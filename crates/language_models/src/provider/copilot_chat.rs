@@ -927,12 +927,20 @@ fn append_reasoning_details_to_response_items(
     };
 
     for mut reasoning_item in metadata.reasoning_items {
+        // Copilot's stateless Responses backend cannot replay reasoning without encrypted state.
+        let Some(encrypted_content) = reasoning_item.encrypted_content.as_ref() else {
+            continue;
+        };
+        if encrypted_content.is_empty() {
+            continue;
+        }
+
         reasoning_item.summary.clear();
         if let Some(id) = reasoning_item.id.as_ref() {
             if let Some(index) = replayed_reasoning_item_indexes.get(id) {
                 input_items[*index] =
                     copilot_responses::ResponseInputItem::Reasoning(reasoning_item);
-                return;
+                continue;
             }
 
             replayed_reasoning_item_indexes.insert(id.clone(), input_items.len());
@@ -1221,6 +1229,7 @@ fn into_copilot_responses(
     for message in messages {
         match message.role {
             Role::User => {
+                let mut function_call_outputs: Vec<responses::ResponseInputItem> = Vec::new();
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
                         let output = match tool_result.content.as_slice() {
@@ -1259,13 +1268,36 @@ fn into_copilot_responses(
                             }
                         };
 
-                        input_items.push(responses::ResponseInputItem::FunctionCallOutput {
-                            call_id: tool_result.tool_use_id.to_string(),
-                            output,
-                            status: None,
-                        });
+                        function_call_outputs.push(
+                            responses::ResponseInputItem::FunctionCallOutput {
+                                call_id: tool_result.tool_use_id.to_string(),
+                                output,
+                                status: None,
+                            },
+                        );
                     }
                 }
+
+                // Sort outputs to match the order of their corresponding function_call items.
+                // Parallel tool calls can return in a different order than they were issued;
+                // the Responses API requires outputs to appear in the same order as the calls.
+                function_call_outputs.sort_by_key(|item| {
+                    let responses::ResponseInputItem::FunctionCallOutput { call_id, .. } = item
+                    else {
+                        return usize::MAX;
+                    };
+                    input_items
+                        .iter()
+                        .rposition(|existing| {
+                            matches!(
+                                existing,
+                                responses::ResponseInputItem::FunctionCall { call_id: fc_id, .. }
+                                if fc_id == call_id
+                            )
+                        })
+                        .unwrap_or(usize::MAX)
+                });
+                input_items.extend(function_call_outputs);
 
                 let mut parts: Vec<responses::ResponseInputContent> = Vec::new();
                 for content in &message.content {
@@ -1292,7 +1324,6 @@ fn into_copilot_responses(
                     input_items.push(responses::ResponseInputItem::Message {
                         role: "user".into(),
                         content: Some(parts),
-                        status: None,
                     });
                 }
             }
@@ -1303,18 +1334,6 @@ fn into_copilot_responses(
                     &mut replayed_reasoning_item_indexes,
                     &mut input_items,
                 );
-
-                for content in &message.content {
-                    if let MessageContent::ToolUse(tool_use) = content {
-                        input_items.push(responses::ResponseInputItem::FunctionCall {
-                            call_id: tool_use.id.to_string(),
-                            name: tool_use.name.to_string(),
-                            arguments: tool_use.raw_input.clone(),
-                            status: None,
-                            thought_signature: tool_use.thought_signature.clone(),
-                        });
-                    }
-                }
 
                 let mut parts: Vec<responses::ResponseInputContent> = Vec::new();
                 for content in &message.content {
@@ -1329,6 +1348,21 @@ fn into_copilot_responses(
                                 text: "[image omitted]".to_string(),
                             });
                         }
+                        MessageContent::ToolUse(tool_use) => {
+                            if !parts.is_empty() {
+                                input_items.push(responses::ResponseInputItem::Message {
+                                    role: "assistant".into(),
+                                    content: Some(parts.drain(..).collect()),
+                                });
+                            }
+                            input_items.push(responses::ResponseInputItem::FunctionCall {
+                                call_id: tool_use.id.to_string(),
+                                name: tool_use.name.to_string(),
+                                arguments: tool_use.raw_input.clone(),
+                                status: None,
+                                thought_signature: tool_use.thought_signature.clone(),
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -1337,7 +1371,6 @@ fn into_copilot_responses(
                     input_items.push(responses::ResponseInputItem::Message {
                         role: "assistant".into(),
                         content: Some(parts),
-                        status: Some("completed".into()),
                     });
                 }
             }
@@ -1356,7 +1389,6 @@ fn into_copilot_responses(
                     input_items.push(responses::ResponseInputItem::Message {
                         role: "system".into(),
                         content: Some(parts),
-                        status: None,
                     });
                 }
             }
@@ -1379,6 +1411,18 @@ fn into_copilot_responses(
         LanguageModelToolChoice::None => responses::ToolChoice::None,
     });
 
+    let include = if thinking_allowed
+        || input_items
+            .iter()
+            .any(|item| matches!(item, responses::ResponseInputItem::Reasoning(_)))
+    {
+        Some(vec![
+            copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
+        ])
+    } else {
+        None
+    };
+
     responses::Request {
         model: model.id().to_string(),
         input: input_items,
@@ -1393,14 +1437,12 @@ fn into_copilot_responses(
                 .unwrap_or(copilot_responses::ReasoningEffort::Medium);
             Some(copilot_responses::ReasoningConfig {
                 effort,
-                summary: Some(copilot_responses::ReasoningSummary::Detailed),
+                summary: Some(copilot_responses::ReasoningSummary::Auto),
             })
         } else {
             None
         },
-        include: Some(vec![
-            copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
-        ]),
+        include,
         store: false,
     }
 }
@@ -1598,6 +1640,184 @@ mod tests {
     }
 
     #[test]
+    fn into_copilot_responses_uses_auto_summary_when_thinking_allowed() {
+        let model = test_responses_model();
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".into()),
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+
+        assert_eq!(serialized["reasoning"]["effort"], json!("xhigh"));
+        assert_eq!(serialized["reasoning"]["summary"], json!("auto"));
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+    }
+
+    #[test]
+    fn into_copilot_responses_omits_include_when_thinking_disabled_and_no_reasoning_items() {
+        let model = test_responses_model();
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            thinking_effort: Some("high".into()),
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+
+        assert!(serialized.get("reasoning").is_none());
+        assert!(serialized.get("include").is_none());
+    }
+
+    #[test]
+    fn into_copilot_responses_includes_encrypted_content_when_reasoning_items_present() {
+        let model = test_responses_model();
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("Done".into())],
+                cache: false,
+                reasoning_details: Some(Arc::new(json!({
+                    "reasoning_items": [
+                        {"id": "r1", "summary": [], "encrypted_content": "ENC"}
+                    ]
+                }))),
+            }],
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+
+        assert!(serialized.get("reasoning").is_none());
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+        let input = serialized["input"].as_array().expect("input items");
+        assert_eq!(
+            input.first(),
+            Some(&json!({
+                "type": "reasoning",
+                "summary": [],
+                "encrypted_content": "ENC"
+            }))
+        );
+    }
+
+    #[test]
+    fn into_copilot_responses_drops_reasoning_items_without_encrypted_content() {
+        let model = test_responses_model();
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("Done".into())],
+                cache: false,
+                reasoning_details: Some(Arc::new(json!({
+                    "reasoning_items": [
+                        {"id": "r1", "summary": []},
+                        {"id": "r2", "summary": [], "encrypted_content": ""},
+                        {"id": "r3", "summary": [], "encrypted_content": "ENC"}
+                    ]
+                }))),
+            }],
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+        let input = serialized["input"].as_array().expect("input items");
+
+        assert_eq!(
+            input[0],
+            json!({"type": "reasoning", "summary": [], "encrypted_content": "ENC"})
+        );
+        assert_eq!(input.len(), 2);
+    }
+
+    #[test]
+    fn into_copilot_responses_text_before_tool_call_preserves_item_order() {
+        let model = test_responses_model();
+        let tool_use = LanguageModelToolUse {
+            id: "call-1".into(),
+            name: "search".into(),
+            raw_input: "{\"q\":\"foo\"}".into(),
+            input: json!({"q": "foo"}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Text("Let me search.".into()),
+                    MessageContent::ToolUse(tool_use),
+                ],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+        let input = serialized["input"].as_array().expect("input items");
+
+        assert_eq!(input.len(), 2);
+        assert_eq!(
+            input[0],
+            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Let me search."}]})
+        );
+        assert_eq!(
+            input[1],
+            json!({"type": "function_call", "call_id": "call-1", "name": "search", "arguments": "{\"q\":\"foo\"}"})
+        );
+    }
+
+    #[test]
+    fn into_copilot_responses_multiple_reasoning_items_all_replayed() {
+        let model = test_responses_model();
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("Done".into())],
+                cache: false,
+                reasoning_details: Some(Arc::new(json!({
+                    "reasoning_items": [
+                        {"id": "r1", "summary": [], "encrypted_content": "ENC1"},
+                        {"id": "r2", "summary": [], "encrypted_content": "ENC2"}
+                    ]
+                }))),
+            }],
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+        let input = serialized["input"].as_array().expect("input items");
+
+        assert_eq!(
+            input[0],
+            json!({"type": "reasoning", "summary": [], "encrypted_content": "ENC1"})
+        );
+        assert_eq!(
+            input[1],
+            json!({"type": "reasoning", "summary": [], "encrypted_content": "ENC2"})
+        );
+        assert_eq!(
+            input[2],
+            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done"}]})
+        );
+    }
+
+    #[test]
     fn into_copilot_responses_replays_reasoning_details() {
         let model = test_responses_model();
         let request = LanguageModelRequest {
@@ -1634,7 +1854,6 @@ mod tests {
             input.first(),
             Some(&json!({
                 "type": "reasoning",
-                "id": "r1",
                 "summary": [],
                 "encrypted_content": "ENC"
             }))
@@ -1644,13 +1863,7 @@ mod tests {
             Some(&json!({
                 "type": "message",
                 "role": "assistant",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "text": "Done"
-                    }
-                ],
-                "status": "completed"
+                "content": [{"type": "output_text", "text": "Done"}]
             }))
         );
         assert!(!serialized.to_string().contains("legacy-redacted"));
@@ -1875,5 +2088,83 @@ mod tests {
             Some("Let me check the directory".to_string()),
             "Should capture reasoning_text"
         );
+    }
+
+    #[test]
+    fn into_copilot_responses_parallel_tool_outputs_sorted_to_match_call_order() {
+        let model = test_responses_model();
+        let make_tool_use = |id: &str, name: &str| LanguageModelToolUse {
+            id: id.into(),
+            name: name.into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let make_tool_result = |text: &str| LanguageModelToolResultContent::Text(text.into());
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::ToolUse(make_tool_use("call-A", "grep")),
+                        MessageContent::ToolUse(make_tool_use("call-B", "find_path")),
+                        MessageContent::ToolUse(make_tool_use("call-C", "find_path")),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                // Tool results arrive in a different order than the calls were issued
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![
+                        MessageContent::ToolResult(language_model::LanguageModelToolResult {
+                            tool_use_id: "call-C".into(),
+                            tool_name: "find_path".into(),
+                            is_error: false,
+                            content: vec![make_tool_result("result-C")],
+                            output: None,
+                        }),
+                        MessageContent::ToolResult(language_model::LanguageModelToolResult {
+                            tool_use_id: "call-B".into(),
+                            tool_name: "find_path".into(),
+                            is_error: false,
+                            content: vec![make_tool_result("result-B")],
+                            output: None,
+                        }),
+                        MessageContent::ToolResult(language_model::LanguageModelToolResult {
+                            tool_use_id: "call-A".into(),
+                            tool_name: "grep".into(),
+                            is_error: false,
+                            content: vec![make_tool_result("result-A")],
+                            output: None,
+                        }),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+        let input = serialized["input"].as_array().expect("input items");
+
+        // Calls are emitted in assistant-message order: A, B, C
+        assert_eq!(input[0]["type"], "function_call");
+        assert_eq!(input[0]["call_id"], "call-A");
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[1]["call_id"], "call-B");
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["call_id"], "call-C");
+
+        // Outputs must be in the same order as the calls, regardless of arrival order
+        assert_eq!(input[3]["type"], "function_call_output");
+        assert_eq!(input[3]["call_id"], "call-A");
+        assert_eq!(input[4]["type"], "function_call_output");
+        assert_eq!(input[4]["call_id"], "call-B");
+        assert_eq!(input[5]["type"], "function_call_output");
+        assert_eq!(input[5]["call_id"], "call-C");
     }
 }

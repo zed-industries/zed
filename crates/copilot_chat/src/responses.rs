@@ -4,7 +4,7 @@ use super::{ChatLocation, copilot_request_headers};
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeMap};
 use serde_json::Value;
 pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 
@@ -114,32 +114,85 @@ pub enum ResponseFunctionOutput {
     Content(Vec<ResponseInputContent>),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseInputItem {
     Message {
         role: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         content: Option<Vec<ResponseInputContent>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        status: Option<String>,
     },
     FunctionCall {
         call_id: String,
         name: String,
         arguments: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         thought_signature: Option<String>,
     },
     FunctionCallOutput {
         call_id: String,
         output: ResponseFunctionOutput,
-        #[serde(skip_serializing_if = "Option::is_none")]
         status: Option<ItemStatus>,
     },
     Reasoning(ResponseReasoningInputItem),
+}
+
+impl Serialize for ResponseInputItem {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        match self {
+            Self::Message { role, content } => {
+                map.serialize_entry("type", "message")?;
+                map.serialize_entry("role", role)?;
+                if let Some(content) = content {
+                    map.serialize_entry("content", content)?;
+                }
+            }
+            Self::FunctionCall {
+                call_id,
+                name,
+                arguments,
+                status,
+                thought_signature,
+            } => {
+                map.serialize_entry("type", "function_call")?;
+                map.serialize_entry("call_id", call_id)?;
+                map.serialize_entry("name", name)?;
+                map.serialize_entry("arguments", arguments)?;
+                if let Some(status) = status {
+                    map.serialize_entry("status", status)?;
+                }
+                if let Some(thought_signature) = thought_signature {
+                    map.serialize_entry("thought_signature", thought_signature)?;
+                }
+            }
+            Self::FunctionCallOutput {
+                call_id,
+                output,
+                status,
+            } => {
+                map.serialize_entry("type", "function_call_output")?;
+                map.serialize_entry("call_id", call_id)?;
+                map.serialize_entry("output", output)?;
+                if let Some(status) = status {
+                    map.serialize_entry("status", status)?;
+                }
+            }
+            Self::Reasoning(reasoning_item) => {
+                // Copilot's stateless Responses backend rejects replayed reasoning item IDs,
+                // but still needs encrypted content to recover reasoning state.
+                map.serialize_entry("type", "reasoning")?;
+                map.serialize_entry("summary", &reasoning_item.summary)?;
+                if let Some(encrypted_content) = reasoning_item.encrypted_content.as_ref() {
+                    map.serialize_entry("encrypted_content", encrypted_content)?;
+                }
+            }
+        }
+        map.end()
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
