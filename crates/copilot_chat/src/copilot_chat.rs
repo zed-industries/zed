@@ -1721,14 +1721,26 @@ mod tests {
             ..model_with_responses_only.clone()
         };
 
+        let anthropic_model_with_both = Model {
+            vendor: ModelVendor::Anthropic,
+            supported_endpoints: vec![
+                ModelSupportedEndpoint::ChatCompletions,
+                ModelSupportedEndpoint::Responses,
+            ],
+            ..model_with_responses_only.clone()
+        };
+
         // Only /responses endpoint -> supports_response = true
         assert!(model_with_responses_only.supports_response());
 
         // Only /chat/completions endpoint -> supports_response = false
         assert!(!model_with_chat_completions.supports_response());
 
-        // Both endpoints (has /chat/completions) -> supports_response = false
+        // Both endpoints for OpenAI models -> supports_response = true, uses /responses
         assert!(model_with_both.supports_response());
+
+        // Both endpoints for non-OpenAI models can still use /responses.
+        assert!(anthropic_model_with_both.supports_response());
 
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());
