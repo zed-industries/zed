@@ -3251,6 +3251,13 @@ impl AgentPanel {
         self.open_skill_creator(SkillCreatorOpenMode::Url { initial_url }, cx);
     }
 
+    /// Open the skill creator pre-filled with a skill received from a
+    /// `zed://skill` share link, so the user can review it and choose a scope
+    /// before installing.
+    pub fn install_shared_skill(&mut self, content: String, cx: &mut Context<Self>) {
+        self.open_skill_creator(SkillCreatorOpenMode::Install { content }, cx);
+    }
+
     fn open_skill_creator(&mut self, open_mode: SkillCreatorOpenMode, cx: &mut Context<Self>) {
         let this = cx.weak_entity();
         let on_saved: Rc<dyn Fn(&mut App)> = Rc::new(move |cx: &mut App| {
