@@ -881,6 +881,7 @@ mod tests {
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
+            terminal_command: None,
         };
 
         cx.update(|cx| {
