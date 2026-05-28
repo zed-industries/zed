@@ -245,6 +245,11 @@ impl A11yNodeBuilder {
         self.focus = ROOT_NODE_ID;
     }
 
+    /// Returns whether a node with the given ID has been pushed in this frame.
+    pub(crate) fn has_node(&self, id: NodeId) -> bool {
+        id == ROOT_NODE_ID || self.seen_ids.contains(&id)
+    }
+
     /// Set the focused node for this frame.
     pub(crate) fn set_focus(&mut self, id: NodeId) {
         #[cfg(debug_assertions)]
@@ -263,6 +268,14 @@ impl A11yNodeBuilder {
         debug_assert_eq!(self.ids_stack.len(), 1);
         debug_assert_eq!(self.ids_stack[0], ROOT_NODE_ID);
 
+        if self.ids_stack.len() != 1 {
+            log::error!(
+                "a11y: Stack imbalance at end of frame: expected 1 (root), got {}. \
+                 Some elements may have pushed without popping.",
+                self.ids_stack.len()
+            );
+        }
+
         // Pop remaining nodes (should just be the root).
         while !self.ids_stack.is_empty() {
             if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {
@@ -271,11 +284,59 @@ impl A11yNodeBuilder {
         }
 
         let nodes = std::mem::take(&mut self.all_nodes);
-        TreeUpdate {
+        let update = TreeUpdate {
             nodes,
             tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
             tree_id: accesskit::TreeId::ROOT,
             focus: self.focus,
+        };
+
+        Self::repair_tree_update(update)
+    }
+
+    /// Accesskit panics on invalid [`TreeUpdate`]s. This function defensively
+    /// checks invariants that accesskit panics on, and tries to fix them.
+    fn repair_tree_update(mut update: TreeUpdate) -> TreeUpdate {
+        let node_ids: FxHashSet<NodeId> = update.nodes.iter().map(|(id, _)| *id).collect();
+
+        // Focus must point to a node in the tree.
+        if !node_ids.contains(&update.focus) {
+            log::error!(
+                "a11y: Focused node {:?} is not in the tree ({} nodes). \
+                 Falling back to root. This is a bug in the a11y tree builder.",
+                update.focus,
+                update.nodes.len()
+            );
+            update.focus = ROOT_NODE_ID;
         }
+
+        // Every child reference must point to a node in the update.
+        for (id, node) in &mut update.nodes {
+            let has_invalid_child = node
+                .children()
+                .iter()
+                .any(|child_id| !node_ids.contains(child_id));
+            if has_invalid_child {
+                let children = node.children();
+                let invalid_count = children
+                    .iter()
+                    .filter(|child_id| !node_ids.contains(child_id))
+                    .count();
+                log::error!(
+                    "a11y: Node {:?} references {} children not present in the tree. \
+                     Stripping invalid child references.",
+                    id,
+                    invalid_count
+                );
+                let valid: Vec<NodeId> = children
+                    .iter()
+                    .copied()
+                    .filter(|child_id| node_ids.contains(child_id))
+                    .collect();
+                node.set_children(valid);
+            }
+        }
+
+        update
     }
 }

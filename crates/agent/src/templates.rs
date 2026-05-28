@@ -195,8 +195,6 @@ mod tests {
         assert!(rendered.contains("allow_network: true"));
         assert!(rendered.contains("allow_fs_write: true"));
         assert!(rendered.contains("unsandboxed: true"));
-        // The model is told the section is stable so it doesn't re-check
-        // sandbox state every turn.
         assert!(rendered.contains("remain in effect for the entire duration"));
     }
 

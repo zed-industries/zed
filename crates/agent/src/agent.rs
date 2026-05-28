@@ -2616,6 +2616,38 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>> {
+        // Use a per-thread temp directory for all terminal commands, even when
+        // sandboxing is disabled, so the model can't infer sandbox state from
+        // `$TMPDIR` changing between conversations.
+        let mut extra_env = extra_env;
+        let mut sandbox_wrap = sandbox_wrap;
+        match self
+            .thread
+            .update(cx, |thread, cx| thread.sandboxed_terminal_temp_dir(cx))
+        {
+            Ok(Ok(temp_dir)) => {
+                // Canonicalize so the path matches what the sandbox resolves
+                // symlinks to (e.g. `/var` -> `/private/var` on macOS).
+                // `$TMPDIR` and the writable-scope entry below must agree, and
+                // they must agree with the path the kernel actually checks.
+                let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
+                let temp_dir_string = temp_dir.to_string_lossy().into_owned();
+                extra_env.extend([
+                    acp::EnvVariable::new("TMPDIR", &temp_dir_string),
+                    acp::EnvVariable::new("TMP", &temp_dir_string),
+                    acp::EnvVariable::new("TEMP", &temp_dir_string),
+                ]);
+                // The command's `$TMPDIR` must live inside the sandbox's
+                // writable scope. The per-thread temp directory is owned here
+                // (not in the terminal tool that assembles the rest of the
+                // writable set), so add it whenever the command is sandboxed.
+                if let Some(sandbox_wrap) = &mut sandbox_wrap {
+                    sandbox_wrap.writable_paths.push(temp_dir);
+                }
+            }
+            Ok(Err(error)) => return Task::ready(Err(error)),
+            Err(error) => return Task::ready(Err(error)),
+        };
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,
