@@ -9,7 +9,7 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, UserAgentsMd};
 use alacritty_terminal::vte::ansi;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
@@ -65,7 +65,7 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle};
+use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -83,10 +83,11 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Workspace,
+    Item, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 actions!(
     git_panel,
@@ -1361,7 +1362,7 @@ impl GitPanel {
             let git_repo = self.active_repository.as_ref()?;
 
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
-                && let Some(project_path) = project_diff.read(cx).active_path(cx)
+                && let Some(project_path) = project_diff.read(cx).active_project_path(cx)
                 && Some(&entry.repo_path)
                     == git_repo
                         .read(cx)
@@ -2698,6 +2699,40 @@ impl GitPanel {
             .unwrap_or_else(|| BuiltInPrompt::CommitMessage.default_content().to_string())
     }
 
+    fn build_commit_message_prompt(
+        prompt: &str,
+        user_agents_md: Option<&str>,
+        rules_content: Option<&str>,
+        subject: &str,
+        diff_text: &str,
+    ) -> String {
+        let user_agents_md_section = match user_agents_md {
+            Some(user_agents_md) => format!(
+                "\n\nThe user has provided the following rules that you should follow when writing the commit message. Project-specific rules may override these instructions when they conflict:\n\
+                <rules>\n{user_agents_md}\n</rules>\n"
+            ),
+            None => String::new(),
+        };
+
+        let rules_section = match rules_content {
+            Some(rules) => format!(
+                "\n\nThe user has provided the following rules specific to this project that you should follow when writing the commit message:\n\
+                <project_rules>\n{rules}\n</project_rules>\n"
+            ),
+            None => String::new(),
+        };
+
+        let subject_section = if subject.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\nHere is the user's subject line:\n{subject}")
+        };
+
+        format!(
+            "{prompt}{user_agents_md_section}{rules_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+        )
+    }
+
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
         if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
@@ -2729,7 +2764,7 @@ impl GitPanel {
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
-             async move {
+            async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
                     this.generate_commit_message_task.take();
                 });
@@ -2761,32 +2796,33 @@ impl GitPanel {
                 const MAX_DIFF_BYTES: usize = 20_000;
                 diff_text = Self::compress_commit_diff(&diff_text, MAX_DIFF_BYTES);
 
-                let rules_content = Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
+                let rules_content =
+                    Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
+                let user_agents_md = cx.update(|cx| {
+                    UserAgentsMd::global(cx)
+                        .and_then(|user_agents_md| user_agents_md.content().cloned())
+                });
 
                 let prompt = Self::load_commit_message_prompt(&mut cx).await;
 
                 let subject = this.update(cx, |this, cx| {
-                    this.commit_editor.read(cx).text(cx).lines().next().map(ToOwned::to_owned).unwrap_or_default()
+                    this.commit_editor
+                        .read(cx)
+                        .text(cx)
+                        .lines()
+                        .next()
+                        .map(ToOwned::to_owned)
+                        .unwrap_or_default()
                 })?;
 
                 let text_empty = subject.trim().is_empty();
 
-                let rules_section = match &rules_content {
-                    Some(rules) => format!(
-                        "\n\nThe user has provided the following project rules that you should follow when writing the commit message:\n\
-                        <project_rules>\n{rules}\n</project_rules>\n"
-                    ),
-                    None => String::new(),
-                };
-
-                let subject_section = if text_empty {
-                    String::new()
-                } else {
-                    format!("\nHere is the user's subject line:\n{subject}")
-                };
-
-                let content = format!(
-                    "{prompt}{rules_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+                let content = Self::build_commit_message_prompt(
+                    &prompt,
+                    user_agents_md.as_deref(),
+                    rules_content.as_deref(),
+                    &subject,
+                    &diff_text,
                 );
 
                 let request = LanguageModelRequest {
@@ -2815,7 +2851,11 @@ impl GitPanel {
                             this.update(cx, |this, cx| {
                                 this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                                     let insert_position = buffer.anchor_before(buffer.len());
-                                    buffer.edit([(insert_position..insert_position, "\n")], None, cx)
+                                    buffer.edit(
+                                        [(insert_position..insert_position, "\n")],
+                                        None,
+                                        cx,
+                                    )
                                 });
                             })?;
                         }
@@ -2825,8 +2865,13 @@ impl GitPanel {
                                 Ok(text) => {
                                     this.update(cx, |this, cx| {
                                         this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                            let insert_position = buffer.anchor_before(buffer.len());
-                                            buffer.edit([(insert_position..insert_position, text)], None, cx);
+                                            let insert_position =
+                                                buffer.anchor_before(buffer.len());
+                                            buffer.edit(
+                                                [(insert_position..insert_position, text)],
+                                                None,
+                                                cx,
+                                            );
                                         });
                                     })?;
                                 }
@@ -2844,7 +2889,8 @@ impl GitPanel {
 
                 anyhow::Ok(())
             }
-            .log_err().await
+            .log_err()
+            .await
         }));
     }
 
@@ -3456,6 +3502,54 @@ impl GitPanel {
         }
     }
 
+    pub(crate) fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_font_size_action(action.persist, px(1.0), cx);
+    }
+
+    pub(crate) fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_font_size_action(action.persist, px(-1.0), cx);
+    }
+
+    fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        if persist {
+            update_settings_file(self.fs.clone(), cx, move |settings, cx| {
+                let git_commit_buffer_font_size =
+                    ThemeSettings::get_global(cx).git_commit_buffer_font_size(cx) + delta;
+
+                let _ = settings.theme.git_commit_buffer_font_size.insert(
+                    f32::from(theme_settings::clamp_font_size(git_commit_buffer_font_size)).into(),
+                );
+            });
+        } else {
+            theme_settings::adjust_git_commit_buffer_font_size(cx, |size| size + delta);
+        }
+    }
+
+    pub(crate) fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.persist {
+            update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                settings.theme.git_commit_buffer_font_size = None;
+            });
+        } else {
+            theme_settings::reset_git_commit_buffer_font_size(cx);
+        }
+    }
+
     fn toggle_directory(&mut self, key: &TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.view_mode.tree_state_mut() {
             let expanded = state.expanded_dirs.entry(key.clone()).or_insert(true);
@@ -3955,7 +4049,7 @@ impl GitPanel {
         };
 
         let repo_path = repo.read(cx).work_directory_abs_path.display().to_string();
-        let text = repo.read(cx).job_debug_queue().to_debug_string();
+        let queue_value = repo.read(cx).job_debug_queue().to_debug_value();
         let title = format!("Git Job Queue: {repo_path}");
 
         let json_language = self.project.read(cx).languages().language_for_name("JSON");
@@ -3965,6 +4059,27 @@ impl GitPanel {
         window
             .spawn(cx, async move |cx| {
                 let json_language = json_language.await.ok();
+
+                // Best-effort: gather runtime diagnostics off the main thread.
+                // Any failure inside `gather` is logged and produces an empty
+                // section; this `.await` itself cannot meaningfully fail and
+                // must never prevent us from showing the queue dump.
+                let diagnostics = cx
+                    .background_spawn(crate::git_runtime_diagnostics::gather())
+                    .await;
+
+                let mut combined = queue_value;
+                if let serde_json::Value::Object(ref mut map) = combined
+                    && let serde_json::Value::Object(diag_map) = diagnostics
+                    && !diag_map.is_empty()
+                {
+                    map.insert(
+                        "runtime_diagnostics".into(),
+                        serde_json::Value::Object(diag_map),
+                    );
+                }
+
+                let text = serde_json::to_string_pretty(&combined).unwrap_or_default();
 
                 let buffer = project
                     .update(cx, |project, cx| {
@@ -4534,7 +4649,9 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
-        let panel_editor_style = panel_editor_style(true, window, cx);
+        let settings = ThemeSettings::get_global(cx);
+        let panel_editor_style =
+            git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
         let enable_coauthors = self.render_co_authors(cx);
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let branch = active_repository.read(cx).branch.clone();
@@ -6605,6 +6722,9 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::activate_changes_tab))
             .on_action(cx.listener(Self::activate_history_tab))
             .size_full()
@@ -6769,42 +6889,20 @@ pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
         .bg(cx.theme().colors().editor_background)
 }
 
-pub(crate) fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorStyle {
+pub(crate) fn git_commit_editor_style(font_size: gpui::Pixels, cx: &App) -> EditorStyle {
     let settings = ThemeSettings::get_global(cx);
-
-    let (font_family, font_fallbacks, font_features, font_size, font_weight, line_height) =
-        if monospace {
-            let font_size = settings.buffer_font_size(cx);
-            (
-                settings.buffer_font.family.clone(),
-                settings.buffer_font.fallbacks.clone(),
-                settings.buffer_font.features.clone(),
-                AbsoluteLength::from(font_size),
-                settings.buffer_font.weight,
-                font_size * settings.buffer_line_height.value(),
-            )
-        } else {
-            (
-                settings.ui_font.family.clone(),
-                settings.ui_font.fallbacks.clone(),
-                settings.ui_font.features.clone(),
-                AbsoluteLength::from(TextSize::Small.rems(cx)),
-                settings.ui_font.weight,
-                window.line_height(),
-            )
-        };
 
     EditorStyle {
         background: cx.theme().colors().editor_background,
         local_player: cx.theme().players().local(),
         text: TextStyle {
             color: cx.theme().colors().text,
-            font_family,
-            font_fallbacks,
-            font_features,
-            font_size,
-            font_weight,
-            line_height: line_height.into(),
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: AbsoluteLength::from(font_size),
+            font_weight: settings.buffer_font.weight,
+            line_height: (font_size * settings.buffer_line_height.value()).into(),
             ..Default::default()
         },
         syntax: cx.theme().syntax().clone(),
@@ -6935,9 +7033,6 @@ impl RenderOnce for PanelRepoFooter {
             .map(|project| project.read(cx).git_store().read(cx).repositories().len() == 1)
             .unwrap_or(true);
 
-        const MAX_BRANCH_LEN: usize = 16;
-        const MAX_REPO_LEN: usize = 16;
-        const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
         const MAX_SHORT_SHA_LEN: usize = 8;
         let branch_name = self
             .branch
@@ -6957,36 +7052,6 @@ impl RenderOnce for PanelRepoFooter {
 
         let active_repo_name = self.active_repository.clone();
 
-        let branch_actual_len = branch_name.len();
-        let repo_actual_len = active_repo_name.len();
-
-        // ideally, show the whole branch and repo names but
-        // when we can't, use a budget to allocate space between the two
-        let (repo_display_len, branch_display_len) =
-            if branch_actual_len + repo_actual_len <= LABEL_CHARACTER_BUDGET {
-                (repo_actual_len, branch_actual_len)
-            } else if branch_actual_len <= MAX_BRANCH_LEN {
-                let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
-                (repo_space, branch_actual_len)
-            } else if repo_actual_len <= MAX_REPO_LEN {
-                let branch_space = (LABEL_CHARACTER_BUDGET - repo_actual_len).min(MAX_BRANCH_LEN);
-                (repo_actual_len, branch_space)
-            } else {
-                (MAX_REPO_LEN, MAX_BRANCH_LEN)
-            };
-
-        let truncated_repo_name = if repo_actual_len <= repo_display_len {
-            active_repo_name.to_string()
-        } else {
-            util::truncate_and_trailoff(active_repo_name.trim_ascii(), repo_display_len)
-        };
-
-        let truncated_branch_name = if branch_actual_len <= branch_display_len {
-            branch_name
-        } else {
-            util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
-        };
-
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
@@ -6996,7 +7061,7 @@ impl RenderOnce for PanelRepoFooter {
                 }
             })
             .trigger_with_tooltip(
-                Button::new("repo-selector", truncated_repo_name)
+                Button::new("repo-selector", active_repo_name)
                     .size(ButtonSize::None)
                     .label_size(LabelSize::Small)
                     .truncate(true),
@@ -7015,7 +7080,7 @@ impl RenderOnce for PanelRepoFooter {
             })
             .into_any_element();
 
-        let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
+        let branch_selector_button = Button::new("branch-selector", branch_name)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
             .truncate(true)
@@ -7058,15 +7123,16 @@ impl RenderOnce for PanelRepoFooter {
                         },
                     ))
                     .when(!single_repo, |this| {
-                        this.child(repo_selector).when(show_separator, |this| {
-                            this.child(
-                                Label::new("/").size(LabelSize::Small).color(Color::Custom(
-                                    cx.theme().colors().text_muted.opacity(0.4),
-                                )),
-                            )
-                        })
+                        this.child(div().child(repo_selector).min_w_0()).when(
+                            show_separator,
+                            |this| {
+                                this.child(Label::new("/").size(LabelSize::Small).color(
+                                    Color::Custom(cx.theme().colors().text_muted.opacity(0.4)),
+                                ))
+                            },
+                        )
                     })
-                    .child(branch_selector),
+                    .child(div().child(branch_selector).min_w_0()),
             )
             .children(if let Some(git_panel) = self.git_panel {
                 git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
@@ -7329,7 +7395,7 @@ impl Component for PanelRepoFooter {
     }
 }
 
-fn open_output(
+pub(crate) fn open_output(
     operation: impl Into<SharedString>,
     workspace: &mut Workspace,
     output: &str,
@@ -8359,8 +8425,8 @@ mod tests {
                 .item_of_type::<ProjectDiff>(cx)
                 .expect("ProjectDiff should exist")
                 .read(cx)
-                .active_path(cx)
-                .expect("active_path should exist");
+                .active_project_path(cx)
+                .expect("active_project_path should exist");
 
             assert_eq!(active_path.path, rel_path("untracked").into_arc());
         });
@@ -8703,6 +8769,26 @@ mod tests {
             [...skipped 2 hunks...]
         "};
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_commit_message_prompt_includes_user_agents_md_before_project_rules() {
+        let prompt = GitPanel::build_commit_message_prompt(
+            "Write a commit message.",
+            Some("Use terse commit messages."),
+            Some("Use the git_ui prefix."),
+            "Update generated message",
+            "diff --git a/file b/file",
+        );
+
+        assert!(prompt.contains("Use terse commit messages."));
+        assert!(prompt.contains("Use the git_ui prefix."));
+        assert!(prompt.contains("Update generated message"));
+        assert!(prompt.contains("diff --git a/file b/file"));
+
+        let user_agents_md_index = prompt.find("<rules>").unwrap();
+        let project_rules_index = prompt.find("<project_rules>").unwrap();
+        assert!(user_agents_md_index < project_rules_index);
     }
 
     #[gpui::test]
@@ -9127,27 +9213,6 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_panel_editor_style_uses_buffer_font_size(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.theme.buffer_font_size = Some(20.0.into());
-                });
-            });
-        });
-
-        cx.add_window(|window, cx| {
-            let style = panel_editor_style(true, window, cx);
-
-            assert_eq!(style.text.font_size.to_pixels(window.rem_size()), px(20.0));
-
-            Editor::single_line(window, cx)
         });
     }
 }

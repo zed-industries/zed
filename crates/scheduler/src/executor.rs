@@ -43,12 +43,14 @@ impl ForegroundExecutor {
         F::Output: 'static,
     {
         let session_id = self.session_id;
-        let scheduler = Arc::clone(&self.scheduler);
+        let scheduler = Arc::downgrade(&self.scheduler);
         let location = Location::caller();
         let (runnable, task) = spawn_local_with_source_location(
             future,
             move |runnable| {
-                scheduler.schedule_foreground(session_id, runnable);
+                if let Some(scheduler) = scheduler.upgrade() {
+                    scheduler.schedule_foreground(session_id, runnable);
+                }
             },
             RunnableMeta { location },
         );
@@ -135,14 +137,16 @@ impl BackgroundExecutor {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        let scheduler = Arc::clone(&self.scheduler);
+        let scheduler = Arc::downgrade(&self.scheduler);
         let location = Location::caller();
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta { location })
             .spawn(
                 move |_| future,
                 move |runnable| {
-                    scheduler.schedule_background_with_priority(runnable, priority);
+                    if let Some(scheduler) = scheduler.upgrade() {
+                        scheduler.schedule_background_with_priority(runnable, priority);
+                    }
                 },
             );
         runnable.schedule();

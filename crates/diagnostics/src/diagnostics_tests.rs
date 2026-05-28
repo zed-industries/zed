@@ -30,7 +30,7 @@ use unindent::Unindent as _;
 use util::{RandomCharIter, path, post_inc, rel_path::rel_path};
 use workspace::MultiWorkspace;
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }

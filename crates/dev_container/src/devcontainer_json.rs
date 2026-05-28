@@ -211,7 +211,7 @@ pub(crate) struct DevContainer {
     #[serde(rename = "updateRemoteUserUID")]
     pub(crate) update_remote_user_uid: Option<bool>,
     user_env_probe: Option<UserEnvProbe>,
-    override_command: Option<bool>,
+    pub(crate) override_command: Option<bool>,
     shutdown_action: Option<ShutdownAction>,
     init: Option<bool>,
     pub(crate) privileged: Option<bool>,
