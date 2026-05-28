@@ -180,6 +180,7 @@ pub struct Snapshot {
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
     root_repo_common_dir: Option<Arc<SanitizedPath>>,
+    root_repo_origin: Option<RootRepoOrigin>,
     always_included_entries: Vec<Arc<RelPath>>,
 
     /// A number that increases every time the worktree begins scanning
@@ -209,6 +210,12 @@ pub enum WorkDirectory {
         absolute_path: Arc<Path>,
         location_in_repo: Arc<Path>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootRepoOrigin {
+    AtProjectRoot,
+    AboveProjectRoot,
 }
 
 impl WorkDirectory {
@@ -423,6 +430,9 @@ impl Worktree {
         } else {
             None
         };
+        let root_repo_origin = root_repo_common_dir
+            .as_ref()
+            .map(|_| RootRepoOrigin::AtProjectRoot);
 
         Ok(cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -444,6 +454,7 @@ impl Worktree {
                 root_file_handle,
             };
             snapshot.root_repo_common_dir = root_repo_common_dir;
+            snapshot.root_repo_origin = root_repo_origin;
 
             let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
@@ -533,6 +544,13 @@ impl Worktree {
             snapshot.root_repo_common_dir = worktree
                 .root_repo_common_dir
                 .map(|p| SanitizedPath::new_arc(Path::new(&p)));
+            snapshot.root_repo_origin = snapshot.root_repo_common_dir.as_ref().map(|_| {
+                if worktree.root_repo_is_above_project.unwrap_or(false) {
+                    RootRepoOrigin::AboveProjectRoot
+                } else {
+                    RootRepoOrigin::AtProjectRoot
+                }
+            });
 
             let background_snapshot = Arc::new(Mutex::new((
                 snapshot.clone(),
@@ -709,6 +727,10 @@ impl Worktree {
             root_repo_common_dir: self
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
+            root_repo_is_above_project: self
+                .snapshot()
+                .root_repo_origin()
+                .map(|origin| origin == RootRepoOrigin::AboveProjectRoot),
         }
     }
 
@@ -1249,12 +1271,25 @@ impl LocalWorktree {
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
 
-        new_snapshot.root_repo_common_dir = new_snapshot
+        let (root_repo_common_dir, root_repo_origin) = new_snapshot
             .local_repo_for_work_directory_path(RelPath::empty())
-            .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
+            .map(|repo| {
+                let origin = match repo.work_directory {
+                    WorkDirectory::InProject { .. } => RootRepoOrigin::AtProjectRoot,
+                    WorkDirectory::AboveProject { .. } => RootRepoOrigin::AboveProjectRoot,
+                };
+                (
+                    SanitizedPath::from_arc(repo.common_dir_abs_path.clone()),
+                    origin,
+                )
+            })
+            .unzip();
+        new_snapshot.root_repo_common_dir = root_repo_common_dir;
+        new_snapshot.root_repo_origin = root_repo_origin;
 
         let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir
-            != new_snapshot.root_repo_common_dir)
+            != new_snapshot.root_repo_common_dir
+            || self.snapshot.root_repo_origin != new_snapshot.root_repo_origin)
             .then(|| self.snapshot.root_repo_common_dir.clone());
         self.snapshot = new_snapshot;
 
@@ -2338,6 +2373,7 @@ impl Snapshot {
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
             root_repo_common_dir: None,
+            root_repo_origin: None,
             scan_id: 1,
             completed_scan_id: 0,
         }
@@ -2369,6 +2405,10 @@ impl Snapshot {
             .map(SanitizedPath::cast_arc_ref)
     }
 
+    pub fn root_repo_origin(&self) -> Option<RootRepoOrigin> {
+        self.root_repo_origin
+    }
+
     fn build_initial_update(&self, project_id: u64, worktree_id: u64) -> proto::UpdateWorktree {
         let mut updated_entries = self
             .entries_by_path
@@ -2385,6 +2425,9 @@ impl Snapshot {
             root_repo_common_dir: self
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
+            root_repo_is_above_project: self
+                .root_repo_origin()
+                .map(|origin| origin == RootRepoOrigin::AboveProjectRoot),
             updated_entries,
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
@@ -2535,6 +2578,11 @@ impl Snapshot {
             .map(|p| SanitizedPath::new_arc(Path::new(&p)))
         {
             self.root_repo_common_dir = Some(dir);
+            self.root_repo_origin = Some(if update.root_repo_is_above_project.unwrap_or(false) {
+                RootRepoOrigin::AboveProjectRoot
+            } else {
+                RootRepoOrigin::AtProjectRoot
+            });
         }
 
         self.scan_id = update.scan_id as usize;
@@ -2767,6 +2815,9 @@ impl LocalSnapshot {
             root_repo_common_dir: self
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
+            root_repo_is_above_project: self
+                .root_repo_origin()
+                .map(|origin| origin == RootRepoOrigin::AboveProjectRoot),
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,

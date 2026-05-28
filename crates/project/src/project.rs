@@ -2144,6 +2144,7 @@ impl Project {
                 visible: true,
                 abs_path: abs_path.to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_above_project: None,
             },
             client,
             PathStyle::Posix,

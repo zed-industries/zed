@@ -526,6 +526,10 @@ impl HeadlessProject {
                 root_repo_common_dir: worktree
                     .root_repo_common_dir()
                     .map(|p| p.to_string_lossy().into_owned()),
+                root_repo_is_above_project: worktree
+                    .snapshot()
+                    .root_repo_origin()
+                    .map(|origin| origin == worktree::RootRepoOrigin::AboveProjectRoot),
             }
         });
 
