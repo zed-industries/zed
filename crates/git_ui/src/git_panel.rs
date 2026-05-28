@@ -5230,11 +5230,12 @@ impl GitPanel {
             return;
         };
 
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
-            return;
-        };
-
-        let branch_name = branch.name().to_string();
+        let branch_name = active_repository
+            .read(cx)
+            .branch
+            .as_ref()
+            .map(|b| b.name().to_string())
+            .unwrap_or_else(|| "HEAD".to_string());
         let log_source = LogSource::Branch(branch_name.into());
         let log_order = LogOrder::DateOrder;
 
@@ -5275,11 +5276,12 @@ impl GitPanel {
             return;
         };
 
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
-            return;
-        };
-
-        let branch_name = branch.name().to_string();
+        let branch_name = active_repository
+            .read(cx)
+            .branch
+            .as_ref()
+            .map(|b| b.name().to_string())
+            .unwrap_or_else(|| "HEAD".to_string());
         let log_source = LogSource::Branch(branch_name.into());
         let log_order = LogOrder::DateOrder;
 
