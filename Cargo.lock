@@ -597,15 +597,14 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.25.1"
-source = "git+https://github.com/zed-industries/alacritty?rev=9d9640d4#9d9640d4e56d67a09d049f9c0a300aae08d4f61e"
+version = "0.26.1-dev"
+source = "git+https://github.com/zed-industries/alacritty?rev=fcf32feacb367b75ec84dd40f041e4fd411d3cc1#fcf32feacb367b75ec84dd40f041e4fd411d3cc1"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.10.0",
  "home",
  "libc",
  "log",
- "mach2 0.5.0",
  "miow",
  "parking_lot",
  "piper",
@@ -3880,6 +3879,8 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sqlez",
+ "tempfile",
 ]
 
 [[package]]
@@ -17339,9 +17340,9 @@ dependencies = [
 
 [[package]]
 name = "signal-hook"
-version = "0.3.18"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
 dependencies = [
  "libc",
  "signal-hook-registry",
