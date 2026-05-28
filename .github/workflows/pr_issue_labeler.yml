@@ -7,7 +7,7 @@
 # Labels issues by author:
 #  - 'community champion' for community champions
 
-name: PR Labeler
+name: PR Issue Labeler
 
 on:
   issues:
