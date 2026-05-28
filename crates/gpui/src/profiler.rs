@@ -25,6 +25,23 @@ use serde::{Deserialize, Serialize};
 use crate::{SharedString, TasksIncluded};
 
 #[doc(hidden)]
+pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
+    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
+    ThreadTaskTimings::collect(&global_thread_timings, included)
+}
+
+#[doc(hidden)]
+pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTimings {
+    gpui::profiler::get_current_thread_task_timings(included)
+}
+
+#[doc(hidden)]
+pub fn get_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
+    let global_timings = GLOBAL_THREAD_TIMINGS.lock();
+    ThreadTaskStatistics::collect(&global_timings, included)
+}
+
+#[doc(hidden)]
 #[derive(Debug, Copy, Clone)]
 pub struct YieldTime(Instant);
 

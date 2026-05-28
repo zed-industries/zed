@@ -34,8 +34,7 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
     PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
     RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, ThreadTaskStatistics, ThreadTaskTimings, Window, WindowControlArea,
-    hash, point, px, size,
+    SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -768,9 +767,6 @@ pub enum TasksIncluded {
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
-    fn get_all_timings(&self, includes: TasksIncluded) -> Vec<ThreadTaskTimings>;
-    fn get_current_thread_timings(&self, includes: TasksIncluded) -> ThreadTaskTimings;
-    fn get_all_stats(&self, includes: TasksIncluded) -> Vec<ThreadTaskStatistics>;
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);

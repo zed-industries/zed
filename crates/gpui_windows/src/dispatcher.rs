@@ -1,7 +1,7 @@
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     thread::{ThreadId, current},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -21,7 +21,7 @@ use windows::{
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
 use gpui::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant,
-    TaskTiming, ThreadTaskTimings, TimerResolutionGuard,
+    TimerResolutionGuard,
 };
 
 pub(crate) struct WindowsDispatcher {
@@ -78,22 +78,13 @@ impl WindowsDispatcher {
     #[inline(always)]
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         let location = runnable.metadata().location;
-        profiler::update_running_task(location);
+        gpui::profiler::update_running_task(location);
         runnable.run();
-        profiler::save_task_timing();
+        gpui::profiler::save_task_timing();
     }
 }
 
 impl PlatformDispatcher for WindowsDispatcher {
-    fn get_all_timings(&self, included: TasksIncluded) -> Vec<ThreadTaskTimings> {
-        let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
-        ThreadTaskTimings::convert(&global_thread_timings, included)
-    }
-
-    fn get_current_thread_timings(&self, included: TasksIncluded) -> gpui::ThreadTaskTimings {
-        gpui::profiler::get_current_thread_task_timings(included)
-    }
-
     fn is_main_thread(&self) -> bool {
         current().id() == self.main_thread_id
     }

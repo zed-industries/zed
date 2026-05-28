@@ -226,15 +226,13 @@ impl ProfilerWindow {
         self.has_remote = self.remote_proto_client(cx).is_some();
         match self.source {
             ProfileSource::Foreground => {
-                let dispatcher = cx.foreground_executor().dispatcher();
                 let current_thread =
-                    dispatcher.get_current_thread_timings(TasksIncluded::OnlyCompleted);
+                    gpui::profiler::get_current_thread_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(vec![current_thread]);
                 self.apply_deltas(deltas);
             }
             ProfileSource::AllThreads => {
-                let dispatcher = cx.foreground_executor().dispatcher();
-                let all_timings = dispatcher.get_all_timings(TasksIncluded::OnlyCompleted);
+                let all_timings = gpui::profiler::get_all_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(all_timings);
                 self.apply_deltas(deltas);
             }

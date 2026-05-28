@@ -36,15 +36,6 @@ impl MacDispatcher {
 }
 
 impl PlatformDispatcher for MacDispatcher {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
-        let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-        ThreadTaskTimings::convert(&global_timings)
-    }
-
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings {
-        gpui::profiler::get_current_thread_task_timings()
-    }
-
     fn is_main_thread(&self) -> bool {
         let is_main_thread: BOOL = unsafe { msg_send![class!(NSThread), isMainThread] };
         is_main_thread == YES
@@ -184,7 +175,7 @@ extern "C" fn trampoline(context: *mut c_void) {
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
     let location = runnable.metadata().location;
-    profiler::update_running_task(location);
+    gpui::profiler::update_running_task(location);
     runnable.run();
-    profiler::save_task_timing();
+    gpui::profiler::save_task_timing();
 }

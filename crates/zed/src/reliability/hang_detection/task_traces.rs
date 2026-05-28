@@ -8,13 +8,10 @@ use util::ResultExt;
 use crate::STARTUP_TIME;
 
 pub fn save_any(
-    background_executor: &gpui::BackgroundExecutor,
     main_thread_id: ThreadId,
 ) -> Option<PathBuf> {
     cleanup_old_hang_traces();
-    let thread_timings = background_executor
-        .dispatcher()
-        .get_all_timings(TasksIncluded::CompletedAndRunning);
+    let thread_timings = gpui::profiler::get_all_timings(TasksIncluded::CompletedAndRunning);
 
     let thread_timings = thread_timings
         .into_iter()

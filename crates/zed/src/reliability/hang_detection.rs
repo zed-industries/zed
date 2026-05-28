@@ -78,7 +78,6 @@ pub(crate) fn start(cx: &mut App) {
 fn start_hang_detection(cx: &App, report_longer_then: Duration) {
     let foreground_thread = thread::current().id();
     let action_resolver = cx.__action_resolver();
-    let background_executor = cx.background_executor().clone();
 
     // an OS thread to insulate detection and reporting from hangs on the fore
     // or background.
@@ -91,9 +90,7 @@ fn start_hang_detection(cx: &App, report_longer_then: Duration) {
             let mut reporter = Reporter::new(Duration::from_secs(1));
             loop {
                 thread::sleep(reporter.monitor_interval);
-                let task_stats = background_executor
-                    .dispatcher()
-                    .get_all_stats(TasksIncluded::CompletedAndRunning);
+                let task_stats = profiler::get_all_stats(TasksIncluded::CompletedAndRunning);
 
                 let mut reported_task_hangs = false;
                 reported_task_hangs |= reporter.report_hanging_foreground(
@@ -108,9 +105,7 @@ fn start_hang_detection(cx: &App, report_longer_then: Duration) {
                 );
                 reporter.report_hanging_actions(&action_resolver, report_longer_then);
 
-                if reported_task_hangs
-                    && let Some(path) =
-                        task_traces::save_any(&background_executor, foreground_thread)
+                if reported_task_hangs && let Some(path) = task_traces::save_any(foreground_thread)
                 {
                     log::info!("Task trace has been saved to: {}", path.display());
                 }
