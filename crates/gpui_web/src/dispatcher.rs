@@ -1,6 +1,5 @@
 use gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
-    ThreadTaskTimings,
 };
 use std::sync::Arc;
 use std::sync::atomic::AtomicI32;

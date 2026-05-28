@@ -151,12 +151,8 @@ static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
 pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
     let now = Instant::now();
     let action = action.type_id();
-    if let Some(action) = cx.actions.try_resolve_action(&action) {
-        ACTION_STATISTICS.lock().update_running_action(action, now);
-    } else {
-        cold_path();
-        log::error!("Action type_id's should always resolve");
-    }
+    let action = cx.actions.try_resolve_action(&action).unwrap_or("un-named");
+    ACTION_STATISTICS.lock().update_running_action(action, now);
 }
 
 #[doc(hidden)]

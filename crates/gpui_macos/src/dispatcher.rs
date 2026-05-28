@@ -1,8 +1,5 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use gpui::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant, TaskTiming,
-    ThreadTaskTimings,
-};
+use gpui::{PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -21,11 +18,7 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
-use std::{
-    ffi::c_void,
-    ptr::NonNull,
-    time::{Duration, Instant},
-};
+use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
 pub(crate) struct MacDispatcher;
 
@@ -175,7 +168,8 @@ extern "C" fn trampoline(context: *mut c_void) {
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
     let location = runnable.metadata().location;
-    gpui::profiler::update_running_task(location);
+    let spawned = runnable.metadata().spawned;
+    gpui::profiler::update_running_task(spawned, location);
     runnable.run();
     gpui::profiler::save_task_timing();
 }

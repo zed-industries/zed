@@ -1270,11 +1270,12 @@ impl HeadlessProject {
         let foreground_only = envelope.payload.foreground_only;
 
         let (deltas, now_nanos) = cx.update(|cx| {
-            let dispatcher = cx.foreground_executor().dispatcher();
             let timings = if foreground_only {
-                vec![dispatcher.get_current_thread_timings(TasksIncluded::OnlyCompleted)]
+                vec![gpui::profiler::get_current_thread_timings(
+                    TasksIncluded::OnlyCompleted,
+                )]
             } else {
-                dispatcher.get_all_timings(TasksIncluded::OnlyCompleted)
+                gpui::profiler::get_all_timings(TasksIncluded::OnlyCompleted)
             };
             this.update(cx, |this, _cx| {
                 let deltas = this.profiling_collector.collect_unseen(timings);
