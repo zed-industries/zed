@@ -28,7 +28,7 @@ const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
-    pub allow_binary_download: bool,
+    pub allow_binary_downloads: bool,
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
 
@@ -147,7 +147,7 @@ impl NodeRuntime {
             None
         };
 
-        let instance = if options.allow_binary_download {
+        let instance = if options.allow_binary_downloads {
             let (log_level, why_using_managed) = match system_node_error {
                 Some(err @ DetectError::Other(_)) => (Level::Warn, err.to_string()),
                 Some(err @ DetectError::NotInPath(_)) => (Level::Info, err.to_string()),

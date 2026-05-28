@@ -5061,10 +5061,11 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_disabled_binary_downloads_stop_default_prettier_formatting(
+async fn test_disabled_binary_downloads_make_default_prettier_formatting_wait(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
+    cx.update(|cx| project::binary_downloads::init(cx));
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
@@ -5093,7 +5094,7 @@ async fn test_disabled_binary_downloads_stop_default_prettier_formatting(
 
     let mut buffers = HashSet::default();
     buffers.insert(buffer);
-    let format_result = project
+    let outcome = project
         .update(cx, |project, cx| {
             project.format(
                 buffers,
@@ -5103,21 +5104,20 @@ async fn test_disabled_binary_downloads_stop_default_prettier_formatting(
                 cx,
             )
         })
-        .with_timeout(Duration::from_secs(1), &cx.executor())
-        .await
-        .unwrap();
+        .with_timeout(Duration::from_millis(200), &cx.executor())
+        .await;
 
-    let error = format_result.unwrap_err();
-    assert_eq!(error.is::<language::BinaryDownloadsDisabled>(), true);
+    assert_eq!(
+        outcome.is_err(),
+        true,
+        "format should be pending while `allow_binary_downloads` is false, not return an error"
+    );
     let last_formatting_failure = project.read_with(cx, |project, cx| {
         project
             .last_formatting_failure(cx)
             .map(|failure| failure.to_string())
     });
-    assert_eq!(
-        last_formatting_failure,
-        Some("binary downloads are disabled; not installing default prettier instance".to_string())
-    );
+    assert_eq!(last_formatting_failure, None);
 }
 
 #[gpui::test]

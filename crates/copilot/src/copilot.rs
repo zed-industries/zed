@@ -17,14 +17,15 @@ use gpui::{
 };
 use language::language_settings::{AllLanguageSettings, CopilotSettings};
 use language::{
-    Anchor, Bias, BinaryDownloadsDisabled, Buffer, BufferSnapshot, Language, PointUtf16,
-    ToPointUtf16,
+    Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
     language_settings::{EditPredictionProvider, all_language_settings},
     point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
+use postage::{stream::Stream as _, watch};
+use project::binary_downloads::BinaryDownloads;
 use project::project_settings::ProjectSettings;
 use project::{DisableAiSettings, Project};
 use request::DidChangeStatus;
@@ -471,7 +472,7 @@ impl Copilot {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
-        let allow_binary_downloads = ProjectSettings::get_global(cx).allow_binary_downloads;
+        let wait_until_downloads_allowed = wait_until_downloads_allowed(cx);
         let start_task = cx
             .spawn(async move |this, cx| {
                 Self::start_language_server(
@@ -479,7 +480,7 @@ impl Copilot {
                     fs,
                     node_runtime,
                     env,
-                    allow_binary_downloads,
+                    wait_until_downloads_allowed,
                     this,
                     awaiting_sign_in_after_start,
                     cx,
@@ -570,13 +571,14 @@ impl Copilot {
         fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
-        allow_binary_downloads: bool,
+        wait_until_downloads_allowed: Option<watch::Receiver<bool>>,
         this: WeakEntity<Self>,
         awaiting_sign_in_after_start: bool,
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(fs, node_runtime, allow_binary_downloads).await?;
+            let server_path =
+                get_copilot_lsp(fs, node_runtime, wait_until_downloads_allowed).await?;
 
             let arguments: Vec<OsString> = vec!["--stdio".into()];
             let binary = LanguageServerBinary {
@@ -857,7 +859,7 @@ impl Copilot {
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let language_settings = all_language_settings(None, cx);
         let env = self.build_env(&language_settings.edit_predictions.copilot);
-        let allow_binary_downloads = ProjectSettings::get_global(cx).allow_binary_downloads;
+        let wait_until_downloads_allowed = wait_until_downloads_allowed(cx);
         let start_task = cx
             .spawn({
                 let fs = self.fs.clone();
@@ -870,7 +872,7 @@ impl Copilot {
                         fs,
                         node_runtime,
                         env,
-                        allow_binary_downloads,
+                        wait_until_downloads_allowed,
                         this,
                         false,
                         cx,
@@ -1423,7 +1425,7 @@ async fn clear_copilot_config_dir() {
 async fn get_copilot_lsp(
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
-    allow_binary_downloads: bool,
+    wait_until_downloads_allowed: Option<watch::Receiver<bool>>,
 ) -> anyhow::Result<PathBuf> {
     const PACKAGE_NAME: &str = "@github/copilot-language-server";
     const SERVER_PATH: &str =
@@ -1431,11 +1433,23 @@ async fn get_copilot_lsp(
 
     let binary_path = copilot_lsp_native_binary_path()?;
 
-    if !allow_binary_downloads {
-        if fs.is_file(&binary_path).await {
+    // Prefer a previously-installed local binary even when downloads aren't yet
+    // allowed - the user already has it on disk, so we shouldn't make them wait.
+    if let Some(mut wait) = wait_until_downloads_allowed {
+        if !*wait.borrow() && fs.is_file(&binary_path).await {
             return Ok(binary_path);
         }
-        return Err(BinaryDownloadsDisabled::new("GitHub Copilot language server").into());
+        if !*wait.borrow() {
+            log::info!(
+                "Waiting for binary downloads approval before installing GitHub Copilot language server"
+            );
+            while let Some(allowed) = wait.recv().await {
+                if allowed {
+                    break;
+                }
+            }
+            log::info!("Binary downloads allowed, installing GitHub Copilot language server");
+        }
     }
 
     let latest_version = node_runtime
@@ -1465,6 +1479,16 @@ async fn get_copilot_lsp(
     }
 
     anyhow::bail!("GitHub Copilot native language server binary was not installed")
+}
+
+/// Returns a wait channel for the global `allow_binary_downloads` permission.
+/// Copilot is not worktree-scoped, so it uses the global value.
+fn wait_until_downloads_allowed(cx: &mut App) -> Option<watch::Receiver<bool>> {
+    BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
+        binary_downloads.update(cx, |binary_downloads, cx| {
+            binary_downloads.wait_until_allowed(None, cx)
+        })
+    })
 }
 
 fn copilot_lsp_native_binary_path() -> anyhow::Result<PathBuf> {
@@ -1504,6 +1528,7 @@ mod tests {
     use language::language_settings::AllLanguageSettings;
     use node_runtime::NodeRuntime;
     use settings::{Settings, SettingsStore};
+    use std::time::Duration;
     use util::{
         path,
         paths::PathStyle,
@@ -1511,13 +1536,27 @@ mod tests {
     };
 
     #[gpui::test]
-    async fn test_get_copilot_lsp_errors_when_downloads_disabled_and_no_local_binary(
+    async fn test_get_copilot_lsp_waits_when_downloads_disabled_and_no_local_binary(
         cx: &mut TestAppContext,
     ) {
         let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
         let node_runtime = NodeRuntime::unavailable();
-        let err = get_copilot_lsp(fs, node_runtime, false).await.unwrap_err();
-        assert_eq!(err.is::<language::BinaryDownloadsDisabled>(), true);
+        let (tx, rx) = postage::watch::channel::<bool>();
+        let mut task = cx
+            .executor()
+            .spawn(get_copilot_lsp(fs, node_runtime, Some(rx)));
+        let mut timeout = cx.executor().timer(Duration::from_millis(50)).fuse();
+        let mut task_ref = (&mut task).fuse();
+        futures::select! {
+            _ = task_ref => panic!("get_copilot_lsp should wait for downloads approval"),
+            _ = timeout => {}
+        }
+        drop(tx);
+        // After the wait channel closes the function falls through to the
+        // download path, which errors out under `NodeRuntime::unavailable()`.
+        // The point of this test is the wait, not the failure mode that
+        // follows, so we just confirm it stops being pending.
+        let _ = task.await;
     }
 
     #[gpui::test]
@@ -1533,7 +1572,8 @@ mod tests {
 
         let fs: Arc<dyn Fs> = fake_fs;
         let node_runtime = NodeRuntime::unavailable();
-        let path = get_copilot_lsp(fs, node_runtime, false).await.unwrap();
+        let (_tx, rx) = postage::watch::channel::<bool>();
+        let path = get_copilot_lsp(fs, node_runtime, Some(rx)).await.unwrap();
         assert_eq!(path, binary_path);
     }
 

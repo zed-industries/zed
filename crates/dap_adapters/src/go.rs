@@ -10,7 +10,7 @@ use dap::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{AsyncApp, SharedString};
-use language::{BinaryDownloadsDisabled, LanguageName};
+use language::LanguageName;
 use log::warn;
 use serde_json::{Map, Value};
 use task::TcpArgumentsTemplate;
@@ -76,17 +76,8 @@ impl GoDebugAdapter {
         }
 
         let adapter_dir = paths::debug_adapters_dir().join("delve-shim-dap");
-        let downloads_allowed = delegate.allow_binary_downloads();
 
-        let download_attempt = if downloads_allowed {
-            Self::fetch_latest_adapter_version(delegate).await
-        } else {
-            Err(anyhow::Error::new(BinaryDownloadsDisabled::new(
-                "Delve debug adapter shim",
-            )))
-        };
-
-        match download_attempt {
+        match Self::fetch_latest_adapter_version(delegate).await {
             Ok(asset) => {
                 let ty = if consts::OS == "windows" {
                     DownloadedFileType::Zip
@@ -129,13 +120,7 @@ impl GoDebugAdapter {
                 }
 
                 if let Some(path) = cached {
-                    if downloads_allowed {
-                        warn!(
-                            "Failed to fetch latest delve-shim-dap, using cached version: {error:#}"
-                        );
-                    } else {
-                        log::info!("Using cached delve-shim-dap: {error:#}");
-                    }
+                    warn!("Failed to fetch latest delve-shim-dap, using cached version: {error:#}");
                     self.shim_path.set(path.clone()).ok();
                     Ok(path)
                 } else {

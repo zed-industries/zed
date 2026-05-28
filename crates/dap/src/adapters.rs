@@ -47,9 +47,6 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
     fn is_headless(&self) -> bool;
-    /// Whether the user has allowed Zed to download and install binaries for
-    /// debug adapters in this worktree.
-    fn allow_binary_downloads(&self) -> bool;
 }
 
 #[derive(

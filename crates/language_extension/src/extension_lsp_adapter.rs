@@ -163,7 +163,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
         _: AsyncApp,
     ) -> LanguageServerBinaryLocations {
         async move {
-            if !binary_options.allow_binary_download {
+            if !binary_options.allow_binary_downloads {
                 let reason = BinaryDownloadsDisabled::new(format!(
                     "language server {}",
                     self.language_server_id.0

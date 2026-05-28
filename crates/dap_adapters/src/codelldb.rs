@@ -6,7 +6,6 @@ use collections::HashMap;
 use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::BinaryDownloadsDisabled;
 use serde_json::Value;
 use task::{DebugRequest, DebugScenario, ZedDebugConfig};
 use util::fs::remove_matching;
@@ -340,18 +339,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
 
         if command.is_none() {
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-            let downloads_allowed = delegate.allow_binary_downloads();
-            let download_attempt = if downloads_allowed {
-                delegate
-                    .output_to_console(format!("Checking latest version of {}...", self.name()));
-                self.fetch_latest_adapter_version(delegate).await
-            } else {
-                Err(anyhow::Error::new(BinaryDownloadsDisabled::new(format!(
-                    "debug adapter {}",
-                    Self::ADAPTER_NAME
-                ))))
-            };
-            let version_path = match download_attempt {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            let version_path = match self.fetch_latest_adapter_version(delegate).await {
                 Ok(version) => {
                     adapters::download_adapter_from_github(
                         self.name(),
@@ -366,33 +355,19 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     version_path
                 }
                 Err(e) => {
-                    if downloads_allowed {
-                        delegate.output_to_console("Unable to fetch latest version".to_string());
-                        log::error!("Error fetching latest version of {}: {}", self.name(), e);
-                    } else {
-                        delegate.output_to_console(format!("{e:#}"));
-                    }
+                    delegate.output_to_console("Unable to fetch latest version".to_string());
+                    log::error!("Error fetching latest version of {}: {}", self.name(), e);
                     delegate.output_to_console(format!(
                         "Searching for adapters in: {}",
                         adapter_path.display()
                     ));
-                    let cached_dir = || {
-                        if downloads_allowed {
-                            anyhow::Error::msg("No cached adapter found")
-                        } else {
-                            anyhow::Error::new(BinaryDownloadsDisabled::new(format!(
-                                "debug adapter {}",
-                                Self::ADAPTER_NAME
-                            )))
-                        }
-                    };
                     let mut paths = match delegate.fs().read_dir(&adapter_path).await {
                         Ok(paths) => paths,
-                        Err(_) => return Err(cached_dir()),
+                        Err(_) => anyhow::bail!("No cached adapter found"),
                     };
                     match paths.next().await {
                         Some(Ok(path)) => path,
-                        _ => return Err(cached_dir()),
+                        _ => anyhow::bail!("No cached adapter found"),
                     }
                 }
             };

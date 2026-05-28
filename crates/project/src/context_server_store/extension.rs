@@ -7,11 +7,9 @@ use extension::{
     ProjectDelegate,
 };
 use gpui::{App, AsyncApp, Entity, Task};
-use language::BinaryDownloadsDisabled;
-use settings::{Settings as _, SettingsLocation};
-use util::rel_path::RelPath;
+use postage::{stream::Stream as _, watch};
 
-use crate::project_settings::ProjectSettings;
+use crate::binary_downloads::BinaryDownloads;
 use crate::worktree_store::WorktreeStore;
 
 use super::registry::{self, ContextServerDescriptorRegistry};
@@ -62,11 +60,10 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
         let extension = self.extension.clone();
         cx.spawn(async move |cx| {
             let extension_project = extension_project(worktree_store.clone(), cx)?;
-            let downloads_disabled =
-                cx.update(|cx| downloads_disabled_for_any_visible_worktree(&worktree_store, cx));
-            if downloads_disabled {
-                return Err(BinaryDownloadsDisabled::new(format!("context server {id}")).into());
-            }
+            let waits = cx.update(|cx| {
+                wait_until_downloads_allowed_for_all_visible_worktrees(&worktree_store, cx)
+            });
+            await_downloads_allowed(waits, &id).await;
             let mut command = extension
                 .context_server_command(id.clone(), extension_project.clone())
                 .await?;
@@ -103,28 +100,51 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
     }
 }
 
-fn downloads_disabled_for_any_visible_worktree(
+/// Collects a wait channel for every visible worktree that currently disallows
+/// binary downloads, plus the global default when there are no worktrees. The
+/// `command` task awaits all of them so an extension-driven context server
+/// downloads only after every relevant scope has been approved.
+fn wait_until_downloads_allowed_for_all_visible_worktrees(
     worktree_store: &Entity<WorktreeStore>,
-    cx: &App,
-) -> bool {
+    cx: &mut App,
+) -> Vec<watch::Receiver<bool>> {
+    let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) else {
+        return Vec::new();
+    };
     let worktree_ids: Vec<_> = worktree_store
         .read(cx)
         .visible_worktrees(cx)
         .map(|worktree| worktree.read(cx).id())
         .collect();
-    if worktree_ids.is_empty() {
-        return !ProjectSettings::get_global(cx).allow_binary_downloads;
-    }
-    worktree_ids.into_iter().any(|worktree_id| {
-        !ProjectSettings::get(
-            Some(SettingsLocation {
-                worktree_id,
-                path: RelPath::empty(),
-            }),
-            cx,
-        )
-        .allow_binary_downloads
+    binary_downloads.update(cx, |binary_downloads, cx| {
+        if worktree_ids.is_empty() {
+            return binary_downloads
+                .wait_until_allowed(None, cx)
+                .into_iter()
+                .collect();
+        }
+        worktree_ids
+            .into_iter()
+            .filter_map(|worktree_id| binary_downloads.wait_until_allowed(Some(worktree_id), cx))
+            .collect()
     })
+}
+
+async fn await_downloads_allowed(waits: Vec<watch::Receiver<bool>>, server_id: &str) {
+    for mut wait in waits {
+        if *wait.borrow() {
+            continue;
+        }
+        log::info!(
+            "Waiting for binary downloads approval before starting context server {server_id}"
+        );
+        while let Some(allowed) = wait.recv().await {
+            if allowed {
+                break;
+            }
+        }
+        log::info!("Binary downloads allowed, starting context server {server_id}");
+    }
 }
 
 struct ContextServerDescriptorRegistryProxy {

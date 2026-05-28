@@ -8035,7 +8035,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if let Some(existing) = self.active_modal::<BinaryDownloadsModal>(cx) {
-            existing.update(cx, |modal, cx| modal.dismiss(cx));
+            existing.update(cx, |modal, cx| modal.acknowledge_and_dismiss(cx));
             return;
         }
         let Some(scope) =

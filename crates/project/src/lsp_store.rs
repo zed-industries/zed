@@ -33,7 +33,7 @@ use crate::{
     CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LspAction, LspPullDiagnostics,
     ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
     PulledDiagnostics, ResolveState, Symbol,
-    binary_downloads::{BinaryDownloads, BinaryDownloadsEvent},
+    binary_downloads::BinaryDownloads,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -471,22 +471,28 @@ impl LocalLspStore {
                     }
                 }
             });
-        let update_binary_status = wait_until_worktree_trust.is_none();
+        let wait_until_downloads_allowed =
+            BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
+                binary_downloads.update(cx, |binary_downloads, cx| {
+                    binary_downloads.wait_until_allowed(Some(worktree_id), cx)
+                })
+            });
+
+        let update_binary_status =
+            wait_until_worktree_trust.is_none() && wait_until_downloads_allowed.is_none();
 
         let settings_location = SettingsLocation {
             worktree_id,
             path: RelPath::empty(),
         };
-        let allow_binary_download =
-            ProjectSettings::get(Some(settings_location), cx).allow_binary_downloads;
         let binary = self.get_language_server_binary(
             worktree_abs_path.clone(),
             adapter.clone(),
             settings,
             toolchain.clone(),
             delegate.clone(),
-            allow_binary_download,
             wait_until_worktree_trust,
+            wait_until_downloads_allowed,
             cx,
         );
         let pending_workspace_folders = Arc::<Mutex<BTreeSet<Uri>>>::default();
@@ -700,8 +706,8 @@ impl LocalLspStore {
         settings: Arc<LspSettings>,
         toolchain: Option<Toolchain>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        allow_binary_download: bool,
         wait_until_worktree_trust: Option<watch::Receiver<bool>>,
+        wait_until_downloads_allowed: Option<watch::Receiver<bool>>,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
         if let Some(settings) = &settings.binary
@@ -710,26 +716,14 @@ impl LocalLspStore {
             let settings = settings.clone();
             let languages = self.languages.clone();
             return cx.background_spawn(async move {
-                if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
-                    let already_trusted =  *wait_until_worktree_trust.borrow();
-                    if !already_trusted {
-                        log::info!(
-                            "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
-                            adapter.name(),
-                        );
-                        while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
-                            if worktree_trusted {
-                                break;
-                            }
-                        }
-                        log::info!(
-                            "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
-                            adapter.name(),
-                        );
-                    }
-                    languages
-                        .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
-                }
+                await_tool_permissions(
+                    wait_until_worktree_trust,
+                    wait_until_downloads_allowed,
+                    &worktree_abs_path,
+                    adapter.name(),
+                    &languages,
+                )
+                .await;
                 let mut env = delegate.shell_env().await;
                 env.extend(settings.env.unwrap_or_default());
 
@@ -751,26 +745,14 @@ impl LocalLspStore {
             let language_server_name = adapter.name.clone();
             let languages = self.languages.clone();
             return cx.spawn(async move |_| {
-                if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
-                    let already_trusted = *wait_until_worktree_trust.borrow();
-                    if !already_trusted {
-                        log::info!(
-                            "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {language_server_name}",
-                        );
-                        while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
-                            if worktree_trusted {
-                                break;
-                            }
-                        }
-                        log::info!(
-                            "Worktree {worktree_abs_path:?} is trusted, starting language server {language_server_name}",
-                        );
-                    }
-                    languages.update_lsp_binary_status(
-                        language_server_name.clone(),
-                        BinaryStatus::Starting,
-                    );
-                }
+                await_tool_permissions(
+                    wait_until_worktree_trust,
+                    wait_until_downloads_allowed,
+                    &worktree_abs_path,
+                    language_server_name.clone(),
+                    &languages,
+                )
+                .await;
 
                 Ok(LanguageServerBinary {
                     path: PathBuf::from(format!("/fake/lsp/{language_server_name}")),
@@ -793,7 +775,7 @@ impl LocalLspStore {
                 .as_ref()
                 .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
-            allow_binary_download,
+            allow_binary_downloads: true,
             pre_release: settings
                 .fetch
                 .as_ref()
@@ -801,38 +783,22 @@ impl LocalLspStore {
                 .unwrap_or(false),
         };
 
+        let languages = self.languages.clone();
         cx.spawn(async move |cx| {
-            if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
-                let already_trusted =  *wait_until_worktree_trust.borrow();
-                if !already_trusted {
-                    log::info!(
-                        "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
-                        adapter.name(),
-                    );
-                    while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
-                        if worktree_trusted {
-                            break;
-                        }
-                    }
-                    log::info!(
-                        "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
-                            adapter.name(),
-                    );
-                    }
-            }
+            await_tool_permissions(
+                wait_until_worktree_trust,
+                wait_until_downloads_allowed,
+                &worktree_abs_path,
+                adapter.name(),
+                &languages,
+            )
+            .await;
 
             let (existing_binary, maybe_download_binary) = adapter
                 .clone()
                 .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
                 .await
                 .await;
-
-            if existing_binary
-                .as_ref()
-                .is_err_and(|error| error.is::<language::BinaryDownloadsDisabled>())
-            {
-                return existing_binary;
-            }
 
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
@@ -4342,20 +4308,6 @@ impl LspStore {
             .detach();
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
-        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
-            let weak_worktree_store = worktree_store.downgrade();
-            cx.subscribe(&binary_downloads, move |lsp_store, _, event, cx| {
-                let (event_store, worktree_ids) = match event {
-                    BinaryDownloadsEvent::Allowed(store, ids)
-                    | BinaryDownloadsEvent::Disallowed(store, ids) => (store, ids),
-                };
-                if event_store != &weak_worktree_store {
-                    return;
-                }
-                lsp_store.restart_language_servers_for_worktrees(worktree_ids.clone(), cx);
-            })
-            .detach();
-        }
         subscribe_to_binary_statuses(&languages, cx).detach();
 
         let _maintain_workspace_config = {
@@ -11389,34 +11341,6 @@ impl LspStore {
         self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
     }
 
-    /// Restarts every language server whose owning buffer lives in one of the
-    /// given worktrees. Used to react to per-worktree setting flips (such as
-    /// `allow_binary_downloads`) without disturbing servers in unrelated
-    /// worktrees.
-    pub fn restart_language_servers_for_worktrees(
-        &mut self,
-        worktree_ids: HashSet<WorktreeId>,
-        cx: &mut Context<Self>,
-    ) {
-        if worktree_ids.is_empty() {
-            return;
-        }
-        let buffers = self
-            .buffer_store
-            .read(cx)
-            .buffers()
-            .filter(|buffer| {
-                File::from_dyn(buffer.read(cx).file())
-                    .map(|file| worktree_ids.contains(&file.worktree_id(cx)))
-                    .unwrap_or(false)
-            })
-            .collect::<Vec<_>>();
-        if buffers.is_empty() {
-            return;
-        }
-        self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
-    }
-
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
@@ -13741,6 +13665,51 @@ fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabi
         capabilities.document_range_formatting_provider.as_ref(),
         Some(provider) if *provider != OneOf::Left(false)
     )
+}
+
+/// Awaits worktree-trust and binary-downloads approvals (whichever ones are
+/// pending) before letting a language-server start proceed. Once both gates
+/// are open the server's binary status is bumped to [`BinaryStatus::Starting`]
+/// so the UI catches up.
+async fn await_tool_permissions(
+    wait_until_worktree_trust: Option<watch::Receiver<bool>>,
+    wait_until_downloads_allowed: Option<watch::Receiver<bool>>,
+    worktree_abs_path: &Path,
+    name: LanguageServerName,
+    languages: &Arc<LanguageRegistry>,
+) {
+    let was_waiting = wait_until_worktree_trust.is_some() || wait_until_downloads_allowed.is_some();
+    if let Some(mut wait) = wait_until_worktree_trust
+        && !*wait.borrow()
+    {
+        log::info!(
+            "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {name}"
+        );
+        while let Some(trusted) = wait.recv().await {
+            if trusted {
+                break;
+            }
+        }
+        log::info!("Worktree {worktree_abs_path:?} is trusted, starting language server {name}");
+    }
+    if let Some(mut wait) = wait_until_downloads_allowed
+        && !*wait.borrow()
+    {
+        log::info!(
+            "Waiting for binary downloads to be allowed for {worktree_abs_path:?}, before starting language server {name}"
+        );
+        while let Some(allowed) = wait.recv().await {
+            if allowed {
+                break;
+            }
+        }
+        log::info!(
+            "Binary downloads allowed for {worktree_abs_path:?}, starting language server {name}"
+        );
+    }
+    if was_waiting {
+        languages.update_lsp_binary_status(name, BinaryStatus::Starting);
+    }
 }
 
 fn subscribe_to_binary_statuses(

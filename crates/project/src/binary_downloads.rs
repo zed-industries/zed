@@ -10,6 +10,7 @@
 
 use collections::{HashMap, HashSet};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, WeakEntity};
+use postage::{sink::Sink as _, watch};
 use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::rel_path::RelPath;
 
@@ -60,6 +61,16 @@ impl EventEmitter<BinaryDownloadsEvent> for BinaryDownloadsStore {}
 
 pub struct BinaryDownloadsStore {
     snapshots: HashMap<WeakEntity<WorktreeStore>, HashMap<WorktreeId, bool>>,
+    global_snapshot: bool,
+    /// Senders for in-flight "wait until downloads are allowed" channels,
+    /// keyed by worktree. A waiter exists only while the worktree's effective
+    /// value is `false`; once it flips to `true` the channel is signalled and
+    /// dropped. A subsequent flip back to `false` will create a fresh channel
+    /// on the next call to [`Self::wait_until_allowed`].
+    waiters: HashMap<WorktreeId, watch::Sender<bool>>,
+    /// Parallel waiter for callers that don't have a worktree in hand (e.g. a
+    /// buffer with no file backing it).
+    global_waiter: Option<watch::Sender<bool>>,
     _worktree_subscriptions: HashMap<WeakEntity<WorktreeStore>, Subscription>,
     _settings_subscription: Subscription,
 }
@@ -67,11 +78,53 @@ pub struct BinaryDownloadsStore {
 impl BinaryDownloadsStore {
     fn new(cx: &mut Context<Self>) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(Self::on_settings_changed);
+        let global_snapshot = Self::allow_binary_downloads(None, cx);
         Self {
             snapshots: HashMap::default(),
+            global_snapshot,
+            waiters: HashMap::default(),
+            global_waiter: None,
             _worktree_subscriptions: HashMap::default(),
             _settings_subscription: settings_subscription,
         }
+    }
+
+    /// Returns a watch channel that yields `true` once `allow_binary_downloads`
+    /// becomes `true` for the given scope. Pass `Some(worktree_id)` for a
+    /// worktree-scoped wait or `None` to wait on the global default (for
+    /// callers that have no worktree in hand, such as buffers backed by no
+    /// file). Returns `None` when downloads are already allowed, so callers
+    /// can early-out without spinning up a wait.
+    ///
+    /// This mirrors the worktree-trust wait so that subsystems that need to
+    /// download a binary can `await` for approval instead of failing fast and
+    /// being restarted later.
+    pub fn wait_until_allowed(
+        &mut self,
+        worktree_id: Option<WorktreeId>,
+        cx: &App,
+    ) -> Option<watch::Receiver<bool>> {
+        if Self::allow_binary_downloads(worktree_id, cx) {
+            match worktree_id {
+                Some(id) => {
+                    self.waiters.remove(&id);
+                }
+                None => {
+                    self.global_waiter = None;
+                }
+            }
+            return None;
+        }
+        let sender = match worktree_id {
+            Some(id) => self
+                .waiters
+                .entry(id)
+                .or_insert_with(|| watch::channel::<bool>().0),
+            None => self
+                .global_waiter
+                .get_or_insert_with(|| watch::channel::<bool>().0),
+        };
+        Some(sender.subscribe())
     }
 
     /// Returns the effective `allow_binary_downloads` value, optionally scoped
@@ -104,6 +157,14 @@ impl BinaryDownloadsStore {
     }
 
     fn on_settings_changed(&mut self, cx: &mut Context<Self>) {
+        let new_global = Self::allow_binary_downloads(None, cx);
+        if new_global != self.global_snapshot {
+            self.global_snapshot = new_global;
+            if new_global && let Some(mut sender) = self.global_waiter.take() {
+                sender.blocking_send(true).ok();
+            }
+        }
+
         let keys = self.snapshots.keys().cloned().collect::<Vec<_>>();
         for weak in keys {
             self.refresh(weak, cx);
@@ -153,6 +214,12 @@ impl BinaryDownloadsStore {
                 } else {
                     disallowed.insert(worktree_id);
                 }
+            }
+        }
+
+        for worktree_id in &allowed {
+            if let Some(mut sender) = self.waiters.remove(worktree_id) {
+                sender.blocking_send(true).ok();
             }
         }
 

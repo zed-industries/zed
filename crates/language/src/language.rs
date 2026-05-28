@@ -771,7 +771,7 @@ where
                 return (Ok(cached_binary.clone()), None);
             }
 
-            if !binary_options.allow_binary_download {
+            if !binary_options.allow_binary_downloads {
                 let reason =
                     BinaryDownloadsDisabled::new(format!("language server {}", self.name().0));
                 delegate.update_status(

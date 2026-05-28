@@ -13,9 +13,9 @@ use extension::{
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
 use gpui::{BackgroundExecutor, SharedString};
-use language::{
-    BinaryDownloadsDisabled, BinaryStatus, LanguageName, language_settings::AllLanguageSettings,
-};
+use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
+use postage::stream::Stream as _;
+use project::binary_downloads::BinaryDownloads;
 use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
@@ -792,18 +792,25 @@ impl nodejs::Host for WasmState {
             .grant_npm_install_package(&package_name)?;
 
         let extension_id = self.manifest.id.clone();
-        let downloads_allowed = self
+        let wait = self
             .on_main_thread(|cx| {
-                async move { cx.update(|cx| ProjectSettings::get_global(cx).allow_binary_downloads) }
-                    .boxed_local()
+                async move {
+                    cx.update(|cx| {
+                        BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
+                            binary_downloads.update(cx, |binary_downloads, cx| {
+                                binary_downloads.wait_until_allowed(None, cx)
+                            })
+                        })
+                    })
+                }
+                .boxed_local()
             })
             .await;
-        if !downloads_allowed {
-            return Result::<(), _>::Err(anyhow::Error::new(BinaryDownloadsDisabled::new(
-                format!("npm package `{package_name}` requested by extension `{extension_id}`"),
-            )))
-            .to_wasmtime_result();
-        }
+        await_extension_downloads_allowed(
+            wait,
+            &format!("npm package `{package_name}` requested by extension `{extension_id}`"),
+        )
+        .await;
 
         self.host
             .node_runtime
@@ -1083,18 +1090,25 @@ impl ExtensionImports for WasmState {
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
         let extension_id = self.manifest.id.clone();
-        let downloads_allowed = self
+        let wait = self
             .on_main_thread(|cx| {
-                async move { cx.update(|cx| ProjectSettings::get_global(cx).allow_binary_downloads) }
-                    .boxed_local()
+                async move {
+                    cx.update(|cx| {
+                        BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
+                            binary_downloads.update(cx, |binary_downloads, cx| {
+                                binary_downloads.wait_until_allowed(None, cx)
+                            })
+                        })
+                    })
+                }
+                .boxed_local()
             })
             .await;
-        if !downloads_allowed {
-            return Result::<(), _>::Err(anyhow::Error::new(BinaryDownloadsDisabled::new(
-                format!("download from `{url}` requested by extension `{extension_id}`"),
-            )))
-            .to_wasmtime_result();
-        }
+        await_extension_downloads_allowed(
+            wait,
+            &format!("download from `{url}` requested by extension `{extension_id}`"),
+        )
+        .await;
         maybe!(async {
             let parsed_url = Url::parse(&url)?;
             self.capability_granter.grant_download_file(&parsed_url)?;
@@ -1175,4 +1189,26 @@ impl ExtensionImports for WasmState {
             .with_context(|| format!("setting permissions for path {path:?}"))
             .to_wasmtime_result()
     }
+}
+
+/// Mirrors the worktree-trust wait so extensions that need to download a
+/// binary (npm package or arbitrary URL) just `await` until the user enables
+/// binary downloads instead of erroring back into the wasm runtime.
+async fn await_extension_downloads_allowed(
+    wait: Option<postage::watch::Receiver<bool>>,
+    description: &str,
+) {
+    let Some(mut wait) = wait else {
+        return;
+    };
+    if *wait.borrow() {
+        return;
+    }
+    log::info!("Waiting for binary downloads approval before {description}");
+    while let Some(allowed) = wait.recv().await {
+        if allowed {
+            break;
+        }
+    }
+    log::info!("Binary downloads allowed, proceeding with {description}");
 }
