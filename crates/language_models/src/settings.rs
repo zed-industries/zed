@@ -6,9 +6,11 @@ use settings::RegisterSetting;
 use crate::provider::{
     anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
     deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
+    minimax::{MiniMaxSettings, MINIMAX_API_URL}, mistral::MistralSettings,
+    ollama::OllamaSettings, open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    opencode::OpenCodeSettings, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    opencode::OpenCodeSettings, vercel_ai_gateway::VercelAiGatewaySettings,
+    x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -18,6 +20,7 @@ pub struct AllLanguageModelSettings {
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
     pub lmstudio: LmStudioSettings,
+    pub minimax: MiniMaxSettings,
     pub mistral: MistralSettings,
     pub ollama: OllamaSettings,
     pub opencode: OpenCodeSettings,
@@ -39,6 +42,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let deepseek = language_models.deepseek.unwrap();
         let google = language_models.google.unwrap();
         let lmstudio = language_models.lmstudio.unwrap();
+        let minimax = language_models.minimax.unwrap_or_default();
         let mistral = language_models.mistral.unwrap();
         let ollama = language_models.ollama.unwrap();
         let opencode = language_models.opencode.unwrap();
@@ -75,6 +79,10 @@ impl settings::Settings for AllLanguageModelSettings {
             lmstudio: LmStudioSettings {
                 api_url: lmstudio.api_url.unwrap(),
                 available_models: lmstudio.available_models.unwrap_or_default(),
+            },
+            minimax: MiniMaxSettings {
+                api_url: minimax.api_url.unwrap_or_else(|| MINIMAX_API_URL.to_string()),
+                available_models: minimax.available_models.unwrap_or_default(),
             },
             mistral: MistralSettings {
                 api_url: mistral.api_url.unwrap(),

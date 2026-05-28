@@ -15,6 +15,7 @@ pub struct AllLanguageModelSettingsContent {
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
+    pub minimax: Option<MiniMaxSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub opencode: Option<OpenCodeSettingsContent>,
@@ -204,6 +205,22 @@ pub struct LmStudioAvailableModel {
     pub max_tokens: u64,
     pub supports_tool_calls: bool,
     pub supports_images: bool,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct MiniMaxSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<MiniMaxAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct MiniMaxAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
 }
 
 #[with_fallible_options]

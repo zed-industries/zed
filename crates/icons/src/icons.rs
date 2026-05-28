@@ -18,6 +18,7 @@ pub enum IconName {
     AiGoogle,
     AiLmStudio,
     AiMistral,
+    AiMinimax,
     AiOllama,
     AiOpenAi,
     AiOpenAiCompat,

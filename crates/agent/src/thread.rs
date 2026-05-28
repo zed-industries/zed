@@ -2877,6 +2877,7 @@ impl Thread {
                     let event = event?;
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::Thinking { text, .. } => text,
                         _ => continue,
                     };
 

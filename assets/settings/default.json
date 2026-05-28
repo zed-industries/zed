@@ -2374,6 +2374,9 @@
     "deepseek": {
       "api_url": "https://api.deepseek.com/v1",
     },
+    "minimax": {
+      "api_url": "https://api.minimax.io/v1",
+    },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1",
     },
