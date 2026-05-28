@@ -4391,7 +4391,7 @@ impl BackgroundScanner {
         //
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
-        let skipped_files_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
+        let skipped_file_names_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
         let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
 
         let mut dot_git_abs_paths = Vec::new();
@@ -4421,8 +4421,10 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    let is_ignored = skipped_files_in_dot_git.iter().any(|skipped| {
-                        OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
+                    let is_ignored = skipped_file_names_in_dot_git.iter().any(|skipped| {
+                        path_in_git_dir
+                            .file_name()
+                            .is_some_and(|file_name| file_name == OsStr::new(skipped))
                     }) || skipped_dirs_in_dot_git
                         .iter()
                         .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir));

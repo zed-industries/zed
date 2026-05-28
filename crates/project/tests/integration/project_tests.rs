@@ -6073,7 +6073,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
                 language::BufferEvent::DirtyChanged
             ]
         );
@@ -6102,9 +6104,13 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
                 language::BufferEvent::DirtyChanged,
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
             ],
         );
         events.lock().clear();
@@ -6119,7 +6125,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6159,7 +6167,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.lock()),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6174,7 +6184,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -12738,7 +12750,7 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
     let new_head = commit
         .parents()
         .inspect(|parnet| {
-            parnet.message();
+            let _ = parnet.message();
         })
         .nth(offset)
         .expect("Not enough history");

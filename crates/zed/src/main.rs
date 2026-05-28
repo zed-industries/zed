@@ -85,6 +85,15 @@ use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+fn build_application() -> Application {
+    let platform = gpui_platform::current_platform(false);
+    if std::env::var("ZED_EXPERIMENTAL_A11Y").as_deref() == Ok("1") {
+        Application::with_platform(platform)
+    } else {
+        Application::new_inaccessible(platform)
+    }
+}
+
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     let message = "Zed failed to launch";
     let error_details = errors
@@ -113,7 +122,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::with_platform(gpui_platform::current_platform(false))
+    build_application()
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
             if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
@@ -338,8 +347,7 @@ fn main() {
     #[cfg(windows)]
     check_for_conpty_dll();
 
-    let app =
-        Application::with_platform(gpui_platform::current_platform(false)).with_assets(Assets);
+    let app = build_application().with_assets(Assets);
 
     let app_db = db::AppDatabase::new();
     let system_id = app.background_executor().spawn(system_id());
