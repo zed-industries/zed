@@ -1,9 +1,17 @@
-# Labels pull requests by author: 'bot' for bot accounts, 'staff' for
-# staff team members, 'guild' for guild members, 'first contribution' for
-# first-time external contributors.
+# Labels pull requests by author:
+#  - 'community champion' for community champions
+#  - 'bot' for bot accounts
+#  - 'staff' for staff team members
+#  - 'guild' for guild members
+#  - 'first contribution' for first-time external contributors
+# Labels issues by author:
+#  - 'community champion' for community champions
+
 name: PR Labeler
 
 on:
+  issues:
+    types: [opened]
   pull_request_target:
     types: [opened]
 
@@ -30,9 +38,9 @@ jobs:
           script: |
             const BOT_LABEL = 'bot';
             const STAFF_LABEL = 'staff';
-            const GUILD_LABEL = 'guild';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
-            const STAFF_TEAM_SLUG = 'staff';
+            const COMMUNITY_CHAMPION_LABEL = 'community champion';
+            const GUILD_LABEL = 'guild';
             const GUILD_MEMBERS = [
               '11happy',
               'AidanV',
@@ -74,77 +82,140 @@ jobs:
               'transitoryangel',
               'virajbhartiya',
             ];
+            const COMMUNITY_CHAMPIONS = [
+              '0x2CA',
+              '5brian',
+              '5herlocked',
+              'abdelq',
+              'afgomez',
+              'AidanV',
+              'akbxr',
+              'AlvaroParker',
+              'amtoaer',
+              'artemevsevev',
+              'bajrangCoder',
+              'bcomnes',
+              'Be-ing',
+              'blopker',
+              'bnjjj',
+              'bobbymannino',
+              'CharlesChen0823',
+              'chbk',
+              'davewa',
+              'davidbarsky',
+              'ddoemonn',
+              'djsauble',
+              'errmayank',
+              'fantacell',
+              'fdncred',
+              'findrakecil',
+              'FloppyDisco',
+              'gko',
+              'huacnlee',
+              'imumesh18',
+              'injust',
+              'jacobtread',
+              'jansol',
+              'jeffreyguenther',
+              'jenslys',
+              'jongretar',
+              'lemorage',
+              'lingyaochu',
+              'lnay',
+              'marcocondrache',
+              'marius851000',
+              'mikebronner',
+              'ognevny',
+              'PKief',
+              'playdohface',
+              'RemcoSmitsDev',
+              'rgbkrk',
+              'romaninsh',
+              'rxptr',
+              'Simek',
+              'someone13574',
+              'sourcefrog',
+              'suxiaoshao',
+              'Takk8IS',
+              'tartarughina',
+              'thedadams',
+              'tidely',
+              'timvermeulen',
+              'valentinegb',
+              'versecafe',
+              'vitallium',
+              'WhySoBad',
+              'ya7010',
+              'Zertsov',
+            ];
 
             const pr = context.payload.pull_request;
-            const author = pr.user.login;
+            const issue = context.payload.issue;
+            const target = pr || issue;
+            const targetType = pr ? 'PR' : 'issue';
+            const author = target.user.login;
+            const authorLower = author.toLowerCase();
 
-            if (pr.user.type === 'Bot') {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                labels: [BOT_LABEL]
-              });
-              console.log(`PR #${pr.number} by ${author}: labeled '${BOT_LABEL}' (user type: '${pr.user.type}')`);
-              return;
-            }
+            const listIncludesAuthor = (members) => members.some(
+              (member) => member.toLowerCase() === authorLower
+            );
 
+            const labelsToAdd = [];
+            const isBot = target.user.type === 'Bot';
             let isStaff = false;
-            try {
-              const response = await github.rest.teams.getMembershipForUserInOrg({
-                org: 'zed-industries',
-                team_slug: STAFF_TEAM_SLUG,
-                username: author
-              });
-              isStaff = response.data.state === 'active';
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
+
+            if (!isBot) {
+              try {
+                const response = await github.rest.teams.getMembershipForUserInOrg({
+                  org: 'zed-industries',
+                  team_slug: STAFF_LABEL,
+                  username: author
+                });
+                isStaff = response.data.state === 'active';
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
               }
             }
 
-            if (isStaff) {
+            if (pr && isBot) {
+              labelsToAdd.push(BOT_LABEL);
+            } else if (pr && isStaff) {
+              labelsToAdd.push(STAFF_LABEL);
+            } else if (!isBot && !isStaff) {
+              if (listIncludesAuthor(COMMUNITY_CHAMPIONS)) {
+                labelsToAdd.push(COMMUNITY_CHAMPION_LABEL);
+              }
+
+              if (pr) {
+                if (listIncludesAuthor(GUILD_MEMBERS)) {
+                  labelsToAdd.push(GUILD_LABEL);
+                }
+
+                // We use inverted logic here due to a suspected GitHub bug where first-time contributors
+                // get 'NONE' instead of 'FIRST_TIME_CONTRIBUTOR' or 'FIRST_TIMER'.
+                // https://github.com/orgs/community/discussions/78038
+                // This will break if GitHub ever adds new associations.
+                const association = pr.author_association;
+                const knownAssociations = ['CONTRIBUTOR', 'COLLABORATOR', 'MEMBER', 'OWNER', 'MANNEQUIN'];
+
+                if (knownAssociations.includes(association)) {
+                  console.log(`PR #${pr.number} by ${author}: not a first-time contributor (association: '${association}')`);
+                } else {
+                  labelsToAdd.push(FIRST_CONTRIBUTION_LABEL);
+                }
+              }
+            }
+
+            if (labelsToAdd.length > 0) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: pr.number,
-                labels: [STAFF_LABEL]
+                issue_number: target.number,
+                labels: labelsToAdd
               });
-              console.log(`PR #${pr.number} by ${author}: labeled '${STAFF_LABEL}' (staff team member)`);
-              return;
+
+              const labels = labelsToAdd.map((label) => `'${label}'`).join(', ');
+              console.log(`${targetType} #${target.number} by ${author}: labeled ${labels}`);
             }
-
-            const authorLower = author.toLowerCase();
-            const isGuildMember = GUILD_MEMBERS.some(
-              (member) => member.toLowerCase() === authorLower
-            );
-            if (isGuildMember) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                labels: [GUILD_LABEL]
-              });
-              console.log(`PR #${pr.number} by ${author}: labeled '${GUILD_LABEL}' (guild member)`);
-              // No early return: guild members can also get 'first contribution'
-            }
-
-            // We use inverted logic here due to a suspected GitHub bug where first-time contributors
-            // get 'NONE' instead of 'FIRST_TIME_CONTRIBUTOR' or 'FIRST_TIMER'.
-            // https://github.com/orgs/community/discussions/78038
-            // This will break if GitHub ever adds new associations.
-            const association = pr.author_association;
-            const knownAssociations = ['CONTRIBUTOR', 'COLLABORATOR', 'MEMBER', 'OWNER', 'MANNEQUIN'];
-
-            if (knownAssociations.includes(association)) {
-              console.log(`PR #${pr.number} by ${author}: not a first-time contributor (association: '${association}')`);
-              return;
-            }
-
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-              labels: [FIRST_CONTRIBUTION_LABEL]
-            });
-            console.log(`PR #${pr.number} by ${author}: labeled '${FIRST_CONTRIBUTION_LABEL}' (association: '${association}')`);
