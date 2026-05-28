@@ -684,6 +684,40 @@ fn test_undo_history_restore_emits_history_event(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_undo_history_restore_resets_existing_syntax_map(cx: &mut TestAppContext) {
+    let text = "fn a() {}";
+    let expected_tree = concat!(
+        "(source_file (function_item name: (identifier) ",
+        "parameters: (parameters) ",
+        "body: (block)))"
+    );
+    let source = cx.new(|cx| {
+        let mut buffer = Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let history = source.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "fn ")], None, cx);
+        buffer.edit([(3..3, "a")], None, cx);
+        buffer.edit([(4..4, "() {}")], None, cx);
+        assert_eq!(buffer.text(), text);
+        buffer.export_undo_history(100).unwrap()
+    });
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
+    cx.executor().run_until_parked();
+    assert_eq!(get_tree_sexp(&buffer, cx), expected_tree);
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.restore_undo_history(history, 100, cx).unwrap();
+        assert_eq!(buffer.text(), text);
+        let _snapshot = buffer.snapshot();
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(get_tree_sexp(&buffer, cx), expected_tree);
+}
+
+#[gpui::test]
 fn test_undo_history_serialization_compacts_node_ids(cx: &mut TestAppContext) {
     let source = cx.new(|cx| {
         let mut buffer = Buffer::local("", cx);

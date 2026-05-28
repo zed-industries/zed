@@ -83,8 +83,8 @@ pub(crate) struct UndoTreeVisualizerNode {
     pub(crate) selected: bool,
 }
 
-/// A parent → child link, with the column/row of each endpoint and whether the
-/// link lies on the currently active branch (used for line coloring).
+/// A parent → child link, with the column/row of each endpoint and whether it
+/// lies on the path from the root to the selected node (used for line coloring).
 #[derive(Clone, Debug)]
 pub(crate) struct UndoTreeVisualizerEdge {
     pub(crate) from_column: f32,
@@ -776,8 +776,8 @@ impl Editor {
         let row_center =
             |row: usize| UNDO_TREE_GRAPH_PADDING + UNDO_TREE_ROW_HEIGHT * (row as f32 + 0.5);
 
-        let active_edge_color = cx.theme().colors().text_muted;
-        let inactive_edge_color = cx.theme().colors().border_variant;
+        let active_edge_color = cx.theme().colors().text;
+        let inactive_edge_color = cx.theme().colors().border_variant.opacity(0.65);
         let edges = state
             .edges
             .iter()
@@ -791,7 +791,6 @@ impl Editor {
         let connectors = canvas(
             |_, _, _| {},
             move |bounds, _, window, _cx| {
-                let half = px(1.) / 2.;
                 let node_gap = UNDO_TREE_NODE_GLYPH_SIZE / 2. + px(1.);
                 let origin = bounds.origin;
                 let mut line = |left: Pixels, top: Pixels, right: Pixels, bottom: Pixels, color| {
@@ -803,24 +802,29 @@ impl Editor {
                         color,
                     ));
                 };
-                for (from, to, active) in &edges {
-                    let color = if *active {
-                        active_edge_color
-                    } else {
-                        inactive_edge_color
-                    };
-                    let mid_y = from.y + (to.y - from.y) / 2.;
-                    let from_exit_y = (from.y + node_gap).min(mid_y);
-                    let to_entry_y = (to.y - node_gap).max(mid_y);
-                    let (left_x, right_x) = if from.x <= to.x {
-                        (from.x, to.x)
-                    } else {
-                        (to.x, from.x)
-                    };
-                    // Vertical out of the parent, horizontal across, vertical into the child.
-                    line(from.x - half, from_exit_y, from.x + half, mid_y, color);
-                    line(left_x, mid_y - half, right_x, mid_y + half, color);
-                    line(to.x - half, mid_y, to.x + half, to_entry_y, color);
+                for active_pass in [false, true] {
+                    for (from, to, active) in &edges {
+                        if *active != active_pass {
+                            continue;
+                        }
+                        let (color, half) = if *active {
+                            (active_edge_color, px(1.5) / 2.)
+                        } else {
+                            (inactive_edge_color, px(1.) / 2.)
+                        };
+                        let mid_y = from.y + (to.y - from.y) / 2.;
+                        let from_exit_y = (from.y + node_gap).min(mid_y);
+                        let to_entry_y = (to.y - node_gap).max(mid_y);
+                        let (left_x, right_x) = if from.x <= to.x {
+                            (from.x, to.x)
+                        } else {
+                            (to.x, from.x)
+                        };
+                        // Vertical out of the parent, horizontal across, vertical into the child.
+                        line(from.x - half, from_exit_y, from.x + half, mid_y, color);
+                        line(left_x, mid_y - half, right_x, mid_y + half, color);
+                        line(to.x - half, mid_y, to.x + half, to_entry_y, color);
+                    }
                 }
             },
         )
@@ -949,10 +953,12 @@ pub(crate) fn undo_tree_visualizer_state(
     selected: UndoNodeId,
 ) -> UndoTreeVisualizerState {
     let lookup = UndoNodeLookup::new(snapshot);
+    let selected_path = undo_tree_path_to_root(&lookup, snapshot.root, selected);
 
     let mut layout = UndoTreeLayout {
         current: snapshot.current,
         selected,
+        selected_path,
         lookup: &lookup,
         visited: HashSet::default(),
         nodes: Vec::new(),
@@ -983,6 +989,27 @@ pub(crate) fn undo_tree_visualizer_state(
     }
 }
 
+fn undo_tree_path_to_root(
+    lookup: &UndoNodeLookup,
+    root: UndoNodeId,
+    selected: UndoNodeId,
+) -> HashSet<UndoNodeId> {
+    let mut path = HashSet::default();
+    let mut node_id = selected;
+    loop {
+        if !path.insert(node_id) {
+            return HashSet::default();
+        }
+        if node_id == root {
+            return path;
+        }
+        let Some(parent_id) = lookup.get(node_id).and_then(|node| node.parent) else {
+            return HashSet::default();
+        };
+        node_id = parent_id;
+    }
+}
+
 /// Assigns each undo-tree node a (column, row) position for the visualizer.
 ///
 /// Rows correspond to tree depth. Columns are assigned bottom-up: leaves take
@@ -993,6 +1020,7 @@ pub(crate) fn undo_tree_visualizer_state(
 struct UndoTreeLayout<'a> {
     current: UndoNodeId,
     selected: UndoNodeId,
+    selected_path: HashSet<UndoNodeId>,
     lookup: &'a UndoNodeLookup<'a>,
     visited: HashSet<UndoNodeId>,
     nodes: Vec<UndoTreeVisualizerNode>,
@@ -1008,7 +1036,7 @@ struct UndoTreeLayoutFrame<'a> {
     node: Option<&'a text::UndoTreeNodeSnapshot>,
     node_id: UndoNodeId,
     row: usize,
-    on_active_branch: bool,
+    on_selected_path: bool,
     /// Index of the next child to descend into.
     next_child: usize,
     /// `(column, active)` of each already-finalized child, in order.
@@ -1029,15 +1057,15 @@ impl<'a> UndoTreeLayout<'a> {
         if !self.visited.insert(root) {
             return;
         }
-        let mut stack = vec![self.new_frame(root, 0, true)];
+        let mut stack = vec![self.new_frame(root, 0, self.selected_path.contains(&root))];
         while let Some(frame) = stack.last_mut() {
             // Try to descend into the next unvisited child of the top frame.
             let descend = match frame.node {
                 Some(node) if frame.next_child < node.children.len() => {
                     let index = frame.next_child;
                     frame.next_child += 1;
-                    let active_child = node.active_child.unwrap_or(0);
-                    let child_active = frame.on_active_branch && index == active_child;
+                    let child_active = frame.on_selected_path
+                        && self.selected_path.contains(&node.children[index]);
                     Some((node.children[index], frame.row + 1, child_active))
                 }
                 _ => None,
@@ -1068,13 +1096,13 @@ impl<'a> UndoTreeLayout<'a> {
         &self,
         node_id: UndoNodeId,
         row: usize,
-        on_active_branch: bool,
+        on_selected_path: bool,
     ) -> UndoTreeLayoutFrame<'a> {
         UndoTreeLayoutFrame {
             node: self.lookup.get(node_id),
             node_id,
             row,
-            on_active_branch,
+            on_selected_path,
             next_child: 0,
             child_columns: Vec::new(),
         }
@@ -1084,7 +1112,7 @@ impl<'a> UndoTreeLayout<'a> {
     /// node's `(column, active)` for its parent to record.
     fn finalize(&mut self, frame: UndoTreeLayoutFrame<'a>) -> (f32, bool) {
         let Some(node) = frame.node else {
-            return (0., frame.on_active_branch);
+            return (0., frame.on_selected_path);
         };
 
         let column = match (frame.child_columns.first(), frame.child_columns.last()) {
@@ -1129,6 +1157,6 @@ impl<'a> UndoTreeLayout<'a> {
             *slot = Some(slot.map_or(edit_time, |current| current.max(edit_time)));
         }
 
-        (column, frame.on_active_branch)
+        (column, frame.on_selected_path)
     }
 }

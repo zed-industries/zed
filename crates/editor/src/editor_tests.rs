@@ -509,7 +509,9 @@ fn test_undo_tree_visualizer_state_marks_current_saved_and_branches(cx: &mut Tes
             now += Duration::from_secs(1);
             editor.start_transaction_at(now, window, cx);
             editor.insert("B", window, cx);
-            editor.end_transaction_at(now, cx);
+            let transaction_b = editor
+                .end_transaction_at(now, cx)
+                .expect("second edit should create a transaction");
 
             editor.undo(&Undo, window, cx);
 
@@ -520,6 +522,11 @@ fn test_undo_tree_visualizer_state_marks_current_saved_and_branches(cx: &mut Tes
 
             editor.show_undo_tree(&ShowUndoTree, window, cx);
             let state = editor.undo_tree_visualizer_state(cx);
+            let snapshot = editor
+                .undo_tree_snapshot(cx)
+                .expect("singleton editor should have an undo tree");
+            let node_b = editor_undo_tree_node_for_transaction(&snapshot, transaction_b)
+                .expect("transaction B should be in the undo tree");
 
             assert!(state.available);
             // Root -> A, with A branching into B and C.
@@ -542,6 +549,40 @@ fn test_undo_tree_visualizer_state_marks_current_saved_and_branches(cx: &mut Tes
             // A branches into two children, so at least one parent has 2 edges.
             assert!(branches_into_two(&state.edges));
             assert!(state.edges.iter().any(|edge| edge.active));
+            let selected_b_state = crate::undo_tree::undo_tree_visualizer_state(&snapshot, node_b);
+            let parent_id = snapshot
+                .nodes
+                .iter()
+                .find(|node| node.id == node_b)
+                .and_then(|node| node.parent)
+                .expect("branch node should have a parent");
+            let parent = selected_b_state
+                .nodes
+                .iter()
+                .find(|node| node.id == parent_id)
+                .expect("parent should be rendered");
+            let selected_b = selected_b_state
+                .nodes
+                .iter()
+                .find(|node| node.id == node_b)
+                .expect("selected branch node should be rendered");
+            let current = selected_b_state
+                .nodes
+                .iter()
+                .find(|node| node.id == snapshot.current)
+                .expect("current branch node should be rendered");
+            let edge_to_selected_b = selected_b_state
+                .edges
+                .iter()
+                .find(|edge| edge_connects(edge, parent, selected_b))
+                .expect("edge to selected branch node should be rendered");
+            let edge_to_current = selected_b_state
+                .edges
+                .iter()
+                .find(|edge| edge_connects(edge, parent, current))
+                .expect("edge to current branch node should be rendered");
+            assert!(edge_to_selected_b.active);
+            assert!(!edge_to_current.active);
             assert!(
                 !state
                     .nodes
@@ -621,6 +662,17 @@ fn branches_into_two(edges: &[crate::undo_tree::UndoTreeVisualizerEdge]) -> bool
             .count()
             > 1
     })
+}
+
+fn edge_connects(
+    edge: &crate::undo_tree::UndoTreeVisualizerEdge,
+    from: &crate::undo_tree::UndoTreeVisualizerNode,
+    to: &crate::undo_tree::UndoTreeVisualizerNode,
+) -> bool {
+    edge.from_row == from.row
+        && edge.from_column == from.column
+        && edge.to_row == to.row
+        && edge.to_column == to.column
 }
 
 #[gpui::test]

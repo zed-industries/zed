@@ -419,10 +419,22 @@ impl MarksState {
         };
         let abs_path: Arc<Path> = abs_path.into();
 
-        let Some(serialized_marks) = self.serialized_marks.get(&abs_path) else {
+        if !self.reload_buffer_marks_from_serialized_points(abs_path.clone(), buffer_handle, cx) {
             return;
-        };
+        }
 
+        self.watch_buffer(MarkLocation::Path(abs_path), buffer_handle, cx)
+    }
+
+    fn reload_buffer_marks_from_serialized_points(
+        &mut self,
+        path: Arc<Path>,
+        buffer_handle: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(serialized_marks) = self.serialized_marks.get(&path).cloned() else {
+            return false;
+        };
         let mut loaded_marks = HashMap::default();
         let buffer = buffer_handle.read(cx);
         for (name, points) in serialized_marks.iter() {
@@ -435,7 +447,7 @@ impl MarksState {
             );
         }
         self.buffer_marks.insert(buffer.remote_id(), loaded_marks);
-        self.watch_buffer(MarkLocation::Path(abs_path), buffer_handle, cx)
+        true
     }
 
     fn serialize_buffer_marks(
@@ -542,6 +554,18 @@ impl MarksState {
         Some(abs_path.into())
     }
 
+    fn path_for_watched_buffer(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
+        self.path_for_buffer(buffer, cx).or_else(|| {
+            let buffer_id = buffer.read(cx).remote_id();
+            self.watched_buffers
+                .get(&buffer_id)
+                .and_then(|(location, _, _)| match location {
+                    MarkLocation::Path(path) => Some(path.clone()),
+                    MarkLocation::Buffer(_) => None,
+                })
+        })
+    }
+
     fn points_at(
         &self,
         location: &MarkLocation,
@@ -567,8 +591,13 @@ impl MarksState {
     ) {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
             BufferEvent::Edited { .. } => {
-                if let Some(path) = this.path_for_buffer(&buffer, cx) {
+                if let Some(path) = this.path_for_watched_buffer(&buffer, cx) {
                     this.serialize_buffer_marks(path, &buffer, cx);
+                }
+            }
+            BufferEvent::UndoHistoryChanged => {
+                if let Some(path) = this.path_for_watched_buffer(&buffer, cx) {
+                    this.reload_buffer_marks_from_serialized_points(path, &buffer, cx);
                 }
             }
             BufferEvent::FileHandleChanged => {
@@ -1934,5 +1963,70 @@ impl VimDb {
             ))?((workspace_id, mark_name))
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[gpui::test]
+    fn test_reload_buffer_marks_after_undo_history_restore_reanchors_stale_marks(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let path: Arc<Path> = Path::new("/tmp/marks.rs").into();
+        let source = cx.new(|cx| {
+            let mut buffer = Buffer::local("abc", cx);
+            buffer.set_group_interval(Duration::ZERO);
+            buffer
+        });
+        let history = source.update(cx, |buffer, cx| {
+            buffer.edit([(3..3, "def")], None, cx);
+            buffer.export_undo_history(100).unwrap()
+        });
+
+        let buffer = cx.new(|cx| Buffer::local("abcdef", cx));
+        let (buffer_id, stale_anchor) = cx.read(|cx| {
+            let buffer = buffer.read(cx);
+            (
+                buffer.remote_id(),
+                buffer.anchor_before(Point { row: 0, column: 3 }),
+            )
+        });
+        let marks_state = cx.new(|_| {
+            let mut serialized_marks = HashMap::default();
+            serialized_marks.insert("a".to_string(), vec![Point { row: 0, column: 3 }]);
+
+            let mut buffer_marks = HashMap::default();
+            buffer_marks.insert("a".to_string(), vec![stale_anchor]);
+
+            MarksState {
+                workspace: WeakEntity::new_invalid(),
+                multibuffer_marks: HashMap::default(),
+                buffer_marks: HashMap::from_iter([(buffer_id, buffer_marks)]),
+                watched_buffers: HashMap::default(),
+                serialized_marks: HashMap::from_iter([(path.clone(), serialized_marks)]),
+                global_marks: HashMap::default(),
+                _subscription: Subscription::new(|| {}),
+            }
+        });
+
+        marks_state.update(cx, |marks_state, cx| {
+            marks_state.watch_buffer(MarkLocation::Path(path.clone()), &buffer, cx);
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.restore_undo_history(history, 100, cx).unwrap();
+        });
+        marks_state.update(cx, |marks_state, cx| {
+            marks_state.serialize_buffer_marks(path.clone(), &buffer, cx);
+            assert_eq!(
+                marks_state
+                    .serialized_marks
+                    .get(&path)
+                    .and_then(|marks| marks.get("a")),
+                Some(&vec![Point { row: 0, column: 3 }])
+            );
+        });
     }
 }

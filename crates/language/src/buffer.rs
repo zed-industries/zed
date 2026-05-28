@@ -3785,6 +3785,24 @@ impl Buffer {
     ) -> Result<()> {
         let was_dirty = self.is_dirty();
         self.text.restore_prepared_undo_history(prepared)?;
+
+        // The restored text has identical visible contents, but different CRDT
+        // fragments. Drop derived state whose anchors point into the old snapshot.
+        if self.reparse.take().is_some() {
+            self.parse_status.0.send(ParseStatus::Idle).unwrap();
+        }
+        drop(self.pending_autoindent.take());
+        self.autoindent_requests.clear();
+        for tx in self.wait_for_autoindent_txs.drain(..) {
+            tx.send(()).ok();
+        }
+
+        let text = self.text.snapshot();
+        self.non_text_state_update_count += 1;
+        self.syntax_map.lock().clear(text);
+        Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, text);
+        self.reparse(cx, true);
+
         if was_dirty {
             self.has_unsaved_edits.set((self.version.clone(), true));
         } else {
