@@ -5577,6 +5577,8 @@ impl GitPanel {
         v_flex()
                 .px_4()
                 .gap_1()
+                .items_center()
+                .text_center()
                 .child(Label::new(message).color(Color::Muted))
                 .child(
                     h_flex()
