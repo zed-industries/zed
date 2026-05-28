@@ -460,16 +460,24 @@ fn test_edit_events(cx: &mut gpui::App) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            BufferEvent::Edited { is_local: true },
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
             BufferEvent::DirtyChanged,
-            BufferEvent::Edited { is_local: true },
-            BufferEvent::Edited { is_local: true },
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
         vec![
-            BufferEvent::Edited { is_local: false },
+            BufferEvent::Edited {
+                source: BufferEditSource::Remote
+            },
             BufferEvent::DirtyChanged
         ]
     );
@@ -487,14 +495,18 @@ fn test_edit_events(cx: &mut gpui::App) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            BufferEvent::Edited { is_local: true },
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
             BufferEvent::DirtyChanged,
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
         vec![
-            BufferEvent::Edited { is_local: false },
+            BufferEvent::Edited {
+                source: BufferEditSource::Remote
+            },
             BufferEvent::DirtyChanged
         ]
     );
