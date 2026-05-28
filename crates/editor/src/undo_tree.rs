@@ -42,6 +42,8 @@ const UNDO_TREE_COLUMN_WIDTH: Pixels = px(22.);
 const UNDO_TREE_ROW_HEIGHT: Pixels = px(28.);
 /// Side length of the (square) clickable box drawn for each node glyph.
 const UNDO_TREE_NODE_SIZE: Pixels = px(16.);
+/// Diameter of the visible circular node within the clickable box.
+const UNDO_TREE_NODE_GLYPH_SIZE: Pixels = px(10.);
 /// Padding around the graph so edge nodes aren't clipped against the viewport.
 const UNDO_TREE_GRAPH_PADDING: Pixels = px(10.);
 
@@ -53,14 +55,6 @@ pub(crate) enum UndoTreeNodeKind {
 }
 
 impl UndoTreeNodeKind {
-    fn glyph(self) -> &'static str {
-        match self {
-            UndoTreeNodeKind::Current => "x",
-            UndoTreeNodeKind::Saved => "s",
-            UndoTreeNodeKind::Normal => "o",
-        }
-    }
-
     fn color(self) -> Color {
         match self {
             UndoTreeNodeKind::Current => Color::Accent,
@@ -322,12 +316,14 @@ impl Editor {
     }
 
     #[doc(hidden)]
-    pub fn benchmark_refresh_undo_tree_visualizer(
-        &mut self,
-        follow_current: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.refresh_undo_tree_visualizer(follow_current, cx)
+    pub fn benchmark_undo_tree_visualizer_state(&self, cx: &App) -> (bool, usize, usize, usize) {
+        let state = self.undo_tree_visualizer_state(cx);
+        (
+            state.available,
+            state.nodes.len(),
+            state.edges.len(),
+            state.columns,
+        )
     }
 
     fn select_undo_tree_node_relative(&mut self, direction: isize, cx: &mut Context<Self>) {
@@ -796,6 +792,7 @@ impl Editor {
             |_, _, _| {},
             move |bounds, _, window, _cx| {
                 let half = px(1.) / 2.;
+                let node_gap = UNDO_TREE_NODE_GLYPH_SIZE / 2. + px(1.);
                 let origin = bounds.origin;
                 let mut line = |left: Pixels, top: Pixels, right: Pixels, bottom: Pixels, color| {
                     window.paint_quad(fill(
@@ -813,15 +810,17 @@ impl Editor {
                         inactive_edge_color
                     };
                     let mid_y = from.y + (to.y - from.y) / 2.;
+                    let from_exit_y = (from.y + node_gap).min(mid_y);
+                    let to_entry_y = (to.y - node_gap).max(mid_y);
                     let (left_x, right_x) = if from.x <= to.x {
                         (from.x, to.x)
                     } else {
                         (to.x, from.x)
                     };
                     // Vertical out of the parent, horizontal across, vertical into the child.
-                    line(from.x - half, from.y, from.x + half, mid_y, color);
+                    line(from.x - half, from_exit_y, from.x + half, mid_y, color);
                     line(left_x, mid_y - half, right_x, mid_y + half, color);
-                    line(to.x - half, mid_y, to.x + half, to.y, color);
+                    line(to.x - half, mid_y, to.x + half, to_entry_y, color);
                 }
             },
         )
@@ -836,6 +835,8 @@ impl Editor {
                 let node_id = node.id;
                 let center = point(column_center(node.column), row_center(node.row));
                 let kind = node.kind;
+                let node_color = kind.color().color(cx);
+                let node_background = cx.theme().colors().elevated_surface_background;
                 div()
                     .id(("undo-tree-node", index))
                     .absolute()
@@ -852,10 +853,18 @@ impl Editor {
                     })
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
                     .child(
-                        Label::new(kind.glyph())
-                            .size(LabelSize::Small)
-                            .color(kind.color())
-                            .line_height_style(LineHeightStyle::UiLabel),
+                        div()
+                            .size(UNDO_TREE_NODE_GLYPH_SIZE)
+                            .rounded_full()
+                            .border_1()
+                            .border_color(node_color)
+                            .bg(node_background)
+                            .when(kind == UndoTreeNodeKind::Current, |this| {
+                                this.border_2().bg(node_color.opacity(0.18))
+                            })
+                            .when(kind == UndoTreeNodeKind::Saved, |this| {
+                                this.bg(node_color.opacity(0.14))
+                            }),
                     )
                     .on_click(cx.listener(move |editor, _, window, cx| {
                         editor.selected_undo_node = Some(node_id);
