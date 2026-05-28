@@ -4159,6 +4159,92 @@ mod tests {
         assert!(cx.read(|cx| !thread.read(cx).has_pending_edit_tool_calls()));
     }
 
+    #[gpui::test]
+    async fn test_tool_call_locations_resolve_zero_based_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() {\n    println!(\"hello\");\n}\n"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let abs_path = PathBuf::from(path!("/test/src/main.rs"));
+        let target_line = 1;
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let abs_path = abs_path.clone();
+            move |_, thread, mut cx| {
+                let abs_path = abs_path.clone();
+                async move {
+                    thread
+                        .update(&mut cx, |thread, cx| {
+                            thread.handle_session_update(
+                                acp::SessionUpdate::ToolCall(
+                                    acp::ToolCall::new("read-file-location", "Read `src/main.rs`")
+                                        .kind(acp::ToolKind::Read)
+                                        .status(acp::ToolCallStatus::Completed)
+                                        .locations(vec![
+                                            acp::ToolCallLocation::new(abs_path)
+                                                .line(Some(target_line)),
+                                        ]),
+                                ),
+                                cx,
+                            )
+                        })
+                        .unwrap()
+                        .unwrap();
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send(vec!["show file".into()], cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let (tool_call_location, agent_location) = thread.entries[1]
+                .location(0)
+                .expect("tool call location should resolve");
+            assert_eq!(tool_call_location.path, abs_path);
+            assert_eq!(tool_call_location.line, Some(target_line));
+
+            let buffer = agent_location.buffer.upgrade().unwrap();
+            let snapshot = buffer.read(cx).snapshot();
+            let point = agent_location.position.to_point(&snapshot);
+            assert_eq!(point.row, target_line);
+            assert_eq!(point.column, 4);
+        });
+
+        project.read_with(cx, |project, cx| {
+            let agent_location = project
+                .agent_location()
+                .expect("resolved tool call should update the project agent location");
+            let buffer = agent_location.buffer.upgrade().unwrap();
+            let snapshot = buffer.read(cx).snapshot();
+            assert_eq!(agent_location.position.to_point(&snapshot).row, target_line);
+        });
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_checkpoints(cx: &mut TestAppContext) {
         init_test(cx);
