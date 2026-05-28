@@ -40,16 +40,19 @@ Session/thread identifier source investigation
 **Description:** Introduce the smallest public contract needed for an opt-in Responses header timeout. This should define the timeout option and timeout error shape, but avoid changing default `stream_response` behavior.
 
 **Acceptance criteria:**
+
 - [ ] A named timeout error exists and carries the configured timeout duration.
 - [ ] The existing `stream_response(...)` function remains source-compatible for existing callers.
 - [ ] Any new API makes it clear that the timeout applies to response headers only.
 
 **Verification:**
+
 - [ ] Compile check: `cargo check -p open_ai`
 
 **Dependencies:** None
 
 **Files likely touched:**
+
 - `crates/open_ai/src/responses.rs`
 - `crates/open_ai/src/open_ai.rs`
 
@@ -60,18 +63,21 @@ Session/thread identifier source investigation
 **Description:** Implement the timeout around the `client.send(request).await` wait and add deterministic transport tests. `crates/open_ai/src/responses.rs` currently has no local test module, so this task should add one using `http_client::FakeHttpClient` and GPUI/background timers or controllable futures rather than live networking.
 
 **Acceptance criteria:**
+
 - [ ] A request whose headers never arrive returns the timeout error from Task 1.
 - [ ] The timeout is cleared immediately after `client.send(request).await` returns.
 - [ ] The delayed-header test fails without the timeout implementation and passes with it.
 - [ ] Existing `stream_response(...)` callers still get no header timeout unless they opt in.
 
 **Verification:**
+
 - [ ] Tests pass: `cargo test -p open_ai responses`
 - [ ] Compile check: `cargo check -p open_ai`
 
 **Dependencies:** Task 1
 
 **Files likely touched:**
+
 - `crates/open_ai/src/responses.rs`
 
 **Estimated scope:** Medium: 1 file
@@ -81,16 +87,19 @@ Session/thread identifier source investigation
 **Description:** Add the positive streaming regression test: response headers arrive before the timeout, then SSE body data arrives later. This guards the exact failure mode that would incorrectly abort long-running reasoning or tool-heavy responses.
 
 **Acceptance criteria:**
+
 - [ ] The delayed-body test confirms the timeout does not abort after headers arrive.
 - [ ] The test consumes at least one parsed `StreamEvent` from the delayed body.
 - [ ] Tests do not use live network access.
 
 **Verification:**
+
 - [ ] Tests pass: `cargo test -p open_ai responses`
 
 **Dependencies:** Task 2
 
 **Files likely touched:**
+
 - `crates/open_ai/src/responses.rs`
 
 **Estimated scope:** Medium: 1 file
@@ -109,18 +118,21 @@ Session/thread identifier source investigation
 **Description:** Wire the provider-scoped timeout into `OpenAiSubscribedLanguageModel::stream_completion` so Codex requests fail promptly when response headers stall.
 
 **Acceptance criteria:**
+
 - [ ] `openai-subscribed/*` requests use the timeout path.
 - [ ] Existing headers remain present: `originator`, `OpenAI-Beta`, and `ChatGPT-Account-Id` when available.
 - [ ] OAuth refresh and request limiting behavior remain unchanged.
 - [ ] The timeout value is a provider-local constant unless settings exposure is explicitly approved.
 
 **Verification:**
+
 - [ ] Tests pass: `cargo test -p language_models openai_subscribed`
 - [ ] Compile check: `cargo check -p language_models`
 
 **Dependencies:** Tasks 1-3
 
 **Files likely touched:**
+
 - `crates/language_models/src/provider/openai_subscribed.rs`
 - `crates/language_models/src/provider/openai_subscribed.rs` tests
 
@@ -131,17 +143,20 @@ Session/thread identifier source investigation
 **Description:** Confirm the new timeout error is retried by `AgentThread` retry policy. If the existing mapping already lands in a retried error variant, add a focused regression test; otherwise adjust the mapping narrowly.
 
 **Acceptance criteria:**
+
 - [ ] A simulated header timeout produces retry events rather than an immediate terminal failure.
 - [ ] Retry count and delay follow the existing transient-error conventions.
 - [ ] The change does not broaden non-retryable auth or permission errors.
 
 **Verification:**
+
 - [ ] Tests pass: `cargo test -p agent retry`
 - [ ] Compile check: `cargo check -p agent`
 
 **Dependencies:** Task 4
 
 **Files likely touched:**
+
 - `crates/agent/src/thread.rs`
 - `crates/agent/src/tests/mod.rs`
 
@@ -161,17 +176,20 @@ Session/thread identifier source investigation
 **Description:** Inspect the native agent and language model request flow to identify whether a stable session or thread identifier reaches the ChatGPT Subscription provider. This task should produce a code comment, spec update, or small test-only finding before any header is added.
 
 **Acceptance criteria:**
+
 - [ ] The candidate identifier source is documented with file references.
 - [ ] The identifier is stable across retries in the same agent turn.
 - [ ] The identifier does not expose secrets or local filesystem paths.
 
 **Verification:**
+
 - [ ] Evidence captured in the PR description or spec update.
 - [ ] No runtime behavior changes in this task.
 
 **Dependencies:** None; can run in parallel with Phase 1 after branch setup
 
 **Files likely touched:**
+
 - `docs/specs/fr-22-chatgpt-subscription-resilience.md`
 - Possibly no code files
 
@@ -182,17 +200,20 @@ Session/thread identifier source investigation
 **Description:** If Task 6 identifies the right stable values, pass `session-id` and optionally `thread-id` to the Codex backend for ChatGPT Subscription requests. If not, explicitly defer this in the PR.
 
 **Acceptance criteria:**
+
 - [ ] Headers use hyphenated names only: `session-id`, `thread-id`.
 - [ ] Header values are stable across retries for one session.
 - [ ] Tests assert header presence and absence of underscored aliases.
 
 **Verification:**
+
 - [ ] Tests pass: `cargo test -p language_models openai_subscribed`
 - [ ] Compile check: `cargo check -p language_models`
 
 **Dependencies:** Task 6
 
 **Files likely touched:**
+
 - `crates/language_models/src/provider/openai_subscribed.rs`
 - Potentially request/thread plumbing files if a stable identifier is not already present
 
@@ -210,11 +231,13 @@ Session/thread identifier source investigation
 **Description:** Run the targeted test set, inspect the final diff for scope control, and prepare PR notes including release notes and any suggested `.rules` additions only if a repeated non-obvious pattern was validated.
 
 **Acceptance criteria:**
+
 - [ ] All touched-crate targeted tests pass or failures are documented.
 - [ ] Final diff is limited to the spec, timeout implementation, tests, and optional header work.
 - [ ] PR body includes `Release Notes:` as the final section.
 
 **Verification:**
+
 - [ ] `cargo test -p open_ai responses`
 - [ ] `cargo test -p language_models openai_subscribed`
 - [ ] `cargo test -p agent retry`
@@ -224,6 +247,7 @@ Session/thread identifier source investigation
 **Dependencies:** Tasks 1-7 as applicable
 
 **Files likely touched:**
+
 - PR description only, unless final docs updates are needed
 
 **Estimated scope:** Small: verification only
@@ -236,13 +260,13 @@ Session/thread identifier source investigation
 
 ## Risks and Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Timeout aborts valid long-running responses | High | Clear timeout immediately after headers arrive and add delayed-body test |
-| Error maps to non-retryable `Other` unexpectedly | Medium | Add retry-policy regression test and narrow conversion if needed |
-| Session header value is guessed incorrectly | Medium | Make header work conditional on Task 6 evidence |
+| Risk                                                       | Impact | Mitigation                                                               |
+| ---------------------------------------------------------- | ------ | ------------------------------------------------------------------------ |
+| Timeout aborts valid long-running responses                | High   | Clear timeout immediately after headers arrive and add delayed-body test |
+| Error maps to non-retryable `Other` unexpectedly           | Medium | Add retry-policy regression test and narrow conversion if needed         |
+| Session header value is guessed incorrectly                | Medium | Make header work conditional on Task 6 evidence                          |
 | Shared OpenAI transport change affects unrelated providers | Medium | Keep new timeout path opt-in and migrate only ChatGPT Subscription first |
-| Tests require live network | Low | Use fake HTTP client or local deterministic harness only |
+| Tests require live network                                 | Low    | Use fake HTTP client or local deterministic harness only                 |
 
 ## Open Questions
 
