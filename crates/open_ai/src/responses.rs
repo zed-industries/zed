@@ -1,8 +1,6 @@
 use anyhow::{Result, anyhow};
 use futures::{
-    AsyncBufReadExt, AsyncReadExt, FutureExt, StreamExt,
-    future::BoxFuture,
-    io::BufReader,
+    AsyncBufReadExt, AsyncReadExt, FutureExt, StreamExt, future::BoxFuture, io::BufReader,
     stream::BoxStream,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -47,7 +45,9 @@ mod tests {
 
     struct TestHttpClient {
         handler: Arc<
-            dyn Fn(HttpRequest<AsyncBody>) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
+            dyn Fn(
+                    HttpRequest<AsyncBody>,
+                ) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
                 + Send
                 + Sync,
         >,
@@ -56,7 +56,9 @@ mod tests {
     impl TestHttpClient {
         fn new<F>(handler: F) -> Self
         where
-            F: Fn(HttpRequest<AsyncBody>) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
+            F: Fn(
+                    HttpRequest<AsyncBody>,
+                ) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
                 + Send
                 + Sync
                 + 'static,

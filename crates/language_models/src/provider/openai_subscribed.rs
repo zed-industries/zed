@@ -1247,8 +1247,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_stream_completion_sends_codex_session_header(cx: &mut TestAppContext) {
-        let captured_headers =
-            Arc::new(Mutex::new(None::<http_client::http::HeaderMap>));
+        let captured_headers = Arc::new(Mutex::new(None::<http_client::http::HeaderMap>));
         let captured_headers_clone = captured_headers.clone();
         let http_client = FakeHttpClient::create(move |request| {
             *captured_headers_clone.lock() = Some(request.headers().clone());
