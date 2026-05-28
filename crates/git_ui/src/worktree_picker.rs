@@ -420,18 +420,18 @@ impl WorktreePickerDelegate {
     fn build_fixed_entries(&self) -> Vec<WorktreeEntry> {
         let mut entries = Vec::new();
 
-        if !self.has_multiple_repositories {
-            if let Some(ref default_branch) = self.default_branch {
-                let is_different = self
-                    .current_branch_name
-                    .as_ref()
-                    .is_none_or(|current| current != &default_branch.branch_name);
-                entries.push(WorktreeEntry::CreateFromDefaultBranch {
-                    default_branch: default_branch.clone(),
-                });
-                if is_different {
-                    entries.push(WorktreeEntry::CreateFromCurrentBranch);
-                }
+        if self.has_multiple_repositories {
+            entries.push(WorktreeEntry::CreateFromCurrentBranch);
+        } else if let Some(ref default_branch) = self.default_branch {
+            let is_different = self
+                .current_branch_name
+                .as_ref()
+                .is_none_or(|current| current != &default_branch.branch_name);
+            entries.push(WorktreeEntry::CreateFromDefaultBranch {
+                default_branch: default_branch.clone(),
+            });
+            if is_different {
+                entries.push(WorktreeEntry::CreateFromCurrentBranch);
             }
         } else {
             entries.push(WorktreeEntry::CreateFromCurrentBranch);
@@ -1536,6 +1536,37 @@ mod tests {
                     }
                     _ => panic!("named worktree creation should prefer the remote default branch"),
                 })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_current_branch_create_target_is_shown_without_default_branch(
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, worktree_picker, _repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.default_branch = None;
+                picker.refresh(window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                assert!(matches!(
+                    picker.delegate.matches.first(),
+                    Some(WorktreeEntry::CreateFromCurrentBranch)
+                ));
+                assert!(
+                    !picker.delegate.matches.iter().any(|entry| matches!(
+                        entry,
+                        WorktreeEntry::CreateFromDefaultBranch { .. }
+                    ))
+                );
+            });
         });
     }
 
