@@ -2178,7 +2178,12 @@ mod tests {
             });
         });
         terminal.read_with(&cx, |terminal, _| {
-            assert!(!terminal.last_content.mode.contains(TermMode::ALT_SCREEN));
+            assert!(
+                !terminal
+                    .last_content
+                    .mode
+                    .contains(TerminalModes::ALT_SCREEN)
+            );
             assert_eq!(terminal.last_content.display_offset, 0);
         });
 
@@ -2220,7 +2225,12 @@ mod tests {
             });
         });
         terminal.read_with(&cx, |terminal, _| {
-            assert!(terminal.last_content.mode.contains(TermMode::ALT_SCREEN));
+            assert!(
+                terminal
+                    .last_content
+                    .mode
+                    .contains(TerminalModes::ALT_SCREEN)
+            );
         });
 
         cx.simulate_keystrokes("shift-up");
