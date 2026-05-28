@@ -3,8 +3,14 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreamResponseOptions {
+    pub response_header_timeout: Option<Duration>,
+}
 
 #[derive(Serialize, Debug)]
 pub struct Request {
@@ -441,6 +447,28 @@ pub async fn stream_response(
     request: Request,
     extra_headers: Vec<(String, String)>,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
+    stream_response_with_options(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        request,
+        extra_headers,
+        StreamResponseOptions::default(),
+    )
+    .await
+}
+
+pub async fn stream_response_with_options(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    extra_headers: Vec<(String, String)>,
+    options: StreamResponseOptions,
+) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
+    let _ = options;
     let uri = format!("{api_url}/responses");
     let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
