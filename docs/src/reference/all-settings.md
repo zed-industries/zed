@@ -2100,7 +2100,6 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "diagnostics": {
     "button": true,
     "include_warnings": true,
-    "go_to_diagnostic_searches_at_cursor": true,
     "inline": {
       "enabled": false
     }
@@ -2112,7 +2111,6 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 - `button`: Whether to show the project diagnostics button in the status bar
 - `include_warnings`: Whether to show warnings or not by default
-- `go_to_diagnostic_searches_at_cursor`: Whether or not to have the "Go to Diagnostic" action's search begin at the current cursor position, rather than the following diagnostic's position
 
 ### Inline Diagnostics
 

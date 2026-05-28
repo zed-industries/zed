@@ -78,8 +78,7 @@ impl Editor {
             return;
         }
         let diagnostics_already_active = self.any_active_diagnostics();
-        let begin_at_cursor = self.go_to_diagnostic_searches_at_cursor(cx);
-        let direction = if !diagnostics_already_active && begin_at_cursor {
+        let direction = if !diagnostics_already_active {
             None
         } else {
             Some(Direction::Next)
@@ -170,7 +169,6 @@ impl Editor {
                 }
             }
             None => {
-                log::info!("{selection:?}");
                 // Falls back to Next behavior if on-cursor search fails
                 let mut next: Option<DiagnosticEntryRef<MultiBufferOffset>> = None;
                 for diagnostic in after.chain(before) {
@@ -557,11 +555,5 @@ impl Editor {
             ActiveDiagnostic::All => true,
             ActiveDiagnostic::Group(_) => true,
         }
-    }
-
-    fn go_to_diagnostic_searches_at_cursor(&self, cx: &mut Context<Self>) -> bool {
-        ProjectSettings::get_global(cx)
-            .diagnostics
-            .go_to_diagnostic_searches_at_cursor
     }
 }

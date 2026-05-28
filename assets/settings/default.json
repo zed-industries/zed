@@ -1512,11 +1512,6 @@
     //
     // Default: true
     "include_warnings": true,
-    // Whether or not to have the "Go to Diagnostic" action's search begin
-    // at the current cursor position, rather than the following diagnostic's position
-    //
-    // Default: true
-    "go_to_diagnostic_searches_at_cursor": true,
     // Settings for using LSP pull diagnostics mechanism in Zed.
     "lsp_pull_diagnostics": {
       // Whether to pull for diagnostics or not.

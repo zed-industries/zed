@@ -1475,20 +1475,6 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
 async fn go_to_diagnostic_with_severity_start_after_cursor(cx: &mut TestAppContext) {
     init_test(cx);
 
-    cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |settings| {
-                *settings
-                    .diagnostics
-                    .get_or_insert_default()
-                    .go_to_diagnostic_searches_at_cursor
-                    .get_or_insert_default() = false;
-            });
-        });
-    });
-
     let mut cx = EditorTestContext::new(cx).await;
     let lsp_store =
         cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
@@ -1610,20 +1596,6 @@ async fn go_to_diagnostic_with_severity_start_after_cursor(cx: &mut TestAppConte
 #[gpui::test]
 async fn go_to_diagnostic_with_severity_start_at_cursor(cx: &mut TestAppContext) {
     init_test(cx);
-
-    cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |settings| {
-                *settings
-                    .diagnostics
-                    .get_or_insert_default()
-                    .go_to_diagnostic_searches_at_cursor
-                    .get_or_insert_default() = true;
-            });
-        });
-    });
 
     let mut cx = EditorTestContext::new(cx).await;
     let lsp_store =

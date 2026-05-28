@@ -65,8 +65,7 @@ impl Render for DiagnosticIndicator {
                 .split_once('\n')
                 .map_or(&*diagnostic.message, |(first, _)| first);
             let diagnostics_already_active = self.any_active_diagnostics(cx);
-            let begin_at_cursor = self.go_to_diagnostic_searches_at_cursor(cx);
-            let tooltip = if begin_at_cursor && !diagnostics_already_active {
+            let tooltip = if !diagnostics_already_active {
                 "Expand Diagnostics"
             } else {
                 "Next Diagnostic"
@@ -169,16 +168,9 @@ impl DiagnosticIndicator {
         }
     }
 
-    fn go_to_diagnostic_searches_at_cursor(&self, cx: &mut Context<Self>) -> bool {
-        ProjectSettings::get_global(cx)
-            .diagnostics
-            .go_to_diagnostic_searches_at_cursor
-    }
-
     fn go_to_next_diagnostic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let diagnostics_already_active = self.any_active_diagnostics(cx);
-        let begin_at_cursor = self.go_to_diagnostic_searches_at_cursor(cx);
-        let direction = if !diagnostics_already_active && begin_at_cursor {
+        let direction = if !diagnostics_already_active {
             None
         } else {
             Some(editor::Direction::Next)

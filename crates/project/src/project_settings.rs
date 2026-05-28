@@ -595,10 +595,6 @@ pub struct DiagnosticsSettings {
     /// Whether or not to include warning diagnostics.
     pub include_warnings: bool,
 
-    /// Whether or not to have the "Go to Diagnostic" action's search begin
-    /// at the current cursor position, rather than the following diagnostic's position
-    pub go_to_diagnostic_searches_at_cursor: bool,
-
     /// Settings for using LSP pull diagnostics mechanism in Zed.
     pub lsp_pull_diagnostics: LspPullDiagnosticsSettings,
 
@@ -748,9 +744,6 @@ impl Settings for ProjectSettings {
             diagnostics: DiagnosticsSettings {
                 button: diagnostics.button.unwrap(),
                 include_warnings: diagnostics.include_warnings.unwrap(),
-                go_to_diagnostic_searches_at_cursor: diagnostics
-                    .go_to_diagnostic_searches_at_cursor
-                    .unwrap(),
                 lsp_pull_diagnostics: LspPullDiagnosticsSettings {
                     enabled: lsp_pull_diagnostics.enabled.unwrap(),
                     debounce_ms: lsp_pull_diagnostics.debounce_ms.unwrap().0,

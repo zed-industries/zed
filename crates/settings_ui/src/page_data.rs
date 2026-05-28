@@ -2896,7 +2896,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn diagnostics_section() -> [SettingsPageItem; 4] {
+    fn diagnostics_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Diagnostics"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2931,28 +2931,6 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .diagnostics
                             .get_or_insert_default()
                             .include_warnings = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Start \"Go to Diagnostic\" search at cursor",
-                description: "Whether or not to have the \"Go to Diagnostic\" action's search begin at the current cursor position, rather than the following diagnostic's position.",
-                field: Box::new(SettingField {
-                    json_path: Some("diagnostics.go_to_diagnostic_searches_at_cursor"),
-                    pick: |settings_content| {
-                        settings_content
-                            .diagnostics
-                            .as_ref()?
-                            .go_to_diagnostic_searches_at_cursor
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _cx| {
-                        settings_content
-                            .diagnostics
-                            .get_or_insert_default()
-                            .go_to_diagnostic_searches_at_cursor = value;
                     },
                 }),
                 metadata: None,

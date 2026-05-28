@@ -691,12 +691,6 @@ pub struct DiagnosticsSettingsContent {
     /// Default: true
     pub include_warnings: Option<bool>,
 
-    /// Whether or not to have the "Go to Diagnostic" action's search begin
-    /// at the current cursor position, rather than the following diagnostic's position
-    ///
-    /// Default: true
-    pub go_to_diagnostic_searches_at_cursor: Option<bool>,
-
     /// Settings for using LSP pull diagnostics mechanism in Zed.
     pub lsp_pull_diagnostics: Option<LspPullDiagnosticsSettingsContent>,
 
