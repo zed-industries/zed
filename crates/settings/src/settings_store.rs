@@ -2311,6 +2311,24 @@ mod tests {
             cx,
         );
 
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "terminal.integrated.confirmOnKill": "panel" }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "confirm_on_kill": "always"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
         // terminal bell settings - newer accessibility setting
         check_vscode_import(
             &mut store,
