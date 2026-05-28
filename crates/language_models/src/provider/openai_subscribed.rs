@@ -1293,7 +1293,11 @@ mod tests {
             .stream_completion(request, &cx.to_async())
             .await
             .expect("stream should start");
-        stream.next().await.expect("stream should emit event").unwrap();
+        stream
+            .next()
+            .await
+            .expect("stream should emit event")
+            .expect("event should parse");
 
         let captured_headers = captured_headers
             .lock()

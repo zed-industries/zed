@@ -4078,7 +4078,7 @@ async fn test_send_retry_on_http_send_error(cx: &mut TestAppContext) {
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
-        .unwrap();
+        .expect("thread send should start");
     cx.run_until_parked();
 
     fake_model.send_last_completion_stream_error(LanguageModelCompletionError::HttpSend {
