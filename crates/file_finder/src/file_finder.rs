@@ -107,7 +107,15 @@ impl FileFinder {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
                 let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                    Self::open(workspace, action.separate_history, window, cx).detach();
+                    Self::open(
+                        workspace,
+                        action.separate_history,
+                        action.initial_query.clone(),
+                        action.include_ignored,
+                        window,
+                        cx,
+                    )
+                    .detach();
                     return;
                 };
 
@@ -124,6 +132,8 @@ impl FileFinder {
     fn open(
         workspace: &mut Workspace,
         separate_history: bool,
+        initial_query: Option<String>,
+        include_ignored_override: Option<bool>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
@@ -169,7 +179,7 @@ impl FileFinder {
                     let project = workspace.project().clone();
                     let weak_workspace = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        let delegate = FileFinderDelegate::new(
+                        let mut delegate = FileFinderDelegate::new(
                             cx.entity().downgrade(),
                             weak_workspace,
                             project,
@@ -179,16 +189,25 @@ impl FileFinder {
                             window,
                             cx,
                         );
+                        if let Some(include_ignored) = include_ignored_override {
+                            delegate.include_ignored = Some(include_ignored);
+                        }
 
-                        FileFinder::new(delegate, window, cx)
+                        FileFinder::new(delegate, initial_query.as_deref(), window, cx)
                     });
                 })
                 .ok();
         })
     }
 
-    fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+    fn new(
+        delegate: FileFinderDelegate,
+        initial_query: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let picker =
+            cx.new(|cx| Picker::uniform_list_with_query(delegate, initial_query, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();

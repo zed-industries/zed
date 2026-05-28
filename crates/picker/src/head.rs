@@ -16,6 +16,7 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
+        initial_text: Option<&str>,
         mut edit_handler: impl FnMut(&mut V, &ErasedEditorEvent, &mut Window, &mut Context<V>) + 'static,
         window: &mut Window,
         cx: &mut Context<V>,
@@ -23,6 +24,10 @@ impl Head {
         let editor = (ui_input::ERASED_EDITOR_FACTORY.get().unwrap())(window, cx);
 
         editor.set_placeholder_text(placeholder_text.as_ref(), window, cx);
+        if let Some(initial_text) = initial_text {
+            editor.set_text(initial_text, window, cx);
+            editor.move_selection_to_end(window, cx);
+        }
         let this = cx.weak_entity();
         editor
             .subscribe(
