@@ -40,6 +40,30 @@ const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
 const CODEX_RESPONSE_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 
+fn codex_extra_headers(
+    account_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut extra_headers: Vec<(String, String)> = vec![
+        ("originator".into(), "zed".into()),
+        ("OpenAI-Beta".into(), "responses=experimental".into()),
+    ];
+
+    if let Some(id) = account_id {
+        if !id.is_empty() {
+            extra_headers.push(("ChatGPT-Account-Id".into(), id.into()));
+        }
+    }
+
+    if let Some(id) = session_id {
+        if !id.is_empty() {
+            extra_headers.push(("session-id".into(), id.into()));
+        }
+    }
+
+    extra_headers
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
     access_token: String,
@@ -476,6 +500,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.
+        let session_id = request.thread_id.clone();
         let mut responses_request = into_open_ai_response(
             request,
             self.model.id(),
@@ -514,15 +539,8 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
 
-            let mut extra_headers: Vec<(String, String)> = vec![
-                ("originator".into(), "zed".into()),
-                ("OpenAI-Beta".into(), "responses=experimental".into()),
-            ];
-            if let Some(ref id) = creds.account_id {
-                if !id.is_empty() {
-                    extra_headers.push(("ChatGPT-Account-Id".into(), id.clone()));
-                }
-            }
+            let extra_headers =
+                codex_extra_headers(creds.account_id.as_deref(), session_id.as_deref());
 
             let access_token = creds.access_token.clone();
             let background_executor = cx.background_executor().clone();
@@ -1164,6 +1182,30 @@ mod tests {
             *self.storage.lock() = None;
             Box::pin(async { Ok(()) })
         }
+    }
+
+    #[test]
+    fn test_codex_extra_headers_include_session_id() {
+        assert_eq!(
+            codex_extra_headers(Some("account-1"), Some("thread-1")),
+            vec![
+                ("originator".into(), "zed".into()),
+                ("OpenAI-Beta".into(), "responses=experimental".into()),
+                ("ChatGPT-Account-Id".into(), "account-1".into()),
+                ("session-id".into(), "thread-1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_codex_extra_headers_omit_empty_optional_ids() {
+        assert_eq!(
+            codex_extra_headers(Some(""), Some("")),
+            vec![
+                ("originator".into(), "zed".into()),
+                ("OpenAI-Beta".into(), "responses=experimental".into()),
+            ]
+        );
     }
 
     fn make_expired_credentials() -> CodexCredentials {
