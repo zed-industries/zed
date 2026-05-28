@@ -37,6 +37,25 @@ use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
 use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalView};
 
+/// Snap a standalone terminal height to a whole number of rows.
+fn snap_standalone_height(
+    available_height: Pixels,
+    line_height: Pixels,
+    scale_factor: f32,
+) -> Pixels {
+    let line_height_device_px = (f32::from(line_height) * scale_factor)
+        .round()
+        .max(1.0) as i32;
+    let available_height_device_px = (f32::from(available_height) * scale_factor)
+        .floor()
+        .max(0.0) as i32;
+
+    let rows = ((available_height_device_px / line_height_device_px) as usize).max(1);
+    let snapped_height_device_px = (rows as i32) * line_height_device_px;
+
+    px(snapped_height_device_px as f32 / scale_factor.max(1.0))
+}
+
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
     hitbox: Hitbox,
@@ -994,30 +1013,11 @@ impl Element for TerminalElement {
                     origin.x += gutter;
 
                     if matches!(self.terminal_view.read(cx).mode, TerminalMode::Standalone) {
-                        let scale_factor = window.scale_factor();
-                        let line_height_pixels = px(line_height);
-                        let line_height_device_px = (f32::from(line_height_pixels) * scale_factor)
-                            .round()
-                            .max(1.0) as i32;
-                        let available_height_device_px =
-                            (f32::from(available_height) * scale_factor)
-                                .floor()
-                                .max(0.0) as i32;
-
-                        let rows =
-                            ((available_height_device_px / line_height_device_px) as usize).max(1);
-                        let snapped_height_device_px = (rows as i32) * line_height_device_px;
-                        let padding_device_px =
-                            (available_height_device_px - snapped_height_device_px).max(0);
-
-                        let snapped_height =
-                            px(snapped_height_device_px as f32 / scale_factor.max(1.0));
-                        let padding = px(padding_device_px as f32 / scale_factor.max(1.0));
-
-                        size.height = snapped_height;
-                        if self.terminal.read(cx).scrolled_to_bottom() {
-                            origin.y += padding;
-                        }
+                        size.height = snap_standalone_height(
+                            available_height,
+                            px(line_height),
+                            window.scale_factor(),
+                        );
                     }
 
                     // Snap to device pixels to avoid subpixel jitter while resizing.
@@ -1733,6 +1733,58 @@ mod tests {
     use super::*;
     use gpui::{AbsoluteLength, Hsla, font};
     use ui::utils::apca_contrast;
+
+    // The snapped grid height must remain stable while dragging within the
+    // leftover space below the last full row.
+    #[test]
+    fn snap_standalone_height_stable_across_subrow_drag() {
+        let line_height = px(20.);
+        let scale_factor = 1.0;
+
+        // 4 full rows fit within 80px, leaving 0..line_height px of slack.
+        // Heights within that range should still snap to the same 4-row grid.
+        for available_px in 80..=99 {
+            let height = snap_standalone_height(
+                px(available_px as f32),
+                line_height,
+                scale_factor,
+            );
+            assert_eq!(
+                height,
+                px(80.),
+                "row count must stay at 4 for available={available_px}",
+            );
+        }
+    }
+
+    #[test]
+    fn snap_standalone_height_snaps_to_whole_rows() {
+        // `available` smaller than `line_height` clamps to one row (5 → 20).
+        for (available, expected_rows) in [
+            (5., 1usize),
+            (20., 1),
+            (21., 1),
+            (39., 1),
+            (40., 2),
+            (99., 4),
+            (100., 5),
+        ] {
+            let height = snap_standalone_height(px(available), px(20.), 1.0);
+            assert_eq!(
+                height,
+                px(expected_rows as f32 * 20.),
+                "available={available}",
+            );
+        }
+    }
+
+    #[test]
+    fn snap_standalone_height_uses_device_pixel_rounding_for_line_height() {
+        // line_height of 19.4 px at 2x DPI rounds to 39 device px per row;
+        // 4 rows = 156 device px = 78 layout px. Verify we agree.
+        let height = snap_standalone_height(px(80.), px(19.4), 2.0);
+        assert_eq!(height, px(78.));
+    }
 
     #[test]
     fn test_is_decorative_character() {
