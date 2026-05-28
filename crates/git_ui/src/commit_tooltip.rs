@@ -258,7 +258,11 @@ impl Render for CommitTooltip {
             .commit
             .message
             .as_ref()
-            .map(|_| MarkdownElement::new(self.markdown.clone(), markdown_style).into_any())
+            .map(|_| {
+                MarkdownElement::new(self.markdown.clone(), markdown_style)
+                    .scroll_handle(self.scroll_handle.clone())
+                    .into_any()
+            })
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = self
