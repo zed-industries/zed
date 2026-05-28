@@ -297,6 +297,19 @@ pub enum Operation {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BufferEditSource {
+    User,
+    Agent,
+    Remote,
+}
+
+impl BufferEditSource {
+    pub fn is_local(self) -> bool {
+        !matches!(self, Self::Remote)
+    }
+}
+
 /// An event that occurs in a buffer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BufferEvent {
@@ -307,7 +320,7 @@ pub enum BufferEvent {
         is_local: bool,
     },
     /// The buffer was edited.
-    Edited { is_local: bool },
+    Edited { source: BufferEditSource },
     /// The buffer's `dirty` bit changed.
     DirtyChanged,
     /// The buffer was saved.
@@ -2433,12 +2446,29 @@ impl Buffer {
         self.end_transaction_at(Instant::now(), cx)
     }
 
+    pub fn end_transaction_with_source(
+        &mut self,
+        source: BufferEditSource,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
+        self.end_transaction_at_internal(Instant::now(), source, cx)
+    }
+
     /// Terminates the current transaction, providing the current time. Subsequent transactions
     /// that occur within a short period of time will be grouped together. This
     /// is controlled by the buffer's undo grouping duration.
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
+        self.end_transaction_at_internal(now, BufferEditSource::User, cx)
+    }
+
+    fn end_transaction_at_internal(
+        &mut self,
+        now: Instant,
+        source: BufferEditSource,
         cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
         assert!(self.transaction_depth > 0);
@@ -2449,7 +2479,7 @@ impl Buffer {
             false
         };
         if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
-            self.did_edit(&start_version, was_dirty, true, cx);
+            self.did_edit(&start_version, was_dirty, source, cx);
             Some(transaction_id)
         } else {
             None
@@ -2844,7 +2874,7 @@ impl Buffer {
         &mut self,
         old_version: &clock::Global,
         was_dirty: bool,
-        is_local: bool,
+        source: BufferEditSource,
         cx: &mut Context<Self>,
     ) {
         self.was_changed();
@@ -2854,7 +2884,7 @@ impl Buffer {
         }
 
         self.reparse(cx, true);
-        cx.emit(BufferEvent::Edited { is_local });
+        cx.emit(BufferEvent::Edited { source });
         let is_dirty = self.is_dirty();
         if was_dirty != is_dirty {
             cx.emit(BufferEvent::DirtyChanged);
@@ -2976,7 +3006,7 @@ impl Buffer {
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
-        self.did_edit(&old_version, was_dirty, false, cx);
+        self.did_edit(&old_version, was_dirty, BufferEditSource::Remote, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
@@ -3131,7 +3161,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3149,7 +3179,7 @@ impl Buffer {
         let old_version = self.version.clone();
         if let Some(operation) = self.text.undo_transaction(transaction_id) {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             true
         } else {
             false
@@ -3171,7 +3201,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if undone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx)
         }
         undone
     }
@@ -3181,7 +3211,7 @@ impl Buffer {
         let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
         self.send_operation(Operation::Buffer(operation), true, cx);
-        self.did_edit(&old_version, was_dirty, true, cx);
+        self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
@@ -3191,7 +3221,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3232,7 +3262,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if redone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx)
         }
         redone
     }
@@ -3342,7 +3372,7 @@ impl Buffer {
         if !ops.is_empty() {
             for op in ops {
                 self.send_operation(Operation::Buffer(op), true, cx);
-                self.did_edit(&old_version, was_dirty, true, cx);
+                self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             }
         }
     }

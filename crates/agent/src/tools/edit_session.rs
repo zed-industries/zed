@@ -12,7 +12,7 @@ use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::language_settings::{self, FormatOnSave};
-use language::{Buffer, BufferEvent, LanguageRegistry};
+use language::{Buffer, BufferEditSource, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
@@ -975,7 +975,9 @@ fn agent_edit_buffer<I, S, T>(
 {
     cx.update(|cx| {
         buffer.update(cx, |buffer, cx| {
+            buffer.start_transaction();
             buffer.edit(edits, None, cx);
+            buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
         });
         action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
     });

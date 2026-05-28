@@ -4070,6 +4070,63 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_send_retry_on_http_send_error(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello!"], cx)
+        })
+        .expect("thread send should start");
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::HttpSend {
+        provider: LanguageModelProviderName::new("OpenAI"),
+        error: anyhow::anyhow!("response headers timed out after 10s"),
+    });
+    fake_model.end_last_completion_stream();
+
+    cx.executor().advance_clock(BASE_RETRY_DELAY);
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Recovered!");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let mut retry_events = Vec::new();
+    while let Some(Ok(event)) = events.next().await {
+        match event {
+            ThreadEvent::Retry(retry_status) => {
+                retry_events.push(retry_status);
+            }
+            ThreadEvent::Stop(..) => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(retry_events.len(), 1);
+    assert!(matches!(
+        retry_events[0],
+        acp_thread::RetryStatus { attempt: 1, .. }
+    ));
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## User
+
+                Hello!
+
+                ## Assistant
+
+                Recovered!
+            "}
+        )
+    });
+}
+
+#[gpui::test]
 async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
