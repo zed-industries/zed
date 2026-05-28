@@ -1,5 +1,10 @@
-//! Strips `<foreignObject>` elements and their contents from the SVG, since
-//! `usvg`/`resvg` does not support them.
+//! Strips any remaining `<foreignObject>` elements and redundant fallback groups
+//! from the SVG.
+//!
+//! merman's raster-safe SVG pipeline removes `<foreignObject>` elements before
+//! Zed-specific post-processing runs. This pass is kept as a defensive filter
+//! and to remove fallback overlay groups when the same label is already present
+//! as native SVG text.
 //!
 //! ```xml
 //! <!-- before -->

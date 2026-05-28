@@ -18,7 +18,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-merman = { version = "0.4", features = ["render"] }
+merman = { version = "0.6", features = ["render"] }
 quick-xml.workspace = true
 serde_json.workspace = true
 
