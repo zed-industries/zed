@@ -582,6 +582,8 @@
       "ctrl-alt-shift-c": "editor::DisplayCursorNames",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk",
+      "alt-shift-.": "git::GoToNextConflict",
+      "alt-shift-,": "git::GoToPreviousConflict",
     },
   },
   {

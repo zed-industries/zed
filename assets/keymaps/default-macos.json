@@ -937,6 +937,8 @@
       "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPreviousHunk",
+      "alt-shift-.": "git::GoToNextConflict",
+      "alt-shift-,": "git::GoToPreviousConflict",
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints",
     },

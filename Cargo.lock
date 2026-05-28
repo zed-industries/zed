@@ -7762,6 +7762,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "telemetry",
+ "text",
  "theme",
  "theme_settings",
  "time",

@@ -262,6 +262,8 @@
       "[ d": "editor::GoToPreviousDiagnostic",
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPreviousHunk",
+      "] x": "git::GoToNextConflict",
+      "[ x": "git::GoToPreviousConflict",
       "g c": "vim::PushToggleComments",
       "g b": "vim::PushToggleBlockComments",
     },
