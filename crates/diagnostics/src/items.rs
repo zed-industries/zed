@@ -170,19 +170,23 @@ impl DiagnosticIndicator {
 
     fn go_to_next_diagnostic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let diagnostics_already_active = self.any_active_diagnostics(cx);
-        let direction = if !diagnostics_already_active {
-            None
-        } else {
-            Some(editor::Direction::Next)
-        };
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
-                editor.go_to_diagnostic_impl(
-                    direction,
-                    GoToDiagnosticSeverityFilter::default(),
-                    window,
-                    cx,
-                );
+                if diagnostics_already_active {
+                    editor.go_to_diagnostic_impl(
+                        editor::Direction::Next,
+                        GoToDiagnosticSeverityFilter::default(),
+                        window,
+                        cx,
+                    );
+                } else {
+                    editor.go_to_diagnostic_at_cursor(
+                        editor::Direction::Next,
+                        GoToDiagnosticSeverityFilter::default(),
+                        window,
+                        cx,
+                    );
+                }
             })
         }
     }
