@@ -257,11 +257,6 @@ impl Default for ActionRegistry {
     }
 }
 
-#[doc(hidden)]
-/// Unstable only for use in the profiler and zed-reliablitly
-/// Used to pass the action registry around without making it public
-pub struct ActionResolver(pub(crate) ActionRegistry);
-
 #[derive(Clone)]
 struct ActionData {
     pub build: ActionBuilder,

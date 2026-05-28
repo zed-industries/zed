@@ -14,10 +14,7 @@ use std::{
 };
 
 mod actions;
-pub use actions::{
-    ActionStatistics, ActionTiming, ResolvedActionStatistics, ResolvedActionTiming,
-    get_action_stats,
-};
+pub use actions::{ActionStatistics, ActionTiming, get_action_stats};
 pub(crate) use actions::{save_action_timing, update_running_action};
 
 use serde::{Deserialize, Serialize};

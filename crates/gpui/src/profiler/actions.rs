@@ -1,19 +1,18 @@
 use std::{
-    any::TypeId,
     hint::cold_path,
     time::{Duration, Instant},
 };
 
 use itertools::Itertools;
 
-use crate::{ActionRegistry, action::Action};
+use crate::action::Action;
 
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct ActionStatistics {
     runtime_to_beat: Duration,
     longest_runtimes: heapless::Vec<ActionTiming, 5>,
-    running: Option<(TypeId, Instant)>,
+    running: Option<(&'static str, Instant)>,
 }
 
 impl std::fmt::Debug for ActionStatistics {
@@ -29,10 +28,14 @@ impl std::fmt::Debug for ActionStatistics {
     }
 }
 
-impl std::fmt::Display for ResolvedActionStatistics {
+impl std::fmt::Display for ActionStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Actions that blocked the longest\n")?;
-        for action in self.0.iter().sorted_by_key(|action| action.runtime()).rev() {
+        for action in self
+            .longest_runtimes()
+            .sorted_by_key(|action| action.runtime())
+            .rev()
+        {
             f.write_fmt(format_args!(
                 "{:<20} - {}",
                 format!("{:?}", action.runtime()), // impl dbg does not support alignment
@@ -57,7 +60,7 @@ impl ActionStatistics {
         self.longest_runtimes.is_empty()
     }
 
-    pub fn update_running_action(&mut self, action: TypeId, started: Instant) {
+    pub fn update_running_action(&mut self, action: &'static str, started: Instant) {
         self.running = Some((action, started));
     }
 
@@ -79,14 +82,14 @@ impl ActionStatistics {
                     .min_by_key(|action| runtime >= action.runtime())
             {
                 *to_replace = ActionTiming {
-                    id: action,
+                    name: action,
                     start: started,
                     end: now,
                 };
             } else {
                 self.longest_runtimes
                     .push(ActionTiming {
-                        id: action,
+                        name: action,
                         start: started,
                         end: now,
                     })
@@ -102,21 +105,12 @@ impl ActionStatistics {
         }
     }
 
-    pub fn resolve(self, resolver: &crate::ActionResolver) -> ResolvedActionStatistics {
-        ResolvedActionStatistics(
-            self.longest_runtimes
-                .into_iter()
-                .flat_map(|timing| timing.try_resolve(&resolver.0))
-                .collect(),
-        )
-    }
-
     pub fn longest_runtimes(&self) -> impl Iterator<Item = ActionTiming> {
         self.longest_runtimes
             .iter()
             .copied()
-            .chain(self.running.into_iter().map(|(id, start)| ActionTiming {
-                id,
+            .chain(self.running.into_iter().map(|(name, start)| ActionTiming {
+                name,
                 start,
                 end: Instant::now(),
             }))
@@ -124,26 +118,10 @@ impl ActionStatistics {
 }
 
 #[doc(hidden)]
-/// Resolved variant of [`ActionTiming`] where the actions are resolved (use
-/// names instead of type ids)
-#[derive(Debug, Clone)]
-pub struct ResolvedActionStatistics(pub Vec<ResolvedActionTiming>);
-impl ResolvedActionStatistics {
-    #[doc(hidden)]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    #[doc(hidden)]
-    pub fn empty() -> Self {
-        Self(Vec::new())
-    }
-}
-
-#[doc(hidden)]
 /// UNSTABLE only for use in the profiler and zed-reliability
 #[derive(Copy, Clone)]
 pub struct ActionTiming {
-    pub id: TypeId,
+    pub name: &'static str,
     pub start: Instant,
     pub end: Instant,
 }
@@ -151,43 +129,13 @@ pub struct ActionTiming {
 impl core::fmt::Debug for ActionTiming {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ActionTiming")
-            .field("id", &self.id)
+            .field("name", &self.name)
             .field("runtime", &self.runtime())
             .finish()
     }
 }
 
 impl ActionTiming {
-    pub fn runtime(&self) -> Duration {
-        self.end - self.start
-    }
-    fn try_resolve(self, actions: &ActionRegistry) -> Option<ResolvedActionTiming> {
-        match actions.try_resolve_action(&self.id) {
-            Some(action_name) => Some(ResolvedActionTiming {
-                name: action_name,
-                start: self.start,
-                end: self.end,
-            }),
-            None => {
-                cold_path();
-                log::error!("Profiler could not resolve action name");
-                None
-            }
-        }
-    }
-}
-
-#[doc(hidden)]
-/// Resolved variant of [`ActionTiming`] with Type_Id replaced with the Action's
-/// name instead.
-#[derive(Debug, Clone)]
-pub struct ResolvedActionTiming {
-    pub name: &'static str,
-    pub start: Instant,
-    pub end: Instant,
-}
-
-impl ResolvedActionTiming {
     #[doc(hidden)]
     pub fn runtime(&self) -> Duration {
         self.end - self.start
@@ -200,10 +148,15 @@ static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
     const { spin::Mutex::new(ActionStatistics::new()) };
 
 #[doc(hidden)]
-pub(crate) fn update_running_action(action: &(dyn Action + 'static)) {
+pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
     let now = Instant::now();
     let action = action.type_id();
-    ACTION_STATISTICS.lock().update_running_action(action, now);
+    if let Some(action) = cx.actions.try_resolve_action(&action) {
+        ACTION_STATISTICS.lock().update_running_action(action, now);
+    } else {
+        cold_path();
+        log::error!("Action type_id's should always resolve");
+    }
 }
 
 #[doc(hidden)]

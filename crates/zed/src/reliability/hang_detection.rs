@@ -40,7 +40,7 @@ pub(crate) fn start(cx: &mut App) {
         log::warn!("debug build, only reporting hangs longer then {hang_time:?}");
     }
 
-    start_hang_detection(cx, hang_time);
+    start_hang_detection(hang_time, cx);
 
     cx.on_action(move |_: &HangAction, _| {
         log::warn!(
@@ -75,9 +75,9 @@ pub(crate) fn start(cx: &mut App) {
     });
 }
 
-fn start_hang_detection(cx: &App, report_longer_then: Duration) {
+// takes a &App simply to force this to start on the foreground thread
+fn start_hang_detection(report_longer_then: Duration, _cx: &App) {
     let foreground_thread = thread::current().id();
-    let action_resolver = cx.__action_resolver();
 
     // an OS thread to insulate detection and reporting from hangs on the fore
     // or background.
@@ -103,7 +103,7 @@ fn start_hang_detection(cx: &App, report_longer_then: Duration) {
                     report_longer_then,
                     foreground_thread,
                 );
-                reporter.report_hanging_actions(&action_resolver, report_longer_then);
+                reporter.report_hanging_actions(report_longer_then);
 
                 if reported_task_hangs && let Some(path) = task_traces::save_any(foreground_thread)
                 {
@@ -227,15 +227,9 @@ impl Reporter {
         report_made
     }
 
-    fn report_hanging_actions(
-        &mut self,
-        resolver: &gpui::ActionResolver,
-        report_longer_then: Duration,
-    ) {
+    fn report_hanging_actions(&mut self, report_longer_then: Duration) {
         let hangs: Vec<_> = profiler::get_action_stats()
-            .resolve(resolver)
-            .0
-            .into_iter()
+            .longest_runtimes()
             .filter(|action| action.runtime() > report_longer_then)
             .filter(|action| !self.hold_report(PerfIssue::Action(action.name)))
             .collect();
@@ -247,7 +241,7 @@ impl Reporter {
     }
 }
 
-struct DisplayActions(Vec<gpui::profiler::ResolvedActionTiming>);
+struct DisplayActions(Vec<gpui::profiler::ActionTiming>);
 struct DisplayTasks<'a>(&'a [gpui::TaskTiming]);
 
 impl Display for DisplayActions {
