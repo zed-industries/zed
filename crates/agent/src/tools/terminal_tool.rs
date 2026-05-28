@@ -178,46 +178,31 @@ impl AgentTool for TerminalTool {
                 }
             }
 
-            // Always provision a per-command temporary directory and point
-            // TMPDIR/TMP/TEMP at it. This is independent of sandbox state:
-            // even an unsandboxed command (or a command on a non-macOS
-            // host) gets a clean, isolated scratch directory that's
-            // auto-cleaned when the task ends, rather than polluting the
-            // user's shared `/tmp`. Decoupling it from sandbox state also
-            // means the model can't infer the sandbox state by looking at
-            // `$TMPDIR`.
-            let temp_dir = tempfile::Builder::new()
-                .prefix("zed-agent-terminal-")
-                .tempdir()
-                .map_err(|e| {
-                    format!("failed to create per-command temporary directory: {e}")
-                })?;
-            let temp_dir_path = temp_dir
-                .path()
-                .canonicalize()
-                .unwrap_or_else(|_| temp_dir.path().to_path_buf());
-            let temp_dir_string = temp_dir_path.to_string_lossy().into_owned();
-            let extra_env = vec![
-                acp::EnvVariable::new("TMPDIR", &temp_dir_string),
-                acp::EnvVariable::new("TMP", &temp_dir_string),
-                acp::EnvVariable::new("TEMP", &temp_dir_string),
-            ];
+            // The per-thread scratch directory (and the `$TMPDIR`/`TMP`/
+            // `TEMP` environment variables pointing at it) is provisioned by
+            // the thread environment in `create_terminal`, which also adds it
+            // to the sandbox's writable scope. We must not set `$TMPDIR` here:
+            // the environment overrides it with the per-thread directory, so a
+            // per-command directory set here would never be the `$TMPDIR` the
+            // command actually sees and would be left out of the writable
+            // scope, breaking writes into `$TMPDIR`.
+            let extra_env = Vec::new();
 
-            // Build the writable scope from the project's worktrees plus
-            // this command's temporary directory. Crucially we do *not*
-            // include the resolved `cd` working directory — that's
+            // Build the writable scope from the project's worktrees. The
+            // per-thread temp directory is appended by the thread environment
+            // (which owns it and points `$TMPDIR` at it). Crucially we do
+            // *not* include the resolved `cd` working directory — that's
             // model-controlled, and using it as the writable scope would
             // let the model widen its own write permissions outside the
             // project.
             let sandbox_wrap = if sandboxing && !want_unsandboxed {
-                let mut writable_paths: Vec<PathBuf> = cx.update(|cx| {
+                let writable_paths: Vec<PathBuf> = cx.update(|cx| {
                     self.project
                         .read(cx)
                         .worktrees(cx)
                         .map(|w| w.read(cx).abs_path().to_path_buf())
                         .collect::<Vec<_>>()
                 });
-                writable_paths.push(temp_dir_path.clone());
                 Some(acp_thread::SandboxWrap {
                     writable_paths,
                     allow_network: want_network,
@@ -239,10 +224,6 @@ impl AgentTool for TerminalTool {
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-            // Hold the TempDir until the spawned command has finished so
-            // its scratch contents (and `$TMPDIR`) stay valid for the
-            // command's lifetime.
-            let _temp_dir = temp_dir;
 
             let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
             event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
