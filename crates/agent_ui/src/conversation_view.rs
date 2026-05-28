@@ -1506,17 +1506,11 @@ impl ConversationView {
                 let index = len - 1;
                 if let Some(active) = self.thread_view(&session_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
-                    let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, cx| {
                         view_state.sync_entry(index, thread, window, cx);
-                        list_state.splice_focusable(
-                            index..index,
-                            [view_state
-                                .entry(index)
-                                .and_then(|entry| entry.focus_handle(cx))],
-                        );
                     });
                     active.update(cx, |active, cx| {
+                        active.sync_history_filter_projection(cx);
                         active.sync_editor_mode_for_empty_state(cx);
                     });
                 }
@@ -1528,8 +1522,9 @@ impl ConversationView {
                     entry_view_state.update(cx, |view_state, cx| {
                         view_state.sync_entry(*index, thread, window, cx);
                     });
-                    list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
+                        active.sync_history_filter_projection(cx);
+                        list_state.remeasure_items(0..list_state.item_count());
                         active.auto_expand_streaming_thought(cx);
                     });
                 }
@@ -1539,8 +1534,9 @@ impl ConversationView {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
-                    list_state.splice(range.clone(), 0);
                     active.update(cx, |active, cx| {
+                        active.sync_history_filter_projection(cx);
+                        list_state.remeasure_items(0..list_state.item_count());
                         active.sync_editor_mode_for_empty_state(cx);
                     });
                 }

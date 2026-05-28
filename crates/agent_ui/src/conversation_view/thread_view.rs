@@ -490,6 +490,172 @@ mod numbered_code_block_tests {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryFilterKind {
+    UserMessages,
+    AssistantMessages,
+    Thinking,
+    ToolCalls,
+    ToolResults,
+    PermissionRequests,
+    ErrorsAndCancels,
+}
+
+impl HistoryFilterKind {
+    const ALL: [Self; 7] = [
+        Self::UserMessages,
+        Self::AssistantMessages,
+        Self::Thinking,
+        Self::ToolCalls,
+        Self::ToolResults,
+        Self::PermissionRequests,
+        Self::ErrorsAndCancels,
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::UserMessages => "user-messages",
+            Self::AssistantMessages => "assistant-messages",
+            Self::Thinking => "thinking",
+            Self::ToolCalls => "tool-calls",
+            Self::ToolResults => "tool-results",
+            Self::PermissionRequests => "permission-requests",
+            Self::ErrorsAndCancels => "errors-cancels",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::UserMessages => "User",
+            Self::AssistantMessages => "Assistant",
+            Self::Thinking => "Thinking",
+            Self::ToolCalls => "Calls",
+            Self::ToolResults => "Results",
+            Self::PermissionRequests => "Permissions",
+            Self::ErrorsAndCancels => "Errors",
+        }
+    }
+
+    fn tooltip(self) -> &'static str {
+        match self {
+            Self::UserMessages => "Show user messages",
+            Self::AssistantMessages => "Show assistant messages",
+            Self::Thinking => "Show thinking and reasoning",
+            Self::ToolCalls => "Show tool call entries",
+            Self::ToolResults => "Show tool results and output",
+            Self::PermissionRequests => "Show permission requests",
+            Self::ErrorsAndCancels => "Show errors and canceled items",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct HistoryVisibilityFilters {
+    user_messages: bool,
+    assistant_messages: bool,
+    thinking: bool,
+    tool_calls: bool,
+    tool_results: bool,
+    permission_requests: bool,
+    errors_and_cancels: bool,
+}
+
+impl Default for HistoryVisibilityFilters {
+    fn default() -> Self {
+        Self {
+            user_messages: true,
+            assistant_messages: true,
+            thinking: true,
+            tool_calls: true,
+            tool_results: true,
+            permission_requests: true,
+            errors_and_cancels: true,
+        }
+    }
+}
+
+impl HistoryVisibilityFilters {
+    fn is_enabled(&self, kind: HistoryFilterKind) -> bool {
+        match kind {
+            HistoryFilterKind::UserMessages => self.user_messages,
+            HistoryFilterKind::AssistantMessages => self.assistant_messages,
+            HistoryFilterKind::Thinking => self.thinking,
+            HistoryFilterKind::ToolCalls => self.tool_calls,
+            HistoryFilterKind::ToolResults => self.tool_results,
+            HistoryFilterKind::PermissionRequests => self.permission_requests,
+            HistoryFilterKind::ErrorsAndCancels => self.errors_and_cancels,
+        }
+    }
+
+    fn toggle(&mut self, kind: HistoryFilterKind) {
+        match kind {
+            HistoryFilterKind::UserMessages => self.user_messages = !self.user_messages,
+            HistoryFilterKind::AssistantMessages => {
+                self.assistant_messages = !self.assistant_messages
+            }
+            HistoryFilterKind::Thinking => self.thinking = !self.thinking,
+            HistoryFilterKind::ToolCalls => self.tool_calls = !self.tool_calls,
+            HistoryFilterKind::ToolResults => self.tool_results = !self.tool_results,
+            HistoryFilterKind::PermissionRequests => {
+                self.permission_requests = !self.permission_requests
+            }
+            HistoryFilterKind::ErrorsAndCancels => {
+                self.errors_and_cancels = !self.errors_and_cancels
+            }
+        }
+    }
+
+    fn allows_assistant_chunk(&self, chunk: &AssistantMessageChunk) -> bool {
+        match chunk {
+            AssistantMessageChunk::Message { .. } => self.assistant_messages,
+            AssistantMessageChunk::Thought { .. } => self.thinking,
+        }
+    }
+
+    fn allows_tool_call(&self, tool_call: &ToolCall) -> bool {
+        match tool_call.status {
+            ToolCallStatus::WaitingForConfirmation { .. } => self.permission_requests,
+            ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled => {
+                self.errors_and_cancels
+            }
+            ToolCallStatus::Completed => {
+                self.tool_calls || (self.tool_results && !tool_call.content.is_empty())
+            }
+            ToolCallStatus::Pending | ToolCallStatus::InProgress => self.tool_calls,
+        }
+    }
+
+    fn allows_entry(&self, entry: &AgentThreadEntry) -> bool {
+        match entry {
+            AgentThreadEntry::UserMessage(_) => self.user_messages,
+            AgentThreadEntry::AssistantMessage(message) => message
+                .chunks
+                .iter()
+                .any(|chunk| self.allows_assistant_chunk(chunk)),
+            AgentThreadEntry::ToolCall(tool_call) => self.allows_tool_call(tool_call),
+            AgentThreadEntry::CompletedPlan(_) => self.assistant_messages,
+        }
+    }
+}
+
+#[cfg(test)]
+mod history_visibility_filter_tests {
+    use super::*;
+
+    #[test]
+    fn toggles_history_filter_kinds_independently() {
+        let mut filters = HistoryVisibilityFilters::default();
+
+        for kind in HistoryFilterKind::ALL {
+            assert!(filters.is_enabled(kind));
+            filters.toggle(kind);
+            assert!(!filters.is_enabled(kind));
+            filters.toggle(kind);
+            assert!(filters.is_enabled(kind));
+        }
+    }
+}
+
 /// Tracks the user's permission dropdown selection state for a specific tool call.
 ///
 /// Default (no entry in the map) means the last dropdown choice is selected,
@@ -620,6 +786,8 @@ pub struct ThreadView {
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
     dismissed_skill_loading_errors: HashSet<SkillLoadingError>,
+    history_filters: HistoryVisibilityFilters,
+    visible_history_entries: Vec<usize>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -926,8 +1094,11 @@ impl ThreadView {
             generating_indicator_in_list: false,
             skill_loading_errors: Vec::new(),
             dismissed_skill_loading_errors: HashSet::default(),
+            history_filters: HistoryVisibilityFilters::default(),
+            visible_history_entries: Vec::new(),
         };
 
+        this.sync_history_filter_projection(cx);
         this.sync_generating_indicator(cx);
         this.sync_editor_mode_for_empty_state(cx);
         let list_state_for_scroll = this.list_state.clone();
@@ -5077,6 +5248,45 @@ impl Render for TokenUsageTooltip {
 }
 
 impl ThreadView {
+    fn toggle_history_filter(
+        &mut self,
+        kind: HistoryFilterKind,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_filters.toggle(kind);
+        self.sync_history_filter_projection(cx);
+        if self.list_state.is_following_tail() {
+            self.list_state.scroll_to_end();
+        }
+        cx.notify();
+    }
+
+    fn render_history_filter_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .justify_center()
+            .px_5()
+            .pt_2()
+            .pb_1()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_wrap()
+                    .children(HistoryFilterKind::ALL.into_iter().map(|kind| {
+                        Button::new(format!("history-filter-{}", kind.id()), kind.label())
+                            .label_size(LabelSize::XSmall)
+                            .style(ButtonStyle::Subtle)
+                            .toggle_state(self.history_filters.is_enabled(kind))
+                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                            .tooltip(Tooltip::text(kind.tooltip()))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.toggle_history_filter(kind, window, cx);
+                            }))
+                    })),
+            )
+    }
+
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
@@ -5091,9 +5301,18 @@ impl ThreadView {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
+                let visible_entries = this.visible_history_entries.clone();
                 let entries = this.thread.read(cx).entries();
-                if let Some(entry) = entries.get(index) {
-                    let rendered = this.render_entry(index, entries.len(), entry, window, cx);
+                if let Some(entry_ix) = visible_entries.get(index).copied()
+                    && let Some(entry) = entries.get(entry_ix)
+                {
+                    let rendered = this.render_entry(
+                        entry_ix,
+                        index + 1 == visible_entries.len(),
+                        entry,
+                        window,
+                        cx,
+                    );
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
                     let confirmation = entries
@@ -5113,7 +5332,7 @@ impl ThreadView {
     fn render_entry(
         &self,
         entry_ix: usize,
-        total_entries: usize,
+        is_last_visible: bool,
         entry: &AgentThreadEntry,
         window: &Window,
         cx: &Context<Self>,
@@ -5310,7 +5529,6 @@ impl ThreadView {
                 is_subagent_output: _,
             }) => {
                 let mut is_blank = true;
-                let is_last = entry_ix + 1 == total_entries;
 
                 let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
                 let message_body = v_flex()
@@ -5319,6 +5537,9 @@ impl ThreadView {
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
                             AssistantMessageChunk::Message { block } => {
+                                if !self.history_filters.assistant_messages {
+                                    return None;
+                                }
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -5333,6 +5554,9 @@ impl ThreadView {
                                 })
                             }
                             AssistantMessageChunk::Thought { block } => {
+                                if !self.history_filters.thinking {
+                                    return None;
+                                }
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -5361,7 +5585,7 @@ impl ThreadView {
                     v_flex()
                         .px_5()
                         .py_1p5()
-                        .when(is_last, |this| this.pb_4())
+                        .when(is_last_visible, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
                         .child(self.render_message_context_menu(entry_ix, message_body, cx))
@@ -5471,7 +5695,7 @@ impl ThreadView {
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
-        let primary = if entry_ix + 1 == total_entries {
+        let primary = if is_last_visible {
             v_flex()
                 .w_full()
                 .child(primary)
@@ -5975,16 +6199,39 @@ impl ThreadView {
         });
     }
 
+    pub(crate) fn sync_history_filter_projection(&mut self, cx: &App) {
+        let entries = self.thread.read(cx).entries();
+        self.visible_history_entries = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, entry)| self.history_filters.allows_entry(entry).then_some(ix))
+            .collect();
+        self.sync_history_filter_item_count();
+    }
+
+    fn sync_history_filter_item_count(&mut self) {
+        let desired_count =
+            self.visible_history_entries.len() + usize::from(self.generating_indicator_in_list);
+        let current_count = self.list_state.item_count();
+
+        if desired_count > current_count {
+            self.list_state
+                .splice(current_count..current_count, desired_count - current_count);
+        } else if desired_count < current_count {
+            self.list_state.splice(desired_count..current_count, 0);
+        }
+    }
+
     /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
     pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
         let is_generating = matches!(self.thread.read(cx).status(), ThreadStatus::Generating);
 
         if is_generating && !self.generating_indicator_in_list {
-            let entries_count = self.thread.read(cx).entries().len();
+            let entries_count = self.visible_history_entries.len();
             self.list_state.splice(entries_count..entries_count, 1);
             self.generating_indicator_in_list = true;
         } else if !is_generating && self.generating_indicator_in_list {
-            let entries_count = self.thread.read(cx).entries().len();
+            let entries_count = self.visible_history_entries.len();
             self.list_state.splice(entries_count..entries_count + 1, 0);
             self.generating_indicator_in_list = false;
         }
@@ -6980,10 +7227,13 @@ impl ThreadView {
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
+        let show_tool_results = self.history_filters.tool_results;
+        let is_collapsible =
+            show_tool_results && !tool_call.content.is_empty() && !needs_confirmation;
         let mut is_open = self.expanded_tool_calls.contains(&tool_call.id);
 
         is_open |= needs_confirmation;
+        is_open &= show_tool_results || needs_confirmation;
 
         let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
@@ -8876,7 +9126,13 @@ impl ThreadView {
             .enumerate()
             .map(|(i, entry)| {
                 let actual_ix = start_ix + i;
-                subagent_view.render_entry(actual_ix, total_entries, entry, window, cx)
+                subagent_view.render_entry(
+                    actual_ix,
+                    actual_ix + 1 == total_entries,
+                    entry,
+                    window,
+                    cx,
+                )
             })
             .collect();
 
@@ -9728,6 +9984,7 @@ impl ThreadView {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
+        let has_thread_history = !self.thread.read(cx).entries().is_empty();
         let list_state = self.list_state.clone();
 
         let conversation = v_flex()
@@ -9735,12 +9992,19 @@ impl Render for ThreadView {
                 this.child(Self::render_resume_notice(cx))
             })
             .map(|this| {
-                if has_messages {
-                    this.flex_1()
+                if has_messages || has_thread_history {
+                    let this = this
+                        .flex_1()
                         .size_full()
-                        .child(self.render_entries(cx))
-                        .vertical_scrollbar_for(&list_state, window, cx)
-                        .into_any()
+                        .child(self.render_history_filter_bar(cx));
+
+                    if has_messages {
+                        this.child(self.render_entries(cx))
+                            .vertical_scrollbar_for(&list_state, window, cx)
+                            .into_any()
+                    } else {
+                        this.into_any()
+                    }
                 } else {
                     this.into_any()
                 }
@@ -9930,7 +10194,9 @@ impl Render for ThreadView {
                 this.child(self.render_codex_windows_warning(cx))
             })
             .children(self.render_thread_retry_status_callout())
-            .children(self.render_thread_error(window, cx))
+            .when(self.history_filters.errors_and_cancels, |this| {
+                this.children(self.render_thread_error(window, cx))
+            })
             .when_some(
                 match has_messages {
                     true => None,
