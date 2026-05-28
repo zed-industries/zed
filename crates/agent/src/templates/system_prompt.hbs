@@ -187,6 +187,24 @@ The current project contains the following root directories:
 - `{{abs_path}}`
 {{/each}}
 
+{{#if sandboxing}}
+## Terminal sandbox
+
+The `terminal` tool runs commands inside a sandbox with these permissions:
+
+- Reads: any path on the filesystem is readable.
+- Writes: a per-thread temporary directory exposed via `$TMPDIR`, `$TMP`, and `$TEMP` is writable and persists across `terminal` calls in this conversation{{#if worktrees}}, along with these project directories:
+{{#each worktrees}}
+  - `{{abs_path}}`
+{{/each}}
+  Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
+- Network: outbound network access is blocked.
+
+You can request elevated permissions on individual `terminal` calls by setting `allow_network: true`, `allow_fs_write: true`, or `unsandboxed: true`. The user will be prompted to approve before the command runs.
+
+These sandbox settings are guaranteed to remain in effect for the entire duration of this conversation. If they ever change, you will be told.
+
+{{/if}}
 {{#if model_name}}
 ## Model Information
 
