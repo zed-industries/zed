@@ -449,6 +449,7 @@ pub enum BaseKeymapContent {
     TextMate,
     Emacs,
     Cursor,
+    Helix,
     None,
 }
 
