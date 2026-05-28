@@ -38,6 +38,7 @@ jobs:
           script: |
             const BOT_LABEL = 'bot';
             const STAFF_LABEL = 'staff';
+            const STAFF_TEAM_SLUG = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
             const GUILD_LABEL = 'guild';
             const GUILD_MEMBERS = [
@@ -152,63 +153,89 @@ jobs:
             const pr = context.payload.pull_request;
             const issue = context.payload.issue;
             const target = pr || issue;
-            const targetType = pr ? 'PR' : 'issue';
             const author = target.user.login;
-            const authorLower = author.toLowerCase();
 
-            const listIncludesAuthor = (members) => members.some(
-              (member) => member.toLowerCase() === authorLower
-            );
+            const listIncludesAuthor = (members, author) => {
+              const authorLower = author.toLowerCase();
+              return members.some((member) => member.toLowerCase() === authorLower);
+            };
 
-            const labelsToAdd = [];
-            const isBot = target.user.type === 'Bot';
-            let isStaff = false;
-
-            if (!isBot) {
+            const isStaffMember = async (author) => {
               try {
                 const response = await github.rest.teams.getMembershipForUserInOrg({
                   org: 'zed-industries',
-                  team_slug: STAFF_LABEL,
+                  team_slug: STAFF_TEAM_SLUG,
                   username: author
                 });
-                isStaff = response.data.state === 'active';
+                return response.data.state === 'active';
               } catch (error) {
                 if (error.status !== 404) {
                   throw error;
                 }
+                return false;
               }
-            }
+            };
 
-            if (pr && isBot) {
-              labelsToAdd.push(BOT_LABEL);
-            } else if (pr && isStaff) {
-              labelsToAdd.push(STAFF_LABEL);
-            } else if (!isBot && !isStaff) {
-              if (listIncludesAuthor(COMMUNITY_CHAMPIONS)) {
+            const getIssueLabels = async () => {
+              if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {
+                return [COMMUNITY_CHAMPION_LABEL];
+              }
+
+              return [];
+            };
+
+            const getPullRequestLabels = async () => {
+              if (target.user.type === 'Bot') {
+                return [BOT_LABEL];
+              }
+
+              if (await isStaffMember(author)) {
+                return [STAFF_LABEL];
+              }
+
+              // External contributors
+
+              const labelsToAdd = [];
+
+              if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {
                 labelsToAdd.push(COMMUNITY_CHAMPION_LABEL);
               }
 
-              if (pr) {
-                if (listIncludesAuthor(GUILD_MEMBERS)) {
-                  labelsToAdd.push(GUILD_LABEL);
-                }
-
-                // We use inverted logic here due to a suspected GitHub bug where first-time contributors
-                // get 'NONE' instead of 'FIRST_TIME_CONTRIBUTOR' or 'FIRST_TIMER'.
-                // https://github.com/orgs/community/discussions/78038
-                // This will break if GitHub ever adds new associations.
-                const association = pr.author_association;
-                const knownAssociations = ['CONTRIBUTOR', 'COLLABORATOR', 'MEMBER', 'OWNER', 'MANNEQUIN'];
-
-                if (knownAssociations.includes(association)) {
-                  console.log(`PR #${pr.number} by ${author}: not a first-time contributor (association: '${association}')`);
-                } else {
-                  labelsToAdd.push(FIRST_CONTRIBUTION_LABEL);
-                }
+              if (listIncludesAuthor(GUILD_MEMBERS, author)) {
+                labelsToAdd.push(GUILD_LABEL);
               }
+
+              // We use inverted logic here due to a suspected GitHub bug where first-time contributors
+              // get 'NONE' instead of 'FIRST_TIME_CONTRIBUTOR' or 'FIRST_TIMER'.
+              // https://github.com/orgs/community/discussions/78038
+              // This will break if GitHub ever adds new associations.
+              const association = pr.author_association;
+              const knownAssociations = ['CONTRIBUTOR', 'COLLABORATOR', 'MEMBER', 'OWNER', 'MANNEQUIN'];
+
+              if (knownAssociations.includes(association)) {
+                console.log(`PR #${pr.number} by ${author}: not a first-time contributor (association: '${association}')`);
+              } else {
+                labelsToAdd.push(FIRST_CONTRIBUTION_LABEL);
+              }
+
+              return labelsToAdd;
+            };
+
+            const getLabels = async () => {
+              if (pr) {
+                return await getPullRequestLabels();
+              }
+
+              return await getIssueLabels();
+            };
+
+            const labelsToAdd = await getLabels();
+
+            if (labelsToAdd.length === 0) {
+              return;
             }
 
-            if (labelsToAdd.length > 0) {
+            try {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -216,6 +243,13 @@ jobs:
                 labels: labelsToAdd
               });
 
+              const targetType = pr ? 'PR' : 'issue';
               const labels = labelsToAdd.map((label) => `'${label}'`).join(', ');
               console.log(`${targetType} #${target.number} by ${author}: labeled ${labels}`);
+            } catch (error) {
+              if (pr) {
+                throw error;
+              }
+
+              console.error(`Failed to label issue #${target.number}: ${error.message}`);
             }
