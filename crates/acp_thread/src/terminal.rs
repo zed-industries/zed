@@ -31,10 +31,18 @@ use util::get_default_system_shell_preferring_bash;
 #[derive(Clone, Debug, Default)]
 pub struct SandboxWrap {
     /// Directory subtrees the sandbox should allow writes to. Pass the
-    /// project's worktree paths (and any per-command scratch directory)
-    /// here — *not* the command's working directory, which is model-
-    /// controlled and would let the model widen its own writable scope.
+    /// project's worktree paths, Git metadata directories only when Git access
+    /// has been approved, and any per-command scratch directory here — *not*
+    /// the command's working directory, which is model-controlled and would
+    /// let the model widen its own writable scope.
     pub writable_paths: Vec<PathBuf>,
+    /// Paths whose file data reads and writes should be blocked even when they
+    /// are inside a writable project directory. Metadata reads remain allowed.
+    pub protected_paths: Vec<PathBuf>,
+    /// Unix domain sockets the sandbox should allow local IPC to. These come
+    /// from trusted process environment, not from the model-controlled command.
+    /// This does not permit IP networking or sending packets to other machines.
+    pub allowed_unix_socket_paths: Vec<PathBuf>,
     /// Allow outbound network access for this command.
     pub allow_network: bool,
     /// Allow unrestricted filesystem writes (ignores `writable_paths`).
@@ -72,12 +80,28 @@ pub(crate) fn apply_sandbox_wrap(
             .iter()
             .map(|p| p.as_path())
             .collect();
+        let protected: Vec<&std::path::Path> = sandbox_wrap
+            .protected_paths
+            .iter()
+            .map(|path| path.as_path())
+            .collect();
+        let allowed_unix_sockets: Vec<&std::path::Path> = sandbox_wrap
+            .allowed_unix_socket_paths
+            .iter()
+            .map(|path| path.as_path())
+            .collect();
         let permissions = sandbox::macos_seatbelt::SandboxPermissions {
             allow_network: sandbox_wrap.allow_network,
             allow_fs_write: sandbox_wrap.allow_fs_write,
         };
-        let (new_program, new_args, config_file) =
-            sandbox::macos_seatbelt::wrap_invocation(&program, &args, &writable, permissions)?;
+        let (new_program, new_args, config_file) = sandbox::macos_seatbelt::wrap_invocation(
+            &program,
+            &args,
+            &writable,
+            &protected,
+            &allowed_unix_sockets,
+            permissions,
+        )?;
         Ok((
             new_program,
             new_args,

@@ -53,29 +53,43 @@ pub struct TerminalToolInput {
     /// Request network access for this command.
     ///
     /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. By default sandboxed commands
-    /// cannot make outbound network connections; set this to `true` only
-    /// when the command needs network access. The user will be prompted
-    /// to approve before the command runs.
+    /// is present — ignored otherwise. By default sandboxed commands cannot
+    /// make outbound network connections or send network packets to other
+    /// machines. The inherited SSH agent socket may remain reachable for
+    /// local SSH-agent IPC, but that local Unix-socket exception does not
+    /// allow packet-sending network access. Set this to `true` only when the
+    /// command needs network access. The user will be prompted to approve
+    /// before the command runs.
     #[serde(default)]
     pub allow_network: Option<bool>,
     /// Request unrestricted filesystem-write access for this command.
     ///
     /// Only meaningful when the system prompt's "Terminal sandbox" section
     /// is present — ignored otherwise. By default sandboxed commands can
-    /// only write to the project worktree directories and a per-command
-    /// temporary directory; set this to `true` only when the command
-    /// needs to write elsewhere. The user will be prompted to approve
-    /// before the command runs.
+    /// only write to the project worktree directories and a per-thread
+    /// temporary directory, excluding protected Git paths. Set this to `true`
+    /// only when the command needs to write elsewhere. The user will be
+    /// prompted to approve before the command runs.
     #[serde(default)]
     pub allow_fs_write: Option<bool>,
+    /// Request Git metadata access for this command.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. By default sandboxed commands cannot
+    /// read file contents from, or write to, `.git` paths for opened worktrees
+    /// and discovered repositories. Set this to `true` for Git operations that
+    /// need those paths. The user will be prompted to approve before the
+    /// command runs.
+    #[serde(default)]
+    pub allow_git_access: Option<bool>,
     /// Request to run this command outside the sandbox entirely.
     ///
     /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. Prefer `allow_network: true` or
-    /// `allow_fs_write: true` when one of those is enough. Set this to
-    /// `true` ONLY when the command needs behavior that the sandbox can't
-    /// grant on a per-permission basis. The user will be prompted to
+    /// is present — ignored otherwise. Prefer `allow_network: true`,
+    /// `allow_fs_write: true`, or `allow_git_access: true` when one of those
+    /// is enough. Set this to `true` ONLY when the command needs behavior
+    /// that the sandbox can't grant on a per-permission basis. The user will
+    /// be prompted to
     /// approve before the command runs without sandbox restrictions.
     #[serde(default)]
     pub unsandboxed: Option<bool>,
@@ -145,15 +159,21 @@ impl AgentTool for TerminalTool {
             // in the system prompt.
             let want_network = sandboxing && input.allow_network == Some(true);
             let want_fs_write = sandboxing && input.allow_fs_write == Some(true);
+            let want_git_access = sandboxing && input.allow_git_access == Some(true);
             let want_unsandboxed = sandboxing && input.unsandboxed == Some(true);
 
             // `unsandboxed: true` bypasses the wrap entirely; per-permission
             // requests are only meaningful when the command is still being
             // sandboxed.
-            let escalate = !want_unsandboxed && (want_network || want_fs_write);
+            let escalate = !want_unsandboxed && (want_network || want_fs_write || want_git_access);
 
             if want_unsandboxed || escalate {
-                let title = sandbox_approval_title(want_network, want_fs_write, want_unsandboxed);
+                let title = sandbox_approval_title(
+                    want_network,
+                    want_fs_write,
+                    want_git_access,
+                    want_unsandboxed,
+                );
                 let approve = cx.update(|cx| {
                     let context = crate::ToolPermissionContext::new(
                         Self::NAME,
@@ -188,23 +208,21 @@ impl AgentTool for TerminalTool {
             // scope, breaking writes into `$TMPDIR`.
             let extra_env = Vec::new();
 
-            // Build the writable scope from the project's worktrees. The
-            // per-thread temp directory is appended by the thread environment
-            // (which owns it and points `$TMPDIR` at it). Crucially we do
-            // *not* include the resolved `cd` working directory — that's
-            // model-controlled, and using it as the writable scope would
-            // let the model widen its own write permissions outside the
-            // project.
+            // Build the writable scope from the project's worktrees. Git
+            // metadata paths are protected unless the command explicitly
+            // requests Git access. The per-thread temp directory is appended by
+            // the thread environment (which owns it and points `$TMPDIR` at
+            // it). Crucially we do *not* include the resolved `cd` working
+            // directory — that's model-controlled, and using it as the writable
+            // scope would let the model widen its own write permissions outside
+            // the project.
             let sandbox_wrap = if sandboxing && !want_unsandboxed {
-                let writable_paths: Vec<PathBuf> = cx.update(|cx| {
-                    self.project
-                        .read(cx)
-                        .worktrees(cx)
-                        .map(|w| w.read(cx).abs_path().to_path_buf())
-                        .collect::<Vec<_>>()
-                });
+                let sandbox_paths =
+                    cx.update(|cx| sandbox_paths(self.project.read(cx), want_git_access, cx));
                 Some(acp_thread::SandboxWrap {
-                    writable_paths,
+                    writable_paths: sandbox_paths.writable_paths,
+                    protected_paths: sandbox_paths.protected_paths,
+                    allowed_unix_socket_paths: Vec::new(),
                     allow_network: want_network,
                     allow_fs_write: want_fs_write,
                 })
@@ -295,18 +313,25 @@ impl AgentTool for TerminalTool {
 fn sandbox_approval_title(
     want_network: bool,
     want_fs_write: bool,
+    want_git_access: bool,
     want_unsandboxed: bool,
 ) -> &'static str {
     if want_unsandboxed {
         "Allow this command to run outside the sandbox?"
     } else {
-        match (want_network, want_fs_write) {
-            (true, true) => "Allow network access and arbitrary filesystem writes?",
-            (true, false) => "Allow network access?",
-            (false, true) => "Allow arbitrary filesystem writes?",
+        match (want_network, want_fs_write, want_git_access) {
+            (true, true, true) => {
+                "Allow network access, arbitrary filesystem writes, and Git access?"
+            }
+            (true, true, false) => "Allow network access and arbitrary filesystem writes?",
+            (true, false, true) => "Allow network access and Git access?",
+            (true, false, false) => "Allow network access?",
+            (false, true, true) => "Allow arbitrary filesystem writes and Git access?",
+            (false, true, false) => "Allow arbitrary filesystem writes?",
+            (false, false, true) => "Allow Git access?",
             // Caller only invokes this when at least one flag is set, so
             // this fallback is unreachable in practice.
-            (false, false) => "Allow this command to run?",
+            (false, false, false) => "Allow this command to run?",
         }
     }
 }
@@ -387,6 +412,60 @@ fn process_content(
     content
 }
 
+struct SandboxPaths {
+    writable_paths: Vec<PathBuf>,
+    protected_paths: Vec<PathBuf>,
+}
+
+fn sandbox_paths(project: &Project, allow_git_access: bool, cx: &App) -> SandboxPaths {
+    let mut writable_paths = Vec::new();
+    let mut git_paths = Vec::new();
+
+    for worktree in project.worktrees(cx) {
+        let worktree = worktree.read(cx);
+        let worktree_abs_path = worktree.abs_path();
+        writable_paths.push(worktree_abs_path.to_path_buf());
+        git_paths.push(worktree_abs_path.join(".git"));
+
+        let snapshot = worktree.snapshot();
+        if let Some(root_repo_common_dir) = snapshot.root_repo_common_dir() {
+            git_paths.push(root_repo_common_dir.to_path_buf());
+        }
+    }
+
+    let repositories = project
+        .git_store()
+        .read(cx)
+        .repositories()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    for repository in repositories {
+        let snapshot = repository.read(cx).snapshot();
+        git_paths.push(snapshot.dot_git_abs_path.to_path_buf());
+        git_paths.push(snapshot.repository_dir_abs_path.to_path_buf());
+        git_paths.push(snapshot.common_dir_abs_path.to_path_buf());
+    }
+
+    git_paths.sort();
+    git_paths.dedup();
+
+    let protected_paths = if allow_git_access {
+        writable_paths.extend(git_paths);
+        Vec::new()
+    } else {
+        git_paths
+    };
+
+    writable_paths.sort();
+    writable_paths.dedup();
+
+    SandboxPaths {
+        writable_paths,
+        protected_paths,
+    }
+}
+
 fn working_dir(
     input: &TerminalToolInput,
     project: &Entity<Project>,
@@ -431,6 +510,7 @@ fn working_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::Fs;
 
     #[test]
     fn test_initial_title_shows_full_multiline_command() {
@@ -460,6 +540,91 @@ mod tests {
             !title.contains("…") && !title.contains("..."),
             "Should NOT contain ellipsis"
         )
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_paths_protect_git_paths_until_git_access_is_allowed(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/main_repo",
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.add_linked_worktree_for_repo(
+            Path::new("/main_repo/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from("/linked_worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        fs.write(Path::new("/linked_worktree/file.txt"), b"content")
+            .await
+            .unwrap();
+
+        let project = project::Project::test(fs, [Path::new("/linked_worktree")], cx).await;
+        let paths_without_git_access = cx.update(|cx| sandbox_paths(project.read(cx), false, cx));
+
+        assert!(
+            paths_without_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/linked_worktree"))
+        );
+        assert!(
+            paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/linked_worktree/.git"))
+        );
+        assert!(
+            !paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/linked_worktree/.gitignore"))
+        );
+        assert!(
+            paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/main_repo/.git"))
+        );
+        assert!(
+            paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
+        );
+
+        let paths_with_git_access = cx.update(|cx| sandbox_paths(project.read(cx), true, cx));
+
+        assert!(paths_with_git_access.protected_paths.is_empty());
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/linked_worktree"))
+        );
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/linked_worktree/.git"))
+        );
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/main_repo/.git"))
+        );
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
+        );
     }
 
     #[test]
@@ -1577,11 +1742,11 @@ mod tests {
         // `unsandboxed: true` skips the sandbox entirely, so the title should
         // reflect that even when other flags are also set — they're moot.
         assert_eq!(
-            sandbox_approval_title(true, true, true),
+            sandbox_approval_title(true, true, false, true),
             "Allow this command to run outside the sandbox?"
         );
         assert_eq!(
-            sandbox_approval_title(false, false, true),
+            sandbox_approval_title(false, false, false, true),
             "Allow this command to run outside the sandbox?"
         );
     }
@@ -1589,16 +1754,24 @@ mod tests {
     #[test]
     fn test_sandbox_approval_title_per_permission_flags() {
         assert_eq!(
-            sandbox_approval_title(true, true, false),
+            sandbox_approval_title(true, true, false, false),
             "Allow network access and arbitrary filesystem writes?"
         );
         assert_eq!(
-            sandbox_approval_title(true, false, false),
+            sandbox_approval_title(true, false, false, false),
             "Allow network access?"
         );
         assert_eq!(
-            sandbox_approval_title(false, true, false),
+            sandbox_approval_title(false, true, false, false),
             "Allow arbitrary filesystem writes?"
+        );
+        assert_eq!(
+            sandbox_approval_title(false, false, true, false),
+            "Allow Git access?"
+        );
+        assert_eq!(
+            sandbox_approval_title(true, false, true, false),
+            "Allow network access and Git access?"
         );
     }
 
@@ -1619,6 +1792,10 @@ mod tests {
             "schema should advertise allow_fs_write: {schema}"
         );
         assert!(
+            schema.contains("allow_git_access"),
+            "schema should advertise allow_git_access: {schema}"
+        );
+        assert!(
             schema.contains("unsandboxed"),
             "schema should advertise unsandboxed: {schema}"
         );
@@ -1637,6 +1814,7 @@ mod tests {
         .expect("minimal input should deserialize");
         assert_eq!(input.allow_network, None);
         assert_eq!(input.allow_fs_write, None);
+        assert_eq!(input.allow_git_access, None);
         assert_eq!(input.unsandboxed, None);
     }
 }

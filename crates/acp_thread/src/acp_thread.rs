@@ -57,6 +57,29 @@ impl std::fmt::Display for MaxOutputTokensError {
 
 impl std::error::Error for MaxOutputTokensError {}
 
+#[cfg(unix)]
+fn trusted_ssh_auth_socket_path() -> Option<PathBuf> {
+    trusted_ssh_auth_socket_path_from_env(std::env::var_os("SSH_AUTH_SOCK")?)
+}
+
+#[cfg(unix)]
+fn trusted_ssh_auth_socket_path_from_env(path: impl Into<PathBuf>) -> Option<PathBuf> {
+    let path = path.into();
+    if !path.is_absolute() {
+        return None;
+    }
+
+    let path = path.canonicalize().ok()?;
+    let metadata = std::fs::metadata(&path).ok()?;
+    use std::os::unix::fs::FileTypeExt as _;
+    metadata.file_type().is_socket().then_some(path)
+}
+
+#[cfg(not(unix))]
+fn trusted_ssh_auth_socket_path() -> Option<PathBuf> {
+    None
+}
+
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
@@ -2984,12 +3007,19 @@ impl AcpThread {
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
         let is_windows = project.read(cx).path_style(cx).is_windows();
+        let trusted_ssh_auth_socket = trusted_ssh_auth_socket_path();
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
+                let mut sandbox_wrap = sandbox_wrap;
+                if let Some(sandbox_wrap) = &mut sandbox_wrap
+                    && let Some(ssh_auth_socket) = trusted_ssh_auth_socket
+                {
+                    sandbox_wrap.allowed_unix_socket_paths.push(ssh_auth_socket);
+                }
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3278,6 +3308,34 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_trusted_ssh_auth_socket_path_requires_socket() {
+        use std::os::unix::net::UnixListener;
+
+        let temp_dir = PathBuf::from(format!(
+            "/tmp/zed-sock-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir(&temp_dir).unwrap();
+        let socket_path = temp_dir.join("agent.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        assert_eq!(
+            trusted_ssh_auth_socket_path_from_env(socket_path.clone()),
+            socket_path.canonicalize().ok()
+        );
+        assert_eq!(
+            trusted_ssh_auth_socket_path_from_env(temp_dir.clone()),
+            None
+        );
+        assert_eq!(trusted_ssh_auth_socket_path_from_env("relative.sock"), None);
+
+        drop(listener);
+        std::fs::remove_dir_all(&temp_dir).unwrap();
     }
 
     #[gpui::test]
