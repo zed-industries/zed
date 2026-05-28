@@ -238,8 +238,6 @@ impl Render for TitleBar {
             }
         }
 
-        children.push(gpui::text!("Hello from a11y").into_any_element());
-
         children.push(
             h_flex()
                 .h_full()
