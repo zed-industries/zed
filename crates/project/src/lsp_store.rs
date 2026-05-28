@@ -33,6 +33,7 @@ use crate::{
     CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LspAction, LspPullDiagnostics,
     ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
     PulledDiagnostics, ResolveState, Symbol,
+    binary_downloads::{BinaryDownloads, BinaryDownloadsEvent},
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -4341,6 +4342,20 @@ impl LspStore {
             .detach();
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            let weak_worktree_store = worktree_store.downgrade();
+            cx.subscribe(&binary_downloads, move |lsp_store, _, event, cx| {
+                let (event_store, worktree_ids) = match event {
+                    BinaryDownloadsEvent::Allowed(store, ids)
+                    | BinaryDownloadsEvent::Disallowed(store, ids) => (store, ids),
+                };
+                if event_store != &weak_worktree_store {
+                    return;
+                }
+                lsp_store.restart_language_servers_for_worktrees(worktree_ids.clone(), cx);
+            })
+            .detach();
+        }
         subscribe_to_binary_statuses(&languages, cx).detach();
 
         let _maintain_workspace_config = {
@@ -11371,6 +11386,34 @@ impl LspStore {
 
     pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
         let buffers = self.buffer_store.read(cx).buffers().collect();
+        self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
+    }
+
+    /// Restarts every language server whose owning buffer lives in one of the
+    /// given worktrees. Used to react to per-worktree setting flips (such as
+    /// `allow_binary_downloads`) without disturbing servers in unrelated
+    /// worktrees.
+    pub fn restart_language_servers_for_worktrees(
+        &mut self,
+        worktree_ids: HashSet<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) {
+        if worktree_ids.is_empty() {
+            return;
+        }
+        let buffers = self
+            .buffer_store
+            .read(cx)
+            .buffers()
+            .filter(|buffer| {
+                File::from_dyn(buffer.read(cx).file())
+                    .map(|file| worktree_ids.contains(&file.worktree_id(cx)))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+        if buffers.is_empty() {
+            return;
+        }
         self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
     }
 

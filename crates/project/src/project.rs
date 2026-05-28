@@ -1,5 +1,6 @@
 pub mod agent_registry_store;
 pub mod agent_server_store;
+pub mod binary_downloads;
 pub mod bookmark_store;
 pub mod buffer_store;
 pub mod color_extractor;
@@ -1194,6 +1195,7 @@ impl Project {
                     cx,
                 );
             }
+            binary_downloads::track_binary_downloads(worktree_store.clone(), cx);
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1418,6 +1420,7 @@ impl Project {
                     cx,
                 );
             }
+            binary_downloads::track_binary_downloads(worktree_store.clone(), cx);
 
             let weak_self = cx.weak_entity();
 

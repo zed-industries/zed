@@ -48,7 +48,7 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::{project_settings::ProjectSettings, trusted_worktrees};
+use project::{binary_downloads, project_settings::ProjectSettings, trusted_worktrees};
 use proto;
 use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
@@ -484,6 +484,7 @@ fn main() {
             }
         };
         trusted_worktrees::init(db_trusted_paths, cx);
+        binary_downloads::init(cx);
         menu::init();
         zed_actions::init();
 

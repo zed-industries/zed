@@ -225,6 +225,144 @@ async fn test_allow_binary_downloads_can_be_enabled_for_a_project(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn test_toggling_allow_binary_downloads_off_disables_running_servers(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| project::binary_downloads::init(cx));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let adapter = DownloadOnlyLspAdapter::default();
+    let fetch_count = adapter.fetch_count.clone();
+    let adapter_name = adapter.name();
+    language_registry.register_lsp_adapter("Rust".into(), Arc::new(adapter));
+    let mut fake_servers = language_registry.register_fake_lsp_server(
+        adapter_name.clone(),
+        lsp::ServerCapabilities::default(),
+        None,
+    );
+    let mut binary_statuses = language_registry.language_server_binary_statuses();
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut next_server = fake_servers.next().fuse();
+    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+    futures::select! {
+        server = next_server => assert_eq!(server.is_some(), true),
+        _ = timeout => panic!("timed out waiting for initial language server start"),
+    }
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 1);
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+
+    let disabled_status = loop {
+        let mut next_status = binary_statuses.next().fuse();
+        let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+        let status = futures::select! {
+            status = next_status => status.unwrap(),
+            _ = timeout => panic!("timed out waiting for disabled binary status after toggle"),
+        };
+        if status.0 == adapter_name && matches!(status.1, BinaryStatus::Disabled { .. }) {
+            break status.1;
+        }
+    };
+    assert_eq!(
+        disabled_status,
+        BinaryStatus::Disabled {
+            reason: "binary downloads are disabled; not installing language server download-only-language-server".to_string(),
+        }
+    );
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
+async fn test_toggling_allow_binary_downloads_on_retries_disabled_servers(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| project::binary_downloads::init(cx));
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let adapter = DownloadOnlyLspAdapter::default();
+    let fetch_count = adapter.fetch_count.clone();
+    let adapter_name = adapter.name();
+    language_registry.register_lsp_adapter("Rust".into(), Arc::new(adapter));
+    let mut fake_servers = language_registry.register_fake_lsp_server(
+        adapter_name.clone(),
+        lsp::ServerCapabilities::default(),
+        None,
+    );
+    let mut binary_statuses = language_registry.language_server_binary_statuses();
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    loop {
+        let mut next_status = binary_statuses.next().fuse();
+        let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+        let status = futures::select! {
+            status = next_status => status.unwrap(),
+            _ = timeout => panic!("timed out waiting for initial disabled binary status"),
+        };
+        if status.0 == adapter_name && matches!(status.1, BinaryStatus::Disabled { .. }) {
+            break;
+        }
+    }
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 0);
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(true);
+            });
+        });
+    });
+
+    let mut next_server = fake_servers.next().fuse();
+    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+    futures::select! {
+        server = next_server => assert_eq!(server.is_some(), true),
+        _ = timeout => panic!("timed out waiting for language server restart after toggle"),
+    }
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
 async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
