@@ -713,9 +713,12 @@ pub struct SiblingThreadRequest {
     /// Optional model override, as `provider/model-id`.
     /// Defaults to the user's configured default model for the agent.
     pub model: Option<String>,
-    /// Whether to create the thread in a new git worktree.
-    /// Not yet supported; passing `true` will return an error.
+    /// Whether to create the thread in a new git worktree workspace.
     pub use_new_worktree: bool,
+    /// Optional worktree directory name. When `None`, the UI generates a
+    /// random non-colliding name (matching the manual "Create worktree"
+    /// flow). Only relevant when `use_new_worktree` is true.
+    pub worktree_name: Option<String>,
     /// Git ref (branch, tag, or commit) to base the new worktree on.
     /// Only relevant when `use_new_worktree` is true.
     pub base_ref: Option<String>,
@@ -730,6 +733,11 @@ pub struct SiblingThreadInfo {
     pub agent_id: String,
     /// The model ID used for the thread, if known.
     pub model: Option<String>,
+    /// An optional, non-fatal heads-up about the created thread that the
+    /// caller should relay or take into account (e.g., the project had an
+    /// unusual worktree layout that affected how the new worktree was set
+    /// up). Empty when nothing noteworthy happened.
+    pub warning: Option<String>,
 }
 
 /// A list of agents and, for each, the models available for use.

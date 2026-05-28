@@ -61,7 +61,7 @@ use crate::{
 };
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 #[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
@@ -880,6 +880,10 @@ pub struct CreateThreadOptions {
     /// Model override, as `provider/model-id`. Only applied when the thread
     /// uses the native Zed agent.
     pub model: Option<String>,
+    /// Working directories to attach to the new thread (e.g., the path of a
+    /// freshly-created sibling worktree). When `None`, the thread inherits
+    /// the project's default path list.
+    pub work_dirs: Option<PathList>,
 }
 
 pub(crate) struct AgentThread {
@@ -3013,7 +3017,7 @@ impl AgentPanel {
             agent,
             None,
             None,
-            None,
+            options.work_dirs,
             options.title.clone(),
             options.initial_content,
             options.model,
@@ -4661,14 +4665,85 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
                 initial_content: Some(initial_content),
                 agent: agent_choice.clone(),
                 model: request.model.clone(),
+                work_dirs: None,
             };
+
+            // If the caller asked for a fresh worktree, open a new workspace
+            // backed by a linked git worktree of each git repo in the parent
+            // project — the same flow the user gets when they pick "Create
+            // worktree" from the worktree picker. The sibling thread is then
+            // created inside the new workspace's agent panel, so it lives
+            // alongside any threads the user would create there manually.
+            let mut worktree_warning: Option<String> = None;
+            let target_panel = if request.use_new_worktree {
+                let workspace = panel.read_with(cx, |panel, _cx| panel.workspace.clone())?;
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("Source workspace is no longer available"))?;
+                // The branch target follows the existing UI semantics: when
+                // `base_ref` is set, treat it as the ref to base off of
+                // (resolved like `git switch --detach <ref>`); otherwise base
+                // off the current HEAD. Either way the new worktrees are in
+                // detached HEAD state — the agent can attach to a branch via
+                // git afterwards.
+                let branch_target = match request.base_ref.as_ref() {
+                    Some(ref_name) => zed_actions::NewWorktreeBranchTarget::ExistingBranch {
+                        name: ref_name.clone(),
+                    },
+                    None => zed_actions::NewWorktreeBranchTarget::CurrentBranch,
+                };
+                let action = zed_actions::CreateWorktree {
+                    worktree_name: request.worktree_name.clone(),
+                    branch_target,
+                };
+                let creation = window.update(cx, |_root, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        git_ui::worktree_service::create_worktree_workspace(
+                            workspace, &action, window, None, cx,
+                        )
+                    })
+                })?;
+                let created = creation
+                    .await
+                    .context("failed to create worktree workspace")?;
+                // The creation flow tells us when the project had multiple
+                // worktrees of the same underlying repo, which it consolidates
+                // into one new worktree — flag it so the calling agent knows
+                // the result may not reflect every source worktree's state.
+                if created.consolidated_worktrees {
+                    worktree_warning = Some(
+                        "The project contained multiple worktrees backed by the same git \
+                         repository, so they were consolidated into a single new worktree. \
+                         The new thread's worktree is based on one of them and may not \
+                         reflect the exact state of the others."
+                            .to_string(),
+                    );
+                }
+                // Locate the agent panel on the new workspace. We rely on
+                // the panel having registered by the time
+                // `create_worktree_workspace` returns — `open_worktree_workspace`
+                // explicitly awaits `take_panels_task` and the initial scan.
+                created
+                    .workspace
+                    .read_with(cx, |workspace, cx| workspace.panel::<AgentPanel>(cx))
+                    .ok_or_else(|| anyhow!("new workspace did not register an agent panel"))?
+                    .downgrade()
+            } else {
+                panel.clone()
+            };
+            // Both the source panel and any newly-opened worktree workspace
+            // live in the same OS window (the new workspace is a tab on the
+            // existing MultiWorkspace), so the original window handle is
+            // still the right context for the `create_thread_with_options`
+            // call regardless of which panel ends up the target.
+            let target_window = window;
 
             // We deliberately don't wait for the new thread's session to
             // become available here: there are currently no agent tools that
             // operate on sibling threads by session ID, so requiring one would
             // just introduce a race for no benefit.
-            let resolved_agent_id = window.update(cx, |_root, window, cx| {
-                panel.update(cx, |panel, cx| {
+            let resolved_agent_id = target_window.update(cx, |_root, window, cx| {
+                target_panel.update(cx, |panel, cx| {
                     panel.create_thread_with_options(
                         options,
                         AgentThreadSource::AgentPanel,
@@ -4686,6 +4761,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
                 title,
                 agent_id: resolved_agent_id.0.to_string(),
                 model: request.model,
+                warning: worktree_warning,
             })
         })
     }
