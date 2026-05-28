@@ -703,7 +703,8 @@ mod tests {
             "```mermaid\nblock-beta\n```\n\n",
             "```mermaid\nflowchart TD\n    A --> B\n```",
         );
-        let events = crate::parser::parse_markdown_with_options(markdown, false, false).events;
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
         let diagrams = extract_mermaid_diagrams(markdown, &events);
         assert_eq!(
             diagrams.len(),
