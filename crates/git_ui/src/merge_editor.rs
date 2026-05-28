@@ -9,17 +9,26 @@
 //! (registered globally via `git_ui::init`'s `observe_new(Editor)` hook) and
 //! gains the "Use Base" button alongside the existing Use Ours / Use Theirs /
 //! Use Both buttons whenever the conflict has a base section.
+//!
+//! A "Mark as Resolved" button in the editor header runs `git add` once
+//! all conflict markers are gone from the buffer. If the path leaves the
+//! unmerged state externally (e.g., the user runs `git add` from a terminal),
+//! a banner appears informing them rather than the merge editor silently
+//! becoming meaningless.
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer};
-use git::repository::UnmergedStages;
+use git::repository::{RepoPath, UnmergedStages};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::{Buffer, Capability};
-use project::{ConflictRegion, ConflictSetUpdate, Project, ProjectItem as _, ProjectPath};
+use project::{
+    ConflictRegion, ConflictSetUpdate, Project, ProjectItem as _, ProjectPath,
+    git_store::{Repository, RepositoryEvent},
+};
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use ui::prelude::*;
@@ -57,6 +66,19 @@ pub struct MergeEditor {
     base_visible: bool,
     ours_branch_label: SharedString,
     theirs_branch_label: SharedString,
+    repository: Entity<Repository>,
+    repo_path: RepoPath,
+    /// Set to true when the path leaves the unmerged state without the user
+    /// using this editor's "Mark as Resolved" button — i.e., resolved by an
+    /// external `git add`. Drives a banner; doesn't auto-close the editor so
+    /// the user keeps their cursor and scroll position.
+    externally_resolved: bool,
+    /// Sticky once the user clicks "Mark as Resolved": suppresses the
+    /// external-resolution banner for the status change our own `git add`
+    /// triggers, as well as any subsequent status changes (the file's
+    /// conflict is already resolved from this editor's point of view, so the
+    /// banner would be redundant).
+    internally_resolved: bool,
     /// Which inner editor most recently received focus. Drives
     /// [`Focusable::focus_handle`] and [`Item::act_as_type`] so that workspace
     /// systems (focus tracking, vim, inline assist, etc.) see the editor the
@@ -208,6 +230,8 @@ impl MergeEditor {
                         ours_branch_label,
                         theirs_branch_label,
                         project,
+                        repository,
+                        repo_path,
                         window,
                         cx,
                     )
@@ -246,6 +270,8 @@ impl MergeEditor {
         ours_branch_label: SharedString,
         theirs_branch_label: SharedString,
         project: Entity<Project>,
+        repository: Entity<Repository>,
+        repo_path: RepoPath,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -304,6 +330,24 @@ impl MergeEditor {
                 cx.notify();
             }));
         }
+        // Re-render when the result buffer is edited so the "Mark as Resolved"
+        // button's enabled state stays current.
+        subscriptions.push(cx.subscribe(&result_buffer, |this, _, event, cx| {
+            if let language::BufferEvent::Edited { .. } = event {
+                this.refresh_resolution_state(cx);
+            }
+        }));
+        // Watch for external resolution: when statuses change, re-check
+        // whether our path is still unmerged.
+        let repo_path_clone = repo_path.clone();
+        subscriptions.push(cx.subscribe(
+            &repository,
+            move |this, repo, event: &RepositoryEvent, cx| {
+                if matches!(event, RepositoryEvent::StatusesChanged) {
+                    this.on_statuses_changed(&repo, &repo_path_clone, cx);
+                }
+            },
+        ));
         // Subscribe to the conflict set so per-conflict accept buttons in
         // the side panes are kept in sync as conflicts are added, removed,
         // or resolved. The set is opened by `ConflictAddon` (registered on
@@ -329,6 +373,10 @@ impl MergeEditor {
             base_visible: false,
             ours_branch_label,
             theirs_branch_label,
+            repository,
+            repo_path,
+            externally_resolved: false,
+            internally_resolved: false,
             last_focused_pane: FocusedPane::default(),
             ours_side_blocks: Vec::new(),
             theirs_side_blocks: Vec::new(),
@@ -438,6 +486,79 @@ impl MergeEditor {
         }
     }
 
+    fn refresh_resolution_state(&self, cx: &mut Context<Self>) {
+        // Currently just notifies; the render path recomputes the marker scan.
+        // Centralized here so future caching (e.g., debounced text scans for
+        // very large files) has one entry point.
+        cx.notify();
+    }
+
+    fn on_statuses_changed(
+        &mut self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        cx: &mut Context<Self>,
+    ) {
+        let still_conflicted = repository
+            .read(cx)
+            .status_for_path(repo_path)
+            .map(|entry| entry.status.is_conflicted())
+            .unwrap_or(false);
+        if !still_conflicted && !self.externally_resolved && !self.internally_resolved {
+            self.externally_resolved = true;
+        }
+        // Always notify so the header button picks up index-level changes
+        // (e.g., transitions between staged ↔ unstaged after the user
+        // clicks `Mark as Resolved` or `Unstage`).
+        cx.notify();
+    }
+
+    /// True when the working-tree buffer no longer contains any parseable
+    /// conflict region. Uses the same parser the inline conflict view drives
+    /// from, so a legitimate `=======` line in a Markdown/RST/banner-comment
+    /// file isn't mistaken for an unresolved marker.
+    fn all_markers_cleared(&self, cx: &App) -> bool {
+        let snapshot = self.result_buffer.read(cx).snapshot();
+        project::ConflictSet::parse(&snapshot).conflicts.is_empty()
+    }
+
+    fn mark_as_resolved(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.all_markers_cleared(cx) {
+            return;
+        }
+        // `Repository::stage_entries` already saves any dirty buffer for the
+        // path before invoking `git add`, so the working tree on disk
+        // matches what the user sees here. Mark the resolution as internal
+        // ONLY after staging succeeds — otherwise a failed `git add` would
+        // permanently latch the flag, suppressing the external-resolution
+        // banner forever even if the file is later resolved from a terminal.
+        let stage = self
+            .repository
+            .update(cx, |repo, cx| repo.stage_entries(vec![self.repo_path.clone()], cx));
+        cx.spawn(async move |this, cx| {
+            stage.await?;
+            this.update(cx, |this, cx| {
+                this.internally_resolved = true;
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    /// Inverse of `mark_as_resolved`: runs `git reset HEAD <path>` so the
+    /// file leaves the staged area. Lets the user undo a too-eager
+    /// resolution without dropping to a terminal. The path doesn't go back
+    /// to being unmerged in git (that's a one-way state transition you'd
+    /// need `git checkout --conflict` for), but the staged-vs-working-tree
+    /// distinction does, which is the bit the button toggles.
+    fn unstage_resolution(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let unstage = self
+            .repository
+            .update(cx, |repo, cx| repo.unstage_entries(vec![self.repo_path.clone()], cx));
+        cx.spawn(async move |_, _cx| unstage.await)
+            .detach_and_log_err(cx);
+    }
+
     /// Returns the underlying single buffer behind a side-pane editor.
     /// Side-pane editors wrap their stage buffer in a `MultiBuffer::singleton`
     /// so `as_singleton()` always succeeds.
@@ -461,6 +582,43 @@ impl MergeEditor {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let base_available = self.base_editor.is_some();
         let base_visible = self.base_visible;
+        // Derive button state from the live repository status rather than the
+        // sticky `externally_resolved` flag: when the path currently has
+        // anything staged in the index, show "Unstage" so the user can undo
+        // a `git add` they (or someone else) ran. Otherwise show "Mark as
+        // Resolved".
+        let is_staged = self
+            .repository
+            .read(cx)
+            .status_for_path(&self.repo_path)
+            .map(|entry| entry.status.staging().has_staged())
+            .unwrap_or(false);
+        let resolved_enabled = self.all_markers_cleared(cx);
+        let resolution_button = if is_staged {
+            Button::new("unstage-resolution", "Unstage")
+                .label_size(LabelSize::Small)
+                .tooltip(|_window, cx| {
+                    Tooltip::simple("Undo `git add` for this file", cx)
+                })
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.unstage_resolution(window, cx)),
+                )
+        } else {
+            Button::new("mark-as-resolved", "Mark as Resolved")
+                .label_size(LabelSize::Small)
+                .disabled(!resolved_enabled)
+                .tooltip(move |_window, cx| {
+                    let text = if resolved_enabled {
+                        "Stage this file with `git add` to mark the conflict resolved"
+                    } else {
+                        "Remove all conflict markers from the buffer first"
+                    };
+                    Tooltip::simple(text, cx)
+                })
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.mark_as_resolved(window, cx)),
+                )
+        };
         h_flex()
             .px_2()
             .py_1()
@@ -474,6 +632,7 @@ impl MergeEditor {
                     .color(Color::Muted),
             )
             .child(div().flex_grow())
+            .child(resolution_button)
             .child(
                 IconButton::new(
                     "toggle-merge-base",
@@ -498,6 +657,32 @@ impl MergeEditor {
                 })
                 .on_click(cx.listener(|this, _, window, cx| this.toggle_base(window, cx))),
             )
+    }
+
+    fn render_external_resolution_banner(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.externally_resolved {
+            return gpui::Empty.into_any_element();
+        }
+        h_flex()
+            .px_2()
+            .py_1()
+            .gap_2()
+            .bg(cx.theme().colors().element_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Icon::new(IconName::Info)
+                    .size(ui::IconSize::Small)
+                    .color(Color::Info),
+            )
+            .child(
+                Label::new(SharedString::new_static(
+                    "This file is no longer in conflict. The merge editor remains open so you don't lose your place.",
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+            .into_any_element()
     }
 
     fn render_pane_header(
@@ -841,6 +1026,7 @@ impl Render for MergeEditor {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(cx))
+            .child(self.render_external_resolution_banner(cx))
             .child(
                 h_flex()
                     .flex_1()
@@ -1176,5 +1362,219 @@ mod tests {
             err.to_string().contains("no text stages"),
             "unexpected error: {err}"
         );
+    }
+
+    /// Opens a merge editor for `/project/conflict.txt` with realistic stages
+    /// and returns the project, workspace, merge editor, and cx for further
+    /// assertions. Used by the Mark-as-Resolved and external-resolution tests.
+    async fn open_for_test(
+        cx: &mut TestAppContext,
+    ) -> (
+        Arc<FakeFs>,
+        Entity<Project>,
+        Entity<MergeEditor>,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "conflict.txt": "<<<<<<< HEAD\nour line\n=======\ntheir line\n>>>>>>> branch\n",
+            }),
+        )
+        .await;
+
+        fs.set_unmerged_paths_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                repo_path("conflict.txt"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            )],
+        );
+        fs.set_unmerged_stages_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                repo_path("conflict.txt"),
+                UnmergedStages {
+                    base: Some("base line\n".into()),
+                    ours: Some("our line\n".into()),
+                    theirs: Some("their line\n".into()),
+                },
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, view_cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(view_cx, |mw, _| mw.workspace().clone());
+        view_cx.executor().run_until_parked();
+
+        let worktree_id = project.read_with(view_cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let project_path = ProjectPath {
+            worktree_id,
+            path: util::rel_path::rel_path("conflict.txt").into(),
+        };
+        let merge_editor = workspace
+            .update_in(view_cx, |workspace, window, cx| {
+                MergeEditor::open(project_path, workspace.weak_handle(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        (fs, project, merge_editor)
+    }
+
+    #[gpui::test]
+    async fn test_external_resolution_sets_banner_flag(
+        _: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let (fs, _project, merge_editor) = open_for_test(cx).await;
+
+        merge_editor.read_with(cx, |this, _| {
+            assert!(
+                !this.externally_resolved,
+                "fresh merge editor must not have the banner flag set"
+            );
+        });
+
+        // Externally resolve: remove the unmerged path from the repo state.
+        // This mirrors what a terminal `git add` would do.
+        fs.set_unmerged_paths_for_repo(path!("/project/.git").as_ref(), &[]);
+        cx.executor().run_until_parked();
+
+        merge_editor.read_with(cx, |this, _| {
+            assert!(
+                this.externally_resolved,
+                "merge editor should detect external resolution via RepositoryEvent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_internal_resolution_suppresses_banner(
+        _: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let (fs, _project, merge_editor) = open_for_test(cx).await;
+
+        // Set the flag the way `mark_as_resolved` would. We do this directly
+        // rather than via the button-handler closure because the latter takes
+        // a `&mut Window` which the existing test fixture doesn't surface.
+        // The behavior under test is `on_statuses_changed` honoring the flag.
+        merge_editor.update(cx, |this, _| {
+            this.internally_resolved = true;
+        });
+
+        // Simulate `git add` completing: the path leaves the unmerged set.
+        fs.set_unmerged_paths_for_repo(path!("/project/.git").as_ref(), &[]);
+        cx.executor().run_until_parked();
+
+        merge_editor.read_with(cx, |this, _| {
+            assert!(
+                !this.externally_resolved,
+                "banner must not fire when the user resolved via this editor's button"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_mark_as_resolved_disabled_when_markers_present(
+        _: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, _project, merge_editor) = open_for_test(cx).await;
+
+        merge_editor.read_with(cx, |this, cx| {
+            assert!(
+                !this.all_markers_cleared(cx),
+                "freshly opened conflict file still contains markers"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_mark_as_resolved_when_markers_cleared(
+        _: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, _project, merge_editor) = open_for_test(cx).await;
+
+        // Simulate the user resolving every conflict by replacing the buffer
+        // contents with marker-free text.
+        merge_editor.update(cx, |this, cx| {
+            this.result_buffer.update(cx, |buffer, cx| {
+                buffer.set_text("our line\n", cx);
+            });
+        });
+        cx.executor().run_until_parked();
+
+        merge_editor.read_with(cx, |this, cx| {
+            assert!(
+                this.all_markers_cleared(cx),
+                "marker scan should report clean once <<<< etc. are removed"
+            );
+        });
+    }
+
+    /// Regression test for the `=======` substring false-positive: legitimate
+    /// content (Markdown H1 underlines, RST headings, ASCII banner comments)
+    /// frequently contains a bare line of equals signs. Using `ConflictSet::parse`
+    /// rather than `str::contains` keeps Mark-as-Resolved enabled for those files.
+    #[gpui::test]
+    async fn test_all_markers_cleared_ignores_legitimate_equals_lines(
+        _: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, _project, merge_editor) = open_for_test(cx).await;
+
+        // Resolved content that legitimately contains a Markdown H1 underline
+        // / RST section divider made of equals signs.
+        merge_editor.update(cx, |this, cx| {
+            this.result_buffer.update(cx, |buffer, cx| {
+                buffer.set_text("# Heading\n=======\n\nthe resolved body\n", cx);
+            });
+        });
+        cx.executor().run_until_parked();
+
+        merge_editor.read_with(cx, |this, cx| {
+            assert!(
+                this.all_markers_cleared(cx),
+                "bare `=======` lines outside a conflict block must not block Mark-as-Resolved"
+            );
+        });
+    }
+
+    /// Side-pane buffers must not be attached to any `ProjectPath`. The merge
+    /// editor builds them via `Buffer::local`, so language servers don't get
+    /// phantom `didOpen` notifications for files that don't exist on disk.
+    #[gpui::test]
+    async fn test_side_pane_buffers_have_no_project_path(
+        _: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, _project, merge_editor) = open_for_test(cx).await;
+
+        merge_editor.read_with(cx, |this, cx| {
+            for editor in [&this.ours_editor, &this.theirs_editor]
+                .into_iter()
+                .chain(this.base_editor.as_ref())
+            {
+                let buffer = MergeEditor::stage_buffer(editor, cx);
+                assert!(
+                    buffer.read(cx).file().is_none(),
+                    "side-pane buffer must have no on-disk file (otherwise LSPs \
+                     would see a phantom didOpen)"
+                );
+            }
+        });
     }
 }
