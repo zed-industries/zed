@@ -1,0 +1,292 @@
+use std::{
+    path::{Path, PathBuf},
+    pin::Pin,
+    task::Poll,
+};
+
+use anyhow::{Context, Result};
+use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
+use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, io::BufReader};
+use sha2::{Digest, Sha256};
+
+use crate::{HttpClient, github::AssetKind};
+
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+pub struct GithubBinaryMetadata {
+    pub metadata_version: u64,
+    pub digest: Option<String>,
+}
+
+impl GithubBinaryMetadata {
+    pub async fn read_from_file(metadata_path: &Path) -> Result<GithubBinaryMetadata> {
+        let metadata_content = async_fs::read_to_string(metadata_path)
+            .await
+            .with_context(|| format!("reading metadata file at {metadata_path:?}"))?;
+        serde_json::from_str(&metadata_content)
+            .with_context(|| format!("parsing metadata file at {metadata_path:?}"))
+    }
+
+    pub async fn write_to_file(&self, metadata_path: &Path) -> Result<()> {
+        let metadata_content = serde_json::to_string(self)
+            .with_context(|| format!("serializing metadata for {metadata_path:?}"))?;
+        async_fs::write(metadata_path, metadata_content.as_bytes())
+            .await
+            .with_context(|| format!("writing metadata file at {metadata_path:?}"))?;
+        Ok(())
+    }
+}
+
+pub async fn download_server_binary(
+    http_client: &dyn HttpClient,
+    url: &str,
+    digest: Option<&str>,
+    destination_path: &Path,
+    asset_kind: AssetKind,
+) -> Result<(), anyhow::Error> {
+    log::info!("downloading github artifact from {url}");
+    let Some(destination_parent) = destination_path.parent() else {
+        anyhow::bail!("destination path has no parent: {destination_path:?}");
+    };
+
+    let staging_path = staging_path(destination_parent, asset_kind)?;
+    let mut response = http_client
+        .get(url, Default::default(), true)
+        .await
+        .with_context(|| format!("downloading release from {url}"))?;
+    let body = response.body_mut();
+
+    if let Err(err) = extract_to_staging(body, digest, url, &staging_path, asset_kind).await {
+        cleanup_staging_path(&staging_path, asset_kind).await;
+        return Err(err);
+    }
+
+    if let Err(err) = finalize_download(&staging_path, destination_path).await {
+        cleanup_staging_path(&staging_path, asset_kind).await;
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+async fn extract_to_staging(
+    body: impl AsyncRead + Unpin,
+    digest: Option<&str>,
+    url: &str,
+    staging_path: &Path,
+    asset_kind: AssetKind,
+) -> Result<()> {
+    match digest {
+        Some(expected_sha_256) => {
+            let temp_asset_file = tempfile::NamedTempFile::new()
+                .with_context(|| format!("creating a temporary file for {url}"))?;
+            let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
+            let mut writer = HashingWriter {
+                writer: async_fs::File::from(temp_asset_file),
+                hasher: Sha256::new(),
+            };
+            futures::io::copy(&mut BufReader::new(body), &mut writer)
+                .await
+                .with_context(|| {
+                    format!("saving archive contents into the temporary file for {url}")
+                })?;
+            let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+
+            anyhow::ensure!(
+                asset_sha_256 == expected_sha_256,
+                "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
+            );
+            writer
+                .writer
+                .seek(std::io::SeekFrom::Start(0))
+                .await
+                .with_context(|| format!("seeking temporary file for {url}"))?;
+            stream_file_archive(&mut writer.writer, url, staging_path, asset_kind)
+                .await
+                .with_context(|| {
+                    format!("extracting downloaded asset for {url} into {staging_path:?}")
+                })?;
+        }
+        None => {
+            stream_response_archive(body, url, staging_path, asset_kind)
+                .await
+                .with_context(|| {
+                    format!("extracting response for asset {url} into {staging_path:?}")
+                })?;
+        }
+    }
+    Ok(())
+}
+
+fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
+    match asset_kind {
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
+            let dir = tempfile::Builder::new()
+                .prefix(".tmp-github-download-")
+                .tempdir_in(parent)
+                .with_context(|| format!("creating staging directory in {parent:?}"))?;
+            Ok(dir.keep())
+        }
+        AssetKind::Gz => {
+            let path = tempfile::Builder::new()
+                .prefix(".tmp-github-download-")
+                .tempfile_in(parent)
+                .with_context(|| format!("creating staging file in {parent:?}"))?
+                .into_temp_path()
+                .keep()
+                .with_context(|| format!("persisting staging file in {parent:?}"))?;
+            Ok(path)
+        }
+    }
+}
+
+async fn cleanup_staging_path(staging_path: &Path, asset_kind: AssetKind) {
+    match asset_kind {
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
+            if let Err(err) = async_fs::remove_dir_all(staging_path).await {
+                log::warn!("failed to remove staging directory {staging_path:?}: {err:?}");
+            }
+        }
+        AssetKind::Gz => {
+            if let Err(err) = async_fs::remove_file(staging_path).await {
+                log::warn!("failed to remove staging file {staging_path:?}: {err:?}");
+            }
+        }
+    }
+}
+
+async fn finalize_download(staging_path: &Path, destination_path: &Path) -> Result<()> {
+    _ = async_fs::remove_dir_all(destination_path).await;
+    async_fs::rename(staging_path, destination_path)
+        .await
+        .with_context(|| format!("renaming {staging_path:?} to {destination_path:?}"))?;
+    Ok(())
+}
+
+async fn stream_response_archive(
+    response: impl AsyncRead + Unpin,
+    url: &str,
+    destination_path: &Path,
+    asset_kind: AssetKind,
+) -> Result<()> {
+    match asset_kind {
+        AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
+        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, response).await?,
+        AssetKind::Gz => extract_gz(destination_path, url, response).await?,
+        AssetKind::Zip => {
+            util::archive::extract_zip(destination_path, response).await?;
+        }
+    };
+    Ok(())
+}
+
+async fn stream_file_archive(
+    file_archive: impl AsyncRead + AsyncSeek + Unpin,
+    url: &str,
+    destination_path: &Path,
+    asset_kind: AssetKind,
+) -> Result<()> {
+    match asset_kind {
+        AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
+        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, file_archive).await?,
+        AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
+        #[cfg(not(windows))]
+        AssetKind::Zip => {
+            util::archive::extract_seekable_zip(destination_path, file_archive).await?;
+        }
+        #[cfg(windows)]
+        AssetKind::Zip => {
+            util::archive::extract_zip(destination_path, file_archive).await?;
+        }
+    };
+    Ok(())
+}
+
+async fn extract_tar_gz(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
+    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
+    Ok(())
+}
+
+async fn extract_tar_bz2(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let decompressed_bytes = BzDecoder::new(BufReader::new(from));
+    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
+    Ok(())
+}
+
+async fn unpack_tar_archive(
+    destination_path: &Path,
+    url: &str,
+    archive_bytes: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    // We don't need to set the modified time. It's irrelevant to downloaded
+    // archive verification, and some filesystems return errors when asked to
+    // apply it after extraction.
+    let archive = async_tar::ArchiveBuilder::new(archive_bytes)
+        .set_preserve_mtime(false)
+        .build();
+    archive
+        .unpack(&destination_path)
+        .await
+        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+    Ok(())
+}
+
+async fn extract_gz(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let mut decompressed_bytes = GzipDecoder::new(BufReader::new(from));
+    let mut file = async_fs::File::create(&destination_path)
+        .await
+        .with_context(|| {
+            format!("creating a file {destination_path:?} for a download from {url}")
+        })?;
+    futures::io::copy(&mut decompressed_bytes, &mut file)
+        .await
+        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+    Ok(())
+}
+
+struct HashingWriter<W: AsyncWrite + Unpin> {
+    writer: W,
+    hasher: Sha256,
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        match Pin::new(&mut self.writer).poll_write(cx, buf) {
+            Poll::Ready(Ok(n)) => {
+                self.hasher.update(&buf[..n]);
+                Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_close(cx)
+    }
+}

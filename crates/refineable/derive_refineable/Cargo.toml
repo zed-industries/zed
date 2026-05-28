@@ -1,0 +1,21 @@
+[package]
+name = "derive_refineable"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "A derive macro for creating refinement types in Rust"
+
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/derive_refineable.rs"
+proc-macro = true
+doctest = false
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true

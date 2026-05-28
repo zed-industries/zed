@@ -1,0 +1,1107 @@
+use anyhow::{Context as _, Result};
+
+use audio::{AudioSettings, CHANNEL_COUNT, SAMPLE_RATE};
+use cpal::DeviceId;
+use cpal::traits::{DeviceTrait, StreamTrait as _};
+use futures::channel::mpsc::Sender;
+use futures::{Stream, StreamExt as _};
+use gpui::{
+    AsyncApp, BackgroundExecutor, Priority, ScreenCaptureFrame, ScreenCaptureSource,
+    ScreenCaptureStream, Task,
+};
+use libwebrtc::native::{apm, audio_mixer, audio_resampler};
+use livekit::track;
+
+use livekit::webrtc::{
+    audio_frame::AudioFrame,
+    audio_source::{AudioSourceOptions, RtcAudioSource, native::NativeAudioSource},
+    audio_stream::native::NativeAudioStream,
+    video_frame::{VideoBuffer, VideoFrame, VideoRotation},
+    video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource},
+    video_stream::native::NativeVideoStream,
+};
+use log::info;
+use parking_lot::Mutex;
+use rodio::Source;
+use rodio::conversions::SampleTypeConverter;
+use rodio::source::{AutomaticGainControlSettings, LimitSettings};
+use serde::{Deserialize, Serialize};
+use settings::Settings;
+use std::cell::RefCell;
+use std::sync::Weak;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use std::{borrow::Cow, collections::VecDeque, sync::Arc};
+use util::{ResultExt as _, maybe};
+
+struct TimestampedFrame {
+    frame: AudioFrame<'static>,
+    captured_at: Instant,
+}
+
+pub(crate) struct AudioStack {
+    executor: BackgroundExecutor,
+    apm: Arc<Mutex<apm::AudioProcessingModule>>,
+    mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
+    _output_task: RefCell<Weak<Task<()>>>,
+    next_ssrc: AtomicI32,
+}
+
+impl AudioStack {
+    pub(crate) fn new(executor: BackgroundExecutor) -> Self {
+        let apm = Arc::new(Mutex::new(apm::AudioProcessingModule::new(
+            true, true, true, true,
+        )));
+        let mixer = Arc::new(Mutex::new(audio_mixer::AudioMixer::new()));
+        Self {
+            executor,
+            apm,
+            mixer,
+            _output_task: RefCell::new(Weak::new()),
+            next_ssrc: AtomicI32::new(1),
+        }
+    }
+
+    pub(crate) fn play_remote_audio_track(
+        &self,
+        track: &livekit::track::RemoteAudioTrack,
+        output_audio_device: Option<DeviceId>,
+    ) -> AudioStream {
+        let output_task = self.start_output(output_audio_device);
+
+        let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
+        let source = AudioMixerSource {
+            ssrc: next_ssrc,
+            sample_rate: SAMPLE_RATE.get(),
+            num_channels: CHANNEL_COUNT.get() as u32,
+            buffer: Arc::default(),
+        };
+        self.mixer.lock().add_source(source.clone());
+
+        let mut stream = NativeAudioStream::new(
+            track.rtc_track(),
+            source.sample_rate as i32,
+            source.num_channels as i32,
+        );
+
+        let receive_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
+            let source = source.clone();
+            async move {
+                while let Some(frame) = stream.next().await {
+                    source.receive(frame);
+                }
+            }
+        });
+
+        let mixer = self.mixer.clone();
+        let on_drop = util::defer(move || {
+            mixer.lock().remove_source(source.ssrc);
+            drop(receive_task);
+            drop(output_task);
+        });
+
+        AudioStream::Output {
+            _drop: Box::new(on_drop),
+        }
+    }
+
+    fn start_output(&self, output_audio_device: Option<DeviceId>) -> Arc<Task<()>> {
+        if let Some(task) = self._output_task.borrow().upgrade() {
+            return task;
+        }
+        let task = Arc::new(self.executor.spawn({
+            let apm = self.apm.clone();
+            let mixer = self.mixer.clone();
+            let executor = self.executor.clone();
+            async move {
+                Self::play_output(
+                    executor,
+                    apm,
+                    mixer,
+                    SAMPLE_RATE.get(),
+                    CHANNEL_COUNT.get().into(),
+                    output_audio_device,
+                )
+                .await
+                .log_err();
+            }
+        }));
+        *self._output_task.borrow_mut() = Arc::downgrade(&task);
+        task
+    }
+
+    pub(crate) fn capture_local_microphone_track(
+        &self,
+        user_name: String,
+        is_staff: bool,
+        cx: &AsyncApp,
+    ) -> Result<(crate::LocalAudioTrack, AudioStream, Arc<AtomicU64>)> {
+        let source = NativeAudioSource::new(
+            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
+            AudioSourceOptions::default(),
+            SAMPLE_RATE.get(),
+            CHANNEL_COUNT.get().into(),
+            10,
+        );
+
+        let speaker = Speaker {
+            name: user_name,
+            is_staff,
+        };
+        log::info!("Microphone speaker: {speaker:?}");
+        let track_name = serde_urlencoded::to_string(speaker)
+            .context("Could not encode user information in track name")?;
+
+        let track = track::LocalAudioTrack::create_audio_track(
+            &track_name,
+            RtcAudioSource::Native(source.clone()),
+        );
+
+        let apm = self.apm.clone();
+
+        let input_lag_us = Arc::new(AtomicU64::new(0));
+        let (frame_tx, mut frame_rx) = futures::channel::mpsc::channel::<TimestampedFrame>(1);
+        let transmit_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
+            let input_lag_us = input_lag_us.clone();
+            async move {
+                while let Some(timestamped) = frame_rx.next().await {
+                    let lag = timestamped.captured_at.elapsed();
+                    input_lag_us.store(lag.as_micros() as u64, Ordering::Relaxed);
+                    source.capture_frame(&timestamped.frame).await.log_err();
+                }
+            }
+        });
+        let capture_task = {
+            let input_audio_device =
+                AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
+                    .flatten();
+            let executor = self.executor.clone();
+            self.executor.spawn(async move {
+                Self::capture_input(
+                    executor,
+                    apm,
+                    frame_tx,
+                    SAMPLE_RATE.get(), // TODO(audio): was legacy removed for now
+                    CHANNEL_COUNT.get().into(),
+                    input_audio_device,
+                )
+                .await
+            })
+        };
+
+        let on_drop = util::defer(|| {
+            drop(transmit_task);
+            drop(capture_task);
+        });
+        Ok((
+            super::LocalAudioTrack(track),
+            AudioStream::Output {
+                _drop: Box::new(on_drop),
+            },
+            input_lag_us,
+        ))
+    }
+
+    async fn play_output(
+        executor: BackgroundExecutor,
+        apm: Arc<Mutex<apm::AudioProcessingModule>>,
+        mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
+        sample_rate: u32,
+        _num_channels: u32,
+        output_audio_device: Option<DeviceId>,
+    ) -> Result<()> {
+        // Prevent App Nap from throttling audio playback on macOS.
+        // This guard is held for the entire duration of audio output.
+        #[cfg(target_os = "macos")]
+        let _prevent_app_nap = PreventAppNapGuard::new();
+
+        loop {
+            let mut device_change_listener = DeviceChangeListener::new(false)?;
+            let (output_device, output_config) =
+                crate::default_device(false, output_audio_device.as_ref())?;
+            info!("Output config: {output_config:?}");
+            let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+            let mixer = mixer.clone();
+            let apm = apm.clone();
+            let mut resampler = audio_resampler::AudioResampler::default();
+            let mut buf = Vec::new();
+
+            executor
+                .spawn_with_priority(Priority::RealtimeAudio, async move {
+                    let output_stream = output_device.build_output_stream(
+                        &output_config.config(),
+                        {
+                            move |mut data, _info| {
+                                while data.len() > 0 {
+                                    if data.len() <= buf.len() {
+                                        let rest = buf.split_off(data.len());
+                                        data.copy_from_slice(&buf);
+                                        buf = rest;
+                                        return;
+                                    }
+                                    if buf.len() > 0 {
+                                        let (prefix, suffix) = data.split_at_mut(buf.len());
+                                        prefix.copy_from_slice(&buf);
+                                        data = suffix;
+                                    }
+
+                                    let mut mixer = mixer.lock();
+                                    let mixed = mixer.mix(output_config.channels() as usize);
+                                    let sampled = resampler.remix_and_resample(
+                                        mixed,
+                                        sample_rate / 100,
+                                        // We need to assume output number of channels as otherwise we will
+                                        // crash in process_reverse_stream otherwise as livekit's audio resampler
+                                        // does not seem to support non-matching channel counts.
+                                        // NOTE: you can verify this by debug printing buf.len() after this stage.
+                                        // For 2->4 channel upmix, we should see buf.len=1920, buf we get only 960.
+                                        output_config.channels() as u32,
+                                        sample_rate,
+                                        output_config.channels() as u32,
+                                        output_config.sample_rate(),
+                                    );
+                                    buf = sampled.to_vec();
+                                    apm.lock()
+                                        .process_reverse_stream(
+                                            &mut buf,
+                                            output_config.sample_rate() as i32,
+                                            output_config.channels() as i32,
+                                        )
+                                        .ok();
+                                }
+                            }
+                        },
+                        |error| log::error!("error playing audio track: {:?}", error),
+                        Some(Duration::from_millis(100)),
+                    );
+
+                    let Some(output_stream) = output_stream.log_err() else {
+                        return;
+                    };
+
+                    output_stream.play().log_err();
+                    // Block forever to keep the output stream alive
+                    end_on_drop_rx.recv().ok();
+                })
+                .detach();
+
+            device_change_listener.next().await;
+            drop(end_on_drop_tx)
+        }
+    }
+
+    async fn capture_input(
+        executor: BackgroundExecutor,
+        apm: Arc<Mutex<apm::AudioProcessingModule>>,
+        frame_tx: Sender<TimestampedFrame>,
+        sample_rate: u32,
+        num_channels: u32,
+        input_audio_device: Option<DeviceId>,
+    ) -> Result<()> {
+        loop {
+            let mut device_change_listener = DeviceChangeListener::new(true)?;
+            let (device, config) = crate::default_device(true, input_audio_device.as_ref())?;
+            let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+            let apm = apm.clone();
+            let mut frame_tx = frame_tx.clone();
+            let mut resampler = audio_resampler::AudioResampler::default();
+
+            executor
+                .spawn_with_priority(Priority::RealtimeAudio, async move {
+                    maybe!({
+                        if let Some(desc) = device.description().ok() {
+                            log::info!("Using microphone: {}", desc.name())
+                        } else {
+                            log::info!("Using microphone: <unknown>");
+                        }
+
+                        let ten_ms_buffer_size =
+                            (config.channels() as u32 * config.sample_rate() / 100) as usize;
+                        let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
+                        let mut rodio_effects = RodioEffectsAdaptor::new(buf.len())
+                            .automatic_gain_control(AutomaticGainControlSettings {
+                                target_level: 0.50,
+                                attack_time: Duration::from_secs(1),
+                                release_time: Duration::from_secs(0),
+                                absolute_max_gain: 5.0,
+                            })
+                            .limit(LimitSettings::live_performance());
+
+                        let stream = device
+                            .build_input_stream_raw(
+                                &config.config(),
+                                config.sample_format(),
+                                move |data, _: &_| {
+                                    let captured_at = Instant::now();
+                                    let data = crate::get_sample_data(config.sample_format(), data)
+                                        .log_err();
+                                    let Some(data) = data else {
+                                        return;
+                                    };
+                                    let mut data = data.as_slice();
+
+                                    while data.len() > 0 {
+                                        let remainder =
+                                            (buf.capacity() - buf.len()).min(data.len());
+                                        buf.extend_from_slice(&data[..remainder]);
+                                        data = &data[remainder..];
+
+                                        if buf.capacity() == buf.len() {
+                                            let mut sampled = resampler
+                                                .remix_and_resample(
+                                                    buf.as_slice(),
+                                                    config.sample_rate() / 100,
+                                                    config.channels() as u32,
+                                                    config.sample_rate(),
+                                                    num_channels,
+                                                    sample_rate,
+                                                )
+                                                .to_owned();
+
+                                            if audio::LIVE_SETTINGS
+                                                .auto_microphone_volume
+                                                .load(Ordering::Relaxed)
+                                            {
+                                                rodio_effects
+                                                    .inner_mut()
+                                                    .inner_mut()
+                                                    .fill_buffer_with(&sampled);
+                                                sampled.clear();
+                                                sampled.extend(SampleTypeConverter::<_, i16>::new(
+                                                    rodio_effects.by_ref(),
+                                                ));
+                                            }
+
+                                            apm.lock()
+                                                .process_stream(
+                                                    &mut sampled,
+                                                    sample_rate as i32,
+                                                    num_channels as i32,
+                                                )
+                                                .log_err();
+                                            buf.clear();
+
+                                            frame_tx
+                                                .try_send(TimestampedFrame {
+                                                    frame: AudioFrame {
+                                                        data: Cow::Owned(sampled),
+                                                        sample_rate,
+                                                        num_channels,
+                                                        samples_per_channel: sample_rate / 100,
+                                                    },
+                                                    captured_at,
+                                                })
+                                                .ok();
+                                        }
+                                    }
+                                },
+                                |err| log::error!("error capturing audio track: {:?}", err),
+                                Some(Duration::from_millis(100)),
+                            )
+                            .context("failed to build input stream")?;
+
+                        stream.play()?;
+                        // Keep the thread alive and holding onto the `stream`
+                        end_on_drop_rx.recv().ok();
+                        anyhow::Ok(Some(()))
+                    })
+                    .log_err();
+                })
+                .detach();
+
+            device_change_listener.next().await;
+            drop(end_on_drop_tx)
+        }
+    }
+}
+
+/// This allows using of Rodio's effects library within our home brewn audio
+/// pipeline. The alternative would be inlining Rodio's effects which is
+/// problematic from a legal stance. We would then have to make clear that code
+/// is not owned by zed-industries while the code would be surrounded by
+/// zed-industries owned code.
+///
+/// This adaptor does incur a slight performance penalty (copying into a
+/// pre-allocated vec and back) however the impact will be immeasurably low.
+///
+/// There is no latency impact.
+pub struct RodioEffectsAdaptor {
+    input: Vec<rodio::Sample>,
+    pos: usize,
+}
+
+impl RodioEffectsAdaptor {
+    // This implementation incorrect terminology confusing everyone. A normal
+    // audio frame consists of all samples for one moment in time (one for mono,
+    // two for stereo). Here a frame of audio refers to a 10ms buffer of samples.
+    fn new(samples_per_frame: usize) -> Self {
+        Self {
+            input: Vec::with_capacity(samples_per_frame),
+            pos: 0,
+        }
+    }
+
+    fn fill_buffer_with(&mut self, integer_samples: &[i16]) {
+        self.input.clear();
+        self.input.extend(SampleTypeConverter::<_, f32>::new(
+            integer_samples.iter().copied(),
+        ));
+        self.pos = 0;
+    }
+}
+
+impl Iterator for RodioEffectsAdaptor {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sample = self.input.get(self.pos)?;
+        self.pos += 1;
+        Some(*sample)
+    }
+}
+
+impl rodio::Source for RodioEffectsAdaptor {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        rodio::nz!(2)
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        rodio::nz!(48000)
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Speaker {
+    pub name: String,
+    pub is_staff: bool,
+}
+
+use super::LocalVideoTrack;
+
+pub enum AudioStream {
+    Input { _task: Task<()> },
+    Output { _drop: Box<dyn std::any::Any> },
+}
+
+pub(crate) async fn capture_local_video_track(
+    capture_source: &dyn ScreenCaptureSource,
+    cx: &mut gpui::AsyncApp,
+) -> Result<(crate::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
+    let metadata = capture_source.metadata()?;
+    let track_source = gpui_tokio::Tokio::spawn(cx, async move {
+        NativeVideoSource::new(
+            VideoResolution {
+                width: metadata.resolution.width.0 as u32,
+                height: metadata.resolution.height.0 as u32,
+            },
+            true,
+        )
+    })
+    .await?;
+
+    let capture_stream = capture_source
+        .stream(cx.foreground_executor(), {
+            let track_source = track_source.clone();
+            Box::new(move |frame| {
+                if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
+                    track_source.capture_frame(&VideoFrame {
+                        rotation: VideoRotation::VideoRotation0,
+                        timestamp_us: 0,
+                        buffer,
+                    });
+                }
+            })
+        })
+        .await??;
+
+    Ok((
+        LocalVideoTrack(track::LocalVideoTrack::create_video_track(
+            "screen share",
+            RtcVideoSource::Native(track_source),
+        )),
+        capture_stream,
+    ))
+}
+
+#[derive(Clone)]
+struct AudioMixerSource {
+    ssrc: i32,
+    sample_rate: u32,
+    num_channels: u32,
+    buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+}
+
+impl AudioMixerSource {
+    fn receive(&self, frame: AudioFrame) {
+        assert_eq!(
+            frame.data.len() as u32,
+            self.sample_rate * self.num_channels / 100
+        );
+
+        let mut buffer = self.buffer.lock();
+        buffer.push_back(frame.data.to_vec());
+        while buffer.len() > 10 {
+            buffer.pop_front();
+        }
+    }
+}
+
+impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
+    fn ssrc(&self) -> i32 {
+        self.ssrc
+    }
+
+    fn preferred_sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame<'_>> {
+        assert_eq!(self.sample_rate, target_sample_rate);
+        let buf = self.buffer.lock().pop_front()?;
+        Some(AudioFrame {
+            data: Cow::Owned(buf),
+            sample_rate: self.sample_rate,
+            num_channels: self.num_channels,
+            samples_per_channel: self.sample_rate / 100,
+        })
+    }
+}
+
+pub fn play_remote_video_track(
+    track: &crate::RemoteVideoTrack,
+    executor: &BackgroundExecutor,
+) -> impl Stream<Item = RemoteVideoFrame> + use<> {
+    #[cfg(target_os = "macos")]
+    {
+        _ = executor;
+        let mut pool = None;
+        let most_recent_frame_size = (0, 0);
+        NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
+            if pool == None
+                || most_recent_frame_size != (frame.buffer.width(), frame.buffer.height())
+            {
+                pool = create_buffer_pool(frame.buffer.width(), frame.buffer.height()).log_err();
+            }
+            let pool = pool.clone();
+            async move {
+                if frame.buffer.width() < 10 && frame.buffer.height() < 10 {
+                    // when the remote stops sharing, we get an 8x8 black image.
+                    // In a lil bit, the unpublish will come through and close the view,
+                    // but until then, don't flash black.
+                    return None;
+                }
+
+                video_frame_buffer_from_webrtc(pool?, frame.buffer)
+            }
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let executor = executor.clone();
+        NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
+            executor.spawn(async move { video_frame_buffer_from_webrtc(frame.buffer) })
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn create_buffer_pool(
+    width: u32,
+    height: u32,
+) -> Result<core_video::pixel_buffer_pool::CVPixelBufferPool> {
+    use core_foundation::{base::TCFType, number::CFNumber, string::CFString};
+    use core_video::pixel_buffer;
+    use core_video::{
+        pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        pixel_buffer_io_surface::kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey,
+        pixel_buffer_pool::{self},
+    };
+
+    let width_key: CFString =
+        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferWidthKey) };
+    let height_key: CFString =
+        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferHeightKey) };
+    let animation_key: CFString = unsafe {
+        CFString::wrap_under_get_rule(kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey)
+    };
+    let format_key: CFString =
+        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferPixelFormatTypeKey) };
+
+    let yes: CFNumber = 1.into();
+    let width: CFNumber = (width as i32).into();
+    let height: CFNumber = (height as i32).into();
+    let format: CFNumber = (kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i64).into();
+
+    let buffer_attributes = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[
+        (width_key, width.into_CFType()),
+        (height_key, height.into_CFType()),
+        (animation_key, yes.into_CFType()),
+        (format_key, format.into_CFType()),
+    ]);
+
+    pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(|cv_return| {
+        anyhow::anyhow!("failed to create pixel buffer pool: CVReturn({cv_return})",)
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub type RemoteVideoFrame = core_video::pixel_buffer::CVPixelBuffer;
+
+#[cfg(target_os = "macos")]
+fn video_frame_buffer_from_webrtc(
+    pool: core_video::pixel_buffer_pool::CVPixelBufferPool,
+    buffer: Box<dyn VideoBuffer>,
+) -> Option<RemoteVideoFrame> {
+    use core_foundation::base::TCFType;
+    use core_video::{pixel_buffer::CVPixelBuffer, r#return::kCVReturnSuccess};
+    use livekit::webrtc::native::yuv_helper::i420_to_nv12;
+
+    if let Some(native) = buffer.as_native() {
+        let pixel_buffer = native.get_cv_pixel_buffer();
+        if pixel_buffer.is_null() {
+            return None;
+        }
+        return unsafe { Some(CVPixelBuffer::wrap_under_get_rule(pixel_buffer as _)) };
+    }
+
+    let i420_buffer = buffer.as_i420()?;
+    let pixel_buffer = pool.create_pixel_buffer().log_err()?;
+
+    let image_buffer = unsafe {
+        if pixel_buffer.lock_base_address(0) != kCVReturnSuccess {
+            return None;
+        }
+
+        let dst_y = pixel_buffer.get_base_address_of_plane(0);
+        let dst_y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
+        let dst_y_len = pixel_buffer.get_height_of_plane(0) * dst_y_stride;
+        let dst_uv = pixel_buffer.get_base_address_of_plane(1);
+        let dst_uv_stride = pixel_buffer.get_bytes_per_row_of_plane(1);
+        let dst_uv_len = pixel_buffer.get_height_of_plane(1) * dst_uv_stride;
+        let width = pixel_buffer.get_width();
+        let height = pixel_buffer.get_height();
+        let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_y_len);
+        let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_uv_len);
+
+        let (stride_y, stride_u, stride_v) = i420_buffer.strides();
+        let (src_y, src_u, src_v) = i420_buffer.data();
+        i420_to_nv12(
+            src_y,
+            stride_y,
+            src_u,
+            stride_u,
+            src_v,
+            stride_v,
+            dst_y_buffer,
+            dst_y_stride as u32,
+            dst_uv_buffer,
+            dst_uv_stride as u32,
+            width as i32,
+            height as i32,
+        );
+
+        if pixel_buffer.unlock_base_address(0) != kCVReturnSuccess {
+            return None;
+        }
+
+        pixel_buffer
+    };
+
+    Some(image_buffer)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub type RemoteVideoFrame = Arc<gpui::RenderImage>;
+
+#[cfg(not(target_os = "macos"))]
+fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<RemoteVideoFrame> {
+    use gpui::RenderImage;
+    use image::{Frame, RgbaImage};
+    use livekit::webrtc::prelude::VideoFormatType;
+    use smallvec::SmallVec;
+    use std::alloc::{Layout, alloc};
+
+    let width = buffer.width();
+    let height = buffer.height();
+    let stride = width * 4;
+    let byte_len = (stride * height) as usize;
+    let argb_image = unsafe {
+        // Motivation for this unsafe code is to avoid initializing the frame data, since to_argb
+        // will write all bytes anyway.
+        let start_ptr = alloc(Layout::array::<u8>(byte_len).log_err()?);
+        if start_ptr.is_null() {
+            return None;
+        }
+        let argb_frame_slice = std::slice::from_raw_parts_mut(start_ptr, byte_len);
+        buffer.to_argb(
+            VideoFormatType::ARGB,
+            argb_frame_slice,
+            stride,
+            width as i32,
+            height as i32,
+        );
+        Vec::from_raw_parts(start_ptr, byte_len, byte_len)
+    };
+
+    // TODO: Unclear why providing argb_image to RgbaImage works properly.
+    let image = RgbaImage::from_raw(width, height, argb_image)
+        .with_context(|| "Bug: not enough bytes allocated for image.")
+        .log_err()?;
+
+    Some(Arc::new(RenderImage::new(SmallVec::from_elem(
+        Frame::new(image),
+        1,
+    ))))
+}
+
+#[cfg(target_os = "macos")]
+fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use livekit::webrtc;
+
+    let pixel_buffer = frame.0.as_concrete_TypeRef();
+    std::mem::forget(frame.0);
+    unsafe {
+        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use libwebrtc::native::yuv_helper::{abgr_to_nv12, argb_to_nv12};
+    use livekit::webrtc::prelude::NV12Buffer;
+    match frame.0 {
+        scap::frame::Frame::BGRx(frame) => {
+            let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
+            let (stride_y, stride_uv) = buffer.strides();
+            let (data_y, data_uv) = buffer.data_mut();
+            argb_to_nv12(
+                &frame.data,
+                frame.width as u32 * 4,
+                data_y,
+                stride_y,
+                data_uv,
+                stride_uv,
+                frame.width,
+                frame.height,
+            );
+            Some(buffer)
+        }
+        scap::frame::Frame::RGBx(frame) => {
+            let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
+            let (stride_y, stride_uv) = buffer.strides();
+            let (data_y, data_uv) = buffer.data_mut();
+            abgr_to_nv12(
+                &frame.data,
+                frame.width as u32 * 4,
+                data_y,
+                stride_y,
+                data_uv,
+                stride_uv,
+                frame.width,
+                frame.height,
+            );
+            Some(buffer)
+        }
+        scap::frame::Frame::YUVFrame(yuvframe) => {
+            let mut buffer = NV12Buffer::with_strides(
+                yuvframe.width as u32,
+                yuvframe.height as u32,
+                yuvframe.luminance_stride as u32,
+                yuvframe.chrominance_stride as u32,
+            );
+            let (luminance, chrominance) = buffer.data_mut();
+            luminance.copy_from_slice(yuvframe.luminance_bytes.as_slice());
+            chrominance.copy_from_slice(yuvframe.chrominance_bytes.as_slice());
+            Some(buffer)
+        }
+        _ => {
+            log::error!(
+                "Expected BGRx or YUV frame from scap screen capture but got some other format."
+            );
+            None
+        }
+    }
+}
+
+trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
+    fn new(input: bool) -> Result<Self>;
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use cocoa::{
+        base::{id, nil},
+        foundation::{NSProcessInfo, NSString},
+    };
+    use coreaudio::sys::{
+        AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
+        AudioObjectRemovePropertyListener, OSStatus, kAudioHardwarePropertyDefaultInputDevice,
+        kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMaster,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
+    };
+    use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
+    use objc::{msg_send, sel, sel_impl};
+
+    /// A guard that prevents App Nap while held.
+    ///
+    /// On macOS, App Nap can throttle background apps to save power. This can cause
+    /// audio artifacts when the app is not in the foreground. This guard tells macOS
+    /// that we're doing latency-sensitive work and should not be throttled.
+    ///
+    /// See Apple's documentation on prioritizing work at the app level:
+    /// https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/PrioritizeWorkAtTheAppLevel.html
+    pub struct PreventAppNapGuard {
+        activity: id,
+    }
+
+    // The activity token returned by NSProcessInfo is thread-safe
+    unsafe impl Send for PreventAppNapGuard {}
+
+    // From NSProcessInfo.h
+    const NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
+    const NS_ACTIVITY_USER_INITIATED: u64 = 0x00FFFFFF | NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+    const NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 =
+        NS_ACTIVITY_USER_INITIATED & !NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+
+    impl PreventAppNapGuard {
+        pub fn new() -> Self {
+            unsafe {
+                let process_info = NSProcessInfo::processInfo(nil);
+                #[allow(clippy::disallowed_methods)]
+                let reason = NSString::alloc(nil).init_str("Audio playback in progress");
+                let activity: id = msg_send![process_info, beginActivityWithOptions:NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP reason:reason];
+                let _: () = msg_send![reason, release];
+                let _: () = msg_send![activity, retain];
+                Self { activity }
+            }
+        }
+    }
+
+    impl Drop for PreventAppNapGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let process_info = NSProcessInfo::processInfo(nil);
+                let _: () = msg_send![process_info, endActivity:self.activity];
+                let _: () = msg_send![self.activity, release];
+            }
+        }
+    }
+
+    /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
+    pub struct CoreAudioDefaultDeviceChangeListener {
+        rx: UnboundedReceiver<()>,
+        callback: Box<PropertyListenerCallbackWrapper>,
+        input: bool,
+        device_id: AudioObjectID, // Store the device ID to properly remove listeners
+    }
+
+    trait _AssertSend: Send {}
+    impl _AssertSend for CoreAudioDefaultDeviceChangeListener {}
+
+    struct PropertyListenerCallbackWrapper(Box<dyn FnMut() + Send>);
+
+    unsafe extern "C" fn property_listener_handler_shim(
+        _: AudioObjectID,
+        _: u32,
+        _: *const AudioObjectPropertyAddress,
+        callback: *mut ::std::os::raw::c_void,
+    ) -> OSStatus {
+        let wrapper = callback as *mut PropertyListenerCallbackWrapper;
+        unsafe { (*wrapper).0() };
+        0
+    }
+
+    impl super::DeviceChangeListenerApi for CoreAudioDefaultDeviceChangeListener {
+        fn new(input: bool) -> anyhow::Result<Self> {
+            let (tx, rx) = futures::channel::mpsc::unbounded();
+
+            let callback = Box::new(PropertyListenerCallbackWrapper(Box::new(move || {
+                tx.unbounded_send(()).ok();
+            })));
+
+            // Get the current default device ID
+            let device_id = unsafe {
+                // Listen for default device changes
+                coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
+                    kAudioObjectSystemObject,
+                    &AudioObjectPropertyAddress {
+                        mSelector: if input {
+                            kAudioHardwarePropertyDefaultInputDevice
+                        } else {
+                            kAudioHardwarePropertyDefaultOutputDevice
+                        },
+                        mScope: kAudioObjectPropertyScopeGlobal,
+                        mElement: kAudioObjectPropertyElementMaster,
+                    },
+                    Some(property_listener_handler_shim),
+                    &*callback as *const _ as *mut _,
+                ))?;
+
+                // Also listen for changes to the device configuration
+                let device_id = if input {
+                    let mut input_device: AudioObjectID = 0;
+                    let mut prop_size = std::mem::size_of::<AudioObjectID>() as u32;
+                    let result = coreaudio::sys::AudioObjectGetPropertyData(
+                        kAudioObjectSystemObject,
+                        &AudioObjectPropertyAddress {
+                            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                            mScope: kAudioObjectPropertyScopeGlobal,
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        0,
+                        std::ptr::null(),
+                        &mut prop_size as *mut _,
+                        &mut input_device as *mut _ as *mut _,
+                    );
+                    if result != 0 {
+                        log::warn!("Failed to get default input device ID");
+                        0
+                    } else {
+                        input_device
+                    }
+                } else {
+                    let mut output_device: AudioObjectID = 0;
+                    let mut prop_size = std::mem::size_of::<AudioObjectID>() as u32;
+                    let result = coreaudio::sys::AudioObjectGetPropertyData(
+                        kAudioObjectSystemObject,
+                        &AudioObjectPropertyAddress {
+                            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                            mScope: kAudioObjectPropertyScopeGlobal,
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        0,
+                        std::ptr::null(),
+                        &mut prop_size as *mut _,
+                        &mut output_device as *mut _ as *mut _,
+                    );
+                    if result != 0 {
+                        log::warn!("Failed to get default output device ID");
+                        0
+                    } else {
+                        output_device
+                    }
+                };
+
+                if device_id != 0 {
+                    // Listen for format changes on the device
+                    coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
+                        device_id,
+                        &AudioObjectPropertyAddress {
+                            mSelector: coreaudio::sys::kAudioDevicePropertyStreamFormat,
+                            mScope: if input {
+                                coreaudio::sys::kAudioObjectPropertyScopeInput
+                            } else {
+                                coreaudio::sys::kAudioObjectPropertyScopeOutput
+                            },
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        Some(property_listener_handler_shim),
+                        &*callback as *const _ as *mut _,
+                    ))?;
+                }
+
+                device_id
+            };
+
+            Ok(Self {
+                rx,
+                callback,
+                input,
+                device_id,
+            })
+        }
+    }
+
+    impl Drop for CoreAudioDefaultDeviceChangeListener {
+        fn drop(&mut self) {
+            unsafe {
+                // Remove the system-level property listener
+                AudioObjectRemovePropertyListener(
+                    kAudioObjectSystemObject,
+                    &AudioObjectPropertyAddress {
+                        mSelector: if self.input {
+                            kAudioHardwarePropertyDefaultInputDevice
+                        } else {
+                            kAudioHardwarePropertyDefaultOutputDevice
+                        },
+                        mScope: kAudioObjectPropertyScopeGlobal,
+                        mElement: kAudioObjectPropertyElementMaster,
+                    },
+                    Some(property_listener_handler_shim),
+                    &*self.callback as *const _ as *mut _,
+                );
+
+                // Remove the device-specific property listener if we have a valid device ID
+                if self.device_id != 0 {
+                    AudioObjectRemovePropertyListener(
+                        self.device_id,
+                        &AudioObjectPropertyAddress {
+                            mSelector: coreaudio::sys::kAudioDevicePropertyStreamFormat,
+                            mScope: if self.input {
+                                coreaudio::sys::kAudioObjectPropertyScopeInput
+                            } else {
+                                coreaudio::sys::kAudioObjectPropertyScopeOutput
+                            },
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        Some(property_listener_handler_shim),
+                        &*self.callback as *const _ as *mut _,
+                    );
+                }
+            }
+        }
+    }
+
+    impl futures::Stream for CoreAudioDefaultDeviceChangeListener {
+        type Item = ();
+
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            self.rx.poll_next_unpin(cx)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+type DeviceChangeListener = macos::CoreAudioDefaultDeviceChangeListener;
+#[cfg(target_os = "macos")]
+use macos::PreventAppNapGuard;
+
+#[cfg(not(target_os = "macos"))]
+mod noop_change_listener {
+    use std::task::Poll;
+
+    use super::DeviceChangeListenerApi;
+
+    pub struct NoopOutputDeviceChangelistener {}
+
+    impl DeviceChangeListenerApi for NoopOutputDeviceChangelistener {
+        fn new(_input: bool) -> anyhow::Result<Self> {
+            Ok(NoopOutputDeviceChangelistener {})
+        }
+    }
+
+    impl futures::Stream for NoopOutputDeviceChangelistener {
+        type Item = ();
+
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> Poll<Option<Self::Item>> {
+            Poll::Pending
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+type DeviceChangeListener = noop_change_listener::NoopOutputDeviceChangelistener;

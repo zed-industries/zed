@@ -1,0 +1,3170 @@
+use std::cmp::Reverse;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use crate::DEFAULT_THREAD_TITLE;
+use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
+use acp_thread::MentionUri;
+use agent_client_protocol::schema as acp;
+use anyhow::Result;
+use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
+use futures::FutureExt as _;
+use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
+use gpui::{App, BackgroundExecutor, Entity, Focusable, SharedString, Task, WeakEntity, Window};
+use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
+use lsp::CompletionContext;
+use multi_buffer::ToOffset as _;
+use ordered_float::OrderedFloat;
+use project::lsp_store::{CompletionDocumentation, SymbolLocation};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionGroup, CompletionIntent, CompletionResponse,
+    DiagnosticSummary, PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
+};
+
+use rope::Point;
+use settings::Settings;
+use terminal::terminal_settings::TerminalSettings;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use text::{Anchor, ToOffset as _, ToPoint as _};
+use ui::IconName;
+use ui::prelude::*;
+use util::ResultExt as _;
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
+use util::truncate_and_remove_front;
+use workspace::Workspace;
+
+use crate::AgentPanel;
+use crate::mention_set::MentionSet;
+
+#[derive(Clone)]
+pub(crate) enum AgentContextSelection {
+    Editor(Vec<(Entity<Buffer>, Range<text::Anchor>)>),
+    Terminal(Vec<String>),
+}
+
+#[derive(Clone)]
+pub(crate) enum AgentContextSource {
+    Editor(WeakEntity<Editor>),
+    TerminalView(WeakEntity<TerminalView>),
+    TerminalPanel,
+}
+
+impl AgentContextSource {
+    pub(crate) fn read_selection(
+        &self,
+        workspace: &Workspace,
+        include_current_line: bool,
+        cx: &mut App,
+    ) -> Option<AgentContextSelection> {
+        match self {
+            Self::Editor(handle) => {
+                let editor = handle.upgrade()?;
+                let ranges = editor_selection_ranges(&editor, include_current_line, cx);
+                (!ranges.is_empty()).then_some(AgentContextSelection::Editor(ranges))
+            }
+            Self::TerminalView(handle) => {
+                let terminal_view = handle.upgrade()?;
+                terminal_view_selection(&terminal_view, cx)
+                    .map(|text| AgentContextSelection::Terminal(vec![text]))
+            }
+            Self::TerminalPanel => {
+                let panel = workspace.panel::<TerminalPanel>(cx)?;
+                let selections = panel.read(cx).terminal_selections(cx);
+                (!selections.is_empty()).then_some(AgentContextSelection::Terminal(selections))
+            }
+        }
+    }
+
+    pub(crate) fn from_focused(workspace: &Workspace, window: &Window, cx: &App) -> Option<Self> {
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && agent_panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return None;
+        }
+
+        if let Some(active_item) = workspace.active_item(cx) {
+            if let Some(editor) = active_item.act_as::<Editor>(cx) {
+                if editor.focus_handle(cx).is_focused(window) {
+                    return Some(Self::Editor(editor.downgrade()));
+                }
+            } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx)
+                && terminal_view.focus_handle(cx).is_focused(window)
+            {
+                return Some(Self::TerminalView(terminal_view.downgrade()));
+            }
+        }
+
+        if let Some(panel) = workspace.panel::<TerminalPanel>(cx)
+            && panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return Some(Self::TerminalPanel);
+        }
+
+        None
+    }
+
+    pub(crate) fn from_active(workspace: &Workspace, cx: &App) -> Option<Self> {
+        if let Some(active_item) = workspace.active_item(cx) {
+            if let Some(editor) = active_item.act_as::<Editor>(cx) {
+                return Some(Self::Editor(editor.downgrade()));
+            } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx) {
+                return Some(Self::TerminalView(terminal_view.downgrade()));
+            }
+        }
+        if terminal_panel_dock_is_open(workspace, cx) {
+            return Some(Self::TerminalPanel);
+        }
+        None
+    }
+
+    pub(crate) fn exists(&self, workspace: &Workspace, cx: &App) -> bool {
+        match self {
+            Self::Editor(handle) => handle.upgrade().is_some(),
+            Self::TerminalView(handle) => handle.upgrade().is_some(),
+            Self::TerminalPanel => terminal_panel_dock_is_open(workspace, cx),
+        }
+    }
+}
+
+fn terminal_panel_dock_is_open(workspace: &Workspace, cx: &App) -> bool {
+    if workspace.panel::<TerminalPanel>(cx).is_none() {
+        return false;
+    }
+    let position = TerminalSettings::get_global(cx).dock.into();
+    workspace.dock_at_position(position).read(cx).is_open()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptContextEntry {
+    Mode(PromptContextType),
+    Action(PromptContextAction),
+}
+
+impl PromptContextEntry {
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::Mode(mode) => mode.keyword(),
+            Self::Action(action) => action.keyword(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptContextType {
+    File,
+    Symbol,
+    Fetch,
+    Thread,
+    Skill,
+    Diagnostics,
+    BranchDiff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptContextAction {
+    AddSelections,
+}
+
+impl PromptContextAction {
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::AddSelections => "selection",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::AddSelections => "Selection",
+        }
+    }
+
+    pub fn icon(&self) -> IconName {
+        match self {
+            Self::AddSelections => IconName::Reader,
+        }
+    }
+}
+
+impl TryFrom<&str> for PromptContextType {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "file" => Ok(Self::File),
+            "symbol" => Ok(Self::Symbol),
+            "fetch" => Ok(Self::Fetch),
+            "thread" => Ok(Self::Thread),
+            "skill" => Ok(Self::Skill),
+            "diagnostics" => Ok(Self::Diagnostics),
+            "diff" => Ok(Self::BranchDiff),
+            _ => Err(format!("Invalid context picker mode: {}", value)),
+        }
+    }
+}
+
+impl PromptContextType {
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Symbol => "symbol",
+            Self::Fetch => "fetch",
+            Self::Thread => "thread",
+            Self::Skill => "skill",
+            Self::Diagnostics => "diagnostics",
+            Self::BranchDiff => "branch diff",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::File => "Files & Directories",
+            Self::Symbol => "Symbols",
+            Self::Fetch => "Fetch",
+            Self::Thread => "Threads",
+            Self::Skill => "Skills",
+            Self::Diagnostics => "Diagnostics",
+            Self::BranchDiff => "Branch Diff",
+        }
+    }
+
+    pub fn icon(&self) -> IconName {
+        match self {
+            Self::File => IconName::File,
+            Self::Symbol => IconName::Code,
+            Self::Fetch => IconName::ToolWeb,
+            Self::Thread => IconName::Thread,
+            Self::Skill => IconName::Sparkle,
+            Self::Diagnostics => IconName::Warning,
+            Self::BranchDiff => IconName::GitBranch,
+        }
+    }
+}
+
+pub(crate) enum Match {
+    File(FileMatch),
+    Symbol(SymbolMatch),
+    Thread(SessionMatch),
+    RecentThread(SessionMatch),
+    Fetch(SharedString),
+    Skill(AvailableSkill),
+    Entry(EntryMatch),
+    BranchDiff(BranchDiffMatch),
+}
+
+#[derive(Debug, Clone)]
+pub struct BranchDiffMatch {
+    pub base_ref: SharedString,
+}
+
+impl Match {
+    pub fn score(&self) -> f64 {
+        match self {
+            Match::File(file) => file.mat.score,
+            Match::Entry(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
+            Match::Thread(_) => 1.,
+            Match::RecentThread(_) => 1.,
+            Match::Symbol(_) => 1.,
+            Match::Skill(_) => 1.,
+            Match::Fetch(_) => 1.,
+            Match::BranchDiff(_) => 1.,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionMatch {
+    session_id: acp::SessionId,
+    title: SharedString,
+}
+
+pub struct EntryMatch {
+    mat: Option<StringMatch>,
+    entry: PromptContextEntry,
+}
+
+fn session_title(title: Option<SharedString>) -> SharedString {
+    title
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE))
+}
+
+#[derive(Debug, Clone)]
+pub struct AvailableSkill {
+    pub name: Arc<str>,
+    pub description: Arc<str>,
+    /// Scope prefix for this skill: empty for global skills, or the
+    /// worktree root name for project-local skills.
+    pub source: SharedString,
+    pub skill_file_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct AvailableCommand {
+    pub name: Arc<str>,
+    pub description: Arc<str>,
+    pub requires_argument: bool,
+    pub source: Option<SharedString>,
+}
+
+#[derive(Debug, Clone)]
+enum SlashCompletionCandidate {
+    Skill(AvailableSkill),
+    Command(AvailableCommand),
+}
+
+impl SlashCompletionCandidate {
+    fn name(&self) -> &Arc<str> {
+        match self {
+            Self::Skill(skill) => &skill.name,
+            Self::Command(command) => &command.name,
+        }
+    }
+}
+
+pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
+    fn supports_context(&self, mode: PromptContextType, cx: &App) -> bool {
+        self.supported_modes(cx).contains(&mode)
+    }
+    fn supported_modes(&self, cx: &App) -> Vec<PromptContextType>;
+    fn supports_images(&self, cx: &App) -> bool;
+
+    fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
+    fn available_skills(&self, _cx: &App) -> Vec<AvailableSkill> {
+        Vec::new()
+    }
+    fn confirm_command(&self, cx: &mut App);
+
+    /// Called once each time the user opens slash-command autocomplete
+    /// in the editor this delegate serves. Implementations may use it
+    /// to lazily kick off work that produces commands (for example,
+    /// scanning the global skills directory). The default is a no-op.
+    fn slash_autocomplete_invoked(&self, _cx: &mut App) {}
+}
+
+pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
+    source: Arc<T>,
+    editor: WeakEntity<Editor>,
+    mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
+}
+
+impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
+    pub fn new(
+        source: T,
+        editor: WeakEntity<Editor>,
+        mention_set: Entity<MentionSet>,
+        workspace: WeakEntity<Workspace>,
+    ) -> Self {
+        Self {
+            source: Arc::new(source),
+            editor,
+            mention_set,
+            workspace,
+        }
+    }
+
+    fn completion_for_entry(
+        entry: PromptContextEntry,
+        source_range: Range<Anchor>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        match entry {
+            PromptContextEntry::Mode(mode) => Some(Completion {
+                replace_range: source_range,
+                new_text: format!("@{} ", mode.keyword()),
+                label: CodeLabel::plain(mode.label().to_string(), None),
+                icon_path: Some(mode.icon().path().into()),
+                documentation: None,
+                source: project::CompletionSource::Custom,
+                match_start: None,
+                snippet_deduplication_key: None,
+                insert_text_mode: None,
+                // This ensures that when a user accepts this completion, the
+                // completion menu will still be shown after "@category " is
+                // inserted
+                confirm: Some(Arc::new(|_, _, _| true)),
+                group: None,
+            }),
+            PromptContextEntry::Action(action) => {
+                let selection = workspace.update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                });
+                Self::completion_for_action(action, source_range, editor, mention_set, selection)
+            }
+        }
+    }
+
+    fn completion_for_thread(
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
+        source_range: Range<Anchor>,
+        recent: bool,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let title = session_title(title);
+        let uri = MentionUri::Thread {
+            id: session_id,
+            name: title.to_string(),
+        };
+
+        let icon_for_completion = if recent {
+            IconName::HistoryRerun.path().into()
+        } else {
+            uri.icon_path(cx)
+        };
+
+        let new_text = format!("{} ", uri.as_link());
+
+        let new_text_len = new_text.len();
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(title.to_string(), None),
+            documentation: None,
+            insert_text_mode: None,
+            source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
+            icon_path: Some(icon_for_completion),
+            confirm: Some(confirm_completion_callback(
+                title,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        }
+    }
+
+    fn completion_for_skill(
+        skill: AvailableSkill,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let uri = MentionUri::Skill {
+            name: skill.name.to_string(),
+            source: skill.source.to_string(),
+            skill_file_path: skill.skill_file_path.clone(),
+        };
+        let new_text = format!("{} ", uri.as_link());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+        let crease_text: SharedString = uri.name().into();
+        let source_highlight_id = cx
+            .theme()
+            .syntax()
+            .highlight_id("variable")
+            .map(HighlightId::new);
+        let label = build_slash_item_label(&skill.name, Some(&skill.source), source_highlight_id);
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: Some(CompletionDocumentation::MultiLinePlainText(
+                skill.description.into(),
+            )),
+            insert_text_mode: None,
+            source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
+            icon_path: Some(icon_path),
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        }
+    }
+
+    pub(crate) fn completion_for_path(
+        project_path: ProjectPath,
+        path_prefix: &RelPath,
+        is_recent: bool,
+        is_directory: bool,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        project: Entity<Project>,
+        label_max_chars: usize,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let path_style = project.read(cx).path_style(cx);
+        let (file_name, directory) =
+            extract_file_name_and_directory(&project_path.path, path_prefix, path_style);
+
+        let label = build_code_label_for_path(
+            &file_name,
+            directory.as_ref().map(|s| s.as_ref()),
+            None,
+            label_max_chars,
+            cx,
+        );
+
+        let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
+
+        let uri = if is_directory {
+            MentionUri::Directory { abs_path }
+        } else {
+            MentionUri::File { abs_path }
+        };
+
+        let crease_icon_path = uri.icon_path(cx);
+        let completion_icon_path = if is_recent {
+            IconName::HistoryRerun.path().into()
+        } else {
+            crease_icon_path
+        };
+
+        let new_text = format!("{} ", uri.as_link());
+        let new_text_len = new_text.len();
+        Some(Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(completion_icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                file_name,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        })
+    }
+
+    fn completion_for_symbol(
+        symbol: Symbol,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        label_max_chars: usize,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let project = workspace.read(cx).project().clone();
+
+        let (abs_path, file_name) = match &symbol.path {
+            SymbolLocation::InProject(project_path) => (
+                project.read(cx).absolute_path(&project_path, cx)?,
+                project_path.path.file_name()?.to_string().into(),
+            ),
+            SymbolLocation::OutsideProject {
+                abs_path,
+                signature: _,
+            } => (
+                PathBuf::from(abs_path.as_ref()),
+                abs_path.file_name().map(|f| f.to_string_lossy())?,
+            ),
+        };
+
+        let label = build_code_label_for_path(
+            &symbol.name,
+            Some(&file_name),
+            Some(symbol.range.start.0.row + 1),
+            label_max_chars,
+            cx,
+        );
+
+        let uri = MentionUri::Symbol {
+            abs_path,
+            name: symbol.name.clone(),
+            line_range: symbol.range.start.0.row..=symbol.range.end.0.row,
+        };
+        let new_text = format!("{} ", uri.as_link());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+        Some(Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                symbol.name.into(),
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        })
+    }
+
+    fn completion_for_fetch(
+        source_range: Range<Anchor>,
+        url_to_fetch: SharedString,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let new_text = format!("@fetch {} ", url_to_fetch);
+        let url_to_fetch = url::Url::parse(url_to_fetch.as_ref())
+            .or_else(|_| url::Url::parse(&format!("https://{url_to_fetch}")))
+            .ok()?;
+        let mention_uri = MentionUri::Fetch {
+            url: url_to_fetch.clone(),
+        };
+        let icon_path = mention_uri.icon_path(cx);
+        Some(Completion {
+            replace_range: source_range.clone(),
+            new_text: new_text.clone(),
+            label: CodeLabel::plain(url_to_fetch.to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                url_to_fetch.to_string().into(),
+                source_range.start,
+                new_text.len() - 1,
+                mention_uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        })
+    }
+
+    pub(crate) fn completion_for_action(
+        action: PromptContextAction,
+        source_range: Range<Anchor>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        selection: Option<AgentContextSelection>,
+    ) -> Option<Completion> {
+        let (new_text, on_action) = match action {
+            PromptContextAction::AddSelections => match selection? {
+                AgentContextSelection::Editor(editor_selections) => {
+                    completion_text_for_editor_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        editor_selections,
+                    )
+                }
+                AgentContextSelection::Terminal(terminal_selections) => {
+                    completion_text_for_terminal_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        terminal_selections,
+                    )
+                }
+            },
+        };
+
+        Some(Completion {
+            replace_range: source_range,
+            new_text,
+            label: CodeLabel::plain(action.label().to_string(), None),
+            icon_path: Some(action.icon().path().into()),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            // This ensures that when a user accepts this completion, the
+            // completion menu will still be shown after "@category " is
+            // inserted
+            confirm: Some(on_action),
+            group: None,
+        })
+    }
+
+    fn completion_for_diagnostics(
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Vec<Completion> {
+        let summary = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .diagnostic_summary(false, cx);
+        if summary.error_count == 0 && summary.warning_count == 0 {
+            return Vec::new();
+        }
+        let icon_path = MentionUri::Diagnostics {
+            include_errors: true,
+            include_warnings: false,
+        }
+        .icon_path(cx);
+
+        let mut completions = Vec::new();
+
+        let cases = [
+            (summary.error_count > 0, true, false),
+            (summary.warning_count > 0, false, true),
+            (
+                summary.error_count > 0 && summary.warning_count > 0,
+                true,
+                true,
+            ),
+        ];
+
+        for (condition, include_errors, include_warnings) in cases {
+            if condition {
+                completions.push(Self::build_diagnostics_completion(
+                    diagnostics_submenu_label(summary, include_errors, include_warnings),
+                    source_range.clone(),
+                    source.clone(),
+                    editor.clone(),
+                    mention_set.clone(),
+                    workspace.clone(),
+                    icon_path.clone(),
+                    include_errors,
+                    include_warnings,
+                    summary,
+                ));
+            }
+        }
+
+        completions
+    }
+
+    fn build_diagnostics_completion(
+        menu_label: String,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        icon_path: SharedString,
+        include_errors: bool,
+        include_warnings: bool,
+        summary: DiagnosticSummary,
+    ) -> Completion {
+        let uri = MentionUri::Diagnostics {
+            include_errors,
+            include_warnings,
+        };
+        let crease_text = diagnostics_crease_label(summary, include_errors, include_warnings);
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(menu_label, None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        }
+    }
+
+    fn build_branch_diff_completion(
+        base_ref: SharedString,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let uri = MentionUri::GitDiff {
+            base_ref: base_ref.to_string(),
+        };
+        let crease_text: SharedString = format!("Branch Diff (vs {})", base_ref).into();
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(crease_text.to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        }
+    }
+
+    fn search_slash_commands(
+        &self,
+        query: String,
+        cx: &mut App,
+    ) -> Task<Vec<SlashCompletionCandidate>> {
+        // Notify the delegate that slash autocomplete is being
+        // invoked, so it can lazily kick off any work that produces
+        // additional commands or skills. Whatever it produces won't be
+        // visible in the current autocomplete pass (we read available
+        // items synchronously below), but will appear on the next
+        // invocation.
+        self.source.slash_autocomplete_invoked(cx);
+
+        let mut candidates = self
+            .source
+            .available_skills(cx)
+            .into_iter()
+            .map(SlashCompletionCandidate::Skill)
+            .collect::<Vec<_>>();
+        candidates.extend(
+            self.source
+                .available_commands(cx)
+                .into_iter()
+                .map(SlashCompletionCandidate::Command),
+        );
+        if candidates.is_empty() {
+            return Task::ready(Vec::new());
+        }
+
+        cx.spawn(async move |cx| {
+            let string_match_candidates = candidates
+                .iter()
+                .enumerate()
+                .map(|(id, candidate)| StringMatchCandidate::new(id, candidate.name()))
+                .collect::<Vec<_>>();
+
+            let matches = fuzzy::match_strings(
+                &string_match_candidates,
+                &query,
+                false,
+                true,
+                100,
+                &Arc::new(AtomicBool::default()),
+                cx.background_executor().clone(),
+            )
+            .await;
+
+            matches
+                .into_iter()
+                .map(|mat| candidates[mat.candidate_id].clone())
+                .collect()
+        })
+    }
+
+    fn fetch_branch_diff_match(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Task<Option<BranchDiffMatch>>> {
+        let project = workspace.read(cx).project().clone();
+        let repo = project.read(cx).active_repository(cx)?;
+
+        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(true));
+
+        Some(cx.spawn(async move |_cx| {
+            let base_ref = default_branch_receiver
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()?;
+
+            Some(BranchDiffMatch { base_ref })
+        }))
+    }
+
+    fn search_mentions(
+        &self,
+        mode: Option<PromptContextType>,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
+        cx: &mut App,
+    ) -> Task<Vec<Match>> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Vec::default());
+        };
+        match mode {
+            Some(PromptContextType::File) => {
+                let search_files_task = search_files(query, cancellation_flag, &workspace, cx);
+                cx.background_spawn(async move {
+                    search_files_task
+                        .await
+                        .into_iter()
+                        .map(Match::File)
+                        .collect()
+                })
+            }
+
+            Some(PromptContextType::Symbol) => {
+                let search_symbols_task = search_symbols(query, cancellation_flag, &workspace, cx);
+                cx.background_spawn(async move {
+                    search_symbols_task
+                        .await
+                        .into_iter()
+                        .map(Match::Symbol)
+                        .collect()
+                })
+            }
+
+            Some(PromptContextType::Thread) => {
+                let sessions = collect_session_matches(cx);
+                if !sessions.is_empty() {
+                    let search_task =
+                        filter_sessions_by_query(query, cancellation_flag, sessions, cx);
+                    cx.spawn(async move |_cx| {
+                        search_task.await.into_iter().map(Match::Thread).collect()
+                    })
+                } else {
+                    Task::ready(Vec::new())
+                }
+            }
+
+            Some(PromptContextType::Fetch) => {
+                if !query.is_empty() {
+                    Task::ready(vec![Match::Fetch(query.into())])
+                } else {
+                    Task::ready(Vec::new())
+                }
+            }
+
+            Some(PromptContextType::Skill) => {
+                let skills = self.source.available_skills(cx);
+                let search_skills_task = search_skills(query, cancellation_flag, skills, cx);
+                cx.background_spawn(async move {
+                    search_skills_task
+                        .await
+                        .into_iter()
+                        .map(Match::Skill)
+                        .collect::<Vec<_>>()
+                })
+            }
+
+            Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
+
+            Some(PromptContextType::BranchDiff) => Task::ready(Vec::new()),
+
+            None if query.is_empty() => {
+                let recent_task = self.recent_context_picker_entries(&workspace, cx);
+                let entries = self
+                    .available_context_picker_entries(&workspace, cx)
+                    .into_iter()
+                    .map(|mode| {
+                        Match::Entry(EntryMatch {
+                            entry: mode,
+                            mat: None,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
+                cx.spawn(async move |_cx| {
+                    let mut matches = recent_task.await;
+                    matches.extend(entries);
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        if let Some(branch_diff_match) = branch_diff_task.await {
+                            matches.push(Match::BranchDiff(branch_diff_match));
+                        }
+                    }
+
+                    matches
+                })
+            }
+            None => {
+                let executor = cx.background_executor().clone();
+
+                let search_files_task =
+                    search_files(query.clone(), cancellation_flag, &workspace, cx);
+
+                let entries = self.available_context_picker_entries(&workspace, cx);
+                let entry_candidates = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, entry)| StringMatchCandidate::new(ix, entry.keyword()))
+                    .collect::<Vec<_>>();
+
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
+                cx.spawn(async move |cx| {
+                    let mut matches = search_files_task
+                        .await
+                        .into_iter()
+                        .map(Match::File)
+                        .collect::<Vec<_>>();
+
+                    let entry_matches = fuzzy::match_strings(
+                        &entry_candidates,
+                        &query,
+                        false,
+                        true,
+                        100,
+                        &Arc::new(AtomicBool::default()),
+                        executor,
+                    )
+                    .await;
+
+                    matches.extend(entry_matches.into_iter().map(|mat| {
+                        Match::Entry(EntryMatch {
+                            entry: entries[mat.candidate_id],
+                            mat: Some(mat),
+                        })
+                    }));
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        let branch_diff_keyword = PromptContextType::BranchDiff.keyword();
+                        let branch_diff_matches = fuzzy::match_strings(
+                            &[StringMatchCandidate::new(0, branch_diff_keyword)],
+                            &query,
+                            false,
+                            true,
+                            1,
+                            &Arc::new(AtomicBool::default()),
+                            cx.background_executor().clone(),
+                        )
+                        .await;
+
+                        if !branch_diff_matches.is_empty() {
+                            if let Some(branch_diff_match) = branch_diff_task.await {
+                                matches.push(Match::BranchDiff(branch_diff_match));
+                            }
+                        }
+                    }
+
+                    matches.sort_by(|a, b| {
+                        b.score()
+                            .partial_cmp(&a.score())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    matches
+                })
+            }
+        }
+    }
+
+    fn recent_context_picker_entries(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Task<Vec<Match>> {
+        let mut recent = Vec::with_capacity(6);
+
+        let mut mentions = self
+            .mention_set
+            .read_with(cx, |store, _cx| store.mentions());
+        let workspace = workspace.read(cx);
+        let project = workspace.project().read(cx);
+        let include_root_name = workspace.visible_worktrees(cx).count() > 1;
+
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
+            && let Some(title) = thread.read(cx).title()
+        {
+            mentions.insert(MentionUri::Thread {
+                id: thread.read(cx).session_id().clone(),
+                name: title.to_string(),
+            });
+        }
+
+        recent.extend(
+            workspace
+                .recent_navigation_history_iter(cx)
+                .filter(|(_, abs_path)| {
+                    abs_path.as_ref().is_none_or(|path| {
+                        !mentions.contains(&MentionUri::File {
+                            abs_path: path.clone(),
+                        })
+                    })
+                })
+                .take(4)
+                .filter_map(|(project_path, _)| {
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|worktree| {
+                            let path_prefix = if include_root_name {
+                                worktree.read(cx).root_name().into()
+                            } else {
+                                RelPath::empty().into()
+                            };
+                            Match::File(FileMatch {
+                                mat: fuzzy::PathMatch {
+                                    score: 1.,
+                                    positions: Vec::new(),
+                                    worktree_id: project_path.worktree_id.to_usize(),
+                                    path: project_path.path,
+                                    path_prefix,
+                                    is_dir: false,
+                                    distance_to_relative_ancestor: 0,
+                                },
+                                is_recent: true,
+                            })
+                        })
+                }),
+        );
+
+        if !self.source.supports_context(PromptContextType::Thread, cx) {
+            return Task::ready(recent);
+        }
+
+        let sessions = collect_session_matches(cx);
+        const RECENT_COUNT: usize = 2;
+        recent.extend(
+            sessions
+                .into_iter()
+                .filter(|session| {
+                    let uri = MentionUri::Thread {
+                        id: session.session_id.clone(),
+                        name: session.title.to_string(),
+                    };
+                    !mentions.contains(&uri)
+                })
+                .take(RECENT_COUNT)
+                .map(Match::RecentThread),
+        );
+
+        Task::ready(recent)
+    }
+
+    fn available_context_picker_entries(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Vec<PromptContextEntry> {
+        let mut entries = vec![
+            PromptContextEntry::Mode(PromptContextType::File),
+            PromptContextEntry::Mode(PromptContextType::Symbol),
+        ];
+
+        if self.source.supports_context(PromptContextType::Thread, cx) {
+            entries.push(PromptContextEntry::Mode(PromptContextType::Thread));
+        }
+
+        let has_active_selection = workspace.update(cx, |workspace, cx| {
+            AgentContextSource::from_active(workspace, cx)
+                .and_then(|source| source.read_selection(workspace, false, cx))
+                .is_some()
+        });
+        if has_active_selection {
+            entries.push(PromptContextEntry::Action(
+                PromptContextAction::AddSelections,
+            ));
+        }
+
+        if self.source.supports_context(PromptContextType::Skill, cx)
+            && !self.source.available_skills(cx).is_empty()
+        {
+            entries.push(PromptContextEntry::Mode(PromptContextType::Skill));
+        }
+
+        if self.source.supports_context(PromptContextType::Fetch, cx) {
+            entries.push(PromptContextEntry::Mode(PromptContextType::Fetch));
+        }
+
+        if self
+            .source
+            .supports_context(PromptContextType::Diagnostics, cx)
+        {
+            let summary = workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .diagnostic_summary(false, cx);
+            if summary.error_count > 0 || summary.warning_count > 0 {
+                entries.push(PromptContextEntry::Mode(PromptContextType::Diagnostics));
+            }
+        }
+
+        entries
+    }
+}
+
+impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
+    fn completions(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: Anchor,
+        _trigger: CompletionContext,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<Result<Vec<CompletionResponse>>> {
+        let state = buffer.update(cx, |buffer, cx| {
+            let position = buffer_position.to_point(buffer);
+            let line_start = Point::new(position.row, 0);
+            let offset_to_line = buffer.point_to_offset(line_start);
+            let mut lines = buffer.text_for_range(line_start..position).lines();
+            let line = lines.next()?;
+            PromptCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
+        });
+        let Some(state) = state else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        let project = workspace.read(cx).project().clone();
+        let snapshot = buffer.read(cx).snapshot();
+        let source_range = snapshot.anchor_before(state.source_range().start)
+            ..snapshot.anchor_after(state.source_range().end);
+
+        let source = self.source.clone();
+        let editor = self.editor.clone();
+        let mention_set = self.mention_set.downgrade();
+        match state {
+            PromptCompletion::SlashCommand(SlashCommandCompletion {
+                command, argument, ..
+            }) => {
+                let show_section_headers = command.is_none() && argument.is_none();
+                let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
+                // Resolve the muted-text highlight up front: the
+                // completion build happens on a background thread where
+                // `cx.theme()` isn't available.
+                let source_highlight_id = cx
+                    .theme()
+                    .syntax()
+                    .highlight_id("variable")
+                    .map(HighlightId::new);
+
+                type SkillInfo = (
+                    String,
+                    SharedString,
+                    Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>,
+                );
+                let slash_candidates: Task<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>> = {
+                    let source = source.clone();
+                    cx.spawn(async move |_this, cx| {
+                        let candidates = search_task.await;
+                        cx.update(|cx| {
+                            candidates
+                                .into_iter()
+                                .map(|candidate| match &candidate {
+                                    SlashCompletionCandidate::Skill(skill) => {
+                                        let uri = MentionUri::Skill {
+                                            name: skill.name.to_string(),
+                                            source: skill.source.to_string(),
+                                            skill_file_path: skill.skill_file_path.clone(),
+                                        };
+                                        let new_text = format!("{} ", uri.as_link());
+                                        let new_text_len = new_text.len();
+                                        let icon_path = uri.icon_path(cx);
+                                        let crease_text: SharedString = uri.name().into();
+                                        let confirm = confirm_completion_callback(
+                                            crease_text,
+                                            source_range.start,
+                                            new_text_len - 1,
+                                            uri,
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                        );
+                                        (candidate, Some((new_text, icon_path, confirm)))
+                                    }
+                                    SlashCompletionCandidate::Command(_) => (candidate, None),
+                                })
+                                .collect::<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>>()
+                        })
+                    })
+                };
+
+                cx.background_spawn(async move {
+                    let mut slash_candidates = slash_candidates.await;
+                    slash_candidates.sort_by_key(|(candidate, _)| match candidate {
+                        SlashCompletionCandidate::Skill(_) => 0,
+                        SlashCompletionCandidate::Command(_) => 1,
+                    });
+                    let completions = slash_candidates
+                        .into_iter()
+                        .map(|(candidate, skill_info)| match candidate {
+                            SlashCompletionCandidate::Skill(skill) => {
+                                let label = build_slash_item_label(
+                                    &skill.name,
+                                    Some(&skill.source),
+                                    source_highlight_id,
+                                );
+                                let Some((new_text, icon_path, confirm)) = skill_info else {
+                                    unreachable!("skill candidates always have confirm callbacks")
+                                };
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    new_text,
+                                    label,
+                                    documentation: Some(
+                                        CompletionDocumentation::MultiLinePlainText(
+                                            skill.description.into(),
+                                        ),
+                                    ),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path: Some(icon_path),
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(confirm),
+                                    group: show_section_headers.then(|| CompletionGroup {
+                                        key: "skills".into(),
+                                        label: Some("Skills".into()),
+                                    }),
+                                }
+                            }
+                            SlashCompletionCandidate::Command(command) => {
+                                let label =
+                                    build_slash_command_label(&command, source_highlight_id);
+                                let new_text = match (command.source.as_ref(), argument.as_ref()) {
+                                    (Some(source), Some(argument)) => {
+                                        format!("/{}:{} {}", source, command.name, argument)
+                                    }
+                                    (Some(source), None) => {
+                                        format!("/{}:{} ", source, command.name)
+                                    }
+                                    (None, Some(argument)) => {
+                                        format!("/{} {}", command.name, argument)
+                                    }
+                                    (None, None) => format!("/{} ", command.name),
+                                };
+
+                                let is_missing_argument =
+                                    command.requires_argument && argument.is_none();
+
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    new_text,
+                                    label,
+                                    documentation: Some(
+                                        CompletionDocumentation::MultiLinePlainText(
+                                            command.description.into(),
+                                        ),
+                                    ),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path: None,
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(Arc::new({
+                                        let source = source.clone();
+                                        move |intent, _window, cx| {
+                                            if !is_missing_argument {
+                                                cx.defer({
+                                                    let source = source.clone();
+                                                    move |cx| match intent {
+                                                        CompletionIntent::Complete
+                                                        | CompletionIntent::CompleteWithInsert
+                                                        | CompletionIntent::CompleteWithReplace => {
+                                                            source.confirm_command(cx);
+                                                        }
+                                                        CompletionIntent::Compose => {}
+                                                    }
+                                                });
+                                            }
+                                            false
+                                        }
+                                    })),
+                                    group: show_section_headers.then(|| CompletionGroup {
+                                        key: "agent-commands".into(),
+                                        label: Some("Agent Commands".into()),
+                                    }),
+                                }
+                            }
+                        })
+                        .collect();
+
+                    Ok(vec![CompletionResponse {
+                        completions,
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
+                        is_incomplete: true,
+                    }])
+                })
+            }
+            PromptCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+                if let Some(PromptContextType::Diagnostics) = mode {
+                    if argument.is_some() {
+                        return Task::ready(Ok(Vec::new()));
+                    }
+
+                    let completions = Self::completion_for_diagnostics(
+                        source_range.clone(),
+                        source.clone(),
+                        editor.clone(),
+                        mention_set.clone(),
+                        workspace.clone(),
+                        cx,
+                    );
+                    if !completions.is_empty() {
+                        return Task::ready(Ok(vec![CompletionResponse {
+                            completions,
+                            display_options: CompletionDisplayOptions::default(),
+                            is_incomplete: false,
+                        }]));
+                    }
+                }
+
+                let show_section_headers = mode.is_none() && argument.is_none();
+                let query = argument.unwrap_or_default();
+                let search_task =
+                    self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
+
+                // Calculate maximum characters available for the full label (file_name + space + directory)
+                // based on maximum menu width after accounting for padding, spacing, and icon width
+                let label_max_chars = {
+                    // Base06 left padding + Base06 gap + Base06 right padding + icon width
+                    let used_pixels = DynamicSpacing::Base06.px(cx) * 3.0
+                        + IconSize::XSmall.rems() * window.rem_size();
+
+                    let style = window.text_style();
+                    let font_id = window.text_system().resolve_font(&style.font());
+                    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+
+                    // Fallback em_width of 10px matches file_finder.rs fallback for TextSize::Small
+                    let em_width = cx
+                        .text_system()
+                        .em_width(font_id, font_size)
+                        .unwrap_or(px(10.0));
+
+                    // Calculate available pixels for text (file_name + directory)
+                    // Using max width since dynamic_width allows the menu to expand up to this
+                    let available_pixels = COMPLETION_MENU_MAX_WIDTH - used_pixels;
+
+                    // Convert to character count (total available for file_name + directory)
+                    (f32::from(available_pixels) / f32::from(em_width)) as usize
+                };
+
+                cx.spawn(async move |_, cx| {
+                    let mut matches = search_task.await;
+                    if show_section_headers {
+                        matches.sort_by_key(|mat| match mat {
+                            Match::File(FileMatch {
+                                is_recent: true, ..
+                            })
+                            | Match::RecentThread(_) => 0,
+                            Match::Entry(_) | Match::BranchDiff(_) => 1,
+                            _ => 2,
+                        });
+                    }
+
+                    let completions = cx.update(|cx| {
+                        matches
+                            .into_iter()
+                            .filter_map(|mat| {
+                                let group = if show_section_headers {
+                                    match &mat {
+                                        Match::File(FileMatch {
+                                            is_recent: true, ..
+                                        })
+                                        | Match::RecentThread(_) => Some(CompletionGroup {
+                                            key: "recent".into(),
+                                            label: None,
+                                        }),
+                                        Match::Entry(_) | Match::BranchDiff(_) => {
+                                            Some(CompletionGroup {
+                                                key: "context".into(),
+                                                label: None,
+                                            })
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                };
+                                let mut completion = match mat {
+                                    Match::File(FileMatch { mat, is_recent }) => {
+                                        let project_path = ProjectPath {
+                                            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                            path: mat.path.clone(),
+                                        };
+
+                                        // If path is empty, this means we're matching with the root directory itself
+                                        // so we use the path_prefix as the name
+                                        let path_prefix = if mat.path.is_empty() {
+                                            project
+                                                .read(cx)
+                                                .worktree_for_id(project_path.worktree_id, cx)
+                                                .map(|wt| wt.read(cx).root_name().into())
+                                                .unwrap_or_else(|| mat.path_prefix.clone())
+                                        } else {
+                                            mat.path_prefix.clone()
+                                        };
+
+                                        Self::completion_for_path(
+                                            project_path,
+                                            &path_prefix,
+                                            is_recent,
+                                            mat.is_dir,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            project.clone(),
+                                            label_max_chars,
+                                            cx,
+                                        )
+                                    }
+                                    Match::Symbol(SymbolMatch { symbol, .. }) => {
+                                        Self::completion_for_symbol(
+                                            symbol,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            label_max_chars,
+                                            cx,
+                                        )
+                                    }
+                                    Match::Thread(thread) => Some(Self::completion_for_thread(
+                                        thread.session_id,
+                                        Some(thread.title),
+                                        source_range.clone(),
+                                        false,
+                                        source.clone(),
+                                        editor.clone(),
+                                        mention_set.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )),
+                                    Match::RecentThread(thread) => {
+                                        Some(Self::completion_for_thread(
+                                            thread.session_id,
+                                            Some(thread.title),
+                                            source_range.clone(),
+                                            true,
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        ))
+                                    }
+                                    Match::Skill(skill) => Some(Self::completion_for_skill(
+                                        skill,
+                                        source_range.clone(),
+                                        source.clone(),
+                                        editor.clone(),
+                                        mention_set.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )),
+                                    Match::Fetch(url) => Self::completion_for_fetch(
+                                        source_range.clone(),
+                                        url,
+                                        source.clone(),
+                                        editor.clone(),
+                                        mention_set.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    ),
+                                    Match::Entry(EntryMatch { entry, .. }) => {
+                                        Self::completion_for_entry(
+                                            entry,
+                                            source_range.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            &workspace,
+                                            cx,
+                                        )
+                                    }
+                                    Match::BranchDiff(branch_diff) => {
+                                        Some(Self::build_branch_diff_completion(
+                                            branch_diff.base_ref,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        ))
+                                    }
+                                };
+                                if let Some(completion) = &mut completion {
+                                    completion.group = group;
+                                }
+                                completion
+                            })
+                            .collect::<Vec<_>>()
+                    });
+
+                    Ok(vec![CompletionResponse {
+                        completions,
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
+                        // Since this does its own filtering (see `filter_completions()` returns false),
+                        // there is no benefit to computing whether this set of completions is incomplete.
+                        is_incomplete: true,
+                    }])
+                })
+            }
+        }
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Entity<language::Buffer>,
+        position: language::Anchor,
+        _text: &str,
+        _trigger_in_words: bool,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        let buffer = buffer.read(cx);
+        let position = position.to_point(buffer);
+        let line_start = Point::new(position.row, 0);
+        let offset_to_line = buffer.point_to_offset(line_start);
+        let mut lines = buffer.text_for_range(line_start..position).lines();
+        if let Some(line) = lines.next() {
+            PromptCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
+                .filter(|completion| {
+                    // Right now we don't support completing arguments of slash commands
+                    let is_slash_command_with_argument = matches!(
+                        completion,
+                        PromptCompletion::SlashCommand(SlashCommandCompletion {
+                            argument: Some(_),
+                            ..
+                        })
+                    );
+                    !is_slash_command_with_argument
+                })
+                .map(|completion| {
+                    completion.source_range().start <= offset_to_line + position.column as usize
+                        && completion.source_range().end
+                            >= offset_to_line + position.column as usize
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    fn sort_completions(&self) -> bool {
+        false
+    }
+
+    fn filter_completions(&self) -> bool {
+        false
+    }
+}
+
+fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
+    crease_text: SharedString,
+    start: Anchor,
+    content_len: usize,
+    mention_uri: MentionUri,
+    source: Arc<T>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    workspace: Entity<Workspace>,
+) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
+    Arc::new(move |_, window, cx| {
+        let source = source.clone();
+        let editor = editor.clone();
+        let mention_set = mention_set.clone();
+        let crease_text = crease_text.clone();
+        let mention_uri = mention_uri.clone();
+        let workspace = workspace.clone();
+        window.defer(cx, move |window, cx| {
+            if let Some(editor) = editor.upgrade() {
+                mention_set
+                    .clone()
+                    .update(cx, |mention_set, cx| {
+                        mention_set
+                            .confirm_mention_completion(
+                                crease_text,
+                                start,
+                                content_len,
+                                mention_uri,
+                                source.supports_images(cx),
+                                editor,
+                                &workspace,
+                                window,
+                                cx,
+                            )
+                            .detach();
+                    })
+                    .ok();
+            }
+        });
+        false
+    })
+}
+
+#[derive(Debug, PartialEq)]
+enum PromptCompletion {
+    SlashCommand(SlashCommandCompletion),
+    Mention(MentionCompletion),
+}
+
+impl PromptCompletion {
+    fn source_range(&self) -> Range<usize> {
+        match self {
+            Self::SlashCommand(completion) => completion.source_range.clone(),
+            Self::Mention(completion) => completion.source_range.clone(),
+        }
+    }
+
+    fn try_parse(
+        line: &str,
+        offset_to_line: usize,
+        supported_modes: &[PromptContextType],
+    ) -> Option<Self> {
+        if line.contains('@') {
+            if let Some(mention) =
+                MentionCompletion::try_parse(line, offset_to_line, supported_modes)
+            {
+                return Some(Self::Mention(mention));
+            }
+        }
+        SlashCommandCompletion::try_parse(line, offset_to_line).map(Self::SlashCommand)
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct SlashCommandCompletion {
+    pub source_range: Range<usize>,
+    pub command: Option<String>,
+    pub argument: Option<String>,
+}
+
+impl SlashCommandCompletion {
+    pub fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+        let mut last_command_start = None;
+        for (idx, _) in line.rmatch_indices('/') {
+            if line[idx + 1..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace())
+            {
+                continue;
+            }
+
+            last_command_start = Some(idx);
+            break;
+        }
+
+        let last_command_start = last_command_start?;
+        let last_command = &line[last_command_start + 1..];
+
+        let mut argument = None;
+        let mut command = None;
+        if let Some((command_text, args)) = last_command.split_once(char::is_whitespace) {
+            if !args.is_empty() {
+                argument = Some(args.trim_end().to_string());
+            }
+            command = Some(command_text.to_string());
+        } else if !last_command.is_empty() {
+            command = Some(last_command.to_string());
+        };
+
+        Some(Self {
+            source_range: last_command_start + offset_to_line
+                ..line
+                    .rfind(|c: char| !c.is_whitespace())
+                    .unwrap_or_else(|| line.len())
+                    + 1
+                    + offset_to_line,
+            command,
+            argument,
+        })
+    }
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct MentionCompletion {
+    source_range: Range<usize>,
+    mode: Option<PromptContextType>,
+    argument: Option<String>,
+}
+
+impl MentionCompletion {
+    fn try_parse(
+        line: &str,
+        offset_to_line: usize,
+        supported_modes: &[PromptContextType],
+    ) -> Option<Self> {
+        // Find the rightmost '@' that has a boundary before it and no whitespace immediately after.
+        // A boundary is the start of the line, whitespace, or an opening bracket.
+        let mut last_mention_start = None;
+        for (idx, _) in line.rmatch_indices('@') {
+            // No whitespace immediately after '@'.
+            if line[idx + 1..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace() && !matches!(c, '(' | '[' | '{'))
+            {
+                continue;
+            }
+
+            last_mention_start = Some(idx);
+            break;
+        }
+
+        let last_mention_start = last_mention_start?;
+
+        let rest_of_line = &line[last_mention_start + 1..];
+
+        let mut mode = None;
+        let mut argument = None;
+
+        let mut parts = rest_of_line.split_whitespace();
+        let mut end = last_mention_start + 1;
+
+        if let Some(mode_text) = parts.next() {
+            // Safe since we check no leading whitespace above
+            end += mode_text.len();
+
+            if let Some(parsed_mode) = PromptContextType::try_from(mode_text).ok()
+                && supported_modes.contains(&parsed_mode)
+            {
+                mode = Some(parsed_mode);
+            } else {
+                argument = Some(mode_text.to_string());
+            }
+            match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
+                Some(whitespace_count) => {
+                    if let Some(argument_text) = parts.next() {
+                        // If mode wasn't recognized but we have an argument, don't suggest completions
+                        // (e.g. '@something word')
+                        if mode.is_none() && !argument_text.is_empty() {
+                            return None;
+                        }
+
+                        argument = Some(argument_text.to_string());
+                        end += whitespace_count + argument_text.len();
+                    }
+                }
+                None => {
+                    // Rest of line is entirely whitespace
+                    end += rest_of_line.len() - mode_text.len();
+                }
+            }
+        }
+
+        Some(Self {
+            source_range: last_mention_start + offset_to_line..end + offset_to_line,
+            mode,
+            argument,
+        })
+    }
+}
+
+fn diagnostics_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    let mut parts = Vec::new();
+
+    if include_errors && summary.error_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ));
+    }
+
+    if include_warnings && summary.warning_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ));
+    }
+
+    if parts.is_empty() {
+        return "Diagnostics".into();
+    }
+
+    let body = if parts.len() == 2 {
+        format!("{} and {}", parts[0], parts[1])
+    } else {
+        parts
+            .pop()
+            .expect("at least one part present after non-empty check")
+    };
+
+    format!("Diagnostics: {body}")
+}
+
+fn diagnostics_submenu_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> String {
+    match (include_errors, include_warnings) {
+        (true, true) => format!(
+            "{} {} & {} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count),
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        (true, _) => format!(
+            "{} {}",
+            summary.error_count,
+            pluralize("error", summary.error_count)
+        ),
+        (_, true) => format!(
+            "{} {}",
+            summary.warning_count,
+            pluralize("warning", summary.warning_count)
+        ),
+        _ => "Diagnostics".into(),
+    }
+}
+
+fn diagnostics_crease_label(
+    summary: DiagnosticSummary,
+    include_errors: bool,
+    include_warnings: bool,
+) -> SharedString {
+    diagnostics_label(summary, include_errors, include_warnings).into()
+}
+
+fn pluralize(noun: &str, count: usize) -> String {
+    if count == 1 {
+        noun.to_string()
+    } else {
+        format!("{noun}s")
+    }
+}
+
+pub(crate) fn search_files(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> Task<Vec<FileMatch>> {
+    if query.is_empty() {
+        let workspace = workspace.read(cx);
+        let project = workspace.project().read(cx);
+        let visible_worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = visible_worktrees.len() > 1;
+
+        let recent_matches = workspace
+            .recent_navigation_history(Some(10), cx)
+            .into_iter()
+            .map(|(project_path, _)| {
+                let path_prefix = if include_root_name {
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|wt| wt.read(cx).root_name().into())
+                        .unwrap_or_else(|| RelPath::empty().into())
+                } else {
+                    RelPath::empty().into()
+                };
+
+                FileMatch {
+                    mat: PathMatch {
+                        score: 0.,
+                        positions: Vec::new(),
+                        worktree_id: project_path.worktree_id.to_usize(),
+                        path: project_path.path,
+                        path_prefix,
+                        distance_to_relative_ancestor: 0,
+                        is_dir: false,
+                    },
+                    is_recent: true,
+                }
+            });
+
+        let file_matches = visible_worktrees.into_iter().flat_map(|worktree| {
+            let worktree = worktree.read(cx);
+            let path_prefix: Arc<RelPath> = if include_root_name {
+                worktree.root_name().into()
+            } else {
+                RelPath::empty().into()
+            };
+            worktree.entries(false, 0).map(move |entry| FileMatch {
+                mat: PathMatch {
+                    score: 0.,
+                    positions: Vec::new(),
+                    worktree_id: worktree.id().to_usize(),
+                    path: entry.path.clone(),
+                    path_prefix: path_prefix.clone(),
+                    distance_to_relative_ancestor: 0,
+                    is_dir: entry.is_dir(),
+                },
+                is_recent: false,
+            })
+        });
+
+        Task::ready(recent_matches.chain(file_matches).collect())
+    } else {
+        let workspace = workspace.read(cx);
+        let relative_to = workspace
+            .recent_navigation_history_iter(cx)
+            .next()
+            .map(|(path, _)| path.path);
+        let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
+        let include_root_name = worktrees.len() > 1;
+        let candidate_sets = worktrees
+            .into_iter()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+
+                PathMatchCandidateSet {
+                    snapshot: worktree.snapshot(),
+                    include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
+                    include_root_name,
+                    candidates: project::Candidates::Entries,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let executor = cx.background_executor().clone();
+        cx.foreground_executor().spawn(async move {
+            fuzzy::match_path_sets(
+                candidate_sets.as_slice(),
+                query.as_str(),
+                &relative_to,
+                false,
+                100,
+                &cancellation_flag,
+                executor,
+            )
+            .await
+            .into_iter()
+            .map(|mat| FileMatch {
+                mat,
+                is_recent: false,
+            })
+            .collect::<Vec<_>>()
+        })
+    }
+}
+
+pub(crate) fn search_symbols(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) -> Task<Vec<SymbolMatch>> {
+    let symbols_task = workspace.update(cx, |workspace, cx| {
+        workspace
+            .project()
+            .update(cx, |project, cx| project.symbols(&query, cx))
+    });
+    let project = workspace.read(cx).project().clone();
+    cx.spawn(async move |cx| {
+        let Some(symbols) = symbols_task.await.log_err() else {
+            return Vec::new();
+        };
+        let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
+            .update(cx, |project, cx| {
+                symbols
+                    .iter()
+                    .enumerate()
+                    .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.label.filter_text()))
+                    .partition(|candidate| match &symbols[candidate.id].path {
+                        SymbolLocation::InProject(project_path) => project
+                            .entry_for_path(project_path, cx)
+                            .is_some_and(|e| !e.is_ignored),
+                        SymbolLocation::OutsideProject { .. } => false,
+                    })
+            });
+        // Try to support rust-analyzer's path based symbols feature which
+        // allows to search by rust path syntax, in that case we only want to
+        // filter names by the last segment
+        // Ideally this was a first class LSP feature (rich queries)
+        let query = query
+            .rsplit_once("::")
+            .map_or(&*query, |(_, suffix)| suffix)
+            .to_owned();
+        // Note if you make changes to this filtering below, also change `project_symbols::ProjectSymbolsDelegate::filter`
+        const MAX_MATCHES: usize = 100;
+        let mut visible_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
+            &visible_match_candidates,
+            &query,
+            false,
+            true,
+            MAX_MATCHES,
+            &cancellation_flag,
+            cx.background_executor().clone(),
+        ));
+        let mut external_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
+            &external_match_candidates,
+            &query,
+            false,
+            true,
+            MAX_MATCHES - visible_matches.len().min(MAX_MATCHES),
+            &cancellation_flag,
+            cx.background_executor().clone(),
+        ));
+        let sort_key_for_match = |mat: &StringMatch| {
+            let symbol = &symbols[mat.candidate_id];
+            (Reverse(OrderedFloat(mat.score)), symbol.label.filter_text())
+        };
+
+        visible_matches.sort_unstable_by_key(sort_key_for_match);
+        external_matches.sort_unstable_by_key(sort_key_for_match);
+        let mut matches = visible_matches;
+        matches.append(&mut external_matches);
+
+        matches
+            .into_iter()
+            .map(|mut mat| {
+                let symbol = symbols[mat.candidate_id].clone();
+                let filter_start = symbol.label.filter_range.start;
+                for position in &mut mat.positions {
+                    *position += filter_start;
+                }
+                SymbolMatch { symbol }
+            })
+            .collect()
+    })
+}
+
+fn collect_session_matches(cx: &App) -> Vec<SessionMatch> {
+    let Some(store) = ThreadMetadataStore::try_global(cx) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<&ThreadMetadata> = store
+        .read(cx)
+        .entries()
+        .filter(|t| !t.archived && t.agent_id == *agent::ZED_AGENT_ID)
+        .collect();
+    entries.sort_by_key(|t| Reverse(t.updated_at));
+    entries
+        .into_iter()
+        .map(|metadata| {
+            let info = acp_thread::AgentSessionInfo::from(metadata);
+            SessionMatch {
+                session_id: info.session_id,
+                title: session_title(info.title),
+            }
+        })
+        .collect()
+}
+
+fn filter_sessions_by_query(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    sessions: Vec<SessionMatch>,
+    cx: &mut App,
+) -> Task<Vec<SessionMatch>> {
+    if query.is_empty() {
+        return Task::ready(sessions);
+    }
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        filter_sessions(query, cancellation_flag, sessions, executor).await
+    })
+}
+
+async fn filter_sessions(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    sessions: Vec<SessionMatch>,
+    executor: BackgroundExecutor,
+) -> Vec<SessionMatch> {
+    let titles = sessions
+        .iter()
+        .map(|session| session.title.clone())
+        .collect::<Vec<_>>();
+    let candidates = titles
+        .iter()
+        .enumerate()
+        .map(|(id, title)| StringMatchCandidate::new(id, title.as_ref()))
+        .collect::<Vec<_>>();
+    let matches = fuzzy::match_strings(
+        &candidates,
+        &query,
+        false,
+        true,
+        100,
+        &cancellation_flag,
+        executor,
+    )
+    .await;
+
+    matches
+        .into_iter()
+        .map(|mat| sessions[mat.candidate_id].clone())
+        .collect()
+}
+
+pub(crate) fn search_skills(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    skills: Vec<AvailableSkill>,
+    cx: &mut App,
+) -> Task<Vec<AvailableSkill>> {
+    if skills.is_empty() {
+        return Task::ready(Vec::new());
+    }
+    let executor = cx.background_executor().clone();
+    cx.background_spawn(async move {
+        let candidates = skills
+            .iter()
+            .enumerate()
+            .map(|(id, skill)| StringMatchCandidate::new(id, &skill.name))
+            .collect::<Vec<_>>();
+        let matches = fuzzy::match_strings(
+            &candidates,
+            &query,
+            false,
+            true,
+            100,
+            &cancellation_flag,
+            executor,
+        )
+        .await;
+        matches
+            .into_iter()
+            .map(|mat| skills[mat.candidate_id].clone())
+            .collect()
+    })
+}
+
+pub struct SymbolMatch {
+    pub symbol: Symbol,
+}
+
+pub struct FileMatch {
+    pub mat: PathMatch,
+    pub is_recent: bool,
+}
+
+pub fn extract_file_name_and_directory(
+    path: &RelPath,
+    path_prefix: &RelPath,
+    path_style: PathStyle,
+) -> (SharedString, Option<SharedString>) {
+    // If path is empty, this means we're matching with the root directory itself
+    // so we use the path_prefix as the name
+    if path.is_empty() && !path_prefix.is_empty() {
+        return (path_prefix.display(path_style).to_string().into(), None);
+    }
+
+    let full_path = path_prefix.join(path);
+    let file_name = full_path.file_name().unwrap_or_default();
+    let display_path = full_path.display(path_style);
+    let (directory, file_name) = display_path.split_at(display_path.len() - file_name.len());
+    (
+        file_name.to_string().into(),
+        Some(SharedString::new(directory)).filter(|dir| !dir.is_empty()),
+    )
+}
+
+fn build_slash_command_label(
+    command: &AvailableCommand,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    build_slash_item_label(&command.name, command.source.as_ref(), source_highlight_id)
+}
+
+/// Build the autocomplete-popup label for a slash menu item, appending
+/// the item origin after the name when one is present and non-empty.
+/// The suffix is styled with the muted `variable` highlight and excluded
+/// from the fuzzy filter range so typing the source doesn't match the entry.
+fn build_slash_item_label(
+    name: &Arc<str>,
+    source: Option<&SharedString>,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    let source = source.filter(|source| !source.is_empty());
+    let Some(source) = source else {
+        return CodeLabel::plain(name.to_string(), None);
+    };
+    let mut builder = CodeLabelBuilder::default();
+    builder.push_str(name, None);
+    // Two spaces gives a touch of breathing room between the name and
+    // the muted source label.
+    builder.push_str("  ", None);
+    builder.push_str(source, source_highlight_id);
+    // The filter range defaults to the entire label after `build()`,
+    // which would let the source text participate in fuzzy filtering.
+    // Slash commands are matched up-front in `search_slash_commands`
+    // against the command name, and the editor doesn't re-filter
+    // (`filter_completions()` is false), so this is mostly defensive
+    // — but it keeps the displayed filter consistent with what we
+    // actually matched against.
+    builder.respan_filter_range(Some(name));
+    builder.build()
+}
+
+fn build_code_label_for_path(
+    file: &str,
+    directory: Option<&str>,
+    line_number: Option<u32>,
+    label_max_chars: usize,
+    cx: &App,
+) -> CodeLabel {
+    let variable_highlight_id = cx
+        .theme()
+        .syntax()
+        .highlight_id("variable")
+        .map(HighlightId::new);
+    let mut label = CodeLabelBuilder::default();
+
+    label.push_str(file, None);
+    label.push_str(" ", None);
+
+    if let Some(directory) = directory {
+        let file_name_chars = file.chars().count();
+        // Account for: file_name + space (ellipsis is handled by truncate_and_remove_front)
+        let directory_max_chars = label_max_chars
+            .saturating_sub(file_name_chars)
+            .saturating_sub(1);
+        let truncated_directory = truncate_and_remove_front(directory, directory_max_chars.max(5));
+        label.push_str(&truncated_directory, variable_highlight_id);
+    }
+    if let Some(line_number) = line_number {
+        label.push_str(&format!(" L{}", line_number), variable_highlight_id);
+    }
+    label.build()
+}
+
+fn terminal_view_selection(terminal_view: &Entity<TerminalView>, cx: &App) -> Option<String> {
+    terminal_view
+        .read(cx)
+        .terminal()
+        .read(cx)
+        .last_content
+        .selection_text
+        .clone()
+        .filter(|text| !text.is_empty())
+}
+
+fn editor_selection_ranges(
+    editor: &Entity<Editor>,
+    include_current_line: bool,
+    cx: &mut App,
+) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
+    editor.update(cx, |editor, cx| {
+        let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+
+        let multi_buffer = editor.buffer().read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+
+        let non_empty_rows: collections::HashSet<u32> = selections
+            .iter()
+            .filter(|s| !s.is_empty())
+            .flat_map(|s| s.start.row..=s.end.row)
+            .collect();
+
+        let mut seen_current_line_rows = collections::HashSet::default();
+        let mut results = Vec::new();
+
+        for s in selections {
+            if s.is_empty() {
+                if !include_current_line
+                    || non_empty_rows.contains(&s.start.row)
+                    || !seen_current_line_rows.insert(s.start.row)
+                {
+                    continue;
+                }
+                let Some((buffer, anchor)) = multi_buffer.text_anchor_for_position(s.start, cx)
+                else {
+                    continue;
+                };
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                let row = anchor.to_point(&buffer_snapshot).row;
+                let line_start = text::Point::new(row, 0);
+                let line_end = text::Point::new(row, buffer_snapshot.line_len(row));
+                let start = buffer_snapshot.anchor_after(line_start);
+                let end = buffer_snapshot.anchor_before(line_end);
+                if start.to_offset(&buffer_snapshot) == end.to_offset(&buffer_snapshot) {
+                    continue;
+                }
+                results.push((buffer, start..end));
+            } else {
+                let mb_start = multi_buffer_snapshot.anchor_after(s.start);
+                let mb_end = multi_buffer_snapshot.anchor_before(s.end);
+                let Some((start_buffer, start)) =
+                    multi_buffer.text_anchor_for_position(mb_start, cx)
+                else {
+                    continue;
+                };
+                let Some((end_buffer, end)) = multi_buffer.text_anchor_for_position(mb_end, cx)
+                else {
+                    continue;
+                };
+                if start_buffer != end_buffer {
+                    continue;
+                }
+                let buffer_snapshot = start_buffer.read(cx).snapshot();
+                if start.to_offset(&buffer_snapshot) == end.to_offset(&buffer_snapshot) {
+                    continue;
+                }
+                results.push((start_buffer, start..end));
+            }
+        }
+
+        results
+    })
+}
+
+type ConfirmCallback = Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>;
+
+fn completion_text_for_editor_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+) -> (String, ConfirmCallback) {
+    const EDITOR_PLACEHOLDER: &str = "selection ";
+
+    let selections = editor_selections
+        .into_iter()
+        .enumerate()
+        .map(|(ix, (buffer, range))| {
+            (
+                buffer,
+                range,
+                (EDITOR_PLACEHOLDER.len() * ix)..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let new_text = EDITOR_PLACEHOLDER.repeat(selections.len());
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let selections = selections.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            window.defer(cx, move |window, cx| {
+                if let Some(editor) = editor.upgrade()
+                    && !selections.is_empty()
+                {
+                    mention_set
+                        .update(cx, |store, cx| {
+                            store.confirm_mention_for_selection(
+                                source_range.clone(),
+                                selections,
+                                editor.clone(),
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
+                }
+            });
+            false
+        }
+    });
+
+    (new_text, callback)
+}
+
+fn completion_text_for_terminal_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    terminal_selections: Vec<String>,
+) -> (String, ConfirmCallback) {
+    const TERMINAL_PLACEHOLDER: &str = "terminal ";
+
+    let mut new_text = String::new();
+    let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
+        .into_iter()
+        .map(|text| {
+            let start = new_text.len();
+            new_text.push_str(TERMINAL_PLACEHOLDER);
+            (text, start..(new_text.len() - 1))
+        })
+        .collect();
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            let terminal_ranges = terminal_ranges.clone();
+            window.defer(cx, move |window, cx| {
+                let Some(editor) = editor.upgrade() else {
+                    return;
+                };
+                for (terminal_text, terminal_range) in terminal_ranges {
+                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
+                        return;
+                    };
+                    let offset = start.to_offset(&snapshot);
+
+                    let line_count = terminal_text.lines().count() as u32;
+                    let mention_uri = MentionUri::TerminalSelection { line_count };
+                    let range = snapshot.anchor_after(offset + terminal_range.start)
+                        ..snapshot.anchor_after(offset + terminal_range.end);
+
+                    let crease = crate::mention_set::crease_for_mention(
+                        mention_uri.name().into(),
+                        mention_uri.icon_path(cx),
+                        None,
+                        range,
+                        editor.downgrade(),
+                    );
+
+                    let Some(crease_id) = editor.update(cx, |editor, cx| {
+                        let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+                        editor.fold_creases(vec![crease], false, window, cx);
+                        crease_ids.first().copied()
+                    }) else {
+                        log::error!("insert_creases returned no ids for terminal selection");
+                        continue;
+                    };
+
+                    mention_set
+                        .update(cx, |mention_set, cx| {
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                Task::ready(Ok(crate::mention_set::Mention::Text {
+                                    content: terminal_text,
+                                    tracked_buffers: vec![],
+                                }))
+                                .shared(),
+                                None,
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            });
+            false
+        }
+    });
+
+    (new_text, callback)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[test]
+    fn test_prompt_completion_parse() {
+        let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+
+        assert_eq!(
+            PromptCompletion::try_parse("/", 0, &supported_modes),
+            Some(PromptCompletion::SlashCommand(SlashCommandCompletion {
+                source_range: 0..1,
+                command: None,
+                argument: None,
+            }))
+        );
+
+        assert_eq!(
+            PromptCompletion::try_parse("@", 0, &supported_modes),
+            Some(PromptCompletion::Mention(MentionCompletion {
+                source_range: 0..1,
+                mode: None,
+                argument: None,
+            }))
+        );
+
+        assert_eq!(
+            PromptCompletion::try_parse("/test @file", 0, &supported_modes),
+            Some(PromptCompletion::Mention(MentionCompletion {
+                source_range: 6..11,
+                mode: Some(PromptContextType::File),
+                argument: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_slash_command_completion_parse() {
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..1,
+                command: None,
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..5,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help ", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..5,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help arg1", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..10,
+                command: Some("help".to_string()),
+                argument: Some("arg1".to_string()),
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help arg1 arg2", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..15,
+                command: Some("help".to_string()),
+                argument: Some("arg1 arg2".to_string()),
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/拿不到命令 拿不到命令 ", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..30,
+                command: Some("拿不到命令".to_string()),
+                argument: Some("拿不到命令".to_string()),
+            })
+        );
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..7,
+                command: None,
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help", 0),
+            Some(SlashCommandCompletion {
+                source_range: 6..11,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("Lorem /help /test", 0),
+            Some(SlashCommandCompletion {
+                source_range: 12..17,
+                command: Some("test".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/help", 10),
+            Some(SlashCommandCompletion {
+                source_range: 10..15,
+                command: Some("help".to_string()),
+                argument: None,
+            })
+        );
+
+        assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("/ ", 0), None);
+    }
+
+    #[test]
+    fn test_mention_completion_parse() {
+        let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+        let supported_modes_with_diagnostics = vec![
+            PromptContextType::File,
+            PromptContextType::Symbol,
+            PromptContextType::Diagnostics,
+        ];
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem Ipsum", 0, &supported_modes),
+            None
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..7,
+                mode: None,
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..11,
+                mode: Some(PromptContextType::File),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file ", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..12,
+                mode: Some(PromptContextType::File),
+                argument: None,
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..19,
+                mode: Some(PromptContextType::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs ", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..19,
+                mode: Some(PromptContextType::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @file main.rs Ipsum", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..19,
+                mode: Some(PromptContextType::File),
+                argument: Some("main.rs".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @main", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..11,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @main ", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..12,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @main m", 0, &supported_modes),
+            None
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("test@", 0, &supported_modes),
+            None
+        );
+
+        // Allowed non-file mentions
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @symbol main", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: Some(PromptContextType::Symbol),
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @symbol agent_ui::completion_provider",
+                0,
+                &supported_modes
+            ),
+            Some(MentionCompletion {
+                source_range: 6..43,
+                mode: Some(PromptContextType::Symbol),
+                argument: Some("agent_ui::completion_provider".to_string()),
+            })
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "Lorem @diagnostics",
+                0,
+                &supported_modes_with_diagnostics
+            ),
+            Some(MentionCompletion {
+                source_range: 6..18,
+                mode: Some(PromptContextType::Diagnostics),
+                argument: None,
+            })
+        );
+
+        // Disallowed non-file mentions
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @symbol main", 0, &[PromptContextType::File]),
+            None
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem@symbol", 0, &supported_modes),
+            None,
+            "Should not parse mention inside word"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("Lorem @ file", 0, &supported_modes),
+            None,
+            "Should not parse with a space after @"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("@ file", 0, &supported_modes),
+            None,
+            "Should not parse with a space after @ at the start of the line"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://www.npmjs.com/package/@matterport/sdk",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..52,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://www.npmjs.com/package/@matterport/sdk".to_string()),
+            }),
+            "Should handle URLs with @ in the path"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@org/@repo/file",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..42,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@org/@repo/file".to_string()),
+            }),
+            "Should handle URLs with multiple @ characters"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..28,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@".to_string()),
+            }),
+            "Should parse URL ending with @ (even if URL is incomplete)"
+        );
+
+        // Bracketed mentions: opening brackets count as a boundary before '@' so
+        // typing `(@`, `[@`, or `{@` still opens the completion menu.
+
+        assert_eq!(
+            MentionCompletion::try_parse("(@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '('"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("[@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '['"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("{@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '{{'"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
+        let alpha = SessionMatch {
+            session_id: acp::SessionId::new("session-alpha"),
+            title: "Alpha Session".into(),
+        };
+        let beta = SessionMatch {
+            session_id: acp::SessionId::new("session-beta"),
+            title: "Beta Session".into(),
+        };
+
+        let sessions = vec![alpha.clone(), beta];
+
+        let task = {
+            let mut app = cx.app.borrow_mut();
+            filter_sessions_by_query(
+                "Alpha".into(),
+                Arc::new(AtomicBool::default()),
+                sessions,
+                &mut app,
+            )
+        };
+
+        let results = task.await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].session_id, alpha.session_id);
+    }
+
+    #[gpui::test]
+    async fn test_search_files_path_distance_ordering(cx: &mut TestAppContext) {
+        use project::Project;
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::{AppState, MultiWorkspace};
+
+        let app_state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            state
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "dir1": { "a.txt": "" },
+                    "dir2": {
+                        "a.txt": "",
+                        "b.txt": ""
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees[0].read(cx).id()
+        });
+
+        // Open a file in dir2 to create navigation history.
+        // When searching for "a.txt", dir2/a.txt should be sorted first because
+        // it is closer to the most recently opened file (dir2/b.txt).
+        let b_path = ProjectPath {
+            worktree_id,
+            path: rel_path("dir2/b.txt").into(),
+        };
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(b_path, None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let results = cx
+            .update(|_window, cx| {
+                search_files(
+                    "a.txt".into(),
+                    Arc::new(AtomicBool::default()),
+                    &workspace,
+                    cx,
+                )
+            })
+            .await;
+
+        assert_eq!(results.len(), 2, "expected 2 matching files");
+        assert_eq!(
+            results[0].mat.path.as_ref(),
+            rel_path("dir2/a.txt"),
+            "dir2/a.txt should be first because it's closer to the recently opened dir2/b.txt"
+        );
+        assert_eq!(
+            results[1].mat.path.as_ref(),
+            rel_path("dir1/a.txt"),
+            "dir1/a.txt should be second"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_source_read_selection_editor_whole_line(cx: &mut TestAppContext) {
+        use editor::Editor;
+        use project::Project;
+        use serde_json::json;
+        use text::ToOffset as _;
+        use util::path;
+        use workspace::{AppState, MultiWorkspace};
+
+        crate::conversation_view::tests::init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "a.txt": "" }))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let buffer = cx.new(|cx| language::Buffer::local("abc\ndef\nghi", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(1, 1)..text::Point::new(1, 1)]);
+            });
+        });
+
+        let source = AgentContextSource::Editor(editor.downgrade());
+
+        workspace.update(cx, |workspace, cx| {
+            let selection = source
+                .read_selection(workspace, true, cx)
+                .expect("editor source with cursor on a line should yield a selection");
+            assert!(
+                matches!(selection, AgentContextSelection::Editor(_)),
+                "expected Editor variant"
+            );
+            if let AgentContextSelection::Editor(ranges) = selection {
+                assert_eq!(
+                    ranges.len(),
+                    1,
+                    "expected exactly one range for whole-line fallback"
+                );
+                let (range_buffer, range) = &ranges[0];
+                let snapshot = range_buffer.read(cx).snapshot();
+                let start_offset = range.start.to_offset(&snapshot);
+                let end_offset = range.end.to_offset(&snapshot);
+                assert_eq!(
+                    &snapshot.text()[start_offset..end_offset],
+                    "def",
+                    "whole-line fallback should capture the current row"
+                );
+            }
+
+            // With include_current_line = false and no non-empty selection, the
+            // fallback is suppressed and read_selection should return None.
+            assert!(source.read_selection(workspace, false, cx).is_none());
+        });
+    }
+}

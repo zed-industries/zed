@@ -1,0 +1,4 @@
+{"Put":{"state":"aaaaˇaa\nanotherline"}}
+{"Key":"4"}
+{"Key":"space"}
+{"Get":{"state":"aaaaaa\nanˇotherline","mode":"Normal"}}

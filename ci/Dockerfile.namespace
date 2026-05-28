@@ -1,0 +1,21 @@
+ARG NAMESPACE_BASE_IMAGE_REF=""
+
+# Your image must build FROM NAMESPACE_BASE_IMAGE_REF
+FROM ${NAMESPACE_BASE_IMAGE_REF} AS base
+
+# Remove problematic git-lfs packagecloud source
+RUN sudo rm -f /etc/apt/sources.list.d/*git-lfs*.list
+# Install git and SSH for cloning private repositories
+RUN sudo apt-get update && \
+    sudo apt-get install -y git openssh-client
+
+# Clone the Zed repository
+RUN git clone https://github.com/zed-industries/zed.git ~/zed
+
+# Run the Linux installation script
+WORKDIR /home/runner/zed
+RUN ./script/linux
+
+# Clean up unnecessary files to reduce image size
+RUN sudo apt-get clean && sudo rm -rf \
+    /home/runner/zed

@@ -1,0 +1,39 @@
+[package]
+name = "json_schema_store"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/json_schema_store.rs"
+
+[features]
+default = []
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+dap.workspace = true
+parking_lot.workspace = true
+extension.workspace = true
+feature_flags.workspace = true
+gpui.workspace = true
+language.workspace = true
+paths.workspace = true
+project.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+settings.workspace = true
+snippet_provider.workspace = true
+task.workspace = true
+theme.workspace = true
+util.workspace = true

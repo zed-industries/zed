@@ -1,0 +1,31 @@
+[package]
+name = "audio"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/audio.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+cpal.workspace = true
+crossbeam.workspace = true
+gpui.workspace = true
+denoise = { path = "../denoise" }
+log.workspace = true
+parking_lot.workspace = true
+rodio.workspace = true
+serde.workspace = true
+settings.workspace = true
+thiserror.workspace = true
+util.workspace = true
+
+[target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
+libwebrtc.workspace = true

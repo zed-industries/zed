@@ -1,0 +1,1226 @@
+use agent_client_protocol::schema as acp;
+use anyhow::{Context as _, Result, bail};
+use file_icons::FileIcons;
+use prompt_store::{PromptId, UserPromptId};
+use serde::{Deserialize, Serialize};
+use std::{
+    borrow::Cow,
+    fmt,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+};
+use ui::{App, IconName, SharedString};
+use url::Url;
+use urlencoding::decode;
+use util::{
+    ResultExt,
+    paths::{PathStyle, PathWithPosition, is_absolute},
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum MentionUri {
+    File {
+        abs_path: PathBuf,
+    },
+    PastedImage {
+        name: String,
+    },
+    Directory {
+        abs_path: PathBuf,
+    },
+    Symbol {
+        abs_path: PathBuf,
+        name: String,
+        line_range: RangeInclusive<u32>,
+    },
+    Thread {
+        id: acp::SessionId,
+        name: String,
+    },
+    Rule {
+        id: PromptId,
+        name: String,
+    },
+    Diagnostics {
+        #[serde(default = "default_include_errors")]
+        include_errors: bool,
+        #[serde(default)]
+        include_warnings: bool,
+    },
+    Selection {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        abs_path: Option<PathBuf>,
+        line_range: RangeInclusive<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        column: Option<u32>,
+    },
+    Fetch {
+        url: Url,
+    },
+    TerminalSelection {
+        line_count: u32,
+    },
+    GitDiff {
+        base_ref: String,
+    },
+    MergeConflict {
+        file_path: String,
+    },
+    Skill {
+        name: String,
+        source: String,
+        skill_file_path: PathBuf,
+    },
+}
+
+impl MentionUri {
+    pub fn parse(input: &str, path_style: PathStyle) -> Result<Self> {
+        let input = input
+            .strip_prefix('`')
+            .and_then(|input| input.strip_suffix('`'))
+            .unwrap_or(input);
+
+        fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
+            let range = fragment.strip_prefix("L").unwrap_or(fragment);
+
+            let (start, end) = if let Some((start, end)) = range.split_once(":") {
+                (start, end)
+            } else if let Some((start, end)) = range.split_once("-") {
+                // Also handle L10-20 or L10-L20 format
+                (start, end.strip_prefix("L").unwrap_or(end))
+            } else {
+                // Single line number like L1872 - treat as a range of one line
+                (range, range)
+            };
+
+            let start_line = start
+                .parse::<u32>()
+                .context("Parsing line range start")?
+                .checked_sub(1)
+                .context("Line numbers should be 1-based")?;
+            let end_line = end
+                .parse::<u32>()
+                .context("Parsing line range end")?
+                .checked_sub(1)
+                .context("Line numbers should be 1-based")?;
+
+            Ok(start_line..=end_line)
+        }
+
+        let parse_column =
+            |input: Option<String>| -> Option<u32> { input?.parse::<u32>().ok()?.checked_sub(1) };
+        let validate_query_params = |url: &Url, allowed: &[&str]| -> Result<()> {
+            for (key, _) in url.query_pairs() {
+                if !allowed.contains(&key.as_ref()) {
+                    bail!("invalid query parameter")
+                }
+            }
+            Ok(())
+        };
+
+        let parse_absolute_path = |input: &str| -> Result<Self> {
+            let (path_input, fragment) = input
+                .split_once('#')
+                .map_or((input, None), |(path, fragment)| (path, Some(fragment)));
+
+            if let Some(fragment) = fragment.and_then(|fragment| parse_line_range(fragment).ok()) {
+                return Ok(MentionUri::Selection {
+                    abs_path: Some(path_input.into()),
+                    line_range: fragment,
+                    column: None,
+                });
+            }
+
+            let path_with_position = PathWithPosition::parse_str(path_input);
+            let abs_path = path_with_position.path;
+            if let Some(row) = path_with_position.row {
+                let line = row
+                    .checked_sub(1)
+                    .context("Line numbers should be 1-based")?;
+                Ok(MentionUri::Selection {
+                    abs_path: Some(abs_path),
+                    line_range: line..=line,
+                    column: path_with_position
+                        .column
+                        .map(|column| column.saturating_sub(1)),
+                })
+            } else {
+                Ok(MentionUri::File { abs_path })
+            }
+        };
+
+        if is_absolute(input, path_style) && !input.contains("://") {
+            return parse_absolute_path(input)
+                .with_context(|| format!("Invalid absolute path mention URI: {input}"));
+        }
+
+        let url = url::Url::parse(input)?;
+        let path = url.path();
+        match url.scheme() {
+            "file" => {
+                let trimmed = if path_style.is_windows() {
+                    path.trim_start_matches("/")
+                } else {
+                    path
+                };
+                let decoded = decode(trimmed).unwrap_or(Cow::Borrowed(trimmed));
+                let normalized: Cow<str> = if path_style.is_windows() {
+                    Cow::Owned(decoded.replace('/', "\\"))
+                } else {
+                    decoded
+                };
+                let path = normalized.as_ref();
+
+                if let Some(fragment) = url.fragment() {
+                    validate_query_params(&url, &["symbol", "column"])?;
+                    let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
+                    let column = parse_column(query_param(&url, "column"));
+                    if let Some(name) = query_param(&url, "symbol") {
+                        Ok(Self::Symbol {
+                            name,
+                            abs_path: path.into(),
+                            line_range,
+                        })
+                    } else {
+                        Ok(Self::Selection {
+                            abs_path: Some(path.into()),
+                            line_range,
+                            column,
+                        })
+                    }
+                } else if input.ends_with("/") {
+                    Ok(Self::Directory {
+                        abs_path: path.into(),
+                    })
+                } else {
+                    Ok(Self::File {
+                        abs_path: path.into(),
+                    })
+                }
+            }
+            "zed" => {
+                if let Some(thread_id) = path.strip_prefix("/agent/thread/") {
+                    let name = single_query_param(&url, "name")?.context("Missing thread name")?;
+                    Ok(Self::Thread {
+                        id: acp::SessionId::new(thread_id),
+                        name,
+                    })
+                } else if let Some(rule_id) = path.strip_prefix("/agent/rule/") {
+                    let name = single_query_param(&url, "name")?.context("Missing rule name")?;
+                    let rule_id = UserPromptId(rule_id.parse()?);
+                    Ok(Self::Rule {
+                        id: rule_id.into(),
+                        name,
+                    })
+                } else if path == "/agent/diagnostics" {
+                    let mut include_errors = default_include_errors();
+                    let mut include_warnings = false;
+                    for (key, value) in url.query_pairs() {
+                        match key.as_ref() {
+                            "include_warnings" => include_warnings = value == "true",
+                            "include_errors" => include_errors = value == "true",
+                            _ => bail!("invalid query parameter"),
+                        }
+                    }
+                    Ok(Self::Diagnostics {
+                        include_errors,
+                        include_warnings,
+                    })
+                } else if path.starts_with("/agent/pasted-image") {
+                    let name =
+                        single_query_param(&url, "name")?.unwrap_or_else(|| "Image".to_string());
+                    Ok(Self::PastedImage { name })
+                } else if path.starts_with("/agent/untitled-buffer") {
+                    let fragment = url
+                        .fragment()
+                        .context("Missing fragment for untitled buffer selection")?;
+                    let line_range = parse_line_range(fragment)?;
+                    validate_query_params(&url, &["column"])?;
+                    Ok(Self::Selection {
+                        abs_path: None,
+                        line_range,
+                        column: parse_column(query_param(&url, "column")),
+                    })
+                } else if let Some(name) = path.strip_prefix("/agent/symbol/") {
+                    let fragment = url
+                        .fragment()
+                        .context("Missing fragment for untitled buffer selection")?;
+                    let line_range = parse_line_range(fragment)?;
+                    let path =
+                        single_query_param(&url, "path")?.context("Missing path for symbol")?;
+                    Ok(Self::Symbol {
+                        name: name.to_string(),
+                        abs_path: path.into(),
+                        line_range,
+                    })
+                } else if path.starts_with("/agent/file") {
+                    let path =
+                        single_query_param(&url, "path")?.context("Missing path for file")?;
+                    Ok(Self::File {
+                        abs_path: path.into(),
+                    })
+                } else if path.starts_with("/agent/directory") {
+                    let path =
+                        single_query_param(&url, "path")?.context("Missing path for directory")?;
+                    Ok(Self::Directory {
+                        abs_path: path.into(),
+                    })
+                } else if path.starts_with("/agent/selection") {
+                    validate_query_params(&url, &["path", "column"])?;
+                    let fragment = url.fragment().context("Missing fragment for selection")?;
+                    let line_range = parse_line_range(fragment)?;
+                    let column = parse_column(query_param(&url, "column"));
+                    let path = query_param(&url, "path").context("Missing path for selection")?;
+                    Ok(Self::Selection {
+                        abs_path: Some(path.into()),
+                        line_range,
+                        column,
+                    })
+                } else if path.starts_with("/agent/terminal-selection") {
+                    let line_count = single_query_param(&url, "lines")?
+                        .unwrap_or_else(|| "0".to_string())
+                        .parse::<u32>()
+                        .unwrap_or(0);
+                    Ok(Self::TerminalSelection { line_count })
+                } else if path.starts_with("/agent/git-diff") {
+                    let base_ref =
+                        single_query_param(&url, "base")?.unwrap_or_else(|| "main".to_string());
+                    Ok(Self::GitDiff { base_ref })
+                } else if path.starts_with("/agent/merge-conflict") {
+                    let file_path = single_query_param(&url, "path")?.unwrap_or_default();
+                    Ok(Self::MergeConflict { file_path })
+                } else if path.starts_with("/agent/skill") {
+                    let mut name = None;
+                    let mut source = None;
+                    let mut skill_file_path = None;
+
+                    for (key, value) in url.query_pairs() {
+                        match key.as_ref() {
+                            "name" => {
+                                if name.replace(value.to_string()).is_some() {
+                                    bail!("duplicate skill name query parameter");
+                                }
+                            }
+                            "source" => {
+                                if source.replace(value.to_string()).is_some() {
+                                    bail!("duplicate skill source query parameter");
+                                }
+                            }
+                            "path" => {
+                                if skill_file_path
+                                    .replace(PathBuf::from(value.to_string()))
+                                    .is_some()
+                                {
+                                    bail!("duplicate skill file path query parameter");
+                                }
+                            }
+                            _ => bail!("invalid query parameter"),
+                        }
+                    }
+
+                    Ok(Self::Skill {
+                        name: name.context("missing skill name")?,
+                        source: source.context("missing skill source")?,
+                        skill_file_path: skill_file_path.context("missing skill file path")?,
+                    })
+                } else {
+                    bail!("invalid zed url: {:?}", input);
+                }
+            }
+            "http" | "https" => Ok(MentionUri::Fetch { url }),
+            other => bail!("unrecognized scheme {:?}", other),
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => abs_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            MentionUri::PastedImage { name } => name.clone(),
+            MentionUri::Symbol { name, .. } => name.clone(),
+            MentionUri::Thread { name, .. } => name.clone(),
+            MentionUri::Rule { name, .. } => name.clone(),
+            MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
+            MentionUri::TerminalSelection { line_count } => {
+                if *line_count == 1 {
+                    "Terminal (1 line)".to_string()
+                } else {
+                    format!("Terminal ({} lines)", line_count)
+                }
+            }
+            MentionUri::GitDiff { base_ref } => format!("Branch Diff ({})", base_ref),
+            MentionUri::MergeConflict { file_path } => {
+                let name = Path::new(file_path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                format!("Merge Conflict ({name})")
+            }
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => selection_name(path.as_deref(), line_range),
+            MentionUri::Fetch { url } => url.to_string(),
+            MentionUri::Skill { name, .. } => name.clone(),
+        }
+    }
+
+    /// Returns a label for this mention at the given disambiguation `detail`
+    /// level. `detail == 0` is the base name returned by [`Self::name`]; higher
+    /// levels include progressively more context (e.g. additional parent path
+    /// components for files, or the source for skills) until a fixed point is
+    /// reached. Intended to be driven by [`util::disambiguate::compute_disambiguation_details`].
+    pub fn disambiguated_name(&self, detail: usize) -> String {
+        if detail == 0 {
+            return self.name();
+        }
+
+        match self {
+            MentionUri::Skill { name, source, .. } => {
+                if source.is_empty() {
+                    // Must match `SkillSource::display_label()` in agent_skills.
+                    format!("{} (global)", name)
+                } else {
+                    format!("{} ({})", name, source)
+                }
+            }
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
+                project::path_suffix(abs_path, detail)
+            }
+            _ => self.name(),
+        }
+    }
+
+    pub fn tooltip_text(&self) -> Option<SharedString> {
+        match self {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                Some(abs_path.to_string_lossy().into_owned().into())
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    abs_path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => Some(skill_file_path.to_string_lossy().into_owned().into()),
+            _ => None,
+        }
+    }
+
+    pub fn icon_path(&self, cx: &mut App) -> SharedString {
+        match self {
+            MentionUri::File { abs_path } => {
+                FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
+            }
+            MentionUri::PastedImage { .. } => IconName::Image.path().into(),
+            MentionUri::Directory { abs_path } => FileIcons::get_folder_icon(false, abs_path, cx)
+                .unwrap_or_else(|| IconName::Folder.path().into()),
+            MentionUri::Symbol { .. } => IconName::Code.path().into(),
+            MentionUri::Thread { .. } => IconName::Thread.path().into(),
+            MentionUri::Rule { .. } => IconName::Reader.path().into(),
+            MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
+            MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
+            MentionUri::Selection { .. } => IconName::Reader.path().into(),
+            MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
+            MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
+            MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
+            MentionUri::Skill { .. } => IconName::Sparkle.path().into(),
+        }
+    }
+
+    pub fn as_link<'a>(&'a self) -> MentionLink<'a> {
+        MentionLink(self)
+    }
+
+    pub fn to_uri(&self) -> Url {
+        match self {
+            MentionUri::File { abs_path } => {
+                let mut url = Url::parse("file:///").unwrap();
+                url.set_path(&abs_path.to_string_lossy());
+                url
+            }
+            MentionUri::PastedImage { name } => {
+                let mut url = Url::parse("zed:///agent/pasted-image").unwrap();
+                url.query_pairs_mut().append_pair("name", name);
+                url
+            }
+            MentionUri::Directory { abs_path } => {
+                let mut url = Url::parse("file:///").unwrap();
+                let mut path = abs_path.to_string_lossy().into_owned();
+                if !path.ends_with('/') && !path.ends_with('\\') {
+                    path.push('/');
+                }
+                url.set_path(&path);
+                url
+            }
+            MentionUri::Symbol {
+                abs_path,
+                name,
+                line_range,
+                ..
+            } => {
+                let mut url = Url::parse("file:///").unwrap();
+                url.set_path(&abs_path.to_string_lossy());
+                url.query_pairs_mut().append_pair("symbol", name);
+                url.set_fragment(Some(&format!(
+                    "L{}:{}",
+                    line_range.start() + 1,
+                    line_range.end() + 1
+                )));
+                url
+            }
+            MentionUri::Selection {
+                abs_path,
+                line_range,
+                column,
+            } => {
+                let mut url = if let Some(path) = abs_path {
+                    let mut url = Url::parse("file:///").unwrap();
+                    url.set_path(&path.to_string_lossy());
+                    url
+                } else {
+                    let mut url = Url::parse("zed:///").unwrap();
+                    url.set_path("/agent/untitled-buffer");
+                    url
+                };
+                if let Some(column) = column {
+                    url.query_pairs_mut()
+                        .append_pair("column", &(column + 1).to_string());
+                }
+                url.set_fragment(Some(&format!(
+                    "L{}:{}",
+                    line_range.start() + 1,
+                    line_range.end() + 1
+                )));
+                url
+            }
+            MentionUri::Thread { name, id } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path(&format!("/agent/thread/{id}"));
+                url.query_pairs_mut().append_pair("name", name);
+                url
+            }
+            MentionUri::Rule { name, id } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path(&format!("/agent/rule/{id}"));
+                url.query_pairs_mut().append_pair("name", name);
+                url
+            }
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/diagnostics");
+                if *include_warnings {
+                    url.query_pairs_mut()
+                        .append_pair("include_warnings", "true");
+                }
+                if !include_errors {
+                    url.query_pairs_mut().append_pair("include_errors", "false");
+                }
+                url
+            }
+            MentionUri::Fetch { url } => url.clone(),
+            MentionUri::TerminalSelection { line_count } => {
+                let mut url = Url::parse("zed:///agent/terminal-selection").unwrap();
+                url.query_pairs_mut()
+                    .append_pair("lines", &line_count.to_string());
+                url
+            }
+            MentionUri::GitDiff { base_ref } => {
+                let mut url = Url::parse("zed:///agent/git-diff").unwrap();
+                url.query_pairs_mut().append_pair("base", base_ref);
+                url
+            }
+            MentionUri::MergeConflict { file_path } => {
+                let mut url = Url::parse("zed:///agent/merge-conflict").unwrap();
+                url.query_pairs_mut().append_pair("path", file_path);
+                url
+            }
+            MentionUri::Skill {
+                name,
+                source,
+                skill_file_path,
+            } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/skill");
+                url.query_pairs_mut()
+                    .append_pair("name", name)
+                    .append_pair("source", source)
+                    .append_pair("path", &skill_file_path.to_string_lossy());
+                url
+            }
+        }
+    }
+}
+
+pub struct MentionLink<'a>(&'a MentionUri);
+
+impl fmt::Display for MentionLink<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[@{}]({})", self.0.name(), self.0.to_uri())
+    }
+}
+
+fn default_include_errors() -> bool {
+    true
+}
+
+fn query_param(url: &Url, name: &'static str) -> Option<String> {
+    url.query_pairs()
+        .find_map(|(key, value)| (key == name).then(|| value.to_string()))
+}
+
+fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
+    let pairs = url.query_pairs().collect::<Vec<_>>();
+    match pairs.as_slice() {
+        [] => Ok(None),
+        [(k, v)] => {
+            if k != name {
+                bail!("invalid query parameter")
+            }
+
+            Ok(Some(v.to_string()))
+        }
+        _ => bail!("too many query pairs"),
+    }
+}
+
+pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> String {
+    format!(
+        "{} ({}:{})",
+        path.and_then(|path| path.file_name())
+            .unwrap_or("Untitled".as_ref())
+            .display(),
+        *line_range.start() + 1,
+        *line_range.end() + 1
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use util::{path, uri};
+
+    use super::*;
+
+    #[test]
+    fn test_parse_file_uri() {
+        let file_uri = uri!("file:///path/to/file.rs");
+        let parsed = MentionUri::parse(file_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new(path!("/path/to/file.rs")));
+            }
+            _ => panic!("Expected File variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), file_uri);
+    }
+
+    #[test]
+    fn test_parse_directory_uri() {
+        let file_uri = uri!("file:///path/to/dir/");
+        let parsed = MentionUri::parse(file_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Directory { abs_path } => {
+                assert_eq!(abs_path, Path::new(path!("/path/to/dir/")));
+            }
+            _ => panic!("Expected Directory variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), file_uri);
+    }
+
+    #[test]
+    fn test_parse_file_uris_use_native_separators_on_windows() {
+        let parsed = MentionUri::parse("file:///C:/path/to/file.rs", PathStyle::Windows).unwrap();
+        match parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
+            }
+            other => panic!("Expected File variant, got {other:?}"),
+        }
+
+        let parsed = MentionUri::parse("file:///C:/path/to/dir/", PathStyle::Windows).unwrap();
+        match parsed {
+            MentionUri::Directory { abs_path } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\dir\\"));
+            }
+            other => panic!("Expected Directory variant, got {other:?}"),
+        }
+
+        let parsed = MentionUri::parse(
+            "file:///C:/path/to/file.rs?symbol=MySymbol#L10:20",
+            PathStyle::Windows,
+        )
+        .unwrap();
+        match parsed {
+            MentionUri::Symbol { abs_path, .. } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
+            }
+            other => panic!("Expected Symbol variant, got {other:?}"),
+        }
+
+        let parsed =
+            MentionUri::parse("file:///C:/path/to/file.rs#L5:15", PathStyle::Windows).unwrap();
+        match parsed {
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                ..
+            } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
+            }
+            other => panic!("Expected Selection variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_to_directory_uri_without_slash() {
+        let uri = MentionUri::Directory {
+            abs_path: PathBuf::from(path!("/path/to/dir/")),
+        };
+        let expected = uri!("file:///path/to/dir/");
+        assert_eq!(uri.to_uri().to_string(), expected);
+    }
+
+    #[test]
+    fn test_directory_uri_round_trip_without_trailing_slash() {
+        let uri = MentionUri::Directory {
+            abs_path: PathBuf::from(path!("/path/to/dir")),
+        };
+        let serialized = uri.to_uri().to_string();
+        assert!(serialized.ends_with('/'), "directory URI must end with /");
+        let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
+        assert!(
+            matches!(parsed, MentionUri::Directory { .. }),
+            "expected Directory variant, got {:?}",
+            parsed
+        );
+    }
+
+    #[test]
+    fn test_parse_symbol_uri() {
+        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10:20");
+        let parsed = MentionUri::parse(symbol_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Symbol {
+                abs_path: path,
+                name,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path, Path::new(path!("/path/to/file.rs")));
+                assert_eq!(name, "MySymbol");
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
+            }
+            _ => panic!("Expected Symbol variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), symbol_uri);
+    }
+
+    #[test]
+    fn test_parse_selection_uri() {
+        let selection_uri = uri!("file:///path/to/file.rs#L5:15");
+        let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &4);
+                assert_eq!(line_range.end(), &14);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), selection_uri);
+    }
+
+    #[test]
+    fn test_parse_file_uri_with_non_ascii() {
+        let file_uri = uri!("file:///path/to/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt");
+        let parsed = MentionUri::parse(file_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new(path!("/path/to/日本語.txt")));
+            }
+            _ => panic!("Expected File variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), file_uri);
+    }
+
+    #[test]
+    fn test_parse_untitled_selection_uri() {
+        let selection_uri = uri!("zed:///agent/untitled-buffer#L1:10");
+        let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: None,
+                line_range,
+                ..
+            } => {
+                assert_eq!(line_range.start(), &0);
+                assert_eq!(line_range.end(), &9);
+            }
+            _ => panic!("Expected Selection variant without path"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), selection_uri);
+    }
+
+    #[test]
+    fn test_parse_thread_uri() {
+        let thread_uri = "zed:///agent/thread/session123?name=Thread+name";
+        let parsed = MentionUri::parse(thread_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Thread {
+                id: thread_id,
+                name,
+            } => {
+                assert_eq!(thread_id.to_string(), "session123");
+                assert_eq!(name, "Thread name");
+            }
+            _ => panic!("Expected Thread variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), thread_uri);
+    }
+
+    #[test]
+    fn test_parse_rule_uri() {
+        let rule_uri = "zed:///agent/rule/d8694ff2-90d5-4b6f-be33-33c1763acd52?name=Some+rule";
+        let parsed = MentionUri::parse(rule_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Rule { id, name } => {
+                assert_eq!(id.to_string(), "d8694ff2-90d5-4b6f-be33-33c1763acd52");
+                assert_eq!(name, "Some rule");
+            }
+            _ => panic!("Expected Rule variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), rule_uri);
+    }
+
+    #[test]
+    fn test_parse_skill_uri_round_trip() {
+        let skill_uri = MentionUri::Skill {
+            name: "rust-best-practices".to_string(),
+            source: "my-personal-project".to_string(),
+            skill_file_path: PathBuf::from(path!("/path/to/skills/rust-best-practices/SKILL.md")),
+        };
+
+        let serialized = skill_uri.to_uri().to_string();
+        let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
+
+        assert_eq!(parsed, skill_uri);
+    }
+
+    #[test]
+    fn test_parse_fetch_http_uri() {
+        let http_uri = "http://example.com/path?query=value#fragment";
+        let parsed = MentionUri::parse(http_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Fetch { url } => {
+                assert_eq!(url.to_string(), http_uri);
+            }
+            _ => panic!("Expected Fetch variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), http_uri);
+    }
+
+    #[test]
+    fn test_parse_fetch_https_uri() {
+        let https_uri = "https://example.com/api/endpoint";
+        let parsed = MentionUri::parse(https_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Fetch { url } => {
+                assert_eq!(url.to_string(), https_uri);
+            }
+            _ => panic!("Expected Fetch variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), https_uri);
+    }
+
+    #[test]
+    fn test_parse_diagnostics_uri() {
+        let uri = "zed:///agent/diagnostics?include_warnings=true";
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                assert!(include_errors);
+                assert!(include_warnings);
+            }
+            _ => panic!("Expected Diagnostics variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), uri);
+    }
+
+    #[test]
+    fn test_parse_diagnostics_uri_warnings_only() {
+        let uri = "zed:///agent/diagnostics?include_warnings=true&include_errors=false";
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                assert!(!include_errors);
+                assert!(include_warnings);
+            }
+            _ => panic!("Expected Diagnostics variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), uri);
+    }
+
+    #[test]
+    fn test_invalid_scheme() {
+        assert!(MentionUri::parse("ftp://example.com", PathStyle::local()).is_err());
+        assert!(MentionUri::parse("ssh://example.com", PathStyle::local()).is_err());
+        assert!(MentionUri::parse("unknown://example.com", PathStyle::local()).is_err());
+    }
+
+    #[test]
+    fn test_invalid_zed_path() {
+        assert!(MentionUri::parse("zed:///invalid/path", PathStyle::local()).is_err());
+        assert!(MentionUri::parse("zed:///agent/unknown/test", PathStyle::local()).is_err());
+    }
+
+    #[test]
+    fn test_parse_absolute_file_path() {
+        let file_path = path!("/path/to/file.rs");
+        let parsed = MentionUri::parse(file_path, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new(file_path));
+            }
+            _ => panic!("Expected File variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_file_path_with_row() {
+        let file_path = "/path/to/file.rs:42";
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_file_path_with_row_and_column() {
+        let file_path = "/path/to/file.rs:42:5";
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                column,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+                assert_eq!(column, &Some(4));
+
+                let parsed_again = MentionUri::parse(parsed.to_uri().as_ref(), PathStyle::Posix)
+                    .expect("selection URI with column should parse");
+                assert_eq!(parsed_again, parsed.clone());
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_file_path_with_fragment_line() {
+        let file_path = "/path/to/file.rs#L42";
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_windows_path() {
+        let file_path = "C:\\Users\\zed\\project\\main.rs";
+        let parsed = MentionUri::parse(file_path, PathStyle::Windows).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new("C:\\Users\\zed\\project\\main.rs"));
+            }
+            _ => panic!("Expected File variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_windows_file_path_with_row() {
+        let file_path = "C:\\Users\\zed\\project\\main.rs:42";
+        let parsed = MentionUri::parse(file_path, PathStyle::Windows).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(
+                    path.as_ref().unwrap(),
+                    Path::new("C:\\Users\\zed\\project\\main.rs")
+                );
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_windows_file_path_with_fragment_line() {
+        let file_path = "C:\\Users\\zed\\project\\main.rs#L42";
+        let parsed = MentionUri::parse(file_path, PathStyle::Windows).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(
+                    path.as_ref().unwrap(),
+                    Path::new("C:\\Users\\zed\\project\\main.rs")
+                );
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_backticked_absolute_file_path() {
+        let file_path = "`/path/to/file.rs`";
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new("/path/to/file.rs"));
+            }
+            _ => panic!("Expected File variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_backticked_absolute_file_path_with_fragment_line() {
+        let file_path = "`/path/to/file.rs#L42`";
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_backticked_absolute_windows_file_path_with_fragment_line() {
+        let file_path = "`C:\\Users\\zed\\project\\main.rs#L42`";
+        let parsed = MentionUri::parse(file_path, PathStyle::Windows).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(
+                    path.as_ref().unwrap(),
+                    Path::new("C:\\Users\\zed\\project\\main.rs")
+                );
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_single_line_number() {
+        // https://github.com/zed-industries/zed/issues/46114
+        let uri = uri!("file:///path/to/file.rs#L1872");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &1871);
+                assert_eq!(line_range.end(), &1871);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_dash_separated_line_range() {
+        let uri = uri!("file:///path/to/file.rs#L10-20");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+
+        // Also test L10-L20 format
+        let uri = uri!("file:///path/to/file.rs#L10-L20");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                ..
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_terminal_selection_uri() {
+        let terminal_uri = "zed:///agent/terminal-selection?lines=42";
+        let parsed = MentionUri::parse(terminal_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::TerminalSelection { line_count } => {
+                assert_eq!(*line_count, 42);
+            }
+            _ => panic!("Expected TerminalSelection variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), terminal_uri);
+        assert_eq!(parsed.name(), "Terminal (42 lines)");
+
+        // Test single line
+        let single_line_uri = "zed:///agent/terminal-selection?lines=1";
+        let parsed_single = MentionUri::parse(single_line_uri, PathStyle::local()).unwrap();
+        assert_eq!(parsed_single.name(), "Terminal (1 line)");
+    }
+
+    #[test]
+    fn test_disambiguated_name() {
+        // Two files with the same name — should disambiguate with parent dir
+        let file_a = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/src/README.md")),
+        };
+        let file_b = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/docs/README.md")),
+        };
+        assert_eq!(file_a.name(), "README.md");
+        assert_eq!(file_b.name(), "README.md");
+        assert_eq!(file_a.disambiguated_name(0), "README.md");
+        assert_eq!(file_a.disambiguated_name(1), "src/README.md");
+        assert_eq!(file_b.disambiguated_name(1), "docs/README.md");
+
+        // Files that still collide at one parent should grow further.
+        let deep_a = MentionUri::File {
+            abs_path: PathBuf::from(path!("/a/src/foo.rs")),
+        };
+        let deep_b = MentionUri::File {
+            abs_path: PathBuf::from(path!("/b/src/foo.rs")),
+        };
+        assert_eq!(deep_a.disambiguated_name(1), "src/foo.rs");
+        assert_eq!(deep_b.disambiguated_name(1), "src/foo.rs");
+        assert_eq!(deep_a.disambiguated_name(2), "a/src/foo.rs");
+        assert_eq!(deep_b.disambiguated_name(2), "b/src/foo.rs");
+
+        // Two skills with the same name — should disambiguate with source
+        let global_skill = MentionUri::Skill {
+            name: "create-skill".into(),
+            source: "".into(),
+            skill_file_path: PathBuf::from("/global/create-skill/SKILL.md"),
+        };
+        let project_skill = MentionUri::Skill {
+            name: "create-skill".into(),
+            source: "my-project".into(),
+            skill_file_path: PathBuf::from("/project/create-skill/SKILL.md"),
+        };
+        assert_eq!(global_skill.name(), "create-skill");
+        assert_eq!(global_skill.disambiguated_name(0), "create-skill");
+        assert_eq!(global_skill.disambiguated_name(1), "create-skill (global)");
+        assert_eq!(
+            project_skill.disambiguated_name(1),
+            "create-skill (my-project)"
+        );
+
+        // A type without special disambiguation (Thread) — detail has no effect
+        // (the value is a fixed point so the disambiguation loop terminates).
+        let thread = MentionUri::Thread {
+            id: acp::SessionId::new("123"),
+            name: "My Thread".into(),
+        };
+        assert_eq!(thread.disambiguated_name(0), "My Thread");
+        assert_eq!(thread.disambiguated_name(1), "My Thread");
+        assert_eq!(thread.disambiguated_name(5), "My Thread");
+
+        // Edge case: file at filesystem root has no parent to show
+        let root_file = MentionUri::File {
+            abs_path: PathBuf::from(path!("/README.md")),
+        };
+        assert_eq!(root_file.disambiguated_name(1), "README.md");
+        assert_eq!(root_file.disambiguated_name(5), "README.md");
+    }
+}

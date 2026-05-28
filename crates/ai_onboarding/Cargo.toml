@@ -1,0 +1,27 @@
+[package]
+name = "ai_onboarding"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/ai_onboarding.rs"
+
+[features]
+default = []
+
+[dependencies]
+client.workspace = true
+cloud_api_types.workspace = true
+component.workspace = true
+gpui.workspace = true
+language_model.workspace = true
+serde.workspace = true
+smallvec.workspace = true
+telemetry.workspace = true
+ui.workspace = true
+zed_actions.workspace = true

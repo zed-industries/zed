@@ -1,0 +1,29 @@
+[package]
+name = "askpass"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/askpass.rs"
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+gpui.workspace = true
+net.workspace = true
+smol.workspace = true
+log.workspace = true
+tempfile.workspace = true
+util.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["log"]

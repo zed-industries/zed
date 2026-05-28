@@ -1,0 +1,781 @@
+use crate::{
+    Bounds, Capslock, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
+    Window, point, seal::Sealed,
+};
+use smallvec::SmallVec;
+use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
+
+/// An event from a platform input source.
+pub trait InputEvent: Sealed + 'static {
+    /// Convert this event into the platform input enum.
+    fn to_platform_input(self) -> PlatformInput;
+}
+
+/// A key event from the platform.
+pub trait KeyEvent: InputEvent {}
+
+/// A mouse event from the platform.
+pub trait MouseEvent: InputEvent {}
+
+/// A gesture event from the platform.
+pub trait GestureEvent: InputEvent {}
+
+/// The key down event equivalent for the platform.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyDownEvent {
+    /// The keystroke that was generated.
+    pub keystroke: Keystroke,
+
+    /// Whether the key is currently held down.
+    pub is_held: bool,
+
+    /// Whether to prefer character input over keybindings for this keystroke.
+    /// In some cases, like AltGr on Windows, modifiers are significant for character input.
+    pub prefer_character_input: bool,
+}
+
+impl Sealed for KeyDownEvent {}
+impl InputEvent for KeyDownEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::KeyDown(self)
+    }
+}
+impl KeyEvent for KeyDownEvent {}
+
+/// The key up event equivalent for the platform.
+#[derive(Clone, Debug)]
+pub struct KeyUpEvent {
+    /// The keystroke that was released.
+    pub keystroke: Keystroke,
+}
+
+impl Sealed for KeyUpEvent {}
+impl InputEvent for KeyUpEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::KeyUp(self)
+    }
+}
+impl KeyEvent for KeyUpEvent {}
+
+/// The modifiers changed event equivalent for the platform.
+#[derive(Clone, Debug, Default)]
+pub struct ModifiersChangedEvent {
+    /// The new state of the modifier keys
+    pub modifiers: Modifiers,
+    /// The new state of the capslock key
+    pub capslock: Capslock,
+}
+
+impl Sealed for ModifiersChangedEvent {}
+impl InputEvent for ModifiersChangedEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::ModifiersChanged(self)
+    }
+}
+impl KeyEvent for ModifiersChangedEvent {}
+
+impl Deref for ModifiersChangedEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+/// The phase of a touch motion event.
+/// Based on the winit enum of the same name.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum TouchPhase {
+    /// The touch started.
+    Started,
+    /// The touch event is moving.
+    #[default]
+    Moved,
+    /// The touch phase has ended
+    Ended,
+}
+
+/// A mouse down event from the platform
+#[derive(Clone, Debug, Default)]
+pub struct MouseDownEvent {
+    /// Which mouse button was pressed.
+    pub button: MouseButton,
+
+    /// The position of the mouse on the window.
+    pub position: Point<Pixels>,
+
+    /// The modifiers that were held down when the mouse was pressed.
+    pub modifiers: Modifiers,
+
+    /// The number of times the button has been clicked.
+    pub click_count: usize,
+
+    /// Whether this is the first, focusing click.
+    pub first_mouse: bool,
+}
+
+impl Sealed for MouseDownEvent {}
+impl InputEvent for MouseDownEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseDown(self)
+    }
+}
+impl MouseEvent for MouseDownEvent {}
+
+impl MouseDownEvent {
+    /// Returns true if this mouse up event should focus the element.
+    pub fn is_focusing(&self) -> bool {
+        match self.button {
+            MouseButton::Left => true,
+            _ => false,
+        }
+    }
+}
+
+/// A mouse up event from the platform
+#[derive(Clone, Debug, Default)]
+pub struct MouseUpEvent {
+    /// Which mouse button was released.
+    pub button: MouseButton,
+
+    /// The position of the mouse on the window.
+    pub position: Point<Pixels>,
+
+    /// The modifiers that were held down when the mouse was released.
+    pub modifiers: Modifiers,
+
+    /// The number of times the button has been clicked.
+    pub click_count: usize,
+}
+
+impl Sealed for MouseUpEvent {}
+impl InputEvent for MouseUpEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseUp(self)
+    }
+}
+
+impl MouseEvent for MouseUpEvent {}
+
+impl MouseUpEvent {
+    /// Returns true if this mouse up event should focus the element.
+    pub fn is_focusing(&self) -> bool {
+        match self.button {
+            MouseButton::Left => true,
+            _ => false,
+        }
+    }
+}
+
+/// A click event, generated when a mouse button is pressed and released.
+#[derive(Clone, Debug, Default)]
+pub struct MouseClickEvent {
+    /// The mouse event when the button was pressed.
+    pub down: MouseDownEvent,
+
+    /// The mouse event when the button was released.
+    pub up: MouseUpEvent,
+}
+
+/// The stage of a pressure click event.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum PressureStage {
+    /// No pressure.
+    #[default]
+    Zero,
+    /// Normal click pressure.
+    Normal,
+    /// High pressure, enough to trigger a force click.
+    Force,
+}
+
+/// A mouse pressure event from the platform. Generated when a force-sensitive trackpad is pressed hard.
+/// Currently only implemented for macOS trackpads.
+#[derive(Debug, Clone, Default)]
+pub struct MousePressureEvent {
+    /// Pressure of the current stage as a float between 0 and 1
+    pub pressure: f32,
+    /// The pressure stage of the event.
+    pub stage: PressureStage,
+    /// The position of the mouse on the window.
+    pub position: Point<Pixels>,
+    /// The modifiers that were held down when the mouse pressure changed.
+    pub modifiers: Modifiers,
+}
+
+impl Sealed for MousePressureEvent {}
+impl InputEvent for MousePressureEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MousePressure(self)
+    }
+}
+impl MouseEvent for MousePressureEvent {}
+
+/// A click event that was generated by a keyboard button being pressed and released.
+#[derive(Clone, Debug, Default)]
+pub struct KeyboardClickEvent {
+    /// The keyboard button that was pressed to trigger the click.
+    pub button: KeyboardButton,
+
+    /// The bounds of the element that was clicked.
+    pub bounds: Bounds<Pixels>,
+}
+
+/// A click event, generated when a mouse button or keyboard button is pressed and released.
+#[derive(Clone, Debug)]
+pub enum ClickEvent {
+    /// A click event trigger by a mouse button being pressed and released.
+    Mouse(MouseClickEvent),
+    /// A click event trigger by a keyboard button being pressed and released.
+    Keyboard(KeyboardClickEvent),
+}
+
+impl Default for ClickEvent {
+    fn default() -> Self {
+        ClickEvent::Keyboard(KeyboardClickEvent::default())
+    }
+}
+
+impl ClickEvent {
+    /// Returns the modifiers that were held during the click event
+    ///
+    /// `Keyboard`: The keyboard click events never have modifiers.
+    /// `Mouse`: Modifiers that were held during the mouse key up event.
+    pub fn modifiers(&self) -> Modifiers {
+        match self {
+            // Click events are only generated from keyboard events _without any modifiers_, so we know the modifiers are always Default
+            ClickEvent::Keyboard(_) => Modifiers::default(),
+            // Click events on the web only reflect the modifiers for the keyup event,
+            // tested via observing the behavior of the `ClickEvent.shiftKey` field in Chrome 138
+            // under various combinations of modifiers and keyUp / keyDown events.
+            ClickEvent::Mouse(event) => event.up.modifiers,
+        }
+    }
+
+    /// Returns the position of the click event
+    ///
+    /// `Keyboard`: The bottom left corner of the clicked hitbox
+    /// `Mouse`: The position of the mouse when the button was released.
+    pub fn position(&self) -> Point<Pixels> {
+        match self {
+            ClickEvent::Keyboard(event) => event.bounds.bottom_left(),
+            ClickEvent::Mouse(event) => event.up.position,
+        }
+    }
+
+    /// Returns the mouse position of the click event
+    ///
+    /// `Keyboard`: None
+    /// `Mouse`: The position of the mouse when the button was released.
+    pub fn mouse_position(&self) -> Option<Point<Pixels>> {
+        match self {
+            ClickEvent::Keyboard(_) => None,
+            ClickEvent::Mouse(event) => Some(event.up.position),
+        }
+    }
+
+    /// Returns if this was a right click
+    ///
+    /// `Keyboard`: false
+    /// `Mouse`: Whether the right button was pressed and released
+    pub fn is_right_click(&self) -> bool {
+        match self {
+            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Mouse(event) => {
+                event.down.button == MouseButton::Right && event.up.button == MouseButton::Right
+            }
+        }
+    }
+
+    /// Returns if this was a middle click
+    ///
+    /// `Keyboard`: false
+    /// `Mouse`: Whether the middle button was pressed and released
+    pub fn is_middle_click(&self) -> bool {
+        match self {
+            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Mouse(event) => {
+                event.down.button == MouseButton::Middle && event.up.button == MouseButton::Middle
+            }
+        }
+    }
+
+    /// Returns whether the click was a standard click
+    ///
+    /// `Keyboard`: Always true
+    /// `Mouse`: Left button pressed and released
+    pub fn standard_click(&self) -> bool {
+        match self {
+            ClickEvent::Keyboard(_) => true,
+            ClickEvent::Mouse(event) => {
+                event.down.button == MouseButton::Left && event.up.button == MouseButton::Left
+            }
+        }
+    }
+
+    /// Returns whether the click focused the element
+    ///
+    /// `Keyboard`: false, keyboard clicks only work if an element is already focused
+    /// `Mouse`: Whether this was the first focusing click
+    pub fn first_focus(&self) -> bool {
+        match self {
+            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Mouse(event) => event.down.first_mouse,
+        }
+    }
+
+    /// Returns the click count of the click event
+    ///
+    /// `Keyboard`: Always 1
+    /// `Mouse`: Count of clicks from MouseUpEvent
+    pub fn click_count(&self) -> usize {
+        match self {
+            ClickEvent::Keyboard(_) => 1,
+            ClickEvent::Mouse(event) => event.up.click_count,
+        }
+    }
+
+    /// Returns whether the click event is generated by a keyboard event
+    pub fn is_keyboard(&self) -> bool {
+        match self {
+            ClickEvent::Mouse(_) => false,
+            ClickEvent::Keyboard(_) => true,
+        }
+    }
+}
+
+/// An enum representing the keyboard button that was pressed for a click event.
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, Default)]
+pub enum KeyboardButton {
+    /// Enter key was clicked
+    #[default]
+    Enter,
+    /// Space key was clicked
+    Space,
+}
+
+/// An enum representing the mouse button that was pressed.
+#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum MouseButton {
+    /// The left mouse button.
+    #[default]
+    Left,
+
+    /// The right mouse button.
+    Right,
+
+    /// The middle mouse button.
+    Middle,
+
+    /// A navigation button, such as back or forward.
+    Navigate(NavigationDirection),
+}
+
+impl MouseButton {
+    /// Get all the mouse buttons in a list.
+    pub fn all() -> Vec<Self> {
+        vec![
+            MouseButton::Left,
+            MouseButton::Right,
+            MouseButton::Middle,
+            MouseButton::Navigate(NavigationDirection::Back),
+            MouseButton::Navigate(NavigationDirection::Forward),
+        ]
+    }
+}
+
+/// A navigation direction, such as back or forward.
+#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum NavigationDirection {
+    /// The back button.
+    #[default]
+    Back,
+
+    /// The forward button.
+    Forward,
+}
+
+/// A mouse move event from the platform.
+#[derive(Clone, Debug, Default)]
+pub struct MouseMoveEvent {
+    /// The position of the mouse on the window.
+    pub position: Point<Pixels>,
+
+    /// The mouse button that was pressed, if any.
+    pub pressed_button: Option<MouseButton>,
+
+    /// The modifiers that were held down when the mouse was moved.
+    pub modifiers: Modifiers,
+}
+
+impl Sealed for MouseMoveEvent {}
+impl InputEvent for MouseMoveEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseMove(self)
+    }
+}
+impl MouseEvent for MouseMoveEvent {}
+
+impl MouseMoveEvent {
+    /// Returns true if the left mouse button is currently held down.
+    pub fn dragging(&self) -> bool {
+        self.pressed_button == Some(MouseButton::Left)
+    }
+}
+
+/// A mouse wheel event from the platform.
+#[derive(Clone, Debug, Default)]
+pub struct ScrollWheelEvent {
+    /// The position of the mouse on the window.
+    pub position: Point<Pixels>,
+
+    /// The change in scroll wheel position for this event.
+    pub delta: ScrollDelta,
+
+    /// The modifiers that were held down when the mouse was moved.
+    pub modifiers: Modifiers,
+
+    /// The phase of the touch event.
+    pub touch_phase: TouchPhase,
+}
+
+impl Sealed for ScrollWheelEvent {}
+impl InputEvent for ScrollWheelEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::ScrollWheel(self)
+    }
+}
+impl MouseEvent for ScrollWheelEvent {}
+
+impl Deref for ScrollWheelEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+/// The scroll delta for a scroll wheel event.
+#[derive(Clone, Copy, Debug)]
+pub enum ScrollDelta {
+    /// An exact scroll delta in pixels.
+    Pixels(Point<Pixels>),
+    /// An inexact scroll delta in lines.
+    Lines(Point<f32>),
+}
+
+impl Default for ScrollDelta {
+    fn default() -> Self {
+        Self::Lines(Default::default())
+    }
+}
+
+/// A pinch gesture event from the platform, generated when the user performs
+/// a pinch-to-zoom gesture (typically on a trackpad).
+///
+#[derive(Clone, Debug, Default)]
+pub struct PinchEvent {
+    /// The position of the pinch center on the window.
+    pub position: Point<Pixels>,
+
+    /// The zoom delta for this event.
+    /// Positive values indicate zooming in, negative values indicate zooming out.
+    /// For example, 0.1 represents a 10% zoom increase.
+    pub delta: f32,
+
+    /// The modifiers that were held down during the pinch gesture.
+    pub modifiers: Modifiers,
+
+    /// The phase of the pinch gesture.
+    pub phase: TouchPhase,
+}
+
+impl Sealed for PinchEvent {}
+impl InputEvent for PinchEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::Pinch(self)
+    }
+}
+impl GestureEvent for PinchEvent {}
+impl MouseEvent for PinchEvent {}
+
+impl Deref for PinchEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+impl ScrollDelta {
+    /// Returns true if this is a precise scroll delta in pixels.
+    pub fn precise(&self) -> bool {
+        match self {
+            ScrollDelta::Pixels(_) => true,
+            ScrollDelta::Lines(_) => false,
+        }
+    }
+
+    /// Converts this scroll event into exact pixels.
+    pub fn pixel_delta(&self, line_height: Pixels) -> Point<Pixels> {
+        match self {
+            ScrollDelta::Pixels(delta) => *delta,
+            ScrollDelta::Lines(delta) => point(line_height * delta.x, line_height * delta.y),
+        }
+    }
+
+    /// Combines two scroll deltas into one.
+    /// If the signs of the deltas are the same (both positive or both negative),
+    /// the deltas are added together. If the signs are opposite, the second delta
+    /// (other) is used, effectively overriding the first delta.
+    pub fn coalesce(self, other: ScrollDelta) -> ScrollDelta {
+        match (self, other) {
+            (ScrollDelta::Pixels(a), ScrollDelta::Pixels(b)) => {
+                let x = if a.x.signum() == b.x.signum() {
+                    a.x + b.x
+                } else {
+                    b.x
+                };
+
+                let y = if a.y.signum() == b.y.signum() {
+                    a.y + b.y
+                } else {
+                    b.y
+                };
+
+                ScrollDelta::Pixels(point(x, y))
+            }
+
+            (ScrollDelta::Lines(a), ScrollDelta::Lines(b)) => {
+                let x = if a.x.signum() == b.x.signum() {
+                    a.x + b.x
+                } else {
+                    b.x
+                };
+
+                let y = if a.y.signum() == b.y.signum() {
+                    a.y + b.y
+                } else {
+                    b.y
+                };
+
+                ScrollDelta::Lines(point(x, y))
+            }
+
+            _ => other,
+        }
+    }
+}
+
+/// A mouse exit event from the platform, generated when the mouse leaves the window.
+#[derive(Clone, Debug, Default)]
+pub struct MouseExitEvent {
+    /// The position of the mouse relative to the window.
+    pub position: Point<Pixels>,
+    /// The mouse button that was pressed, if any.
+    pub pressed_button: Option<MouseButton>,
+    /// The modifiers that were held down when the mouse was moved.
+    pub modifiers: Modifiers,
+}
+
+impl Sealed for MouseExitEvent {}
+impl InputEvent for MouseExitEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::MouseExited(self)
+    }
+}
+
+impl MouseEvent for MouseExitEvent {}
+
+impl Deref for MouseExitEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+/// A collection of paths from the platform, such as from a file drop.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct ExternalPaths(pub SmallVec<[PathBuf; 2]>);
+
+impl ExternalPaths {
+    /// Convert this collection of paths into a slice.
+    pub fn paths(&self) -> &[PathBuf] {
+        &self.0
+    }
+}
+
+impl Render for ExternalPaths {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // the platform will render icons for the dragged files
+        Empty
+    }
+}
+
+/// A file drop event from the platform, generated when files are dragged and dropped onto the window.
+#[derive(Debug, Clone)]
+pub enum FileDropEvent {
+    /// The files have entered the window.
+    Entered {
+        /// The position of the mouse relative to the window.
+        position: Point<Pixels>,
+        /// The paths of the files that are being dragged.
+        paths: ExternalPaths,
+    },
+    /// The files are being dragged over the window
+    Pending {
+        /// The position of the mouse relative to the window.
+        position: Point<Pixels>,
+    },
+    /// The files have been dropped onto the window.
+    Submit {
+        /// The position of the mouse relative to the window.
+        position: Point<Pixels>,
+    },
+    /// The user has stopped dragging the files over the window.
+    Exited,
+}
+
+impl Sealed for FileDropEvent {}
+impl InputEvent for FileDropEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::FileDrop(self)
+    }
+}
+impl MouseEvent for FileDropEvent {}
+
+/// An enum corresponding to all kinds of platform input events.
+#[derive(Clone, Debug)]
+pub enum PlatformInput {
+    /// A key was pressed.
+    KeyDown(KeyDownEvent),
+    /// A key was released.
+    KeyUp(KeyUpEvent),
+    /// The keyboard modifiers were changed.
+    ModifiersChanged(ModifiersChangedEvent),
+    /// The mouse was pressed.
+    MouseDown(MouseDownEvent),
+    /// The mouse was released.
+    MouseUp(MouseUpEvent),
+    /// Mouse pressure.
+    MousePressure(MousePressureEvent),
+    /// The mouse was moved.
+    MouseMove(MouseMoveEvent),
+    /// The mouse exited the window.
+    MouseExited(MouseExitEvent),
+    /// The scroll wheel was used.
+    ScrollWheel(ScrollWheelEvent),
+    /// A pinch gesture was performed.
+    Pinch(PinchEvent),
+    /// Files were dragged and dropped onto the window.
+    FileDrop(FileDropEvent),
+}
+
+impl PlatformInput {
+    pub(crate) fn mouse_event(&self) -> Option<&dyn Any> {
+        match self {
+            PlatformInput::KeyDown { .. } => None,
+            PlatformInput::KeyUp { .. } => None,
+            PlatformInput::ModifiersChanged { .. } => None,
+            PlatformInput::MouseDown(event) => Some(event),
+            PlatformInput::MouseUp(event) => Some(event),
+            PlatformInput::MouseMove(event) => Some(event),
+            PlatformInput::MousePressure(event) => Some(event),
+            PlatformInput::MouseExited(event) => Some(event),
+            PlatformInput::ScrollWheel(event) => Some(event),
+            PlatformInput::Pinch(event) => Some(event),
+            PlatformInput::FileDrop(event) => Some(event),
+        }
+    }
+
+    pub(crate) fn keyboard_event(&self) -> Option<&dyn Any> {
+        match self {
+            PlatformInput::KeyDown(event) => Some(event),
+            PlatformInput::KeyUp(event) => Some(event),
+            PlatformInput::ModifiersChanged(event) => Some(event),
+            PlatformInput::MouseDown(_) => None,
+            PlatformInput::MouseUp(_) => None,
+            PlatformInput::MouseMove(_) => None,
+            PlatformInput::MousePressure(_) => None,
+            PlatformInput::MouseExited(_) => None,
+            PlatformInput::ScrollWheel(_) => None,
+            PlatformInput::Pinch(_) => None,
+            PlatformInput::FileDrop(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use crate::{
+        self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
+        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
+    };
+
+    struct TestView {
+        saw_key_down: bool,
+        saw_action: bool,
+        focus_handle: FocusHandle,
+    }
+
+    actions!(test_only, [TestAction]);
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().id("testview").child(
+                div()
+                    .key_context("parent")
+                    .on_key_down(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.saw_key_down = true
+                    }))
+                    .on_action(cx.listener(|this: &mut TestView, _: &TestAction, _, _| {
+                        this.saw_action = true
+                    }))
+                    .child(
+                        div()
+                            .key_context("nested")
+                            .track_focus(&self.focus_handle)
+                            .into_element(),
+                    ),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_on_events(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| TestView {
+                    saw_key_down: false,
+                    saw_action: false,
+                    focus_handle: cx.focus_handle(),
+                })
+            })
+            .unwrap()
+        });
+
+        cx.update(|cx| {
+            cx.bind_keys(vec![KeyBinding::new("ctrl-g", TestAction, Some("parent"))]);
+        });
+
+        window
+            .update(cx, |test_view, window, cx| {
+                window.focus(&test_view.focus_handle, cx)
+            })
+            .unwrap();
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+
+        window
+            .update(cx, |test_view, _, _| {
+                assert!(test_view.saw_key_down || test_view.saw_action);
+                assert!(test_view.saw_key_down);
+                assert!(test_view.saw_action);
+            })
+            .unwrap();
+    }
+}

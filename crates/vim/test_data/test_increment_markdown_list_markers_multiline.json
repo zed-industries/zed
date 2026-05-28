@@ -1,0 +1,9 @@
+{"Put":{"state":"# Title\nˇ1. item\n2. item\n3. item"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"# Title\nˇ2. item\n2. item\n3. item","mode":"Normal"}}
+{"Key":"j"}
+{"Get":{"state":"# Title\n2. item\nˇ2. item\n3. item","mode":"Normal"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"# Title\n2. item\nˇ3. item\n3. item","mode":"Normal"}}
+{"Key":"ctrl-x"}
+{"Get":{"state":"# Title\n2. item\nˇ2. item\n3. item","mode":"Normal"}}

@@ -1,0 +1,21 @@
+[package]
+name = "paths"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[lib]
+path = "src/paths.rs"
+
+[dependencies]
+const_format.workspace = true
+dirs.workspace = true
+ignore.workspace = true
+util.workspace = true

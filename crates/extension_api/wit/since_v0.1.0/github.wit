@@ -1,0 +1,33 @@
+interface github {
+    /// A GitHub release.
+    record github-release {
+        /// The version of the release.
+        version: string,
+        /// The list of assets attached to the release.
+        assets: list<github-release-asset>,
+    }
+
+    /// An asset from a GitHub release.
+    record github-release-asset {
+        /// The name of the asset.
+        name: string,
+        /// The download URL for the asset.
+        download-url: string,
+    }
+
+    /// The options used to filter down GitHub releases.
+    record github-release-options {
+        /// Whether releases without assets should be included.
+        require-assets: bool,
+        /// Whether pre-releases should be included.
+        pre-release: bool,
+    }
+
+    /// Returns the latest release for the given GitHub repository.
+    latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
+
+    /// Returns the GitHub release with the specified tag name for the given GitHub repository.
+    ///
+    /// Returns an error if a release with the given tag name does not exist.
+    github-release-by-tag-name: func(repo: string, tag: string) -> result<github-release, string>;
+}

@@ -1,0 +1,45 @@
+---
+title: Snippets - Zed
+description: Create and use code snippets in Zed with tab stops, placeholders, variables, and language-scoped triggers.
+---
+
+# Snippets
+
+Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).
+
+The snippets are located in `~/.config/zed/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
+
+## Example configuration
+
+```json
+{
+  // Each snippet must have a name and body, but the prefix and description are optional.
+  // The prefix is used to trigger the snippet, but when omitted then the name is used.
+  // Use placeholders like $1, $2 or ${1:defaultValue} to define tab stops.
+  // The $0 determines the final cursor position.
+  // Placeholders with the same value are linked.
+  // If the snippet contains the $ symbol outside of a placeholder, it must be escaped with two slashes (e.g. \\$var).
+  "Log to console": {
+    "prefix": "log",
+    "body": ["console.info(\"Hello, ${1:World}!\")", "$0"],
+    "description": "Logs to console"
+  }
+}
+```
+
+## Scopes
+
+The scope is determined by the language name in lowercase e.g. `python.json` for Python, `shell script.json` for Shell Script, but there are some exceptions to this rule:
+
+| Scope      | Filename        |
+| ---------- | --------------- |
+| Global     | snippets.json   |
+| JSX        | javascript.json |
+| Plain Text | plaintext.json  |
+
+To create JSX snippets you have to use `javascript.json` snippets file, instead of `jsx.json`, but this does not apply to TSX and TypeScript which follow the above rule.
+
+## Known Limitations
+
+- Only the first prefix is used when a list of prefixes is passed in.
+- Currently only the `json` snippet file format is supported.

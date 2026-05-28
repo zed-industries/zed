@@ -1,0 +1,26 @@
+[package]
+name = "feature_flags"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/feature_flags.rs"
+
+[dependencies]
+collections.workspace = true
+feature_flags_macros.workspace = true
+fs.workspace = true
+gpui.workspace = true
+inventory.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }

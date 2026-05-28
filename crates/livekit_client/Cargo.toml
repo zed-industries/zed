@@ -1,0 +1,75 @@
+[package]
+name = "livekit_client"
+version = "0.1.0"
+edition.workspace = true
+description = "Logic for using LiveKit with GPUI"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[[example]]
+name = "test_app"
+
+[features]
+test-support = ["collections/test-support", "gpui/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+audio.workspace = true
+collections.workspace = true
+cpal.workspace = true
+futures.workspace = true
+gpui = { workspace = true, features = ["screen-capture", "x11", "wayland"] }
+gpui_tokio.workspace = true
+http_client_tls.workspace = true
+image.workspace = true
+livekit_api.workspace = true
+log.workspace = true
+nanoid.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+rodio.workspace = true
+serde.workspace = true
+serde_urlencoded.workspace = true
+settings.workspace = true
+smallvec.workspace = true
+ui.workspace = true
+util.workspace = true
+
+[target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
+libwebrtc.workspace = true
+livekit.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio = { workspace = true, features = ["time"] }
+webrtc-sys.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
+scap.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa.workspace = true
+core-foundation.workspace = true
+core-video.workspace = true
+coreaudio-rs = "0.12.1"
+objc.workspace = true
+
+[dev-dependencies]
+collections = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+gpui_platform.workspace = true
+simplelog.workspace = true
+
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["serde_json"]

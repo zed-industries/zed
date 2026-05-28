@@ -1,0 +1,1 @@
+website: cd ../zed.dev; npm run dev -- --port=3000

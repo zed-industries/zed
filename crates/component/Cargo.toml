@@ -1,0 +1,26 @@
+[package]
+name = "component"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/component.rs"
+
+[dependencies]
+collections.workspace = true
+gpui.workspace = true
+inventory.workspace = true
+parking_lot.workspace = true
+strum.workspace = true
+theme.workspace = true
+
+[dev-dependencies]
+documented.workspace = true
+
+[features]
+default = []

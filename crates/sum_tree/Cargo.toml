@@ -1,0 +1,35 @@
+[package]
+name = "sum_tree"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "A sum tree data structure, a concurrency-friendly B-tree"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/sum_tree.rs"
+doctest = false
+
+[dependencies]
+heapless.workspace = true
+rayon.workspace = true
+log.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
+proptest = { workspace = true, optional = true }
+
+[dev-dependencies]
+ctor.workspace = true
+rand.workspace = true
+proptest.workspace = true
+zlog.workspace = true
+
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
+
+[features]
+test-support = ["proptest"]

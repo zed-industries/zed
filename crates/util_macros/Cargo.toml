@@ -1,0 +1,23 @@
+[package]
+name = "util_macros"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Utility macros for Zed"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/util_macros.rs"
+proc-macro = true
+doctest = false
+
+[dependencies]
+quote.workspace = true
+syn.workspace = true
+perf.workspace = true
+
+[features]
+perf-enabled = []

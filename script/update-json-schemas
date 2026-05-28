@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.." || exit 1
+cd crates/languages/src/json/schemas
+files=(
+    "tsconfig.json"
+    "package.json"
+)
+for file in "${files[@]}"; do
+    curl -sL -o "$file" "https://raw.githubusercontent.com/SchemaStore/schemastore/master/src/schemas/json/$file"
+done
+
+HASH="$(curl -s 'https://api.github.com/repos/SchemaStore/schemastore/commits/HEAD' | jq -r '.sha')"
+SHORT_HASH="${HASH:0:7}"
+DATE="$(curl -s 'https://api.github.com/repos/SchemaStore/schemastore/commits/HEAD' |jq -r .commit.author.date | cut -c1-10)"
+echo
+echo "Updated JSON schemas to [SchemaStore/schemastore@$SHORT_HASH](https://github.com/SchemaStore/schemastore/tree/$HASH) ($DATE)"
+echo
+for file in "${files[@]}"; do
+    echo "- [$file](https://github.com/SchemaStore/schemastore/commits/master/src/schemas/json/$file)" \
+        "@ [$SHORT_HASH](https://raw.githubusercontent.com/SchemaStore/schemastore/$HASH/src/schemas/json/$file)"
+done
+echo

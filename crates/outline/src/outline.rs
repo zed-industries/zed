@@ -1,0 +1,1190 @@
+use std::ops::Range;
+use std::{cmp, sync::Arc};
+
+use editor::scroll::ScrollOffset;
+use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
+use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
+use fuzzy::StringMatch;
+use gpui::{
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
+    rems,
+};
+use language::{Outline, OutlineItem};
+use ordered_float::OrderedFloat;
+use picker::{Picker, PickerDelegate};
+use settings::Settings;
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
+use ui::{ListItem, ListItemSpacing, prelude::*};
+use util::ResultExt;
+use workspace::{DismissDecision, ModalView};
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(OutlineView::register).detach();
+    zed_actions::outline::TOGGLE_OUTLINE
+        .set(|view, window, cx| {
+            let Ok(editor) = view.downcast::<Editor>() else {
+                return;
+            };
+
+            toggle(editor, &Default::default(), window, cx);
+        })
+        .ok();
+}
+
+pub fn toggle(
+    editor: Entity<Editor>,
+    _: &zed_actions::outline::ToggleOutline,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = editor.read(cx).workspace() else {
+        return;
+    };
+    if workspace.read(cx).active_modal::<OutlineView>(cx).is_some() {
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                OutlineView::new(Outline::new(Vec::new()), editor.clone(), window, cx)
+            });
+        });
+        return;
+    }
+
+    let Some(task) = outline_for_editor(&editor, cx) else {
+        return;
+    };
+    let editor = editor.clone();
+    window
+        .spawn(cx, async move |cx| {
+            let items = task.await;
+            if items.is_empty() {
+                return;
+            }
+            cx.update(|window, cx| {
+                let outline = Outline::new(items);
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        OutlineView::new(outline, editor, window, cx)
+                    });
+                });
+            })
+            .ok();
+        })
+        .detach();
+}
+
+fn outline_for_editor(
+    editor: &Entity<Editor>,
+    cx: &mut App,
+) -> Option<Task<Vec<OutlineItem<Anchor>>>> {
+    let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+    let buffer_snapshot = multibuffer.as_singleton()?;
+    let buffer_id = buffer_snapshot.remote_id();
+    let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
+
+    Some(cx.background_executor().spawn(async move {
+        task.await
+            .into_iter()
+            .filter_map(|item| {
+                Some(OutlineItem {
+                    depth: item.depth,
+                    range: multibuffer.anchor_in_buffer(item.range.start)?
+                        ..multibuffer.anchor_in_buffer(item.range.end)?,
+                    source_range_for_text: multibuffer
+                        .anchor_in_buffer(item.source_range_for_text.start)?
+                        ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
+                    text: item.text,
+                    highlight_ranges: item.highlight_ranges,
+                    name_ranges: item.name_ranges,
+                    body_range: item.body_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                    annotation_range: item.annotation_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                })
+            })
+            .collect()
+    }))
+}
+
+pub struct OutlineView {
+    picker: Entity<Picker<OutlineViewDelegate>>,
+}
+
+impl Focusable for OutlineView {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl EventEmitter<DismissEvent> for OutlineView {}
+impl ModalView for OutlineView {
+    fn on_before_dismiss(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.restore_active_editor(window, cx)
+        });
+        DismissDecision::Dismiss(true)
+    }
+}
+
+impl Render for OutlineView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w(rems(34.))
+            .on_action(cx.listener(
+                |_this: &mut OutlineView,
+                 _: &zed_actions::outline::ToggleOutline,
+                 _window: &mut Window,
+                 cx: &mut Context<OutlineView>| {
+                    // When outline::Toggle is triggered while the outline is open, dismiss it
+                    cx.emit(DismissEvent);
+                },
+            ))
+            .child(self.picker.clone())
+    }
+}
+
+impl OutlineView {
+    fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut Context<Editor>) {
+        if editor.mode().is_full() {
+            let handle = cx.entity().downgrade();
+            editor
+                .register_action(move |action, window, cx| {
+                    if let Some(editor) = handle.upgrade() {
+                        toggle(editor, action, window, cx);
+                    }
+                })
+                .detach();
+        }
+    }
+
+    fn new(
+        outline: Outline<Anchor>,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> OutlineView {
+        let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .max_height(Some(vh(0.75, window)))
+                .show_scrollbar(true)
+        });
+        OutlineView { picker }
+    }
+}
+
+struct OutlineViewDelegate {
+    outline_view: WeakEntity<OutlineView>,
+    active_editor: Entity<Editor>,
+    outline: Arc<Outline<Anchor>>,
+    selected_match_index: usize,
+    prev_scroll_position: Option<Point<ScrollOffset>>,
+    matches: Vec<StringMatch>,
+}
+
+enum OutlineRowHighlights {}
+
+impl OutlineViewDelegate {
+    fn new(
+        outline_view: WeakEntity<OutlineView>,
+        outline: Outline<Anchor>,
+        editor: Entity<Editor>,
+
+        cx: &mut Context<OutlineView>,
+    ) -> Self {
+        Self {
+            outline_view,
+            matches: Default::default(),
+            selected_match_index: 0,
+            prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
+            active_editor: editor,
+            outline: Arc::new(outline),
+        }
+    }
+
+    fn restore_active_editor(&mut self, window: &mut Window, cx: &mut App) {
+        self.active_editor.update(cx, |editor, cx| {
+            editor.clear_row_highlights::<OutlineRowHighlights>();
+            if let Some(scroll_position) = self.prev_scroll_position {
+                editor.set_scroll_position(scroll_position, window, cx);
+            }
+        })
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        navigate: bool,
+
+        cx: &mut Context<Picker<OutlineViewDelegate>>,
+    ) {
+        let Some(selected_match) = self.matches.get(ix) else {
+            self.selected_match_index = self.matches.len();
+            return;
+        };
+
+        self.selected_match_index = ix;
+
+        if navigate {
+            let outline_item = &self.outline.items[selected_match.candidate_id];
+
+            self.active_editor.update(cx, |active_editor, cx| {
+                active_editor.clear_row_highlights::<OutlineRowHighlights>();
+                active_editor.highlight_rows::<OutlineRowHighlights>(
+                    outline_item.range.start..outline_item.range.end,
+                    cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions {
+                        autoscroll: true,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                active_editor.request_autoscroll(Autoscroll::center(), cx);
+            });
+        }
+    }
+}
+
+impl PickerDelegate for OutlineViewDelegate {
+    type ListItem = ListItem;
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search buffer symbols...".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_match_index
+    }
+
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        ix < self.matches.len()
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _: &mut Window,
+        cx: &mut Context<Picker<OutlineViewDelegate>>,
+    ) {
+        self.set_selected_index(ix, true, cx);
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<OutlineViewDelegate>>,
+    ) -> Task<()> {
+        let is_query_empty = query.is_empty();
+        if is_query_empty {
+            self.restore_active_editor(window, cx);
+        }
+
+        let outline = self.outline.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let matches = if is_query_empty {
+                outline
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| StringMatch {
+                        candidate_id: index,
+                        score: Default::default(),
+                        positions: Default::default(),
+                        string: Default::default(),
+                    })
+                    .collect()
+            } else {
+                outline
+                    .search(&query, cx.background_executor().clone())
+                    .await
+            };
+
+            let _ = this.update(cx, |this, cx| {
+                this.delegate.matches = matches;
+                let selected_index = if is_query_empty {
+                    let (buffer, cursor_offset) =
+                        this.delegate.active_editor.update(cx, |editor, cx| {
+                            let snapshot = editor.display_snapshot(cx);
+                            let cursor_offset = editor
+                                .selections
+                                .newest::<MultiBufferOffset>(&snapshot)
+                                .head();
+                            (snapshot.buffer().clone(), cursor_offset)
+                        });
+                    this.delegate
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, m)| {
+                            let item = &this.delegate.outline.items[m.candidate_id];
+                            let range = item.range.to_offset(&buffer);
+                            range.contains(&cursor_offset).then_some((ix, item.depth))
+                        })
+                        .max_by_key(|(ix, depth)| (*depth, cmp::Reverse(*ix)))
+                        .map(|(ix, _)| ix)
+                        .unwrap_or(0)
+                } else {
+                    this.delegate
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .max_by(|(ix_a, a), (ix_b, b)| {
+                            OrderedFloat(a.score)
+                                .cmp(&OrderedFloat(b.score))
+                                .then(ix_b.cmp(ix_a))
+                        })
+                        .map(|(ix, _)| ix)
+                        .unwrap_or(0)
+                };
+
+                this.delegate
+                    .set_selected_index(selected_index, !is_query_empty, cx);
+            });
+        })
+    }
+
+    fn confirm(
+        &mut self,
+        _: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<OutlineViewDelegate>>,
+    ) {
+        self.prev_scroll_position.take();
+        self.set_selected_index(self.selected_match_index, true, cx);
+
+        self.active_editor.update(cx, |active_editor, cx| {
+            let highlight = active_editor
+                .highlighted_rows::<OutlineRowHighlights>()
+                .next();
+            if let Some((rows, _)) = highlight {
+                active_editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |s| s.select_ranges([rows.start..rows.start]),
+                );
+                active_editor.clear_row_highlights::<OutlineRowHighlights>();
+                window.focus(&active_editor.focus_handle(cx), cx);
+            }
+        });
+
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<OutlineViewDelegate>>) {
+        self.outline_view
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+        self.restore_active_editor(window, cx);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let mat = self.matches.get(ix)?;
+        let outline_item = self.outline.items.get(mat.candidate_id)?;
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    div()
+                        .text_ui(cx)
+                        .pl(rems(outline_item.depth as f32))
+                        .child(render_item(outline_item, mat.ranges(), cx)),
+                ),
+        )
+    }
+}
+
+pub fn render_item<T>(
+    outline_item: &OutlineItem<T>,
+    match_ranges: impl IntoIterator<Item = Range<usize>>,
+    cx: &App,
+) -> StyledText {
+    let highlight_style = HighlightStyle {
+        background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
+        ..Default::default()
+    };
+    let custom_highlights = match_ranges
+        .into_iter()
+        .map(|range| (range, highlight_style));
+
+    let settings = ThemeSettings::get_global(cx);
+
+    // TODO: We probably shouldn't need to build a whole new text style here
+    // but I'm not sure how to get the current one and modify it.
+    // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
+    let text_style = TextStyle {
+        color: cx.theme().colors().text,
+        font_family: settings.buffer_font.family.clone(),
+        font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_size: settings.buffer_font_size(cx).into(),
+        font_weight: settings.buffer_font.weight,
+        line_height: relative(1.),
+        ..Default::default()
+    };
+    let highlights = gpui::combine_highlights(
+        custom_highlights,
+        outline_item.highlight_ranges.iter().cloned(),
+    );
+
+    StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use futures::stream::StreamExt as _;
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use indoc::indoc;
+    use language::FakeLspAdapter;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::{path, rel_path::rel_path};
+    use workspace::{AppState, MultiWorkspace, Workspace};
+
+    #[gpui::test]
+    async fn test_outline_view_row_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                                       // display line 0
+                    struct SingleLine; // display line 1
+                                       // display line 2
+                    struct MultiLine { // display line 3
+                        field_1: i32,  // display line 4
+                        field_2: i32,  // display line 5
+                    }                  // display line 6
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let ensure_outline_view_contents =
+            |outline_view: &Entity<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
+                assert_eq!(query(outline_view, cx), "");
+                assert_eq!(
+                    outline_names(outline_view, cx),
+                    vec![
+                        "struct SingleLine",
+                        "struct MultiLine",
+                        "field_1",
+                        "field_2"
+                    ],
+                );
+            };
+
+        let outline_view = open_outline_view(&workspace, cx);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Initially opened outline view should have no highlights"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::Confirm);
+        // Ensures that outline still goes to entry even if no queries have been made
+        assert_single_caret_at_row(&editor, 1, cx);
+
+        let outline_view = open_outline_view(&workspace, cx);
+
+        cx.dispatch_action(menu::SelectNext);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![3, 4, 5, 6],
+            "Second struct's rows should be highlighted"
+        );
+        assert_single_caret_at_row(&editor, 1, cx);
+
+        cx.dispatch_action(menu::SelectPrevious);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![1],
+            "First struct's row should be highlighted"
+        );
+        assert_single_caret_at_row(&editor, 1, cx);
+
+        cx.dispatch_action(menu::Cancel);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "No rows should be highlighted after outline view is cancelled and closed"
+        );
+        assert_single_caret_at_row(&editor, 1, cx);
+
+        let outline_view = open_outline_view(&workspace, cx);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Reopened outline view should have no highlights"
+        );
+        assert_single_caret_at_row(&editor, 1, cx);
+
+        let expected_first_highlighted_row = 3;
+        cx.dispatch_action(menu::SelectNext);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![expected_first_highlighted_row, 4, 5, 6]
+        );
+        assert_single_caret_at_row(&editor, 1, cx);
+        cx.dispatch_action(menu::Confirm);
+        ensure_outline_view_contents(&outline_view, cx);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "No rows should be highlighted after outline view is confirmed and closed"
+        );
+        // On confirm, should place the caret on the first row of the highlighted rows range.
+        assert_single_caret_at_row(&editor, expected_first_highlighted_row, cx);
+    }
+
+    #[gpui::test]
+    async fn test_outline_empty_query_prefers_deepest_containing_symbol_else_first(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc! {"
+                                       // display line 0
+                    struct Outer {     // display line 1
+                        fn top(&self) {// display line 2
+                            let _x = 1;// display line 3
+                        }              // display line 4
+                    }                  // display line 5
+
+                    struct Another;    // display line 7
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        set_single_caret_at_row(&editor, 3, cx);
+        let outline_view = open_outline_view(&workspace, cx);
+        cx.run_until_parked();
+        let (selected_candidate_id, expected_deepest_containing_candidate_id) = outline_view
+            .update(cx, |outline_view, cx| {
+                let delegate = &outline_view.delegate;
+                let selected_candidate_id =
+                    delegate.matches[delegate.selected_match_index].candidate_id;
+                let (buffer, cursor_offset) = delegate.active_editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let cursor_offset = editor
+                        .selections
+                        .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                        .head();
+                    (buffer, cursor_offset)
+                });
+                let deepest_containing_candidate_id = delegate
+                    .outline
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, item)| {
+                        item.range
+                            .to_offset(&buffer)
+                            .contains(&cursor_offset)
+                            .then_some((ix, item.depth))
+                    })
+                    .max_by(|(ix_a, depth_a), (ix_b, depth_b)| {
+                        depth_a.cmp(depth_b).then(ix_b.cmp(ix_a))
+                    })
+                    .map(|(ix, _)| ix)
+                    .unwrap();
+                (selected_candidate_id, deepest_containing_candidate_id)
+            });
+        assert_eq!(
+            selected_candidate_id, expected_deepest_containing_candidate_id,
+            "Empty query should select the deepest symbol containing the cursor"
+        );
+
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+
+        set_single_caret_at_row(&editor, 0, cx);
+        let outline_view = open_outline_view(&workspace, cx);
+        cx.run_until_parked();
+        let selected_candidate_id = outline_view.read_with(cx, |outline_view, _| {
+            let delegate = &outline_view.delegate;
+            delegate.matches[delegate.selected_match_index].candidate_id
+        });
+        assert_eq!(
+            selected_candidate_id, 0,
+            "Empty query should fall back to the first symbol when cursor is outside all symbol ranges"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_outline_stale_hover_index_after_matches_shrink(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut source = String::new();
+        for index in 0..69 {
+            source.push_str(&format!("struct Keep{index};\n"));
+        }
+        for index in 69..74 {
+            source.push_str(&format!("struct Drop{index};\n"));
+        }
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.rs": source }))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let outline_view = open_outline_view(&workspace, cx);
+        outline_view.read_with(cx, |outline_view, _| {
+            assert_eq!(outline_view.delegate.matches.len(), 74);
+        });
+
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("Keep".to_string(), window, cx)
+            })
+            .await;
+        outline_view.read_with(cx, |outline_view, _| {
+            assert_eq!(outline_view.delegate.matches.len(), 69);
+        });
+
+        outline_view.update_in(cx, |outline_view, window, cx| {
+            outline_view.set_selected_index(73, None, false, window, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_outline_filtered_selection_prefers_first_match_on_score_ties(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc! {"
+                    struct A;
+                    impl A {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+
+                    struct B;
+                    impl B {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+
+                    struct C;
+                    impl C {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        assert_single_caret_at_row(&editor, 0, cx);
+        let outline_view = open_outline_view(&workspace, cx);
+        let match_ids = |outline_view: &Entity<Picker<OutlineViewDelegate>>,
+                         cx: &mut VisualTestContext| {
+            outline_view.read_with(cx, |outline_view, _| {
+                let delegate = &outline_view.delegate;
+                let selected_match = &delegate.matches[delegate.selected_match_index];
+                let scored_ids = delegate
+                    .matches
+                    .iter()
+                    .filter(|m| m.score > 0.0)
+                    .map(|m| m.candidate_id)
+                    .collect::<Vec<_>>();
+                (
+                    selected_match.candidate_id,
+                    *scored_ids.first().unwrap(),
+                    *scored_ids.last().unwrap(),
+                    scored_ids.len(),
+                )
+            })
+        };
+
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("f".to_string(), window, cx)
+            })
+            .await;
+        let (selected_id, first_scored_id, last_scored_id, scored_match_count) =
+            match_ids(&outline_view, cx);
+
+        assert!(
+            scored_match_count > 1,
+            "Expected multiple scored matches for `f` in outline filtering"
+        );
+        assert_eq!(
+            selected_id, first_scored_id,
+            "Filtered query should pick the first scored match when scores tie"
+        );
+        assert_ne!(
+            selected_id, last_scored_id,
+            "Selection should not default to the last scored match"
+        );
+
+        set_single_caret_at_row(&editor, 12, cx);
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("f".to_string(), window, cx)
+            })
+            .await;
+        let (selected_id, first_scored_id, last_scored_id, scored_match_count) =
+            match_ids(&outline_view, cx);
+
+        assert!(
+            scored_match_count > 1,
+            "Expected multiple scored matches for `f` in outline filtering"
+        );
+        assert_eq!(
+            selected_id, first_scored_id,
+            "Filtered selection should stay score-ordered and not switch based on cursor proximity"
+        );
+        assert_ne!(
+            selected_id, last_scored_id,
+            "Selection should not default to the last scored match"
+        );
+    }
+
+    fn open_outline_view(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<Picker<OutlineViewDelegate>> {
+        cx.dispatch_action(zed_actions::outline::ToggleOutline);
+        cx.executor().advance_clock(Duration::from_millis(200));
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<OutlineView>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        })
+    }
+
+    fn query(
+        outline_view: &Entity<Picker<OutlineViewDelegate>>,
+        cx: &mut VisualTestContext,
+    ) -> String {
+        outline_view.update(cx, |outline_view, cx| outline_view.query(cx))
+    }
+
+    fn outline_names(
+        outline_view: &Entity<Picker<OutlineViewDelegate>>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<String> {
+        outline_view.read_with(cx, |outline_view, _| {
+            let items = &outline_view.delegate.outline.items;
+            outline_view
+                .delegate
+                .matches
+                .iter()
+                .map(|hit| items[hit.candidate_id].text.clone())
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn highlighted_display_rows(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
+        editor.update_in(cx, |editor, window, cx| {
+            editor
+                .highlighted_display_rows(window, cx)
+                .into_keys()
+                .map(|r| r.0)
+                .collect()
+        })
+    }
+
+    fn set_single_caret_at_row(
+        editor: &Entity<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([rope::Point::new(buffer_row, 0)..rope::Point::new(buffer_row, 0)])
+            });
+        });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            state
+        })
+    }
+
+    #[gpui::test]
+    async fn test_outline_modal_lsp_document_symbols(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    struct Foo {
+                        bar: u32,
+                        baz: String,
+                    }
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang());
+            project.languages().clone()
+        });
+
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(|fake_language_server| {
+                    #[allow(deprecated)]
+                    fake_language_server
+                        .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                            move |_, _| async move {
+                                Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                                    lsp::DocumentSymbol {
+                                        name: "Foo".to_string(),
+                                        detail: None,
+                                        kind: lsp::SymbolKind::STRUCT,
+                                        tags: None,
+                                        deprecated: None,
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(3, 1),
+                                        ),
+                                        selection_range: lsp::Range::new(
+                                            lsp::Position::new(0, 7),
+                                            lsp::Position::new(0, 10),
+                                        ),
+                                        children: Some(vec![
+                                            lsp::DocumentSymbol {
+                                                name: "bar".to_string(),
+                                                detail: None,
+                                                kind: lsp::SymbolKind::FIELD,
+                                                tags: None,
+                                                deprecated: None,
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(1, 4),
+                                                    lsp::Position::new(1, 13),
+                                                ),
+                                                selection_range: lsp::Range::new(
+                                                    lsp::Position::new(1, 4),
+                                                    lsp::Position::new(1, 7),
+                                                ),
+                                                children: None,
+                                            },
+                                            lsp::DocumentSymbol {
+                                                name: "lsp_only_field".to_string(),
+                                                detail: None,
+                                                kind: lsp::SymbolKind::FIELD,
+                                                tags: None,
+                                                deprecated: None,
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(2, 4),
+                                                    lsp::Position::new(2, 15),
+                                                ),
+                                                selection_range: lsp::Range::new(
+                                                    lsp::Position::new(2, 4),
+                                                    lsp::Position::new(2, 7),
+                                                ),
+                                                children: None,
+                                            },
+                                        ]),
+                                    },
+                                ])))
+                            },
+                        );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = cx.read(|cx| multi_workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let _fake_language_server = fake_language_servers.next().await.unwrap();
+        cx.run_until_parked();
+
+        // Step 1: tree-sitter outlines by default
+        let outline_view = open_outline_view(&workspace, cx);
+        let tree_sitter_names = outline_names(&outline_view, cx);
+        assert_eq!(
+            tree_sitter_names,
+            vec!["struct Foo", "bar", "baz"],
+            "Step 1: tree-sitter outlines should be displayed by default"
+        );
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+
+        // Step 2: Switch to LSP document symbols
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.document_symbols =
+                        Some(settings::DocumentSymbols::On);
+                });
+            });
+        });
+        let outline_view = open_outline_view(&workspace, cx);
+        let lsp_names = outline_names(&outline_view, cx);
+        assert_eq!(
+            lsp_names,
+            vec!["struct Foo", "bar", "lsp_only_field"],
+            "Step 2: LSP-provided symbols should be displayed"
+        );
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Step 2: initially opened outline view should have no highlights"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::SelectNext);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![1],
+            "Step 2: bar's row should be highlighted after SelectNext"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+        assert_single_caret_at_row(&editor, 1, cx);
+
+        // Step 3: Switch back to tree-sitter
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.document_symbols =
+                        Some(settings::DocumentSymbols::Off);
+                });
+            });
+        });
+
+        let outline_view = open_outline_view(&workspace, cx);
+        let restored_names = outline_names(&outline_view, cx);
+        assert_eq!(
+            restored_names,
+            vec!["struct Foo", "bar", "baz"],
+            "Step 3: tree-sitter outlines should be restored after switching back"
+        );
+    }
+
+    #[track_caller]
+    fn assert_single_caret_at_row(
+        editor: &Entity<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        let selections = editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .all::<rope::Point>(&editor.display_snapshot(cx))
+                .into_iter()
+                .map(|s| s.start..s.end)
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            selections.len() == 1,
+            "Expected one caret selection but got: {selections:?}"
+        );
+        let selection = &selections[0];
+        assert!(
+            selection.start == selection.end,
+            "Expected a single caret selection, but got: {selection:?}"
+        );
+        assert_eq!(selection.start.row, buffer_row);
+    }
+}

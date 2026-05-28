@@ -1,0 +1,1138 @@
+use gh_workflow::{ctx::Context, *};
+use serde_json::Value;
+
+use crate::tasks::workflows::{
+    runners::Platform,
+    steps::named::function_name,
+    vars::{self, StepOutput},
+};
+
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
+
+const SCCACHE_R2_BUCKET: &str = "sccache-zed";
+
+pub(crate) const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+pub const PWSH_SHELL: &str = "pwsh";
+
+pub(crate) struct Nextest(Step<Run>);
+
+pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
+    Nextest(named::run(
+        platform,
+        "cargo nextest run --workspace --no-fail-fast --no-tests=warn",
+    ))
+}
+
+impl Nextest {
+    #[allow(dead_code)]
+    pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(r#" -E "{filter_expr}""#));
+        }
+        self
+    }
+
+    pub(crate) fn with_changed_packages_filter(mut self, orchestrate_job: &str) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(
+                r#"${{{{ needs.{orchestrate_job}.outputs.changed_packages && format(' -E "{{0}}"', needs.{orchestrate_job}.outputs.changed_packages) || '' }}}}"#
+            ));
+        }
+        self
+    }
+}
+
+impl From<Nextest> for Step<Run> {
+    fn from(value: Nextest) -> Self {
+        value.0
+    }
+}
+
+#[derive(Default)]
+enum FetchDepth {
+    #[default]
+    Shallow,
+    Full,
+    Custom(serde_json::Value),
+}
+
+#[derive(Default)]
+pub(crate) struct CheckoutStep {
+    fetch_depth: FetchDepth,
+    fetch_tags: bool,
+    name: Option<String>,
+    token: Option<String>,
+    path: Option<String>,
+    repository: Option<String>,
+    ref_: Option<String>,
+}
+
+impl CheckoutStep {
+    pub fn with_full_history(mut self) -> Self {
+        self.fetch_depth = FetchDepth::Full;
+        self
+    }
+
+    pub fn with_custom_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
+        self
+    }
+
+    pub fn with_custom_fetch_depth(mut self, fetch_depth: impl Into<Value>) -> Self {
+        self.fetch_depth = FetchDepth::Custom(fetch_depth.into());
+        self
+    }
+
+    /// Sets `fetch-depth` to `2` on the main branch and `350` on all other branches.
+    pub fn with_deep_history_on_non_main(self) -> Self {
+        self.with_custom_fetch_depth("${{ github.ref == 'refs/heads/main' && 2 || 350 }}")
+    }
+
+    pub fn with_token(mut self, token: &StepOutput) -> Self {
+        self.token = Some(token.to_string());
+        self
+    }
+
+    pub fn with_path(mut self, path: &str) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+
+    pub fn with_repository(mut self, repository: &str) -> Self {
+        self.repository = Some(repository.to_string());
+        self
+    }
+
+    pub fn with_ref(mut self, ref_: impl ToString) -> Self {
+        self.ref_ = Some(ref_.to_string());
+        self
+    }
+
+    pub fn with_fetch_tags(mut self) -> Self {
+        self.fetch_tags = true;
+        self
+    }
+}
+
+impl From<CheckoutStep> for Step<Use> {
+    fn from(value: CheckoutStep) -> Self {
+        Step::new(value.name.unwrap_or("steps::checkout_repo".to_string()))
+            .uses(
+                "actions",
+                "checkout",
+                "93cb6efe18208431cddfb8368fd83d5badbf9bfd", // v5.0.1
+            )
+            // prevent checkout action from running `git clean -ffdx` which
+            // would delete the target directory
+            .add_with(("clean", false))
+            .map(|step| match value.fetch_depth {
+                FetchDepth::Shallow => step,
+                FetchDepth::Full => step.add_with(("fetch-depth", 0)),
+                FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
+            })
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.repository, |step, repository| {
+                step.add_with(("repository", repository))
+            })
+            .when(value.fetch_tags, |step| step.add_with(("fetch-tags", true)))
+            .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
+            .when_some(value.token, |step, token| step.add_with(("token", token)))
+    }
+}
+
+impl FluentBuilder for CheckoutStep {}
+
+pub fn checkout_repo() -> CheckoutStep {
+    CheckoutStep::default()
+}
+
+pub fn setup_pnpm() -> Step<Use> {
+    named::uses(
+        "pnpm",
+        "action-setup",
+        "fe02b34f77f8bc703788d5817da081398fad5dd2", // v4.0.0
+    )
+    .add_with(("version", "9"))
+}
+
+pub fn setup_node() -> Step<Use> {
+    named::uses(
+        "actions",
+        "setup-node",
+        "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
+    )
+    .add_with(("node-version", "20"))
+}
+
+pub fn setup_sentry() -> Step<Use> {
+    named::uses(
+        "matbour",
+        "setup-sentry-cli",
+        "3e938c54b3018bdd019973689ef984e033b0454b",
+    )
+    .add_with(("token", vars::SENTRY_AUTH_TOKEN))
+}
+
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier")
+}
+
+pub fn cargo_fmt() -> Step<Run> {
+    named::bash("cargo fmt --all -- --check")
+}
+
+pub fn install_cargo_edit() -> Step<Use> {
+    taiki_install_action("cargo-edit")
+}
+
+pub fn taiki_install_action(tool: &str) -> Step<Use> {
+    Step::new(named::function_name(1))
+        .uses(
+            "taiki-e",
+            "install-action",
+            "02cc5f8ca9f2301050c0c099055816a41ee05507", // v2
+        )
+        .add_with(("tool", tool))
+}
+
+pub fn cargo_install_nextest() -> Step<Use> {
+    named::uses(
+        "taiki-e",
+        "install-action",
+        "921e2c9f7148d7ba14cd819f417db338f63e733c", // nextest
+    )
+}
+
+pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh(indoc::indoc! {r#"
+            New-Item -ItemType Directory -Path "./../.cargo" -Force
+            Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+        "#}),
+
+        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+            mkdir -p ./../.cargo
+            cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+        "#}),
+    }
+}
+
+pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
+    let step = match platform {
+        Platform::Windows => named::pwsh(indoc::indoc! {r#"
+            Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+        "#}),
+        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+            rm -rf ./../.cargo
+        "#}),
+    };
+
+    step.if_condition(Expression::new("always()"))
+}
+
+pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 350 200"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
+        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
+    }
+}
+
+pub fn clippy(platform: Platform, target: Option<&str>) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("./script/clippy.ps1"),
+        _ => match target {
+            Some(target) => named::bash(format!("./script/clippy --target {target}")),
+            None => named::bash("./script/clippy"),
+        },
+    }
+}
+
+pub fn install_rustup_target(target: &str) -> Step<Run> {
+    named::bash(format!("rustup target add {target}"))
+}
+
+pub fn cache_rust_dependencies_namespace() -> Step<Use> {
+    named::uses(
+        "namespacelabs",
+        "nscloud-cache-action",
+        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
+    )
+    .add_with(("cache", "rust"))
+    .add_with(("path", "~/.rustup"))
+}
+
+pub fn setup_sccache(platform: Platform) -> Step<Run> {
+    let step = match platform {
+        Platform::Windows => named::pwsh("./script/setup-sccache.ps1"),
+        Platform::Linux | Platform::Mac => named::bash("./script/setup-sccache"),
+    };
+    step.add_env(("R2_ACCOUNT_ID", vars::R2_ACCOUNT_ID))
+        .add_env(("R2_ACCESS_KEY_ID", vars::R2_ACCESS_KEY_ID))
+        .add_env(("R2_SECRET_ACCESS_KEY", vars::R2_SECRET_ACCESS_KEY))
+        .add_env(("SCCACHE_BUCKET", SCCACHE_R2_BUCKET))
+}
+
+pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
+    match platform {
+        // Use $env:RUSTC_WRAPPER (absolute path) because GITHUB_PATH changes
+        // don't take effect until the next step in PowerShell.
+        // Check if RUSTC_WRAPPER is set first (it won't be for fork PRs without secrets).
+        Platform::Windows => {
+            named::pwsh("if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0")
+        }
+        Platform::Linux | Platform::Mac => named::bash("sccache --show-stats || true"),
+    }
+}
+
+pub fn cache_nix_dependencies_namespace() -> Step<Use> {
+    named::uses(
+        "namespacelabs",
+        "nscloud-cache-action",
+        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
+    )
+    .add_with(("cache", "nix"))
+}
+
+pub fn cache_nix_store_macos() -> Step<Use> {
+    // On macOS, `/nix` is on a read-only root filesystem so nscloud's `cache: nix`
+    // cannot mount or symlink there. Instead we cache a user-writable directory and
+    // use nix-store --import/--export in separate steps to transfer store paths.
+    named::uses(
+        "namespacelabs",
+        "nscloud-cache-action",
+        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
+    )
+    .add_with(("path", "~/nix-cache"))
+}
+
+pub fn setup_linux() -> Step<Run> {
+    named::bash("./script/linux")
+}
+
+fn download_wasi_sdk() -> Step<Run> {
+    named::bash("./script/download-wasi-sdk")
+}
+
+pub(crate) fn install_linux_dependencies(job: Job) -> Job {
+    job.add_step(setup_linux()).add_step(download_wasi_sdk())
+}
+
+pub fn script(name: &str) -> Step<Run> {
+    if name.ends_with(".ps1") {
+        Step::new(name).run(name).shell(PWSH_SHELL)
+    } else {
+        Step::new(name).run(name)
+    }
+}
+
+pub struct NamedJob<J: JobType = RunJob> {
+    pub name: String,
+    pub job: Job<J>,
+}
+
+// impl NamedJob {
+//     pub fn map(self, f: impl FnOnce(Job) -> Job) -> Self {
+//         NamedJob {
+//             name: self.name,
+//             job: f(self.job),
+//         }
+//     }
+// }
+
+pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
+    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+
+pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
+    Expression::new(format!(
+        "{}{}",
+        DEFAULT_REPOSITORY_OWNER_GUARD,
+        trigger_always.then_some(" && always()").unwrap_or_default()
+    ))
+}
+
+pub trait CommonJobConditions: Sized {
+    fn with_repository_owner_guard(self) -> Self;
+}
+
+impl CommonJobConditions for Job {
+    fn with_repository_owner_guard(self) -> Self {
+        self.cond(repository_owner_guard_expression(false))
+    }
+}
+
+pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
+    dependant_job(deps)
+        .with_repository_owner_guard()
+        .timeout_minutes(60u32)
+}
+
+pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
+    let job = Job::default();
+    if deps.len() > 0 {
+        job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+    } else {
+        job
+    }
+}
+
+impl FluentBuilder for Job {}
+impl FluentBuilder for Workflow {}
+impl FluentBuilder for Input {}
+impl<T> FluentBuilder for Step<T> {}
+
+/// A helper trait for building complex objects with imperative conditionals in a fluent style.
+/// Copied from GPUI to avoid adding GPUI as dependency
+/// todo(ci) just put this in gh-workflow
+#[allow(unused)]
+pub trait FluentBuilder {
+    /// Imperatively modify self with the given closure.
+    fn map<U>(self, f: impl FnOnce(Self) -> U) -> U
+    where
+        Self: Sized,
+    {
+        f(self)
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { this })
+    }
+
+    /// Conditionally modify self with the given closure.
+    fn when_else(
+        self,
+        condition: bool,
+        then: impl FnOnce(Self) -> Self,
+        else_fn: impl FnOnce(Self) -> Self,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { else_fn(this) })
+    }
+
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(value) = option {
+                then(this, value)
+            } else {
+                this
+            }
+        })
+    }
+    /// Conditionally unwrap and modify self with the given closure, if the given option is None.
+    fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if option.is_some() { this } else { then(this) })
+    }
+}
+
+// (janky) helper to generate steps with a name that corresponds
+// to the name of the calling function.
+pub mod named {
+    use super::*;
+
+    /// Returns a uses step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub fn uses(owner: &str, repo: &str, ref_: &str) -> Step<Use> {
+        Step::new(function_name(1)).uses(owner, repo, ref_)
+    }
+
+    /// Returns a bash-script step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub fn bash(script: impl AsRef<str>) -> Step<Run> {
+        Step::new(function_name(1)).run(script.as_ref())
+    }
+
+    /// Returns a pwsh-script step with the same name as the enclosing function.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub fn pwsh(script: &str) -> Step<Run> {
+        Step::new(function_name(1)).run(script).shell(PWSH_SHELL)
+    }
+
+    /// Runs the command in either powershell or bash, depending on platform.
+    /// (You shouldn't inline this function into the workflow definition, you must
+    /// wrap it in a new function.)
+    pub fn run(platform: Platform, script: &str) -> Step<Run> {
+        match platform {
+            Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
+            Platform::Linux | Platform::Mac => Step::new(function_name(1)).run(script),
+        }
+    }
+
+    /// Returns a Workflow with the same name as the enclosing module with default
+    /// set for the running shell.
+    pub fn workflow() -> Workflow {
+        Workflow::default()
+            .name(
+                named::function_name(1)
+                    .split("::")
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .skip(1)
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            )
+            .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
+    }
+
+    /// Returns a Job with the same name as the enclosing function.
+    /// (note job names may not contain `::`)
+    pub fn job<J: JobType>(job: Job<J>) -> NamedJob<J> {
+        NamedJob {
+            name: function_name(1).split("::").last().unwrap().to_owned(),
+            job,
+        }
+    }
+
+    /// Returns the function name N callers above in the stack
+    /// (typically 1).
+    /// This only works because xtask always runs debug builds.
+    pub fn function_name(i: usize) -> String {
+        let mut name = "<unknown>".to_string();
+        let mut count = 0;
+        backtrace::trace(|frame| {
+            if count < i + 3 {
+                count += 1;
+                return true;
+            }
+            backtrace::resolve_frame(frame, |cb| {
+                if let Some(s) = cb.name() {
+                    name = s.to_string()
+                }
+            });
+            false
+        });
+
+        name.split("::")
+            .skip_while(|s| s != &"workflows")
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+}
+
+const ZED_ZIPPY_GIT_USER_NAME: &str = "zed-zippy[bot]";
+const ZED_ZIPPY_GIT_USER_EMAIL: &str = "234243425+zed-zippy[bot]@users.noreply.github.com";
+
+pub(crate) trait ZippyGitIdentity {
+    fn with_zippy_git_identity(self) -> Self;
+}
+
+impl ZippyGitIdentity for Step<Run> {
+    fn with_zippy_git_identity(self) -> Self {
+        self.add_env(("GIT_AUTHOR_NAME", ZED_ZIPPY_GIT_USER_NAME))
+            .add_env(("GIT_AUTHOR_EMAIL", ZED_ZIPPY_GIT_USER_EMAIL))
+            .add_env(("GIT_COMMITTER_NAME", ZED_ZIPPY_GIT_USER_NAME))
+            .add_env(("GIT_COMMITTER_EMAIL", ZED_ZIPPY_GIT_USER_EMAIL))
+    }
+}
+
+const GITHUB_SCRIPT_SHA: &str = "f28e40c7f34bde8b3046d885e986cb6290c5673b"; // v7
+const UPLOAD_ARTIFACT_SHA: &str = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"; // v7.0.1
+const DOWNLOAD_ARTIFACT_SHA: &str = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"; // v8.0.1
+
+#[allow(unused)]
+pub(crate) enum ResultEncoding {
+    String,
+    Json,
+}
+
+impl ResultEncoding {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ResultEncoding::String => "string",
+            ResultEncoding::Json => "json",
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct GitHubScriptStep {
+    name: String,
+    id: Option<String>,
+    script: String,
+    result_encoding: Option<ResultEncoding>,
+    token: Option<String>,
+    env: Vec<(String, String)>,
+}
+
+impl GitHubScriptStep {
+    pub fn custom_name(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
+    }
+
+    pub fn id(mut self, id: &str) -> Self {
+        self.id = Some(id.to_string());
+        self
+    }
+
+    pub fn result_encoding(mut self, encoding: ResultEncoding) -> Self {
+        self.result_encoding = Some(encoding);
+        self
+    }
+
+    pub fn token(mut self, token: impl ToString) -> Self {
+        self.token = Some(token.to_string());
+        self
+    }
+
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+}
+
+impl From<GitHubScriptStep> for Step<Use> {
+    fn from(value: GitHubScriptStep) -> Self {
+        let mut step = Step::new(value.name)
+            .uses("actions", "github-script", GITHUB_SCRIPT_SHA)
+            .add_with(("script", value.script))
+            .when_some(value.result_encoding, |step, encoding| {
+                step.add_with(("result-encoding", encoding.as_str()))
+            })
+            .when_some(value.token, |step, token| {
+                step.add_with(("github-token", token))
+            })
+            .when_some(value.id, |step, id| step.id(id));
+        for (key, val) in value.env {
+            step = step.add_env((key, val));
+        }
+        step
+    }
+}
+
+impl FluentBuilder for GitHubScriptStep {}
+
+pub fn github_script(script: impl Into<String>) -> GitHubScriptStep {
+    GitHubScriptStep {
+        name: function_name(1),
+        script: script.into(),
+        ..Default::default()
+    }
+}
+
+pub(crate) enum IfNoFilesFound {
+    #[allow(unused)]
+    Warn,
+    Error,
+    Ignore,
+}
+
+impl IfNoFilesFound {
+    fn as_str(&self) -> &'static str {
+        match self {
+            IfNoFilesFound::Warn => "warn",
+            IfNoFilesFound::Error => "error",
+            IfNoFilesFound::Ignore => "ignore",
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct UploadArtifactStep {
+    name: String,
+    artifact_name: String,
+    path: String,
+    if_no_files_found: Option<IfNoFilesFound>,
+    retention_days: Option<u32>,
+    if_condition: Option<Expression>,
+    overwrite: bool,
+}
+
+impl UploadArtifactStep {
+    pub fn if_no_files_found(mut self, behavior: IfNoFilesFound) -> Self {
+        self.if_no_files_found = Some(behavior);
+        self
+    }
+
+    pub fn retention_days(mut self, days: u32) -> Self {
+        self.retention_days = Some(days);
+        self
+    }
+
+    pub fn if_condition(mut self, condition: Expression) -> Self {
+        self.if_condition = Some(condition);
+        self
+    }
+
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+}
+
+impl From<UploadArtifactStep> for Step<Use> {
+    fn from(value: UploadArtifactStep) -> Self {
+        Step::new(value.name)
+            .uses("actions", "upload-artifact", UPLOAD_ARTIFACT_SHA)
+            .add_with(("name", value.artifact_name))
+            .add_with(("path", value.path))
+            .when_some(value.if_no_files_found, |step, behavior| {
+                step.add_with(("if-no-files-found", behavior.as_str()))
+            })
+            .when_some(value.retention_days, |step, days| {
+                step.add_with(("retention-days", days.to_string()))
+            })
+            .when_some(value.if_condition, |step, condition| {
+                step.if_condition(condition)
+            })
+            .when(value.overwrite, |step| step.add_with(("overwrite", true)))
+    }
+}
+
+impl FluentBuilder for UploadArtifactStep {}
+
+pub fn upload_artifact(
+    artifact_name: impl Into<String>,
+    path: impl Into<String>,
+) -> UploadArtifactStep {
+    UploadArtifactStep {
+        name: function_name(1),
+        artifact_name: artifact_name.into(),
+        path: path.into(),
+        ..Default::default()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct DownloadArtifactStep {
+    name: String,
+    artifact_name: Option<String>,
+    path: Option<String>,
+}
+
+impl DownloadArtifactStep {
+    pub fn artifact_name(mut self, artifact_name: impl Into<String>) -> Self {
+        self.artifact_name = Some(artifact_name.into());
+        self
+    }
+
+    pub fn path(mut self, path: &str) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+}
+
+impl From<DownloadArtifactStep> for Step<Use> {
+    fn from(value: DownloadArtifactStep) -> Self {
+        Step::new(value.name)
+            .uses("actions", "download-artifact", DOWNLOAD_ARTIFACT_SHA)
+            .when_some(value.artifact_name, |step, artifact_name| {
+                step.add_with(("name", artifact_name))
+            })
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+    }
+}
+
+impl FluentBuilder for DownloadArtifactStep {}
+
+pub fn download_artifact() -> DownloadArtifactStep {
+    DownloadArtifactStep {
+        name: function_name(1),
+        ..Default::default()
+    }
+}
+
+pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
+}
+
+/// Non-exhaustive list of the permissions to be set for a GitHub app token.
+///
+/// See https://github.com/actions/create-github-app-token?tab=readme-ov-file#permission-permission-name
+/// and beyond for a full list of available permissions.
+#[allow(unused)]
+pub(crate) enum TokenPermissions {
+    Contents,
+    Issues,
+    PullRequests,
+    Workflows,
+}
+
+impl TokenPermissions {
+    pub fn environment_name(&self) -> &'static str {
+        match self {
+            TokenPermissions::Contents => "permission-contents",
+            TokenPermissions::Issues => "permission-issues",
+            TokenPermissions::PullRequests => "permission-pull-requests",
+            TokenPermissions::Workflows => "permission-workflows",
+        }
+    }
+}
+
+pub(crate) struct GenerateAppToken<'a> {
+    job_name: String,
+    app_id: &'a str,
+    app_secret: &'a str,
+    repository_target: Option<RepositoryTarget>,
+    permissions: Option<Vec<(TokenPermissions, Level)>>,
+}
+
+impl<'a> GenerateAppToken<'a> {
+    pub fn for_repository(self, repository_target: RepositoryTarget) -> Self {
+        Self {
+            repository_target: Some(repository_target),
+            ..self
+        }
+    }
+
+    pub fn with_permissions(self, permissions: impl Into<Vec<(TokenPermissions, Level)>>) -> Self {
+        Self {
+            permissions: Some(permissions.into()),
+            ..self
+        }
+    }
+}
+
+impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
+    fn from(token: GenerateAppToken<'a>) -> Self {
+        let step = Step::new(token.job_name)
+            .uses(
+                "actions",
+                "create-github-app-token",
+                "f8d387b68d61c58ab83c6c016672934102569859",
+            )
+            .id("generate-token")
+            .add_with(
+                Input::default()
+                    .add("app-id", token.app_id)
+                    .add("private-key", token.app_secret)
+                    .when_some(
+                        token.repository_target,
+                        |input,
+                         RepositoryTarget {
+                             owner,
+                             repositories,
+                         }| {
+                            input
+                                .when_some(owner, |input, owner| input.add("owner", owner))
+                                .when_some(repositories, |input, repositories| {
+                                    input.add("repositories", repositories)
+                                })
+                        },
+                    )
+                    .when_some(token.permissions, |input, permissions| {
+                        permissions
+                            .into_iter()
+                            .fold(input, |input, (permission, level)| {
+                                input.add(
+                                    permission.environment_name(),
+                                    serde_json::to_value(&level).unwrap_or_default(),
+                                )
+                            })
+                    }),
+            );
+
+        let generated_token = StepOutput::new(&step, "token");
+        (step, generated_token)
+    }
+}
+
+pub(crate) struct RepositoryTarget {
+    owner: Option<String>,
+    repositories: Option<String>,
+}
+
+impl RepositoryTarget {
+    pub fn new<T: ToString>(owner: T, repositories: &[&str]) -> Self {
+        Self {
+            owner: Some(owner.to_string()),
+            repositories: Some(repositories.join("\n")),
+        }
+    }
+
+    pub fn current() -> Self {
+        Self {
+            owner: None,
+            repositories: None,
+        }
+    }
+}
+
+pub(crate) fn generate_token<'a>(
+    app_id_source: &'a str,
+    app_secret_source: &'a str,
+) -> GenerateAppToken<'a> {
+    generate_token_with_job_name(app_id_source, app_secret_source)
+}
+
+pub fn authenticate_as_zippy() -> GenerateAppToken<'static> {
+    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+}
+
+fn generate_token_with_job_name<'a>(
+    app_id_source: &'a str,
+    app_secret_source: &'a str,
+) -> GenerateAppToken<'a> {
+    GenerateAppToken {
+        job_name: function_name(1),
+        app_id: app_id_source,
+        app_secret: app_secret_source,
+        repository_target: None,
+        permissions: None,
+    }
+}
+
+pub(crate) struct BotCommitStep {
+    message: String,
+    branch: String,
+    files: String,
+    token: String,
+}
+
+impl BotCommitStep {
+    pub fn new(message: impl ToString, branch: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            message: message.to_string(),
+            branch: branch.to_string(),
+            files: "**".to_string(),
+            token: token.to_string(),
+        }
+    }
+
+    pub fn with_files(self, files: impl ToString) -> Self {
+        Self {
+            files: files.to_string(),
+            ..self
+        }
+    }
+}
+
+impl From<BotCommitStep> for Step<Use> {
+    fn from(step: BotCommitStep) -> Self {
+        Step::new("steps::bot_commit")
+            .uses(
+                "IAreKyleW00t",
+                "verified-bot-commit",
+                "126a6a11889ab05bcff72ec2403c326cd249b84c", // v2.3.0
+            )
+            .id("commit")
+            .add_with(("message", step.message))
+            .add_with(("ref", format!("refs/heads/{}", step.branch)))
+            .add_with(("files", step.files))
+            .add_with(("token", step.token))
+    }
+}
+
+pub(crate) enum GitRef {
+    Tag(String),
+    Branch(String),
+}
+
+impl GitRef {
+    pub fn tag(name: impl ToString) -> Self {
+        Self::Tag(name.to_string())
+    }
+
+    pub fn branch(name: impl ToString) -> Self {
+        Self::Branch(name.to_string())
+    }
+
+    fn create_ref_path(&self) -> String {
+        match self {
+            Self::Tag(name) => format!("refs/tags/{name}"),
+            Self::Branch(name) => format!("refs/heads/{name}"),
+        }
+    }
+
+    fn update_ref_path(&self) -> String {
+        match self {
+            Self::Tag(name) => format!("tags/{name}"),
+            Self::Branch(name) => format!("heads/{name}"),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Tag(_) => "tag",
+            Self::Branch(_) => "branch",
+        }
+    }
+}
+
+enum RefOperation {
+    Create,
+    Update { force: bool },
+}
+
+pub(crate) enum RefSha {
+    Context,
+    Custom(String),
+}
+
+struct RefOp {
+    git_ref: GitRef,
+    operation: RefOperation,
+    sha: RefSha,
+    token: String,
+}
+
+impl<T: ToString> From<T> for RefSha {
+    fn from(sha: T) -> Self {
+        RefSha::Custom(sha.to_string())
+    }
+}
+
+impl From<RefOp> for Step<Use> {
+    fn from(op: RefOp) -> Self {
+        let (api_method, ref_path, force_line) = match &op.operation {
+            RefOperation::Create => ("createRef", op.git_ref.create_ref_path(), String::new()),
+            RefOperation::Update { force } => (
+                "updateRef",
+                op.git_ref.update_ref_path(),
+                format!(",\n    force: {force}"),
+            ),
+        };
+        let step_name = match &op.operation {
+            RefOperation::Create => format!("steps::create_{}", op.git_ref.kind()),
+            RefOperation::Update { .. } => format!("steps::update_{}", op.git_ref.kind()),
+        };
+        let script = indoc::formatdoc! {r#"
+            github.rest.git.{api_method}({{
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: '{ref_path}',
+                sha: {sha}{force_line}
+            }})
+            "#,
+            sha = match &op.sha {
+                RefSha::Context => "context.sha".to_string(),
+                RefSha::Custom(sha) => format!("'{sha}'"),
+            }
+        };
+        github_script(script)
+            .custom_name(&step_name)
+            .token(op.token)
+            .into()
+    }
+}
+
+pub(crate) fn create_ref(
+    git_ref: GitRef,
+    sha: impl Into<RefSha>,
+    token: &StepOutput,
+) -> impl Into<Step<Use>> {
+    RefOp {
+        git_ref,
+        operation: RefOperation::Create,
+        sha: sha.into(),
+        token: token.to_string(),
+    }
+}
+
+pub(crate) fn update_ref(
+    git_ref: GitRef,
+    sha: impl Into<RefSha>,
+    token: &StepOutput,
+    force: bool,
+) -> impl Into<Step<Use>> {
+    RefOp {
+        git_ref,
+        operation: RefOperation::Update { force },
+        sha: sha.into(),
+        token: token.to_string(),
+    }
+}
+
+const ZED_ZIPPY_COMMITTER: &str =
+    "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>";
+
+pub(crate) struct CreatePrStep {
+    title: String,
+    body: String,
+    branch: String,
+    base: String,
+    token: String,
+    assignees: Option<String>,
+    labels: Option<String>,
+    path: Option<String>,
+}
+
+impl CreatePrStep {
+    pub fn new(title: impl ToString, branch: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            title: title.to_string(),
+            body: "Release Notes:\n\n- N/A".to_string(),
+            branch: branch.to_string(),
+            base: "main".to_string(),
+            token: token.to_string(),
+            assignees: Some(Context::github().actor().to_string()),
+            labels: None,
+            path: None,
+        }
+    }
+
+    pub fn with_body(self, body: impl ToString) -> Self {
+        Self {
+            body: body.to_string(),
+            ..self
+        }
+    }
+
+    pub fn with_assignee(self, assignee: impl ToString) -> Self {
+        Self {
+            assignees: Some(assignee.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_labels(self, labels: impl ToString) -> Self {
+        Self {
+            labels: Some(labels.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_path(self, path: impl ToString) -> Self {
+        Self {
+            path: Some(path.to_string()),
+            ..self
+        }
+    }
+}
+
+impl From<CreatePrStep> for Step<Use> {
+    fn from(step: CreatePrStep) -> Self {
+        Step::new("steps::create_pull_request")
+            .uses(
+                "peter-evans",
+                "create-pull-request",
+                "98357b18bf14b5342f975ff684046ec3b2a07725", // v7
+            )
+            .add_with(("title", step.title.clone()))
+            .add_with(("body", step.body))
+            .add_with(("commit-message", step.title))
+            .add_with(("branch", step.branch))
+            .add_with(("committer", ZED_ZIPPY_COMMITTER))
+            .add_with(("author", ZED_ZIPPY_COMMITTER))
+            .add_with(("base", step.base))
+            .add_with(("delete-branch", true))
+            .add_with(("token", step.token))
+            .add_with(("sign-commits", true))
+            .when_some(step.assignees, |s, v| s.add_with(("assignees", v)))
+            .when_some(step.labels, |s, v| s.add_with(("labels", v)))
+            .when_some(step.path, |s, v| s.add_with(("path", v)))
+    }
+}

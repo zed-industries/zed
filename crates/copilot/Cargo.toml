@@ -1,0 +1,70 @@
+[package]
+name = "copilot"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/copilot.rs"
+doctest = false
+
+[features]
+default = []
+test-support = [
+    "collections/test-support",
+    "gpui/test-support",
+    "language/test-support",
+    "lsp/test-support",
+    "settings/test-support",
+    "util/test-support",
+]
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+command_palette_hooks.workspace = true
+copilot_chat.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+edit_prediction_types.workspace = true
+icons.workspace = true
+language.workspace = true
+log.workspace = true
+lsp.workspace = true
+node_runtime.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+sum_tree.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+async-std = { version = "1.12.0", features = ["unstable"] }
+
+[dev-dependencies]
+collections = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
+node_runtime = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true
+theme_settings.workspace = true

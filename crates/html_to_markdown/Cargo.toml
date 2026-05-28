@@ -1,0 +1,26 @@
+[package]
+name = "html_to_markdown"
+version = "0.1.0"
+description = "Convert HTML to Markdown"
+repository = "https://github.com/zed-industries/zed"
+documentation = "https://docs.rs/html_to_markdown"
+keywords = ["html", "markdown", "html-to-markdown"]
+edition.workspace = true
+publish = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/html_to_markdown.rs"
+
+[dependencies]
+anyhow.workspace = true
+html5ever.workspace = true
+markup5ever_rcdom.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
+pretty_assertions.workspace = true

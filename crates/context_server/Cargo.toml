@@ -1,0 +1,45 @@
+[package]
+name = "context_server"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/context_server.rs"
+
+[features]
+test-support = ["gpui/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+async-channel.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+collections.workspace = true
+futures.workspace = true
+futures-lite.workspace = true
+gpui.workspace = true
+http_client = { workspace = true, features = ["test-support"] }
+log.workspace = true
+net.workspace = true
+oauth_callback_server.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+postage.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+settings.workspace = true
+sha2.workspace = true
+slotmap.workspace = true
+tempfile.workspace = true
+url = { workspace = true, features = ["serde"] }
+util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+pollster.workspace = true

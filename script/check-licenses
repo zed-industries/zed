@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+AGPL_CRATES=("collab")
+RELEASE_CRATES=("cli" "remote_server" "zed")
+
+check_symlink_target () {
+    local symlink_path="$1"
+    local license_name="$2"
+
+    local target=$(readlink "$symlink_path")
+
+    local dir=$(dirname "$symlink_path")
+    local depth=$(echo "$dir" | tr '/' '\n' | wc -l)
+    local expected_prefix=""
+    for ((i = 0; i < depth; i++)); do
+        expected_prefix="../$expected_prefix"
+    done
+    local expected_target="${expected_prefix}${license_name}"
+
+    if [[ "$target" != "$expected_target" ]]; then
+        echo "Error: $symlink_path points to '$target' but should point to '$expected_target'"
+        exit 1
+    fi
+
+    if [[ ! -e "$symlink_path" ]]; then
+        echo "Error: $symlink_path is a broken symlink (target '$target' does not exist)"
+        exit 1
+    fi
+}
+
+check_license () {
+    local dir="$1"
+    local allowed_licenses=()
+
+    local is_agpl=false
+    for agpl_crate in "${AGPL_CRATES[@]}"; do
+        if [[ "$dir" == "crates/$agpl_crate" ]]; then
+            is_agpl=true
+            break
+        fi
+    done
+
+    if [[ "$is_agpl" == true ]]; then
+        allowed_licenses=("LICENSE-AGPL")
+    else
+        allowed_licenses=("LICENSE-GPL" "LICENSE-APACHE")
+    fi
+
+    for license in "${allowed_licenses[@]}"; do
+        if [[ -L "$dir/$license" ]]; then
+            check_symlink_target "$dir/$license" "$license"
+            return 0
+        elif [[ -e "$dir/$license" ]]; then
+            echo "Error: $dir/$license exists but is not a symlink."
+            exit 1
+        fi
+    done
+
+    if [[ "$is_agpl" == true ]]; then
+        echo "Error: $dir does not contain a LICENSE-AGPL symlink"
+    else
+        echo "Error: $dir does not contain a LICENSE-GPL or LICENSE-APACHE symlink"
+    fi
+    exit 1
+}
+
+git ls-files "**/*/Cargo.toml" | while read -r cargo_toml; do
+   check_license "$(dirname "$cargo_toml")"
+done
+
+
+# Make sure the AGPL server crates are included in the release tarball.
+for release_crate in "${RELEASE_CRATES[@]}"; do
+    tree_output=$(cargo tree --package "$release_crate")
+    for agpl_crate in "${AGPL_CRATES[@]}"; do
+        # Look for lines that contain the crate name followed by " v" (version)
+        # This matches patterns like "├── collab v0.44.0"
+        if echo "$tree_output" | grep -E "(^|[^a-zA-Z_])${agpl_crate} v" > /dev/null; then
+            echo "Error: crate '${agpl_crate}' is AGPL and is a dependency of crate '${release_crate}'." >&2
+            echo "AGPL licensed code should not be used in the release distribution, only in servers." >&2
+            exit 1
+        fi
+    done
+done
+
+echo "check-licenses succeeded"
