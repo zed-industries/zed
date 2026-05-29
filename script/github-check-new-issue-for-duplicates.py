@@ -146,8 +146,12 @@ No action needed. A maintainer will review this shortly.
             ]
             parts.append("**Possibly related open issues:**\n\n" + "\n".join(lines))
         if related_closed_issues:
+            # state_reason is shown only for "duplicate" (the close type is otherwise
+            # already visible from GitHub's icon next to the issue number on render).
             lines = [
-                f"- #{m['number']} (closed as {m['state_reason']}) — {m['explanation']}"
+                f"- #{m['number']}"
+                f"{' (closed as duplicate)' if m['state_reason'] == 'duplicate' else ''}"
+                f" — {m['explanation']}"
                 for m in related_closed_issues
             ]
             parts.append("**Recently closed, possibly related:**\n\n" + "\n".join(lines))
@@ -550,15 +554,35 @@ waste the time of both the issue author and the maintainers. When in doubt, omit
 
 # (b) Related closed issues — CLOSED candidates only
 
-The goal is to give triagers extra context, NOT to claim a duplicate. The bar is lower than for
-duplicates: include a closed candidate if a triager would plausibly want to see it when reviewing
-the new issue. Examples worth surfacing:
-- A recently fixed (state_reason "completed") issue describing the same symptom — triager may ask
-  the reporter to retest on the latest build.
-- A cluster of similar issues closed as "not_planned" — signals a known limitation or design choice.
-- A previously triaged duplicate (state_reason "duplicate") in the same code area.
+The goal is to give triagers useful technical context, NOT to fill a section. Empty is
+preferable to weak filler — triagers lose trust in this section quickly if it's stretched.
+The same false-positives-are-worse asymmetry as for duplicates applies here.
 
-Include at most 5 closed candidates, prioritized by relevance.
+The bar: name a specific shared technical claim — a mechanism, code path, regression, or
+known design limitation. Surface overlap (same area label, same broad symptom, "both involve
+feature X") is NOT sufficient.
+
+Worth surfacing:
+- A recently fixed (state_reason "completed") issue describing the same specific symptom and
+  trigger — reporter may need to retest on the latest build.
+- A cluster of issues closed as "not_planned" about the exact same request — known design
+  choice the triager can point to.
+- A previously triaged duplicate (state_reason "duplicate") that points at the same canonical
+  issue, or shares an identical mechanism.
+
+NOT worth surfacing — examples of false positives we want to avoid:
+- "ARM compile failure" alongside "ARM runtime perf" — same area, different mechanism.
+- "Worktree path bug" alongside "worktree display label confusion" — same feature, unrelated.
+- A vague closed issue (e.g. "Zed is slow") that could be cited next to almost any new bug.
+  If you'd reuse the same closed issue across many unrelated new issues, it's filler — omit.
+- A closed issue whose only connection is a shared area:* label or a single shared keyword.
+
+If your explanation reads like "may indicate similar...", "could provide context for...",
+"shows recent attention to...", or "demonstrates a pattern of..." — STOP. You don't have a
+real claim. Omit.
+
+Count: typically 0 or 1. Never more than 2 unless there's an obvious cluster of identical
+"not_planned" reports. 0 is a normal outcome.
 
 # Output format
 
