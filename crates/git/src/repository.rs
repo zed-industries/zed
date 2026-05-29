@@ -749,7 +749,9 @@ impl LogSource {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
             LogSource::Path(_) => Ok("--follow"),
-            LogSource::LineRange { .. } => Ok("--follow"),
+            LogSource::LineRange { .. } => {
+                unreachable!("LineRange is handled separately in initial_graph_data")
+            }
         }
     }
 }

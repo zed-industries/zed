@@ -699,12 +699,19 @@ message GetCommitDataResponse {
 
 message GitLogSourceAll {}
 
+message GitLogSourceLineRange {
+  string path = 1;
+  uint32 start = 2;
+  uint32 end = 3;
+}
+
 message GitLogSource {
   oneof source {
     GitLogSourceAll all = 1;
     string branch = 2;
     string sha = 3;
     string path = 4;
+    GitLogSourceLineRange line_range = 5;
   }
 }
 

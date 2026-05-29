@@ -4044,7 +4044,7 @@ mod persistence {
             LogSource::Sha(oid) => Some(oid.to_string()),
             LogSource::Path(path) => Some(path.as_unix_str().to_string()),
             LogSource::LineRange { path, start, end } => {
-                Some(format!("{}:{}:{}", path.as_unix_str(), start, end))
+                Some(format!("{}:{}:{}", start, end, path.as_unix_str()))
             }
         }
     }
@@ -4082,10 +4082,11 @@ mod persistence {
                 .log_source_value
                 .as_ref()
                 .and_then(|v| {
+                    // Format: "start:end:path" — numbers first so `:` in paths is safe
                     let mut parts = v.splitn(3, ':');
-                    let path = RepoPath::new(parts.next()?).ok()?;
                     let start = parts.next()?.parse::<u32>().ok()?;
                     let end = parts.next()?.parse::<u32>().ok()?;
+                    let path = RepoPath::new(parts.next()?).ok()?;
                     Some(LogSource::LineRange { path, start, end })
                 })
                 .unwrap_or_default(),

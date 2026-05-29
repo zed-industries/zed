@@ -549,6 +549,11 @@ pub struct InlineBlameSettings {
     ///
     /// Default: false
     pub show_commit_summary: bool,
+    /// Whether to show a "View Line History" inline indicator when
+    /// lines are selected in a git-tracked file.
+    ///
+    /// Default: true
+    pub inline_line_history: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -667,6 +672,7 @@ impl Settings for ProjectSettings {
                     padding: inline.padding.unwrap(),
                     min_column: inline.min_column.unwrap(),
                     show_commit_summary: inline.show_commit_summary.unwrap(),
+                    inline_line_history: inline.inline_line_history.unwrap_or(true),
                 }
             },
             blame: {

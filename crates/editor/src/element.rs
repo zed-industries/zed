@@ -130,7 +130,6 @@ struct InlineBlameLayout {
 
 struct InlineLineHistoryLayout {
     element: AnyElement,
-    bounds: Bounds<Pixels>,
 }
 
 impl SelectionLayout {
@@ -2895,14 +2894,21 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineLineHistoryLayout> {
+        if !ProjectSettings::get_global(cx)
+            .git
+            .inline_blame
+            .inline_line_history
         {
-            let sel = self.editor.read(cx).selections.newest_anchor().clone();
-            if sel.start == sel.end {
-                return None;
-            }
+            return None;
         }
 
         let editor = self.editor.read(cx);
+
+        let sel = editor.selections.newest_anchor().clone();
+        if sel.start == sel.end {
+            return None;
+        }
+
         let has_git_repo = editor.blame.is_some()
             || editor
                 .project
@@ -2939,12 +2945,11 @@ impl EditorElement {
             })
             .into_any_element();
 
-        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
         let origin = point(start_x, start_y);
-        let bounds = Bounds::new(origin, size);
+        element.layout_as_root(AvailableSpace::min_size(), window, cx);
         element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
 
-        Some(InlineLineHistoryLayout { element, bounds })
+        Some(InlineLineHistoryLayout { element })
     }
 
     fn layout_blame_popover(

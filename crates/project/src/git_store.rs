@@ -8681,8 +8681,12 @@ fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
             LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
             LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
             LogSource::Path(path) => proto::git_log_source::Source::Path(path.to_proto()),
-            LogSource::LineRange { path, .. } => {
-                proto::git_log_source::Source::Path(path.to_proto())
+            LogSource::LineRange { path, start, end } => {
+                proto::git_log_source::Source::LineRange(proto::GitLogSourceLineRange {
+                    path: path.to_proto(),
+                    start: *start,
+                    end: *end,
+                })
             }
         }),
     }
@@ -8699,6 +8703,11 @@ fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
         proto::git_log_source::Source::Path(path) => {
             Ok(LogSource::Path(RepoPath::from_proto(&path)?))
         }
+        proto::git_log_source::Source::LineRange(lr) => Ok(LogSource::LineRange {
+            path: RepoPath::from_proto(&lr.path)?,
+            start: lr.start,
+            end: lr.end,
+        }),
     }
 }
 

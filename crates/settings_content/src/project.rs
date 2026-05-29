@@ -613,6 +613,11 @@ pub struct InlineBlameSettings {
     ///
     /// Default: false
     pub show_commit_summary: Option<bool>,
+    /// Whether to show a "View Line History" inline indicator when
+    /// lines are selected in a git-tracked file.
+    ///
+    /// Default: true
+    pub inline_line_history: Option<bool>,
 }
 
 #[with_fallible_options]
