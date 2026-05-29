@@ -51,7 +51,7 @@
 
 use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, Window,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, ScrollDirection, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -437,7 +437,7 @@ impl DispatchTree {
         binding: &KeyBinding,
         context_stack: &[KeyContext],
     ) -> bool {
-        let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
+        let (bindings, _) = keymap.bindings_for_input(binding.keystrokes(), context_stack);
         if let Some(found) = bindings.iter().next() {
             found.action.partial_eq(binding.action.as_ref())
         } else {
@@ -558,6 +558,43 @@ impl DispatchTree {
             });
         }
         (input, to_replay)
+    }
+
+    /// Dispatch a mouse click event, returning any matching bindings.
+    /// Unlike keyboard events, mouse bindings don't have pending state.
+    pub fn dispatch_mouse(
+        &self,
+        button: MouseButton,
+        modifiers: Modifiers,
+        click_count: usize,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let context_stack: Vec<KeyContext> = dispatch_path
+            .iter()
+            .filter_map(|node_id| self.node(*node_id).context.clone())
+            .collect();
+
+        self.keymap
+            .borrow()
+            .bindings_for_mouse(button, modifiers, click_count, &context_stack)
+    }
+
+    /// Dispatch a scroll event, returning any matching bindings.
+    /// Unlike keyboard events, scroll bindings don't have pending state.
+    pub fn dispatch_scroll(
+        &self,
+        direction: ScrollDirection,
+        modifiers: Modifiers,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let context_stack: Vec<KeyContext> = dispatch_path
+            .iter()
+            .filter_map(|node_id| self.node(*node_id).context.clone())
+            .collect();
+
+        self.keymap
+            .borrow()
+            .bindings_for_scroll(direction, modifiers, &context_stack)
     }
 
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {

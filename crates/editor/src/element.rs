@@ -320,6 +320,17 @@ impl EditorElement {
         register_action(editor, window, Editor::split_selection_into_lines);
         register_action(editor, window, Editor::add_selection_above);
         register_action(editor, window, Editor::add_selection_below);
+        register_action(editor, window, Editor::add_cursor_at_mouse);
+        register_action(editor, window, Editor::extend_selection_to_mouse);
+        register_action(editor, window, |editor, action, window, cx| {
+            let task = editor.go_to_definition_at_mouse(action, window, cx);
+            editor.detach_and_notify_err(task, window, cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            let task = editor.go_to_type_definition_at_mouse(action, window, cx);
+            editor.detach_and_notify_err(task, window, cx);
+        });
+        register_action(editor, window, Editor::start_columnar_selection_at_mouse);
         register_action(editor, window, Editor::insert_snippet_at_selections);
         register_action(editor, window, |editor, action, window, cx| {
             editor.select_next(action, window, cx).log_err();
@@ -754,6 +765,10 @@ impl EditorElement {
             return;
         }
 
+        if Self::dispatch_mouse_binding(editor, event, window, cx) {
+            return;
+        }
+
         if EditorSettings::get_global(cx)
             .drag_and_drop_selection
             .enabled
@@ -922,6 +937,10 @@ impl EditorElement {
             return;
         }
 
+        if Self::dispatch_mouse_binding(editor, event, window, cx) {
+            return;
+        }
+
         let point_for_position = position_map.point_for_position(event.position);
         mouse_context_menu::deploy_context_menu(
             editor,
@@ -944,6 +963,10 @@ impl EditorElement {
             return;
         }
 
+        if Self::dispatch_mouse_binding(editor, event, window, cx) {
+            return;
+        }
+
         let point_for_position = position_map.point_for_position(event.position);
         let position = point_for_position.nearest_valid;
 
@@ -957,6 +980,62 @@ impl EditorElement {
             window,
             cx,
         );
+    }
+
+    fn dispatch_mouse_binding(
+        editor: &mut Editor,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        let focus_handle = editor.focus_handle(cx);
+        let bindings = window.mouse_bindings_for_focus_handle(
+            event.button,
+            event.modifiers,
+            event.click_count,
+            &focus_handle,
+        );
+        if bindings.is_empty() {
+            return false;
+        }
+
+        if !focus_handle.is_focused(window) {
+            window.focus(&focus_handle, cx);
+        }
+        for binding in bindings {
+            window.dispatch_action(binding.action().boxed_clone(), cx);
+        }
+        cx.stop_propagation();
+        true
+    }
+
+    fn dispatch_scroll_binding(
+        editor: &mut Editor,
+        event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        if !event.modifiers.modified() {
+            return false;
+        }
+        let Some(direction) = gpui::ScrollDirection::from_delta(&event.delta) else {
+            return false;
+        };
+        let focus_handle = editor.focus_handle(cx);
+        let bindings =
+            window.scroll_bindings_for_focus_handle(direction, event.modifiers, &focus_handle);
+        if bindings.is_empty() {
+            return false;
+        }
+
+        if !focus_handle.is_focused(window) {
+            window.focus(&focus_handle, cx);
+        }
+        for binding in bindings {
+            window.dispatch_action(binding.action().boxed_clone(), cx);
+        }
+        cx.stop_propagation();
+        true
     }
 
     fn mouse_up(
@@ -7762,7 +7841,11 @@ impl EditorElement {
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    delta = delta.coalesce(event.delta);
+                    if editor.update(cx, |editor, cx| {
+                        Self::dispatch_scroll_binding(editor, event, window, cx)
+                    }) {
+                        return;
+                    }
 
                     if event.modifiers.secondary()
                         && editor.read(cx).enable_mouse_wheel_zoom
@@ -7781,6 +7864,8 @@ impl EditorElement {
 
                         cx.stop_propagation();
                     } else {
+                        delta = delta.coalesce(event.delta);
+
                         let scroll_sensitivity = {
                             if event.modifiers.alt {
                                 fast_scroll_sensitivity
@@ -7879,7 +7964,9 @@ impl EditorElement {
                         MouseButton::Middle => editor.update(cx, |editor, cx| {
                             Self::mouse_middle_down(editor, event, &position_map, window, cx);
                         }),
-                        _ => {}
+                        MouseButton::Navigate(_) => editor.update(cx, |editor, cx| {
+                            Self::dispatch_mouse_binding(editor, event, window, cx);
+                        }),
                     };
                 }
             }
