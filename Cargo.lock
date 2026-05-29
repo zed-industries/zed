@@ -234,6 +234,7 @@ dependencies = [
  "agent_settings",
  "agent_skills",
  "anyhow",
+ "assets",
  "async-channel 2.5.0",
  "async-io",
  "chrono",
@@ -290,6 +291,7 @@ dependencies = [
  "tempfile",
  "text",
  "theme",
+ "theme_settings",
  "thiserror 2.0.17",
  "ui",
  "unindent",
@@ -426,6 +428,7 @@ name = "agent_skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "const_format",
  "fs",
  "futures 0.3.32",
@@ -434,6 +437,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "url",
  "util",
 ]
 
@@ -512,7 +516,6 @@ dependencies = [
  "remote_server",
  "reqwest_client",
  "rope",
- "rules_library",
  "schemars 1.0.4",
  "search",
  "semver",
@@ -597,15 +600,14 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.25.1"
-source = "git+https://github.com/zed-industries/alacritty?rev=9d9640d4#9d9640d4e56d67a09d049f9c0a300aae08d4f61e"
+version = "0.26.1-dev"
+source = "git+https://github.com/zed-industries/alacritty?rev=fcf32feacb367b75ec84dd40f041e4fd411d3cc1#fcf32feacb367b75ec84dd40f041e4fd411d3cc1"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.10.0",
  "home",
  "libc",
  "log",
- "mach2 0.5.0",
  "miow",
  "parking_lot",
  "piper",
@@ -11725,16 +11727,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.32",
- "net",
- "smol",
-]
-
-[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16017,33 +16009,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
 
 [[package]]
-name = "rules_library"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "editor",
- "gpui",
- "language",
- "language_model",
- "log",
- "menu",
- "picker",
- "platform_title_bar",
- "prompt_store",
- "release_channel",
- "rope",
- "serde",
- "settings",
- "theme_settings",
- "ui",
- "ui_input",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "runtimelib"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17341,9 +17306,9 @@ dependencies = [
 
 [[package]]
 name = "signal-hook"
-version = "0.3.18"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
 dependencies = [
  "libc",
  "signal-hook-registry",
@@ -23514,6 +23479,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "agent_ui",
  "anyhow",
  "ashpd",
@@ -23596,7 +23562,6 @@ dependencies = [
  "migrator",
  "mimalloc",
  "miniprofiler_ui",
- "nc",
  "node_runtime",
  "notifications",
  "onboarding",
