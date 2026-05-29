@@ -15,10 +15,9 @@ pub fn uncommitted_diffs_for_events(
     events: Vec<StoredEvent>,
     cx: &Context<'_, EditPredictionStore>,
 ) -> Task<Option<(UncommittedDiffSnapshot, Vec<StoredEvent>)>> {
-    let project_id = project.entity_id();
     let git_store = project.read_with(cx, |project, _| project.git_store().clone());
 
-    cx.spawn(async move |store, cx| {
+    cx.spawn(async move |_store, cx| {
         let events_with_paths = events
             .into_iter()
             .filter_map(|stored_event| {
@@ -50,28 +49,9 @@ pub fn uncommitted_diffs_for_events(
                 })
                 .await
                 .ok()?;
-            let old_snapshot_remote_id = stored_event.old_snapshot.remote_id();
-            let new_snapshot_version = stored_event.new_snapshot_version.clone();
-            let zeta_prompt::Event::BufferChange {
-                path: event_path, ..
-            } = stored_event.event.as_ref();
-            let cached_diff = stored_event.uncommitted_diff.clone().or_else(|| {
-                store
-                    .update(cx, |store, _| {
-                        store
-                            .projects
-                            .get(&project_id)?
-                            .events
-                            .iter()
-                            .find(|event| {
-                                event.old_snapshot.remote_id() == old_snapshot_remote_id
-                                    && event.new_snapshot_version == new_snapshot_version
-                            })?
-                            .uncommitted_diff
-                            .clone()
-                    })
-                    .ok()
-                    .flatten()
+            let file_context = stored_event.file_context.clone();
+            let cached_diff = file_context.as_ref().and_then(|file_context| {
+                file_context.read_with(cx, |file_context, _| file_context.uncommitted_diff.clone())
             });
             let diff = match cached_diff {
                 Some(diff) => diff,
@@ -82,21 +62,11 @@ pub fn uncommitted_diffs_for_events(
                         })
                         .await
                         .ok()?;
-                    store
-                        .update(cx, |store, _| {
-                            if let Some(project) = store.projects.get_mut(&project_id) {
-                                for event in project.events.iter_mut() {
-                                    let zeta_prompt::Event::BufferChange { path, .. } =
-                                        event.event.as_ref();
-                                    if old_snapshot_remote_id == event.old_snapshot.remote_id()
-                                        && path == event_path
-                                    {
-                                        event.uncommitted_diff = Some(diff.clone());
-                                    }
-                                }
-                            }
-                        })
-                        .ok()?;
+                    if let Some(file_context) = file_context {
+                        file_context.update(cx, |file_context, _| {
+                            file_context.uncommitted_diff = Some(diff.clone());
+                        });
+                    }
                     diff
                 }
             };

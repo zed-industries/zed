@@ -32,7 +32,7 @@ use gpui::BackgroundExecutor;
 use gpui::TaskExt;
 use gpui::http_client::Url;
 use gpui::{
-    App, AsyncApp, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
+    App, AsyncApp, Context, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
@@ -51,6 +51,7 @@ use settings::{
 };
 use std::collections::{VecDeque, hash_map};
 use std::env;
+use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
 use zeta_prompt::{ZetaFormat, ZetaPromptInput};
@@ -58,7 +59,6 @@ use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 use std::mem;
 use std::ops::Range;
 use std::path::Path;
-use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -246,7 +246,11 @@ pub struct StoredEvent {
     pub old_snapshot: TextBufferSnapshot,
     pub new_snapshot_version: clock::Global,
     pub total_edit_range: Range<Anchor>,
-    pub uncommitted_diff: Option<Entity<BufferDiff>>,
+    pub(crate) file_context: Option<Entity<StoredFileContext>>,
+}
+
+pub(crate) struct StoredFileContext {
+    pub(crate) uncommitted_diff: Option<Entity<BufferDiff>>,
 }
 
 impl StoredEvent {
@@ -342,6 +346,7 @@ struct ProjectState {
     recently_viewed_files: VecDeque<RecentFile>,
     recently_opened_files: VecDeque<RecentFile>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
+    file_contexts: HashMap<ProjectPath, WeakEntity<StoredFileContext>>,
     current_prediction: Option<CurrentEditPrediction>,
     last_edit_source: Option<BufferEditSource>,
     next_pending_prediction_id: usize,
@@ -412,6 +417,26 @@ impl ProjectState {
         let active_buffer = project.buffer_store().read(cx).get_by_path(&active_path)?;
         let registered_buffer = self.registered_buffers.get(&active_buffer.entity_id())?;
         Some((active_buffer, registered_buffer.last_position))
+    }
+
+    fn file_context_for_path(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut Context<EditPredictionStore>,
+    ) -> Entity<StoredFileContext> {
+        if let Some(context) = self
+            .file_contexts
+            .get_mut(&path)
+            .and_then(|entry| entry.upgrade())
+        {
+            context
+        } else {
+            let context = cx.new(|_| StoredFileContext {
+                uncommitted_diff: None,
+            });
+            self.file_contexts.insert(path, context.downgrade());
+            context
+        }
     }
 
     fn update_recent_file_cursor(&mut self, path: &Path, cursor_position: usize) {
@@ -583,6 +608,7 @@ struct LastEvent {
     predicted: bool,
     snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
+    file_context: Option<Entity<StoredFileContext>>,
 }
 
 impl LastEvent {
@@ -626,7 +652,7 @@ impl LastEvent {
                 new_snapshot_version: self.new_snapshot.version.clone(),
                 total_edit_range: self.new_snapshot.anchor_before(edit_range.start)
                     ..self.new_snapshot.anchor_before(edit_range.end),
-                uncommitted_diff: None,
+                file_context: self.file_context.clone(),
             })
         }
     }
@@ -661,6 +687,7 @@ impl LastEvent {
             predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
+            file_context: self.file_context.clone(),
         };
 
         let after = LastEvent {
@@ -674,6 +701,7 @@ impl LastEvent {
             predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
+            file_context: self.file_context.clone(),
         };
 
         (before, Some(after))
@@ -1194,6 +1222,7 @@ impl EditPredictionStore {
                 recently_opened_files: VecDeque::new(),
                 debug_tx: None,
                 registered_buffers: HashMap::default(),
+                file_contexts: HashMap::default(),
                 current_prediction: None,
                 last_edit_source: None,
                 cancelled_predictions: HashSet::default(),
@@ -1541,6 +1570,10 @@ impl EditPredictionStore {
             &edit_range,
         );
 
+        let file_context = new_file.as_ref().map(|file| {
+            project_state.file_context_for_path(ProjectPath::from_file(file.as_ref(), cx), cx)
+        });
+
         project_state.last_event = Some(LastEvent {
             old_file,
             new_file,
@@ -1552,6 +1585,7 @@ impl EditPredictionStore {
             predicted: is_predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
+            file_context,
         });
     }
 
@@ -3179,8 +3213,8 @@ fn merge_trailing_events_if_needed(
         return;
     }
 
-    let mut events_to_merge = events.range(events.len() - mergeable_count..).peekable();
-    let oldest_event = events_to_merge.peek().unwrap();
+    let merge_start = events.len() - mergeable_count;
+    let oldest_event = &events[merge_start];
     let oldest_snapshot = oldest_event.old_snapshot.clone();
     let newest_snapshot = end_snapshot;
     let mut merged_edit_range = oldest_event.total_edit_range.clone();
@@ -3207,9 +3241,9 @@ fn merge_trailing_events_if_needed(
                     path: path.clone(),
                     diff,
                     in_open_source_repo: *in_open_source_repo,
-                    predicted: events_to_merge.all(|e| {
+                    predicted: events.range(merge_start..).all(|event| {
                         matches!(
-                            e.event.as_ref(),
+                            event.event.as_ref(),
                             zeta_prompt::Event::BufferChange {
                                 predicted: true,
                                 ..
@@ -3221,7 +3255,7 @@ fn merge_trailing_events_if_needed(
                 new_snapshot_version: newest_snapshot.version.clone(),
                 total_edit_range: newest_snapshot.anchor_before(edit_range.start)
                     ..newest_snapshot.anchor_before(edit_range.end),
-                uncommitted_diff: None,
+                file_context: oldest_event.file_context.clone(),
             },
         };
         events.truncate(events.len() - mergeable_count);
