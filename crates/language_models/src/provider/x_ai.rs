@@ -525,7 +525,7 @@ mod tests {
                 .iter()
                 .find(|level| level.is_default)
                 .map(|level| level.value.as_ref()),
-            Some("medium")
+            Some("low")
         );
     }
 
