@@ -33,7 +33,7 @@ fn style() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_fmt())
-            .add_step(steps::clippy(Platform::Linux)),
+            .add_step(steps::clippy(Platform::Linux, None)),
     ))
 }
 

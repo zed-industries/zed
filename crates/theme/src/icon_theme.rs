@@ -80,6 +80,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         ],
     ),
     ("backup", &["bak"]),
+    ("ballerina", &["bal"]),
     ("bicep", &["bicep"]),
     ("bun", &["lockb"]),
     ("c", &["c", "h"]),
@@ -115,7 +116,8 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "xlsx",
         ],
     ),
-    ("elixir", &["eex", "ex", "exs", "heex"]),
+    ("editorconfig", &["editorconfig"]),
+    ("elixir", &["eex", "ex", "exs", "heex", "leex", "neex"]),
     ("elm", &["elm"]),
     (
         "erlang",
@@ -191,7 +193,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("metal", &["metal"]),
     ("nim", &["nim", "nims", "nimble"]),
     ("nix", &["nix"]),
-    ("ocaml", &["ml", "mli"]),
+    ("ocaml", &["ml", "mli", "mlx"]),
     ("odin", &["odin"]),
     ("php", &["php"]),
     (
@@ -311,6 +313,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
 const FILE_ICONS: &[(&str, &str)] = &[
     ("astro", "icons/file_icons/astro.svg"),
     ("audio", "icons/file_icons/audio.svg"),
+    ("ballerina", "icons/file_icons/ballerina.svg"),
     ("bicep", "icons/file_icons/file.svg"),
     ("bun", "icons/file_icons/bun.svg"),
     ("c", "icons/file_icons/c.svg"),
@@ -328,6 +331,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("diff", "icons/file_icons/diff.svg"),
     ("docker", "icons/file_icons/docker.svg"),
     ("document", "icons/file_icons/book.svg"),
+    ("editorconfig", "icons/file_icons/editorconfig.svg"),
     ("elixir", "icons/file_icons/elixir.svg"),
     ("elm", "icons/file_icons/elm.svg"),
     ("erlang", "icons/file_icons/erlang.svg"),
@@ -416,7 +420,7 @@ fn icon_keys_by_association(
 }
 
 /// The name of the default icon theme.
-pub(crate) const DEFAULT_ICON_THEME_NAME: &str = "Zed (Default)";
+pub const DEFAULT_ICON_THEME_NAME: &str = "Zed (Default)";
 
 static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
     Arc::new(IconTheme {

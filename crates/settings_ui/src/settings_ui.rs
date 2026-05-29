@@ -2,6 +2,7 @@ mod components;
 mod page_data;
 pub mod pages;
 
+use agent_skills::SkillIndex;
 use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
@@ -29,11 +30,12 @@ use std::{
     collections::{HashMap, HashSet},
     num::{NonZero, NonZeroU32},
     ops::Range,
+    path::PathBuf,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
     KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
@@ -42,7 +44,8 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
+    client_side_decorations,
 };
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
@@ -100,7 +103,7 @@ struct FocusFile(pub u32);
 
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
-    write: fn(&mut SettingsContent, Option<T>),
+    write: fn(&mut SettingsContent, Option<T>, &App),
 
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
@@ -149,7 +152,7 @@ impl<T: 'static> SettingField<T> {
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
-            write: |_, _| unreachable!(),
+            write: |_, _, _| unreachable!(),
             json_path: self.json_path,
         }
     }
@@ -232,8 +235,8 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 None,
                 window,
                 cx,
-                move |settings, _| {
-                    (this.write)(settings, value_to_set);
+                move |settings, app| {
+                    (this.write)(settings, value_to_set, app);
                 },
             )
             // todo(settings_ui): Don't log err
@@ -392,29 +395,22 @@ pub fn init(cx: &mut App) {
     let queue = ProjectSettingsUpdateQueue::new(cx);
     cx.set_global(queue);
 
+    cx.on_action(|_: &OpenSettings, cx| {
+        open_settings_editor(None, None, None, cx);
+    });
+
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
-            .register_action(
-                |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
-                    let window_handle = window
-                        .window_handle()
-                        .downcast::<MultiWorkspace>()
-                        .expect("Workspaces are root Windows");
-                    open_settings_editor(workspace, Some(&path), None, window_handle, cx);
-                },
-            )
-            .register_action(|workspace, _: &OpenSettings, window, cx| {
-                let window_handle = window
-                    .window_handle()
-                    .downcast::<MultiWorkspace>()
-                    .expect("Workspaces are root Windows");
-                open_settings_editor(workspace, None, None, window_handle, cx);
+            .register_action(|_, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor(Some(&path), None, window_handle, cx);
+            })
+            .register_action(|_, _: &OpenSettings, window, cx| {
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor(None, None, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
-                let window_handle = window
-                    .window_handle()
-                    .downcast::<MultiWorkspace>()
-                    .expect("Workspaces are root Windows");
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                 let target_worktree_id = workspace
                     .project()
                     .read(cx)
@@ -425,7 +421,7 @@ pub fn init(cx: &mut App) {
                             .is_dir()
                             .then_some(tree.read(cx).id())
                     });
-                open_settings_editor(workspace, None, target_worktree_id, window_handle, cx);
+                open_settings_editor(None, target_worktree_id, window_handle, cx);
             });
     })
     .detach();
@@ -465,6 +461,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<settings::CliDefaultOpenBehavior>(render_dropdown)
         .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::TextRenderingMode>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
@@ -481,6 +478,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockSide>(render_dropdown)
         .add_basic_renderer::<settings::TerminalDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
+        .add_basic_renderer::<settings::SidebarDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
@@ -488,13 +486,16 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
         .add_basic_renderer::<settings::GoToDefinitionFallback>(render_dropdown)
+        .add_basic_renderer::<settings::GoToDefinitionScrollStrategy>(render_dropdown)
         .add_basic_renderer::<settings::ActivateOnClose>(render_dropdown)
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelSortMode>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelSortOrder>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
+        .add_basic_renderer::<settings::LineEndingSetting>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideBackgroundColoring>(render_dropdown)
         .add_basic_renderer::<settings::FileFinderWidthContent>(render_dropdown)
@@ -502,23 +503,25 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
         .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
         .add_basic_renderer::<settings::CompletionDetailAlignment>(render_dropdown)
+        .add_basic_renderer::<settings::CompletionMenuItemKind>(render_dropdown)
         .add_basic_renderer::<settings::DiffViewStyle>(render_dropdown)
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
-        .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
-        .add_basic_renderer::<f32>(render_number_field)
-        .add_basic_renderer::<u32>(render_number_field)
-        .add_basic_renderer::<u64>(render_number_field)
-        .add_basic_renderer::<usize>(render_number_field)
-        .add_basic_renderer::<NonZero<usize>>(render_number_field)
-        .add_basic_renderer::<NonZeroU32>(render_number_field)
-        .add_basic_renderer::<settings::CodeFade>(render_number_field)
-        .add_basic_renderer::<settings::DelayMs>(render_number_field)
-        .add_basic_renderer::<settings::FontWeightContent>(render_number_field)
-        .add_basic_renderer::<settings::CenteredPaddingSettings>(render_number_field)
-        .add_basic_renderer::<settings::InactiveOpacity>(render_number_field)
-        .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
+        .add_basic_renderer::<settings::EditPredictionPromptFormatContent>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
+        .add_basic_renderer::<f32>(render_editable_number_field)
+        .add_basic_renderer::<u32>(render_editable_number_field)
+        .add_basic_renderer::<u64>(render_editable_number_field)
+        .add_basic_renderer::<usize>(render_editable_number_field)
+        .add_basic_renderer::<NonZero<usize>>(render_editable_number_field)
+        .add_basic_renderer::<NonZeroU32>(render_editable_number_field)
+        .add_basic_renderer::<settings::CodeFade>(render_editable_number_field)
+        .add_basic_renderer::<settings::DelayMs>(render_editable_number_field)
+        .add_basic_renderer::<settings::FontWeightContent>(render_editable_number_field)
+        .add_basic_renderer::<settings::CenteredPaddingSettings>(render_editable_number_field)
+        .add_basic_renderer::<settings::InactiveOpacity>(render_editable_number_field)
+        .add_basic_renderer::<settings::MinimumContrast>(render_editable_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
         .add_basic_renderer::<settings::ScrollbarDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::ShowMinimap>(render_dropdown)
@@ -530,13 +533,15 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::VimInsertModeCursorShape>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
-        .add_basic_renderer::<settings::NewThreadLocation>(render_dropdown)
+        .add_basic_renderer::<settings::PlaySoundWhenAgentDone>(render_dropdown)
+        .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::CodeLens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ThemeAppearanceMode>(render_dropdown)
@@ -552,6 +557,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
+        .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -559,15 +565,15 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
         .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
+        .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
 
 pub fn open_settings_editor(
-    _workspace: &mut Workspace,
     path: Option<&str>,
     target_worktree_id: Option<WorktreeId>,
-    workspace_handle: WindowHandle<MultiWorkspace>,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
     telemetry::event!("Settings Viewed");
@@ -589,9 +595,9 @@ pub fn open_settings_editor(
 
         settings_window.opening_link = true;
         settings_window.search_bar.update(cx, |editor, cx| {
-            editor.set_text(query, window, cx);
+            editor.set_text(query.clone(), window, cx);
         });
-        settings_window.apply_match_indices(indices.iter().copied());
+        settings_window.apply_match_indices(indices.iter().copied(), &query);
 
         if indices.len() == 1
             && let Some(search_index) = settings_window.search_index.as_ref()
@@ -624,7 +630,8 @@ pub fn open_settings_editor(
     if let Some(existing_window) = existing_window {
         existing_window
             .update(cx, |settings_window, window, cx| {
-                settings_window.original_window = Some(workspace_handle);
+                settings_window.original_window = workspace_handle;
+
                 window.activate_window();
                 if let Some(path) = path {
                     open_path(path, settings_window, window, cx);
@@ -645,7 +652,9 @@ pub fn open_settings_editor(
     // We have to defer this to get the workspace off the stack.
     let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
-        let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
+        let current_rem_size: f32 = theme_settings::ThemeSettings::get_global(cx)
+            .ui_font_size(cx)
+            .into();
 
         let default_bounds = DEFAULT_ADDITIONAL_WINDOW_SIZE;
         let default_rem_size = 16.0;
@@ -656,7 +665,10 @@ pub fn open_settings_editor(
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
             Ok(val) if val == "server" => gpui::WindowDecorations::Server,
             Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-            _ => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
         };
 
         cx.open_window(
@@ -685,7 +697,7 @@ pub fn open_settings_editor(
             },
             |window, cx| {
                 let settings_window =
-                    cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+                    cx.new(|cx| SettingsWindow::new(workspace_handle, window, cx));
                 settings_window.update(cx, |settings_window, cx| {
                     if let Some(path) = path {
                         open_path(&path, settings_window, window, cx);
@@ -757,7 +769,12 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
+    pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
+    last_copied_link_path: Option<&'static str>,
+    /// Directory path of the skill whose share link was most recently copied,
+    /// used to show a transient "copied" checkmark on its share button.
+    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
 }
 
 struct SearchDocument {
@@ -1030,6 +1047,7 @@ impl SettingsPageItem {
                             sub_page_link.title.clone(),
                             sub_page_link.json_path,
                             false,
+                            settings_window,
                             cx,
                         )),
                 )
@@ -1213,7 +1231,8 @@ fn render_settings_item(
                 .child(
                     Label::new(SharedString::new_static(setting_item.description))
                         .size(LabelSize::Small)
-                        .color(Color::Muted),
+                        .color(Color::Muted)
+                        .render_code_spans(),
                 ),
         )
         .child(control)
@@ -1222,6 +1241,7 @@ fn render_settings_item(
                 setting_item.description,
                 setting_item.field.json_path(),
                 sub_field,
+                settings_window,
                 cx,
             ))
         })
@@ -1231,16 +1251,13 @@ fn render_settings_item_link(
     id: impl Into<ElementId>,
     json_path: Option<&'static str>,
     sub_field: bool,
+    settings_window: &SettingsWindow,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> impl IntoElement {
-    let clipboard_has_link = cx
-        .read_from_clipboard()
-        .and_then(|entry| entry.text())
-        .map_or(false, |maybe_url| {
-            json_path.is_some() && maybe_url.strip_prefix("zed://settings/") == json_path
-        });
+    let copied_link_matches =
+        json_path.is_some() && json_path == settings_window.last_copied_link_path;
 
-    let (link_icon, link_icon_color) = if clipboard_has_link {
+    let (link_icon, link_icon_color) = if copied_link_matches {
         (IconName::Check, Color::Success)
     } else {
         (IconName::Link, Color::Muted)
@@ -1265,9 +1282,10 @@ fn render_settings_item_link(
                 .shape(IconButtonShape::Square)
                 .tooltip(Tooltip::text("Copy Link"))
                 .when_some(json_path, |this, path| {
-                    this.on_click(cx.listener(move |_, _, _, cx| {
+                    this.on_click(cx.listener(move |this, _, _, cx| {
                         let link = format!("zed://settings/{}", path);
                         cx.write_to_clipboard(ClipboardItem::new_string(link));
+                        this.last_copied_link_path = Some(path);
                         cx.notify();
                     }))
                 }),
@@ -1398,17 +1416,14 @@ impl PartialEq for ActionLink {
 }
 
 fn all_language_names(cx: &App) -> Vec<SharedString> {
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map_or(vec![], |state| {
-            state
-                .languages
-                .language_names()
-                .into_iter()
-                .filter(|name| name.as_ref() != "Zed Keybind Context")
-                .map(Into::into)
-                .collect()
-        })
+    let state = workspace::AppState::global(cx);
+    state
+        .languages
+        .language_names()
+        .into_iter()
+        .filter(|name| name.as_ref() != "Zed Keybind Context")
+        .map(Into::into)
+        .collect()
 }
 
 #[allow(unused)]
@@ -1522,7 +1537,40 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.on_window_closed(|cx| {
+        use feature_flags::FeatureFlagAppExt as _;
+        let mut last_is_staff = cx.is_staff();
+        cx.observe_global_in::<feature_flags::FeatureFlagStore>(window, move |this, window, cx| {
+            let is_staff = cx.is_staff();
+            if is_staff != last_is_staff {
+                last_is_staff = is_staff;
+                this.rebuild_pages(window, cx);
+            }
+        })
+        .detach();
+
+        cx.observe_global_in::<SkillIndex>(window, |this, _window, cx| {
+            if let Some(skill_index) = cx.try_global::<SkillIndex>() {
+                this.hidden_deleted_skill_directory_paths
+                    .retain(|directory_path| {
+                        skill_index
+                            .global_skills
+                            .iter()
+                            .chain(
+                                skill_index
+                                    .project_skills
+                                    .iter()
+                                    .flat_map(|group| group.skills.iter()),
+                            )
+                            .any(|skill| skill.directory_path.as_path() == directory_path.as_path())
+                    });
+            } else {
+                this.hidden_deleted_skill_directory_paths.clear();
+            }
+            cx.notify();
+        })
+        .detach();
+
+        cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
                 .into_iter()
@@ -1539,29 +1587,26 @@ impl SettingsWindow {
         })
         .detach();
 
-        if let Some(app_state) = AppState::global(cx).upgrade() {
-            let workspaces: Vec<Entity<Workspace>> = app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .collect();
+        let app_state = AppState::global(cx);
+        let workspaces: Vec<Entity<Workspace>> = app_state
+            .workspace_store
+            .read(cx)
+            .workspaces()
+            .filter_map(|weak| weak.upgrade())
+            .collect();
 
-            for workspace in workspaces {
-                let project = workspace.read(cx).project().clone();
-                cx.observe_release_in(&project, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
+        for workspace in workspaces {
+            let project = workspace.read(cx).project().clone();
+            cx.observe_release_in(&project, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
+            cx.subscribe_in(&project, window, Self::handle_project_event)
                 .detach();
-                cx.subscribe_in(&project, window, Self::handle_project_event)
-                    .detach();
-                cx.observe_release_in(&workspace, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
-                .detach();
-            }
-        } else {
-            log::error!("App state doesn't exist when creating a new settings window");
+            cx.observe_release_in(&workspace, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
         }
 
         let this_weak = cx.weak_entity();
@@ -1672,8 +1717,11 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             list_state,
+            last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -1714,6 +1762,35 @@ impl SettingsWindow {
         *expanded = !*expanded;
         self.navbar_entry = nav_entry_index;
         self.reset_list_state();
+    }
+
+    fn toggle_and_focus_navbar_entry(
+        &mut self,
+        nav_entry_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_navbar_entry(nav_entry_index);
+        window.focus(&self.navbar_entries[nav_entry_index].focus_handle, cx);
+        cx.notify();
+    }
+
+    fn toggle_navbar_entry_on_double_click(
+        &mut self,
+        nav_entry_index: usize,
+        event: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(entry) = self.navbar_entries.get(nav_entry_index) else {
+            return false;
+        };
+        if !entry.is_root || event.click_count() != 2 {
+            return false;
+        }
+
+        self.toggle_and_focus_navbar_entry(nav_entry_index, window, cx);
+        true
     }
 
     fn build_navbar(&mut self, cx: &App) {
@@ -1877,7 +1954,7 @@ impl SettingsWindow {
         indices
     }
 
-    fn apply_match_indices(&mut self, match_indices: impl Iterator<Item = usize>) {
+    fn apply_match_indices(&mut self, match_indices: impl Iterator<Item = usize>, query: &str) {
         let Some(search_index) = self.search_index.as_ref() else {
             return;
         };
@@ -1899,8 +1976,11 @@ impl SettingsWindow {
         }
         self.has_query = true;
         self.filter_matches_to_file();
-        self.open_first_nav_page();
+        let query_lower = query.to_lowercase();
+        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+        self.open_best_matching_nav_page(&query_words);
         self.reset_list_state();
+        self.scroll_content_to_best_match(&query_words);
     }
 
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
@@ -1921,7 +2001,7 @@ impl SettingsWindow {
         if is_json_link_query {
             let indices = self.filter_by_json_path(&query);
             if !indices.is_empty() {
-                self.apply_match_indices(indices.into_iter());
+                self.apply_match_indices(indices.into_iter(), &query);
                 cx.notify();
                 return;
             }
@@ -1936,11 +2016,14 @@ impl SettingsWindow {
                 async move {
                     let query_lower = query.to_lowercase();
                     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+                    if query_words.is_empty() {
+                        return Vec::new();
+                    }
                     search_index
                         .documents
                         .iter()
                         .filter(|doc| {
-                            query_words.iter().any(|query_word| {
+                            query_words.iter().all(|query_word| {
                                 doc.words
                                     .iter()
                                     .any(|doc_word| doc_word.starts_with(query_word))
@@ -1964,19 +2047,18 @@ impl SettingsWindow {
             let fuzzy_matches = fuzzy_search_task.await;
             let exact_matches = exact_match_task.await;
 
-            _ = this
-                .update(cx, |this, cx| {
-                    let exact_indices = exact_matches.into_iter();
-                    let fuzzy_indices = fuzzy_matches
-                        .into_iter()
-                        .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
-                        .map(|fuzzy_match| fuzzy_match.candidate_id);
-                    let merged_indices = exact_indices.chain(fuzzy_indices);
+            this.update(cx, |this, cx| {
+                let exact_indices = exact_matches.into_iter();
+                let fuzzy_indices = fuzzy_matches
+                    .into_iter()
+                    .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
+                    .map(|fuzzy_match| fuzzy_match.candidate_id);
+                let merged_indices = exact_indices.chain(fuzzy_indices);
 
-                    this.apply_match_indices(merged_indices);
-                    cx.notify();
-                })
-                .ok();
+                this.apply_match_indices(merged_indices, &query);
+                cx.notify();
+            })
+            .ok();
 
             cx.background_executor().timer(Duration::from_secs(1)).await;
             telemetry::event!("Settings Searched", query = query)
@@ -2145,6 +2227,15 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    fn rebuild_pages(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+        self.pages.clear();
+        self.navbar_entries.clear();
+        self.navbar_focus_subscriptions.clear();
+        self.content_handles.clear();
+        self.build_ui(window, cx);
+        self.build_search_index();
+    }
+
     #[track_caller]
     fn fetch_files(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.worktree_root_dirs.clear();
@@ -2191,37 +2282,39 @@ impl SettingsWindow {
 
         ui_files.reverse();
 
-        let mut missing_worktrees = Vec::new();
+        if self.original_window.is_some() {
+            let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(self.original_window.as_ref(), cx)
-            .flat_map(|project| project.read(cx).visible_worktrees(cx))
-            .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
-        {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            let Some(directory_name) = worktree.root_dir().and_then(|file| {
-                file.file_name()
-                    .map(|os_string| os_string.to_string_lossy().to_string())
-            }) else {
-                continue;
-            };
+            for worktree in all_projects(self.original_window.as_ref(), cx)
+                .flat_map(|project| project.read(cx).visible_worktrees(cx))
+                .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
+            {
+                let worktree = worktree.read(cx);
+                let worktree_id = worktree.id();
+                let Some(directory_name) = worktree.root_dir().and_then(|file| {
+                    file.file_name()
+                        .map(|os_string| os_string.to_string_lossy().to_string())
+                }) else {
+                    continue;
+                };
 
-            missing_worktrees.push((worktree_id, directory_name.clone()));
-            let path = RelPath::empty().to_owned().into_arc();
+                missing_worktrees.push((worktree_id, directory_name.clone()));
+                let path = RelPath::empty().to_owned().into_arc();
 
-            let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
+                let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
 
-            let focus_handle = prev_files
-                .iter()
-                .find_map(|(prev_file, handle)| {
-                    (prev_file == &settings_ui_file).then(|| handle.clone())
-                })
-                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
+                let focus_handle = prev_files
+                    .iter()
+                    .find_map(|(prev_file, handle)| {
+                        (prev_file == &settings_ui_file).then(|| handle.clone())
+                    })
+                    .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
 
-            ui_files.push((settings_ui_file, focus_handle));
+                ui_files.push((settings_ui_file, focus_handle));
+            }
+
+            self.worktree_root_dirs.extend(missing_worktrees);
         }
-
-        self.worktree_root_dirs.extend(missing_worktrees);
 
         self.files = ui_files;
         let current_file_still_exists = self
@@ -2234,6 +2327,10 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        // Navigating to another page dismisses the transient "copied share
+        // link" checkmark shown on a Skills page row.
+        self.last_copied_skill_directory_path = None;
+
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
@@ -2249,6 +2346,58 @@ impl SettingsWindow {
         }
 
         self.sub_page_stack.clear();
+    }
+
+    fn open_best_matching_nav_page(&mut self, query_words: &[&str]) {
+        let mut entries = self.visible_navbar_entries().peekable();
+        let first_entry = entries.peek().map(|(index, _)| (0, *index));
+        let best_match = entries
+            .enumerate()
+            .filter(|(_, (_, entry))| !entry.is_root)
+            .map(|(logical_index, (index, entry))| {
+                let title_lower = entry.title.to_lowercase();
+                let matching_words = query_words
+                    .iter()
+                    .filter(|query_word| {
+                        title_lower
+                            .split_whitespace()
+                            .any(|title_word| title_word.starts_with(*query_word))
+                    })
+                    .count();
+                (logical_index, index, matching_words)
+            })
+            .filter(|(_, _, count)| *count > 0)
+            .max_by_key(|(_, _, count)| *count)
+            .map(|(logical_index, index, _)| (logical_index, index));
+        if let Some((logical_index, navbar_entry_index)) = best_match.or(first_entry) {
+            self.open_navbar_entry_page(navbar_entry_index);
+            self.navbar_scroll_handle
+                .scroll_to_item(logical_index + 1, gpui::ScrollStrategy::Top);
+        }
+    }
+
+    fn scroll_content_to_best_match(&self, query_words: &[&str]) {
+        let position = self
+            .visible_page_items()
+            .enumerate()
+            .find(|(_, (_, item))| match item {
+                SettingsPageItem::SectionHeader(title) => {
+                    let title_lower = title.to_lowercase();
+                    query_words.iter().all(|query_word| {
+                        title_lower
+                            .split_whitespace()
+                            .any(|title_word| title_word.starts_with(query_word))
+                    })
+                }
+                _ => false,
+            })
+            .map(|(position, _)| position);
+        if let Some(position) = position {
+            self.list_state.scroll_to(gpui::ListOffset {
+                item_ix: position + 1,
+                offset_in_item: px(0.),
+            });
+        }
     }
 
     fn open_first_nav_page(&mut self) {
@@ -2397,7 +2546,7 @@ impl SettingsWindow {
                                     .style(DropdownStyle::Subtle)
                                     .trigger_tooltip(Tooltip::text("View Other Projects"))
                                     .trigger_icon(IconName::ChevronDown)
-                                    .attach(gpui::Corner::BottomLeft)
+                                    .attach(gpui::Anchor::BottomLeft)
                                     .offset(gpui::Point {
                                         x: px(0.0),
                                         y: px(2.0),
@@ -2664,13 +2813,11 @@ impl SettingsWindow {
                                             item.expanded(entry.expanded || this.has_query)
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
-                                                        this.toggle_navbar_entry(entry_index);
-                                                        window.focus(
-                                                            &this.navbar_entries[entry_index]
-                                                                .focus_handle,
+                                                        this.toggle_and_focus_navbar_entry(
+                                                            entry_index,
+                                                            window,
                                                             cx,
                                                         );
-                                                        cx.notify();
                                                     },
                                                 ))
                                         })
@@ -2679,7 +2826,17 @@ impl SettingsWindow {
                                             let subcategory =
                                                 (!entry.is_root).then_some(entry.title);
 
-                                            cx.listener(move |this, _, window, cx| {
+                                            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                                                if this.toggle_navbar_entry_on_double_click(
+                                                        entry_index,
+                                                        event,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                {
+                                                    return;
+                                                }
+
                                                 telemetry::event!(
                                                     "Settings Navigation Clicked",
                                                     category = category,
@@ -2883,19 +3040,26 @@ impl SettingsWindow {
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
-        h_flex().gap_1().children(
+        let scope_name: SharedString = self
+            .display_name(&self.current_file)
+            .unwrap_or_else(|| self.current_file.setting_type().to_string())
+            .into();
+
+        h_flex().min_w_0().gap_1().overflow_x_hidden().children(
             itertools::intersperse(
-                std::iter::once(self.current_page().title.into()).chain(
-                    self.sub_page_stack
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, page)| {
-                            (index == 0)
-                                .then(|| page.section_header.clone())
-                                .into_iter()
-                                .chain(std::iter::once(page.link.title.clone()))
-                        }),
-                ),
+                std::iter::once(scope_name)
+                    .chain(std::iter::once(self.current_page().title.into()))
+                    .chain(
+                        self.sub_page_stack
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(index, page)| {
+                                (index == 0)
+                                    .then(|| page.section_header.clone())
+                                    .into_iter()
+                                    .chain(std::iter::once(page.link.title.clone()))
+                            }),
+                    ),
                 "/".into(),
             )
             .map(|item| Label::new(item).color(Color::Muted)),
@@ -3113,9 +3277,11 @@ impl SettingsWindow {
         if let Some(current_sub_page) = self.sub_page_stack.last() {
             page_header = h_flex()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     h_flex()
+                        .min_w_0()
                         .ml_neg_1p5()
                         .gap_1()
                         .child(
@@ -3130,17 +3296,19 @@ impl SettingsWindow {
                 )
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
-                        Button::new("open-in-settings-file", "Edit in settings.json")
-                            .tab_index(0_isize)
-                            .style(ButtonStyle::OutlinedGhost)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Edit in settings.json",
-                                &OpenCurrentFile,
-                                &self.focus_handle,
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_current_settings_file(window, cx);
-                            })),
+                        div().flex_shrink_0().child(
+                            Button::new("open-in-settings-file", "Edit in settings.json")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::OutlinedGhost)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Edit in settings.json",
+                                    &OpenCurrentFile,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_current_settings_file(window, cx);
+                                })),
+                        ),
                     )
                 })
                 .into_any_element();
@@ -3227,6 +3395,65 @@ impl SettingsWindow {
                 .into_any_element()
         }
 
+        let mut restricted_banner = gpui::Empty.into_any_element();
+        if let SettingsUiFile::Project((worktree_id, _)) = &self.current_file {
+            let worktree_id = *worktree_id;
+            let is_restricted = all_projects(self.original_window.as_ref(), cx)
+                .find(|project| project.read(cx).worktree_for_id(worktree_id, cx).is_some())
+                .map(|project| {
+                    let worktree_store = project.read(cx).worktree_store();
+                    project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+                        &worktree_store,
+                        cx,
+                    )
+                })
+                .unwrap_or(false);
+
+            if is_restricted {
+                let original_window = self.original_window;
+                restricted_banner = Banner::new()
+                    .severity(Severity::Warning)
+                    .child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new("Restricted Mode"))
+                            .child(
+                                Label::new(
+                                    "This project is in restricted mode. Some project settings may not apply.",
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .action_slot(
+                        div().pr_2().pb_1().child(
+                            Button::new("manage-trust", "Manage Trust")
+                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                .on_click(cx.listener(move |_this, _, window, cx| {
+                                    if let Some(original_window) = original_window {
+                                        original_window
+                                            .update(cx, |multi_workspace, window, cx| {
+                                                multi_workspace
+                                                    .workspace()
+                                                    .update(cx, |workspace, cx| {
+                                                        workspace
+                                                            .show_worktree_trust_security_modal(
+                                                                true, window, cx,
+                                                            );
+                                                    });
+                                            })
+                                            .log_err();
+                                    }
+                                    // Close the settings window
+                                    window.remove_window();
+                                })),
+                        ),
+                    )
+                    .into_any_element();
+            }
+        }
+
         v_flex()
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
@@ -3310,13 +3537,15 @@ impl SettingsWindow {
             .pt_6()
             .gap_4()
             .flex_1()
+            .min_w_0()
             .bg(cx.theme().colors().editor_background)
             .child(
                 v_flex()
                     .px_8()
                     .gap_2()
                     .child(page_header)
-                    .child(warning_banner),
+                    .child(warning_banner)
+                    .child(restricted_banner),
             )
             .child(
                 div()
@@ -3359,9 +3588,7 @@ impl SettingsWindow {
             }
             SettingsUiFile::Project((worktree_id, path)) => {
                 let settings_path = path.join(paths::local_settings_file_relative_path());
-                let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
-                    return;
-                };
+                let app_state = workspace::AppState::global(cx);
 
                 let Some((workspace_window, worktree, corresponding_workspace)) = app_state
                     .workspace_store
@@ -3649,7 +3876,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
 
         client_side_decorations(
             v_flex()
@@ -3742,31 +3969,25 @@ fn all_projects(
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
     let mut seen_project_ids = std::collections::HashSet::new();
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map(|app_state| {
-            app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
-                .chain(
-                    window
-                        .and_then(|handle| handle.read(cx).ok())
-                        .into_iter()
-                        .flat_map(|multi_workspace| {
-                            multi_workspace
-                                .workspaces()
-                                .iter()
-                                .map(|workspace| workspace.read(cx).project().clone())
-                                .collect::<Vec<_>>()
-                        }),
-                )
-                .filter(move |project| seen_project_ids.insert(project.entity_id()))
-        })
-        .into_iter()
-        .flatten()
+    let app_state = workspace::AppState::global(cx);
+    app_state
+        .workspace_store
+        .read(cx)
+        .workspaces()
+        .filter_map(|weak| weak.upgrade())
+        .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
+        .chain(
+            window
+                .and_then(|handle| handle.read(cx).ok())
+                .into_iter()
+                .flat_map(|multi_workspace| {
+                    multi_workspace
+                        .workspaces()
+                        .map(|workspace| workspace.read(cx).project().clone())
+                        .collect::<Vec<_>>()
+                }),
+        )
+        .filter(move |project| seen_project_ids.insert(project.entity_id()))
 }
 
 fn open_user_settings_in_workspace(
@@ -3941,10 +4162,13 @@ impl ProjectSettingsUpdateQueue {
 
         buffer.update(cx, |buffer, cx| {
             let current_text = buffer.text();
-            let new_text = cx
+            if let Some(new_text) = cx
                 .global::<SettingsStore>()
-                .new_text_for_update(current_text, |settings| update(settings, cx));
-            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+                .new_text_for_update(current_text, |settings| update(settings, cx))
+                .log_err()
+            {
+                buffer.edit([(0..buffer.len(), new_text)], None, cx);
+            }
         });
 
         buffer_store
@@ -4015,8 +4239,8 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, new_text.map(Into::into));
+                    move |settings, app| {
+                        (field.write)(settings, new_text.map(Into::into), app);
                     },
                 )
                 .log_err(); // todo(settings_ui) don't log err
@@ -4047,44 +4271,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, _cx| {
-                    (field.write)(settings, Some(state.into()));
+                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, app| {
+                    (field.write)(settings, Some(state.into()), app);
                 })
-                .log_err(); // todo(settings_ui) don't log err
-            }
-        })
-        .into_any_element()
-}
-
-fn render_number_field<T: NumberFieldType + Send + Sync>(
-    field: SettingField<T>,
-    file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let value = value.copied().unwrap_or_else(T::min_value);
-
-    let id = field
-        .json_path
-        .map(|p| format!("numeric_stepper_{}", p))
-        .unwrap_or_else(|| "numeric_stepper".to_string());
-
-    NumberField::new(id, value, window, cx)
-        .tab_index(0_isize)
-        .on_change({
-            move |value, window, cx| {
-                let value = *value;
-                update_settings_file(
-                    file.clone(),
-                    field.json_path,
-                    window,
-                    cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
-                    },
-                )
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
@@ -4117,8 +4306,8 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
+                    move |settings, app| {
+                        (field.write)(settings, Some(value), app);
                     },
                 )
                 .log_err(); // todo(settings_ui) don't log err
@@ -4157,8 +4346,8 @@ where
                 field.json_path,
                 window,
                 cx,
-                move |settings, _cx| {
-                    (field.write)(settings, Some(value));
+                move |settings, app| {
+                    (field.write)(settings, Some(value), app);
                 },
             )
             .log_err(); // todo(settings_ui) don't log err
@@ -4212,8 +4401,8 @@ fn render_font_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
-                                (field.write)(settings, Some(font_name.to_string().into()));
+                            move |settings, app| {
+                                (field.write)(settings, Some(font_name.to_string().into()), app);
                             },
                         )
                         .log_err(); // todo(settings_ui) don't log err
@@ -4223,7 +4412,7 @@ fn render_font_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4262,10 +4451,11 @@ fn render_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::ThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         )
@@ -4276,7 +4466,7 @@ fn render_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4315,10 +4505,11 @@ fn render_icon_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::IconThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         )
@@ -4329,7 +4520,7 @@ fn render_icon_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4391,7 +4582,10 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
+                hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
+                last_copied_link_path: None,
+                last_copied_skill_directory_path: None,
             }
         }
     }
@@ -4409,7 +4603,7 @@ pub mod test {
 
     pub fn register_settings(cx: &mut App) {
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         menu::init();
     }
@@ -4516,7 +4710,10 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
+            last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         settings_window.build_filter_table();
@@ -4708,6 +4905,91 @@ pub mod test {
     );
 
     #[gpui::test]
+    fn navbar_double_click_toggle(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let mut settings_window = parse(
+                r"
+                > General*
+                - General
+                - Privacy
+                v Project
+                - Project Settings
+                ",
+                window,
+                cx,
+            );
+            settings_window.build_content_handles(window, cx);
+            settings_window
+        });
+
+        settings_window.update_in(cx, |settings_window, window, cx| {
+            let general_idx = settings_window
+                .navbar_entries
+                .iter()
+                .position(|entry| entry.title == "General" && entry.is_root)
+                .expect("General root entry should exist");
+            let privacy_idx = settings_window
+                .navbar_entries
+                .iter()
+                .position(|entry| entry.title == "Privacy" && !entry.is_root)
+                .expect("Privacy nested entry should exist");
+
+            let click_event = |click_count| {
+                gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
+                    down: gpui::MouseDownEvent {
+                        button: gpui::MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    },
+                    up: gpui::MouseUpEvent {
+                        button: gpui::MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    },
+                })
+            };
+
+            assert!(
+                !settings_window.toggle_navbar_entry_on_double_click(
+                    general_idx,
+                    &click_event(1),
+                    window,
+                    cx,
+                ),
+                "single-clicks should use the normal navigation path"
+            );
+            assert!(!settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(settings_window.toggle_navbar_entry_on_double_click(
+                general_idx,
+                &click_event(2),
+                window,
+                cx,
+            ));
+            assert!(settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(
+                !settings_window.toggle_navbar_entry_on_double_click(
+                    general_idx,
+                    &click_event(3),
+                    window,
+                    cx,
+                ),
+                "triple-clicks should not toggle the entry again"
+            );
+            assert!(settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(!settings_window.toggle_navbar_entry_on_double_click(
+                privacy_idx,
+                &click_event(2),
+                window,
+                cx,
+            ));
+        });
+    }
+
+    #[gpui::test]
     async fn test_settings_window_shows_worktrees_from_multiple_workspaces(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -4720,7 +5002,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -4894,7 +5176,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -5074,7 +5356,7 @@ mod project_settings_update_tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             let queue = ProjectSettingsUpdateQueue::new(cx);

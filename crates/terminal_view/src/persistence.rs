@@ -6,7 +6,7 @@ use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use ui::{App, Context, Pixels, Window};
+use ui::{App, Context, Window};
 use util::ResultExt as _;
 
 use db::{
@@ -97,12 +97,7 @@ pub(crate) fn deserialize_terminal_panel(
 ) -> Task<anyhow::Result<Entity<TerminalPanel>>> {
     window.spawn(cx, async move |cx| {
         let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| {
-                let mut panel = TerminalPanel::new(workspace, window, cx);
-                panel.height = serialized_panel.height.map(|h| h.round());
-                panel.width = serialized_panel.width.map(|w| w.round());
-                panel
-            })
+            cx.new(|cx| TerminalPanel::new(workspace, window, cx))
         })?;
         match &serialized_panel.items {
             SerializedItems::NoSplits(item_ids) => {
@@ -152,14 +147,12 @@ fn populate_pane_items(
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) {
-    let mut item_index = pane.items_len();
     let mut active_item_index = None;
-    for item in items {
+    for (item_index, item) in (pane.items_len()..).zip(items) {
         if Some(item.item_id().as_u64()) == active_item {
             active_item_index = Some(item_index);
         }
         pane.add_item(Box::new(item), false, false, None, window, cx);
-        item_index += 1;
     }
     if let Some(index) = active_item_index {
         pane.activate_item(index, false, false, window, cx);
@@ -317,8 +310,6 @@ pub(crate) struct SerializedTerminalPanel {
     pub items: SerializedItems,
     // A deprecated field, kept for backwards compatibility for the code before terminal splits were introduced.
     pub active_item_id: Option<u64>,
-    pub width: Option<Pixels>,
-    pub height: Option<Pixels>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

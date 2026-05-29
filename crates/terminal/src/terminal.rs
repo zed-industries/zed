@@ -26,6 +26,7 @@ use alacritty_terminal::{
     },
 };
 use anyhow::{Context as _, Result, bail};
+use futures_lite::future::yield_now;
 use log::trace;
 
 use futures::{
@@ -39,12 +40,12 @@ use mappings::mouse::{
     scroll_report,
 };
 
+use async_channel::{Receiver, Sender};
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, SpawnInTerminal};
 use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
@@ -59,7 +60,7 @@ use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, RangeInclusive},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
@@ -83,6 +84,8 @@ actions!(
         Copy,
         /// Pastes from the clipboard.
         Paste,
+        /// Pastes the text from the clipboard.
+        PasteText,
         /// Shows the character palette for special characters.
         ShowCharacterPalette,
         /// Searches for text in the terminal.
@@ -207,11 +210,16 @@ impl TerminalBounds {
     }
 
     pub fn num_lines(&self) -> usize {
-        (self.bounds.size.height / self.line_height).floor() as usize
+        // Tolerance to prevent f32 precision from losing a row:
+        // `N * line_height / line_height` can be N-epsilon, which floor()
+        // would round down, pushing the first line into invisible scrollback.
+        let raw = self.bounds.size.height / self.line_height;
+        raw.next_up().floor() as usize
     }
 
     pub fn num_columns(&self) -> usize {
-        (self.bounds.size.width / self.cell_width).floor() as usize
+        let raw = self.bounds.size.width / self.cell_width;
+        raw.next_up().floor() as usize
     }
 
     pub fn height(&self) -> Pixels {
@@ -412,6 +420,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
@@ -444,6 +453,13 @@ impl TerminalBuilder {
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
+        #[cfg(not(windows))]
+        let child_signal_mask = match tty::SignalMask::current()
+            .context("failed to capture terminal child signal mask")
+        {
+            Ok(signal_mask) => Some(signal_mask),
+            Err(error) => return Task::ready(Err(error)),
+        };
         let fut = async move {
             // Remove SHLVL so the spawned shell initializes it to 1, matching
             // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
@@ -533,6 +549,12 @@ impl TerminalBuilder {
                     working_directory: working_directory.clone(),
                     drain_on_exit: true,
                     env: env.clone().into_iter().collect(),
+                    // We pass in the foreground thread's signal mask to the child process via pty_options,
+                    // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
+                    // otherwise the terminal would inherit the background executor's signal mask which blocks
+                    // some terminal signals
+                    #[cfg(not(windows))]
+                    child_signal_mask,
                     #[cfg(windows)]
                     escape_args: shell_kind.tty_escape_args(),
                 }
@@ -645,6 +667,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                keyboard_input_sent: false,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
@@ -678,12 +701,7 @@ impl TerminalBuilder {
                 events_rx,
             })
         };
-        // the thread we spawn things on has an effect on signal handling
-        if !cfg!(target_os = "windows") {
-            cx.spawn(async move |_| fut.await)
-        } else {
-            cx.background_spawn(fut)
-        }
+        cx.background_spawn(fut)
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
@@ -729,7 +747,7 @@ impl TerminalBuilder {
                     }
 
                     if events.is_empty() && !wakeup {
-                        smol::future::yield_now().await;
+                        yield_now().await;
                         break 'outer;
                     }
 
@@ -742,7 +760,7 @@ impl TerminalBuilder {
                             this.process_event(event, cx);
                         }
                     })?;
-                    smol::future::yield_now().await;
+                    yield_now().await;
                 }
             }
             anyhow::Ok(())
@@ -871,6 +889,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    keyboard_input_sent: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
@@ -974,7 +993,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(Some(9), cx),
+            AlacTermEvent::Exit => self.register_task_finished(None, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -998,8 +1017,8 @@ impl Terminal {
                     .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
-            AlacTermEvent::ChildExit(raw_status) => {
-                self.register_task_finished(Some(raw_status), cx);
+            AlacTermEvent::ChildExit(exit_status) => {
+                self.register_task_finished(Some(exit_status), cx);
             }
         }
     }
@@ -1431,8 +1450,27 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
-        if self.last_content.terminal_bounds != new_bounds {
-            self.events.push_back(InternalEvent::Resize(new_bounds))
+        let mut new_bounds = new_bounds;
+        new_bounds.bounds.size.height = cmp::max(new_bounds.line_height, new_bounds.height());
+        new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
+
+        let old_bounds = self.last_content.terminal_bounds;
+        self.last_content.terminal_bounds = new_bounds;
+
+        // Avoid spamming PTY resizes on pixel-level size changes (e.g. while dragging edges),
+        // since those can generate excessive SIGWINCH/reflows and cause visible flicker.
+        let requires_resize = old_bounds.num_lines() != new_bounds.num_lines()
+            || old_bounds.num_columns() != new_bounds.num_columns()
+            || old_bounds.cell_width != new_bounds.cell_width
+            || old_bounds.line_height != new_bounds.line_height;
+
+        if !requires_resize {
+            return;
+        }
+
+        match self.events.back_mut() {
+            Some(InternalEvent::Resize(pending_bounds)) => *pending_bounds = new_bounds,
+            _ => self.events.push_back(InternalEvent::Resize(new_bounds)),
         }
     }
 
@@ -1457,6 +1495,7 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
         let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.input_log.push(input.to_vec());
@@ -1940,7 +1979,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default();
-                        self.input(text.into_bytes());
+                        self.paste(&text);
                     }
                 }
                 _ => {}
@@ -2106,6 +2145,18 @@ impl Terminal {
         }
     }
 
+    /// Normalizes the command name of the foreground process, if one is known.
+    pub fn foreground_process_command_name(&self) -> Option<String> {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => info
+                .current
+                .read()
+                .as_ref()
+                .and_then(|process| foreground_process_command_from_argv(&process.argv)),
+            TerminalType::DisplayOnly => None,
+        }
+    }
+
     /// Returns the working directory of the process that's connected to the PTY.
     /// That means it returns the working directory of the local shell or program
     /// that's running inside the terminal.
@@ -2219,18 +2270,11 @@ impl Terminal {
         Task::ready(None)
     }
 
-    fn register_task_finished(&mut self, raw_status: Option<i32>, cx: &mut Context<Terminal>) {
-        let exit_status: Option<ExitStatus> = raw_status.map(|value| {
-            #[cfg(unix)]
-            {
-                std::os::unix::process::ExitStatusExt::from_raw(value)
-            }
-            #[cfg(windows)]
-            {
-                std::os::windows::process::ExitStatusExt::from_raw(value as u32)
-            }
-        });
-
+    fn register_task_finished(
+        &mut self,
+        exit_status: Option<ExitStatus>,
+        cx: &mut Context<Terminal>,
+    ) {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(exit_status).ok();
         }
@@ -2240,7 +2284,17 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                // For interactive shells (no task), we need to differentiate:
+                // 1. User-initiated exits (typed "exit", Ctrl+D, etc.) - always close,
+                //    even if the shell exits with a non-zero code (e.g. after `false`).
+                // 2. Shell spawn failures (bad $SHELL) - don't close, so the user sees
+                //    the error. Spawn failures never receive keyboard input.
+                let should_close = if self.keyboard_input_sent {
+                    true
+                } else {
+                    self.child_exited.is_none_or(|e| e.code() == Some(0))
+                };
+                if should_close {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2405,6 +2459,7 @@ impl Drop for Terminal {
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
             pty_tx.0.send(Msg::Shutdown).ok();
+            info.terminate_child_process();
 
             let timer = self.background_executor.timer(Duration::from_millis(100));
             self.background_executor
@@ -2418,6 +2473,77 @@ impl Drop for Terminal {
 }
 
 impl EventEmitter<Event> for Terminal {}
+
+fn normalize_path_command_name(command: &str) -> Option<String> {
+    const MAX_COMMAND_NAME_LENGTH: usize = 64;
+
+    let command = command.trim();
+    if command.is_empty()
+        || command.len() > MAX_COMMAND_NAME_LENGTH
+        || command.starts_with('.')
+        || command.starts_with('-')
+        || command.contains('/')
+        || command.contains('\\')
+    {
+        return None;
+    }
+
+    let mut command = command.to_ascii_lowercase();
+    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
+        if command.ends_with(suffix) {
+            command.truncate(command.len() - suffix.len());
+            break;
+        }
+    }
+
+    if command.is_empty()
+        || !command.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return None;
+    }
+
+    Some(command)
+}
+
+fn foreground_process_command_from_argv(argv: &[String]) -> Option<String> {
+    let command = argv
+        .first()
+        .and_then(|command| normalize_path_command_name(command));
+
+    if !matches!(
+        command.as_deref(),
+        Some("node" | "python" | "python3" | "bun" | "deno")
+    ) {
+        return command;
+    }
+
+    argv.iter()
+        .skip(1)
+        .filter_map(|argument| normalize_script_command_name(argument))
+        .next()
+        .or(command)
+}
+
+fn normalize_script_command_name(argument: &str) -> Option<String> {
+    let path = Path::new(argument);
+    let file_stem = path
+        .file_stem()
+        .and_then(|file_stem| file_stem.to_str())
+        .and_then(normalize_path_command_name)?;
+
+    if file_stem != "index" {
+        return Some(file_stem);
+    }
+
+    path.parent()
+        .and_then(|parent| parent.parent())
+        .and_then(|package_path| package_path.file_name())
+        .and_then(|package_name| package_name.to_str())
+        .and_then(|package_name| package_name.strip_suffix("-cli").or(Some(package_name)))
+        .and_then(normalize_path_command_name)
+}
 
 fn make_selection(range: &RangeInclusive<AlacPoint>) -> Selection {
     let mut selection = Selection::new(SelectionType::Simple, *range.start(), AlacDirection::Left);
@@ -2545,22 +2671,70 @@ mod tests {
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
+    use async_channel::Receiver;
     use collections::HashMap;
     use gpui::{
         Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
         Point, TestAppContext, bounds, point, size,
     };
     use parking_lot::Mutex;
-    use rand::{Rng, distr, rngs::ThreadRng};
-    use smol::channel::Receiver;
+    use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
 
-    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_normalize_path_command_name() {
+        assert_eq!(normalize_path_command_name("claude"), Some("claude".into()));
+        assert_eq!(normalize_path_command_name("Cargo"), Some("cargo".into()));
+        assert_eq!(normalize_path_command_name("node.exe"), Some("node".into()));
+        assert_eq!(
+            normalize_path_command_name("my-agent_cli.1"),
+            Some("my-agent_cli.1".into())
+        );
+        assert_eq!(normalize_path_command_name("./local-agent"), None);
+        assert_eq!(normalize_path_command_name("../local-agent"), None);
+        assert_eq!(normalize_path_command_name("/usr/local/bin/cargo"), None);
+        assert_eq!(
+            normalize_path_command_name("target\\debug\\agent.exe"),
+            None
+        );
+        assert_eq!(normalize_path_command_name(".hidden-agent"), None);
+        assert_eq!(normalize_path_command_name("agent with spaces"), None);
+        assert_eq!(normalize_path_command_name("zsh"), Some("zsh".into()));
+        assert_eq!(normalize_path_command_name("-zsh"), None);
+        assert_eq!(normalize_path_command_name("pwsh.exe"), Some("pwsh".into()));
+    }
+
+    #[test]
+    fn test_foreground_process_command_from_interpreter_wrapper() {
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "node".to_string(),
+                "/opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js".to_string(),
+            ]),
+            Some("gemini".to_string())
+        );
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "python3".to_string(),
+                "/Users/me/.local/bin/codex.py".to_string(),
+            ]),
+            Some("codex".to_string())
+        );
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "node".to_string(),
+                "/Users/me/private-project/scripts/customer-data-export.js".to_string(),
+            ]),
+            Some("customer-data-export".to_string())
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -2571,10 +2745,18 @@ mod tests {
         command: &str,
         args: &[&str],
     ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
             ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
+        build_test_terminal_with_arguments(cx, program, args).await
+    }
+
+    async fn build_test_terminal_with_arguments(
+        cx: &mut TestAppContext,
+        program: String,
+        args: Vec<String>,
+    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2699,10 +2881,7 @@ mod tests {
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
         );
-        assert_eq!(
-            terminal.update(cx, |term, _| term.get_content()).trim(),
-            "hello"
-        );
+        assert_content_eventually(&terminal, "hello", cx).await;
 
         // Inject additional output directly into the emulator (display-only path)
         terminal.update(cx, |term, cx| {
@@ -2716,6 +2895,23 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_foreground_process_command_tracks_path_command(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (terminal, completion_rx) =
+            build_test_terminal_with_arguments(cx, "sleep".to_string(), vec!["1".to_string()])
+                .await;
+
+        assert_foreground_process_command_eventually(&terminal, "sleep", cx).await;
+
+        assert!(
+            completion_rx.recv().await.is_ok(),
+            "expected terminal completion after sleep exits"
+        );
+    }
+
     // TODO should be tested on Linux too, but does not work there well
     #[cfg(target_os = "macos")]
     #[gpui::test(iterations = 10)]
@@ -2724,7 +2920,7 @@ mod tests {
 
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2750,7 +2946,7 @@ mod tests {
         // Build an empty command, which will result in a tty shell spawned.
         let terminal = cx.new(|cx| builder.subscribe(cx));
 
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
         cx.update(|cx| {
             cx.subscribe(&terminal, move |_, e, _| {
                 event_tx.send_blocking(e.clone()).unwrap();
@@ -2790,11 +2986,73 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test(iterations = 10)]
+    async fn test_terminal_closes_after_nonzero_exit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::System,
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    None,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
+                event_tx.send_blocking(e.clone()).unwrap();
+            })
+        })
+        .detach();
+
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
+
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"false\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_millis(500)).await;
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"exit\r".to_vec());
+        });
+
+        let mut all_events = vec![first_event];
+        while let Ok(new_event) = event_rx.recv().await {
+            all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
+        assert!(
+            all_events.contains(&Event::CloseTerminal),
+            "Shell exiting after `false && exit` should close terminal, but got events: {all_events:?}",
+        );
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let builder = cx
@@ -2872,9 +3130,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_test() {
-        let mut rng = rand::rng();
+    #[gpui::test]
+    fn test_mouse_to_cell_test(mut rng: StdRng) {
         const ITERATIONS: usize = 10;
         const PRECISION: usize = 1000;
 
@@ -2922,10 +3179,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_clamp() {
-        let mut rng = rand::rng();
-
+    #[gpui::test]
+    fn test_mouse_to_cell_clamp(mut rng: StdRng) {
         let size = crate::TerminalBounds {
             cell_width: Pixels::from(10.),
             line_height: Pixels::from(10.),
@@ -2956,12 +3211,57 @@ mod tests {
         );
     }
 
-    fn get_cells(size: TerminalBounds, rng: &mut ThreadRng) -> Vec<Vec<char>> {
+    #[gpui::test]
+    async fn test_set_size_coalesces_pixel_only_changes(cx: &mut TestAppContext) {
+        let builder = cx.update(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::Block,
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+        });
+        let mut terminal = builder.terminal;
+
+        let base_bounds = TerminalBounds {
+            cell_width: Pixels::from(10.),
+            line_height: Pixels::from(10.),
+            bounds: bounds(
+                Point::default(),
+                size(Pixels::from(100.), Pixels::from(100.)),
+            ),
+        };
+
+        terminal.set_size(base_bounds);
+        terminal.events.clear();
+        assert_eq!(terminal.last_content.terminal_bounds, base_bounds);
+
+        // Pixel-only change: height grows by 1px but still the same number of rows/cols.
+        let mut pixel_changed = base_bounds;
+        pixel_changed.bounds.size.height = Pixels::from(101.);
+        terminal.set_size(pixel_changed);
+        assert!(terminal.events.is_empty());
+        assert_eq!(terminal.last_content.terminal_bounds, pixel_changed);
+
+        // Grid change: height increases enough to add a row.
+        let mut grid_changed = base_bounds;
+        grid_changed.bounds.size.height = Pixels::from(110.);
+        terminal.set_size(grid_changed);
+        assert!(matches!(
+            terminal.events.back(),
+            Some(InternalEvent::Resize(_))
+        ));
+    }
+
+    fn get_cells(size: TerminalBounds, rng: &mut StdRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..size.num_lines() {
             let mut row_vec = Vec::new();
-            for _ in 0..((size.width() / size.cell_width()) as usize) {
+            for _ in 0..size.num_columns() {
                 let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
@@ -3195,6 +3495,63 @@ mod tests {
         });
     }
 
+    /// Polls the terminal content until `expected` appears, or panics after ~1s.
+    /// The PTY IO thread writes into the terminal grid independently of the
+    /// GPUI executor, so we need a real-time polling loop to synchronize.
+    async fn assert_content_eventually(
+        terminal: &Entity<Terminal>,
+        expected: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let mut content = String::new();
+        for _ in 0..100 {
+            content = terminal.update(cx, |term, _| term.get_content());
+            if content.contains(expected) {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        panic!("Expected terminal content to contain {expected:?}, got: {content}");
+    }
+
+    #[cfg(unix)]
+    async fn assert_foreground_process_command_eventually(
+        terminal: &Entity<Terminal>,
+        expected: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let mut command_name = None;
+        for _ in 0..100 {
+            terminal.update(cx, |terminal, _| {
+                if let TerminalType::Pty { info, .. } = &terminal.terminal_type {
+                    info.load_for_test();
+                }
+            });
+            command_name =
+                terminal.update(cx, |terminal, _| terminal.foreground_process_command_name());
+            if command_name.as_deref() == Some(expected) {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        let process_info = terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+            TerminalType::Pty { info, .. } => format!(
+                "pid={:?}, fallback_pid={:?}, has_current_info={}",
+                info.pid(),
+                info.pid_getter().fallback_pid(),
+                info.current.read().is_some()
+            ),
+            TerminalType::DisplayOnly => "display-only".to_string(),
+        });
+        panic!(
+            "Expected foreground process command name to be {expected:?}, got {command_name:?}; process info: {process_info:?}"
+        );
+    }
+
     /// Test that kill_active_task properly terminates both the foreground process
     /// and the shell, allowing wait_for_completed_task to complete and output to be captured.
     #[cfg(unix)]
@@ -3207,10 +3564,7 @@ mod tests {
         let (terminal, completion_rx) =
             build_test_terminal(cx, "echo", &["test_output_before_kill; sleep 60"]).await;
 
-        // Wait a bit for the echo to execute and produce output
-        cx.background_executor
-            .timer(Duration::from_millis(200))
-            .await;
+        assert_content_eventually(&terminal, "test_output_before_kill", cx).await;
 
         // Kill the active task
         terminal.update(cx, |term, _cx| {
@@ -3253,6 +3607,8 @@ mod tests {
             .await
             .expect("Should receive exit status");
         assert_eq!(exit_status, Some(ExitStatus::default()));
+
+        assert_content_eventually(&terminal, "done", cx).await;
 
         // Now try to kill - should be a no-op since task already completed
         terminal.update(cx, |term, _cx| {
@@ -3362,6 +3718,60 @@ mod tests {
             for _ in 0..20000 {
                 scroll_by(1);
                 scroll_by(-1);
+            }
+        }
+
+        #[test]
+        fn test_num_lines_float_precision() {
+            let line_heights = [
+                20.1f32, 16.7, 18.3, 22.9, 14.1, 15.6, 17.8, 19.4, 21.3, 23.7,
+            ];
+            for &line_height in &line_heights {
+                for n in 1..=100 {
+                    let height = n as f32 * line_height;
+                    let bounds = TerminalBounds::new(
+                        px(line_height),
+                        px(8.0),
+                        Bounds {
+                            origin: Point::default(),
+                            size: Size {
+                                width: px(800.0),
+                                height: px(height),
+                            },
+                        },
+                    );
+                    assert_eq!(
+                        bounds.num_lines(),
+                        n,
+                        "num_lines() should be {n} for height={height}, line_height={line_height}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn test_num_columns_float_precision() {
+            let cell_widths = [8.1f32, 7.3, 9.7, 6.9, 10.1];
+            for &cell_width in &cell_widths {
+                for n in 1..=200 {
+                    let width = n as f32 * cell_width;
+                    let bounds = TerminalBounds::new(
+                        px(20.0),
+                        px(cell_width),
+                        Bounds {
+                            origin: Point::default(),
+                            size: Size {
+                                width: px(width),
+                                height: px(400.0),
+                            },
+                        },
+                    );
+                    assert_eq!(
+                        bounds.num_columns(),
+                        n,
+                        "num_columns() should be {n} for width={width}, cell_width={cell_width}"
+                    );
+                }
             }
         }
     }

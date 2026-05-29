@@ -5,11 +5,11 @@ use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
     Task, TextStyleRefinement, UnderlineStyle, WeakEntity, svg,
 };
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
@@ -401,8 +401,8 @@ impl Render for LanguageServerPrompt {
                         MarkdownElement::new(self.markdown.clone(), markdown_style(window, cx))
                             .text_size(TextSize::Small.rems(cx))
                             .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                copy_button: false,
-                                copy_button_on_hover: false,
+                                copy_button_visibility: CopyButtonVisibility::Hidden,
+                                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                 border: false,
                             })
                             .on_url_click(|link, _, cx| cx.open_url(&link)),
@@ -697,7 +697,26 @@ impl RenderOnce for NotificationFrame {
     }
 }
 
-impl Component for NotificationFrame {}
+impl Component for NotificationFrame {
+    fn description() -> &'static str {
+        "The standard container used by workspace notifications, \
+        providing a consistent title row, close and suppress affordances, \
+        and a slot for the notification's contents."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        single_example(
+            "Default",
+            NotificationFrame::new()
+                .with_title(Some("Notification Title"))
+                .with_content(Label::new(
+                    "This is the content of a workspace notification.",
+                ))
+                .into_any_element(),
+        )
+        .into_any_element()
+    }
+}
 
 pub mod simple_message_notification {
     use std::sync::Arc;
@@ -1227,10 +1246,8 @@ where
                     let mut display = format!("{err:#}");
                     if !display.ends_with('\n') {
                         display.push('.');
-                        display.push(' ')
                     }
-                    let detail =
-                        f(err, window, cx).unwrap_or_else(|| format!("{display}Please try again."));
+                    let detail = f(err, window, cx).unwrap_or(display);
                     window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
                 }) {
                     prompt.await.ok();

@@ -6,15 +6,11 @@ edition.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
-cfg-if.workspace = true
+async-process.workspace = true
 crash-handler.workspace = true
-futures.workspace = true
 log.workspace = true
 minidumper.workspace = true
 parking_lot.workspace = true
-paths.workspace = true
-release_channel.workspace = true
-smol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 system_specs.workspace = true

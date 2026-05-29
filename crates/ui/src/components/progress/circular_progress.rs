@@ -175,49 +175,46 @@ impl Component for CircularProgress {
         ComponentScope::Status
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A circular progress indicator that displays progress as an arc growing clockwise from the top.",
-        )
+    fn description() -> &'static str {
+        "A circular progress indicator that displays progress as an arc \
+        growing clockwise from the top."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let max_value = 100.0;
         let container = || v_flex().items_center().gap_1();
 
-        Some(
-            example_group(vec![single_example(
-                "Examples",
-                h_flex()
-                    .gap_6()
-                    .child(
-                        container()
-                            .child(CircularProgress::new(0.0, max_value, px(48.0), cx))
-                            .child(Label::new("0%").size(LabelSize::Small)),
-                    )
-                    .child(
-                        container()
-                            .child(CircularProgress::new(25.0, max_value, px(48.0), cx))
-                            .child(Label::new("25%").size(LabelSize::Small)),
-                    )
-                    .child(
-                        container()
-                            .child(CircularProgress::new(50.0, max_value, px(48.0), cx))
-                            .child(Label::new("50%").size(LabelSize::Small)),
-                    )
-                    .child(
-                        container()
-                            .child(CircularProgress::new(75.0, max_value, px(48.0), cx))
-                            .child(Label::new("75%").size(LabelSize::Small)),
-                    )
-                    .child(
-                        container()
-                            .child(CircularProgress::new(100.0, max_value, px(48.0), cx))
-                            .child(Label::new("100%").size(LabelSize::Small)),
-                    )
-                    .into_any_element(),
-            )])
-            .into_any_element(),
-        )
+        example_group(vec![single_example(
+            "Examples",
+            h_flex()
+                .gap_6()
+                .child(
+                    container()
+                        .child(CircularProgress::new(0.0, max_value, px(48.0), cx))
+                        .child(Label::new("0%").size(LabelSize::Small)),
+                )
+                .child(
+                    container()
+                        .child(CircularProgress::new(25.0, max_value, px(48.0), cx))
+                        .child(Label::new("25%").size(LabelSize::Small)),
+                )
+                .child(
+                    container()
+                        .child(CircularProgress::new(50.0, max_value, px(48.0), cx))
+                        .child(Label::new("50%").size(LabelSize::Small)),
+                )
+                .child(
+                    container()
+                        .child(CircularProgress::new(75.0, max_value, px(48.0), cx))
+                        .child(Label::new("75%").size(LabelSize::Small)),
+                )
+                .child(
+                    container()
+                        .child(CircularProgress::new(100.0, max_value, px(48.0), cx))
+                        .child(Label::new("100%").size(LabelSize::Small)),
+                )
+                .into_any_element(),
+        )])
+        .into_any_element()
     }
 }

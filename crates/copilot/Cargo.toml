@@ -40,7 +40,6 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
-semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -68,3 +67,4 @@ settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+theme_settings.workspace = true

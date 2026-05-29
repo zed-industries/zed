@@ -15,15 +15,14 @@
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::PinchEvent;
 use crate::{
-    AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
-    DispatchPhase, Display, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId,
-    Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext,
-    KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent,
-    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
+    Display, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
+    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
     size,
 };
@@ -357,11 +356,7 @@ impl Interactivity {
 
     /// Bind the given callback to pinch gesture events during the bubble phase.
     ///
-    /// Note: This event is only available on macOS and Wayland (Linux).
-    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
-    ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn on_pinch(&mut self, listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static) {
         self.pinch_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -373,11 +368,7 @@ impl Interactivity {
 
     /// Bind the given callback to pinch gesture events during the capture phase.
     ///
-    /// Note: This event is only available on macOS and Wayland (Linux).
-    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
-    ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn capture_pinch(
         &mut self,
         listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static,
@@ -675,14 +666,8 @@ impl Interactivity {
         self.hitbox_behavior = HitboxBehavior::BlockMouseExceptScroll;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn has_pinch_listeners(&self) -> bool {
         !self.pinch_listeners.is_empty()
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn has_pinch_listeners(&self) -> bool {
-        false
     }
 }
 
@@ -753,7 +738,7 @@ pub trait InteractiveElement: Sized {
     fn key_context<C, E>(mut self, key_context: C) -> Self
     where
         C: TryInto<KeyContext, Error = E>,
-        E: Debug,
+        E: std::fmt::Display,
     {
         if let Some(key_context) = key_context.try_into().log_err() {
             self.interactivity().key_context = Some(key_context);
@@ -957,11 +942,7 @@ pub trait InteractiveElement: Sized {
     /// Bind the given callback to pinch gesture events during the bubble phase.
     /// The fluent API equivalent to [`Interactivity::on_pinch`].
     ///
-    /// Note: This event is only available on macOS and Wayland (Linux).
-    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
-    ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn on_pinch(mut self, listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static) -> Self {
         self.interactivity().on_pinch(listener);
         self
@@ -970,11 +951,7 @@ pub trait InteractiveElement: Sized {
     /// Bind the given callback to pinch gesture events during the capture phase.
     /// The fluent API equivalent to [`Interactivity::capture_pinch`].
     ///
-    /// Note: This event is only available on macOS and Wayland (Linux).
-    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
-    ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn capture_pinch(
         mut self,
         listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static,
@@ -1198,6 +1175,124 @@ pub trait InteractiveElement: Sized {
 /// A trait for elements that want to use the standard GPUI interactivity features
 /// that require state.
 pub trait StatefulInteractiveElement: InteractiveElement {
+    /// Set the accessible role for this element.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    fn role(mut self, role: accesskit::Role) -> Self {
+        debug_assert!(
+            role != accesskit::Role::GenericContainer,
+            "GenericContainer is filtered out of the a11y tree and has no effect"
+        );
+        self.interactivity().override_role = Some(role);
+        self
+    }
+
+    /// Set the accessible label for this element.
+    fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_label = Some(label.into());
+        self
+    }
+
+    /// Set the selected state for this element.
+    fn aria_selected(mut self, selected: bool) -> Self {
+        self.interactivity().aria_selected = Some(selected);
+        self
+    }
+
+    /// Set the expanded state for this element.
+    fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.interactivity().aria_expanded = Some(expanded);
+        self
+    }
+
+    /// Set the toggled state for this element.
+    fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
+        self.interactivity().aria_toggled = Some(toggled);
+        self
+    }
+
+    /// Set the numeric value for this element.
+    fn aria_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the minimum numeric value for this element.
+    fn aria_min_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_min_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the maximum numeric value for this element.
+    fn aria_max_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_max_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the orientation of this element.
+    fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
+        self.interactivity().aria_orientation = Some(orientation);
+        self
+    }
+
+    /// Set the heading level of this element.
+    fn aria_level(mut self, level: usize) -> Self {
+        self.interactivity().aria_level = Some(level);
+        self
+    }
+
+    /// Set the position in set of this element.
+    fn aria_position_in_set(mut self, position: usize) -> Self {
+        self.interactivity().aria_position_in_set = Some(position);
+        self
+    }
+
+    /// Set the size of set for this element.
+    fn aria_size_of_set(mut self, size: usize) -> Self {
+        self.interactivity().aria_size_of_set = Some(size);
+        self
+    }
+
+    /// Set the row index for this element.
+    fn aria_row_index(mut self, index: usize) -> Self {
+        self.interactivity().aria_row_index = Some(index);
+        self
+    }
+
+    /// Set the column index for this element.
+    fn aria_column_index(mut self, index: usize) -> Self {
+        self.interactivity().aria_column_index = Some(index);
+        self
+    }
+
+    /// Set the row count for this element.
+    fn aria_row_count(mut self, count: usize) -> Self {
+        self.interactivity().aria_row_count = Some(count);
+        self
+    }
+
+    /// Set the column count for this element.
+    fn aria_column_count(mut self, count: usize) -> Self {
+        self.interactivity().aria_column_count = Some(count);
+        self
+    }
+
+    /// Register a handler for an accessibility action on this element.
+    /// The handler is called when a screen reader requests the given action.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    fn on_a11y_action(
+        mut self,
+        action: accesskit::Action,
+        listener: impl FnMut(Option<&accesskit::ActionData>, &mut crate::Window, &mut crate::App)
+        + 'static,
+    ) -> Self {
+        self.interactivity()
+            .a11y_action_listeners
+            .push((action, Box::new(listener)));
+        self
+    }
+
     /// Set this element to focusable.
     fn focusable(mut self) -> Self {
         self.interactivity().focusable = true;
@@ -1220,15 +1315,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the overflow y to scroll.
     fn overflow_y_scroll(mut self) -> Self {
         self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
-        self
-    }
-
-    /// Set the space to be reserved for rendering the scrollbar.
-    ///
-    /// This will only affect the layout of the element when overflow for this element is set to
-    /// `Overflow::Scroll`.
-    fn scrollbar_width(mut self, width: impl Into<AbsoluteLength>) -> Self {
-        self.interactivity().base_style.scrollbar_width = Some(width.into());
         self
     }
 
@@ -1367,7 +1453,6 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
@@ -1505,6 +1590,18 @@ impl Element for Div {
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
         self.interactivity.source_location()
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        // Nodes with `GenericContainer` should never be reported to accesskit.
+        // Equivalent to an HTML div with no role.
+        self.interactivity
+            .override_role
+            .filter(|role| *role != accesskit::Role::GenericContainer)
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.interactivity.write_a11y_info(node);
     }
 
     #[stacksafe]
@@ -1725,7 +1822,6 @@ pub struct Interactivity {
     pub(crate) mouse_pressure_listeners: Vec<MousePressureListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) pinch_listeners: Vec<PinchListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
@@ -1743,6 +1839,25 @@ pub struct Interactivity {
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
+
+    pub(crate) a11y_action_listeners:
+        Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
+    pub(crate) override_role: Option<accesskit::Role>,
+    pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_selected: Option<bool>,
+    pub(crate) aria_expanded: Option<bool>,
+    pub(crate) aria_toggled: Option<accesskit::Toggled>,
+    pub(crate) aria_numeric_value: Option<f64>,
+    pub(crate) aria_min_numeric_value: Option<f64>,
+    pub(crate) aria_max_numeric_value: Option<f64>,
+    pub(crate) aria_orientation: Option<accesskit::Orientation>,
+    pub(crate) aria_level: Option<usize>,
+    pub(crate) aria_position_in_set: Option<usize>,
+    pub(crate) aria_size_of_set: Option<usize>,
+    pub(crate) aria_row_index: Option<usize>,
+    pub(crate) aria_column_index: Option<usize>,
+    pub(crate) aria_row_count: Option<usize>,
+    pub(crate) aria_column_count: Option<usize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1864,6 +1979,16 @@ impl Interactivity {
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
+
+            if window.a11y.is_active() {
+                if let Some(global_id) = global_id {
+                    let node_id = global_id.accesskit_node_id();
+                    window.a11y.focus_ids.insert(node_id, focus_handle.id);
+                    if focus_handle.is_focused(window) && window.a11y.nodes.has_node(node_id) {
+                        window.a11y.nodes.set_focus(node_id);
+                    }
+                }
+            }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -2088,6 +2213,22 @@ impl Interactivity {
                                         }
 
                                         self.paint_keyboard_listeners(window, cx);
+
+                                        if window.a11y.is_active() {
+                                            if let Some(global_id) = global_id {
+                                                if !self.a11y_action_listeners.is_empty() {
+                                                    let node_id = global_id.accesskit_node_id();
+                                                    for (action, listener) in
+                                                        self.a11y_action_listeners.drain(..)
+                                                    {
+                                                        window.on_a11y_action(
+                                                            node_id, action, listener,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         f(&style, window, cx);
 
                                         if let Some(_hitbox) = hitbox {
@@ -2297,7 +2438,6 @@ impl Interactivity {
             })
         }
 
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         for listener in self.pinch_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &PinchEvent, phase, window, cx| {
@@ -2892,6 +3032,63 @@ impl Interactivity {
 
         style
     }
+
+    pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        if let Some(label) = &self.aria_label {
+            node.set_label(label.to_string());
+        }
+        if let Some(selected) = self.aria_selected {
+            node.set_selected(selected);
+        }
+        if let Some(expanded) = self.aria_expanded {
+            node.set_expanded(expanded);
+        }
+        if let Some(toggled) = self.aria_toggled {
+            node.set_toggled(toggled);
+        }
+        if let Some(value) = self.aria_numeric_value {
+            node.set_numeric_value(value);
+        }
+        if let Some(value) = self.aria_min_numeric_value {
+            node.set_min_numeric_value(value);
+        }
+        if let Some(value) = self.aria_max_numeric_value {
+            node.set_max_numeric_value(value);
+        }
+        if let Some(orientation) = self.aria_orientation {
+            node.set_orientation(orientation);
+        }
+        if let Some(level) = self.aria_level {
+            node.set_level(level);
+        }
+        if let Some(position) = self.aria_position_in_set {
+            node.set_position_in_set(position);
+        }
+        if let Some(size) = self.aria_size_of_set {
+            node.set_size_of_set(size);
+        }
+        if let Some(index) = self.aria_row_index {
+            node.set_row_index(index);
+        }
+        if let Some(index) = self.aria_column_index {
+            node.set_column_index(index);
+        }
+        if let Some(count) = self.aria_row_count {
+            node.set_row_count(count);
+        }
+        if let Some(count) = self.aria_column_count {
+            node.set_column_count(count);
+        }
+        if !self.click_listeners.is_empty() {
+            node.add_action(accesskit::Action::Click);
+        }
+        if self.tracked_focus_handle.is_some() || self.focusable {
+            node.add_action(accesskit::Action::Focus);
+        }
+        for (action, _) in &self.a11y_action_listeners {
+            node.add_action(*action);
+        }
+    }
 }
 
 /// The per-frame state of an interactive element. Used for tracking stateful interactions like clicks
@@ -3093,21 +3290,29 @@ fn handle_tooltip_mouse_move(
         }
         Action::ScheduleShow => {
             let delayed_show_task = window.spawn(cx, {
-                let active_tooltip = active_tooltip.clone();
+                let weak_active_tooltip = Rc::downgrade(active_tooltip);
                 let build_tooltip = build_tooltip.clone();
                 let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
                 async move |cx| {
                     cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
+                    let Some(active_tooltip) = weak_active_tooltip.upgrade() else {
+                        return;
+                    };
                     cx.update(|window, cx| {
                         let new_tooltip =
                             build_tooltip(window, cx).map(|(view, tooltip_is_hoverable)| {
-                                let active_tooltip = active_tooltip.clone();
+                                let weak_active_tooltip = Rc::downgrade(&active_tooltip);
                                 ActiveTooltip::Visible {
                                     tooltip: AnyTooltip {
                                         view,
                                         mouse_position: window.mouse_position(),
                                         check_visible_and_update: Rc::new(
                                             move |tooltip_bounds, window, cx| {
+                                                let Some(active_tooltip) =
+                                                    weak_active_tooltip.upgrade()
+                                                else {
+                                                    return false;
+                                                };
                                                 handle_tooltip_check_visible_and_update(
                                                     &active_tooltip,
                                                     tooltip_is_hoverable,
@@ -3186,11 +3391,14 @@ fn handle_tooltip_check_visible_and_update(
         Action::Hide => clear_active_tooltip(active_tooltip, window),
         Action::ScheduleHide(tooltip) => {
             let delayed_hide_task = window.spawn(cx, {
-                let active_tooltip = active_tooltip.clone();
+                let weak_active_tooltip = Rc::downgrade(active_tooltip);
                 async move |cx| {
                     cx.background_executor()
                         .timer(HOVERABLE_TOOLTIP_HIDE_DELAY)
                         .await;
+                    let Some(active_tooltip) = weak_active_tooltip.upgrade() else {
+                        return;
+                    };
                     if active_tooltip.borrow_mut().take().is_some() {
                         cx.update(|window, _cx| window.refresh()).ok();
                     }
@@ -3285,6 +3493,14 @@ where
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         self.element.source_location()
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        self.element.a11y_role()
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.element.write_a11y_info(node);
     }
 
     fn request_layout(
@@ -3603,6 +3819,112 @@ impl ScrollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext};
+    use std::rc::Weak;
+
+    struct TestTooltipView;
+
+    impl Render for TestTooltipView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(20.)).h(px(20.)).child("tooltip")
+        }
+    }
+
+    type CapturedActiveTooltip = Rc<RefCell<Option<Weak<RefCell<Option<ActiveTooltip>>>>>>;
+
+    struct TooltipCaptureElement {
+        child: AnyElement,
+        captured_active_tooltip: CapturedActiveTooltip,
+    }
+
+    impl IntoElement for TooltipCaptureElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for TooltipCaptureElement {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            (self.child.request_layout(window, cx), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            _bounds: Bounds<Pixels>,
+            _request_layout: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            self.child.prepaint(window, cx);
+        }
+
+        fn paint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            _bounds: Bounds<Pixels>,
+            _request_layout: &mut Self::RequestLayoutState,
+            _prepaint: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.child.paint(window, cx);
+            window.with_global_id("target".into(), |global_id, window| {
+                window.with_element_state::<InteractiveElementState, _>(
+                    global_id,
+                    |state, _window| {
+                        let state = state.unwrap();
+                        *self.captured_active_tooltip.borrow_mut() =
+                            state.active_tooltip.as_ref().map(Rc::downgrade);
+                        ((), state)
+                    },
+                )
+            });
+        }
+    }
+
+    struct TooltipOwner {
+        captured_active_tooltip: CapturedActiveTooltip,
+    }
+
+    impl Render for TooltipOwner {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            TooltipCaptureElement {
+                child: div()
+                    .size_full()
+                    .child(
+                        div()
+                            .id("target")
+                            .w(px(50.))
+                            .h(px(50.))
+                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                    )
+                    .into_any_element(),
+                captured_active_tooltip: self.captured_active_tooltip.clone(),
+            }
+        }
+    }
 
     #[test]
     fn scroll_handle_aligns_wide_children_to_left_edge() {
@@ -3640,5 +3962,97 @@ mod tests {
         handle.scroll_to_active_item();
 
         assert_eq!(handle.offset().y, px(-25.));
+    }
+
+    fn setup_tooltip_owner_test() -> (
+        TestAppContext,
+        crate::AnyWindowHandle,
+        CapturedActiveTooltip,
+    ) {
+        let mut test_app = TestAppContext::single();
+        let captured_active_tooltip: CapturedActiveTooltip = Rc::new(RefCell::new(None));
+        let window = test_app.add_window({
+            let captured_active_tooltip = captured_active_tooltip.clone();
+            move |_, _| TooltipOwner {
+                captured_active_tooltip,
+            }
+        });
+        let any_window = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(10.), px(10.)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+
+        (test_app, any_window, captured_active_tooltip)
+    }
+
+    #[test]
+    fn tooltip_waiting_for_show_is_released_when_its_owner_disappears() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        test_app
+            .update_window(any_window, |_, window, _| {
+                window.remove_window();
+            })
+            .unwrap();
+        test_app.run_until_parked();
+        drop(active_tooltip);
+
+        assert!(weak_active_tooltip.upgrade().is_none());
+    }
+
+    #[test]
+    fn tooltip_is_released_when_its_owner_disappears() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+
+        test_app.dispatcher.advance_clock(TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        test_app
+            .update_window(any_window, |_, window, _| {
+                window.remove_window();
+            })
+            .unwrap();
+        test_app.run_until_parked();
+        drop(active_tooltip);
+
+        assert!(weak_active_tooltip.upgrade().is_none());
     }
 }
