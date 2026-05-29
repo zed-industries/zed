@@ -1,7 +1,8 @@
 mod thread_switcher;
 
-use acp_thread::ThreadStatus;
+use acp_thread::{AcpThread, ThreadStatus};
 use action_log::DiffStats;
+use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
@@ -40,6 +41,7 @@ use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::utils::platform_title_bar_height;
 
+use project::search::SearchQuery;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::cmp::Ordering;
@@ -48,6 +50,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
@@ -57,6 +60,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
+use util::paths::PathMatcher;
 use workspace::{
     CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, NextProject,
     NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
@@ -700,6 +704,23 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
+    /// Thread IDs whose *message content* (not just title) matches the current
+    /// filter query. Populated asynchronously by [`Self::update_content_search`]
+    /// and OR-ed into the title/worktree match in [`Self::rebuild_contents`] so
+    /// that a thread surfaces in the filtered list when the query appears in the
+    /// conversation, not only in its title.
+    content_matches: HashSet<ThreadId>,
+    /// Bumped on every filter-query change. The background content search
+    /// captures the value at spawn time and bails if it no longer matches,
+    /// so results from a stale query never overwrite a newer one.
+    content_search_generation: usize,
+    /// Cache of extracted, searchable thread text keyed by session, invalidated
+    /// when the thread's `updated_at` changes. Avoids re-loading and
+    /// re-deserializing every thread blob on each keystroke.
+    thread_text_cache: HashMap<acp::SessionId, (DateTime<Utc>, Arc<str>)>,
+    /// The in-flight content search. Holding the handle here cancels the
+    /// previous search when a new query replaces it.
+    _content_search_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
@@ -756,6 +777,7 @@ impl Sidebar {
                 if !query.is_empty() {
                     this.selection.take();
                 }
+                this.update_content_search(cx);
                 this.update_entries(cx);
                 if !query.is_empty() {
                     this.select_first_entry();
@@ -822,6 +844,10 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
+            content_matches: HashSet::new(),
+            content_search_generation: 0,
+            thread_text_cache: HashMap::new(),
+            _content_search_task: Task::ready(()),
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
@@ -1725,6 +1751,8 @@ impl Sidebar {
                 let mut matched_threads: Vec<Arc<ThreadEntry>> = Vec::new();
                 for mut thread in threads {
                     let mut worktree_matched = false;
+                    let content_matched =
+                        self.content_matches.contains(&thread.metadata.thread_id);
                     {
                         let thread = Arc::make_mut(&mut thread);
                         let title = thread.metadata.display_title();
@@ -1744,6 +1772,7 @@ impl Sidebar {
                     if workspace_matched
                         || !thread.highlight_positions.is_empty()
                         || worktree_matched
+                        || content_matched
                     {
                         matched_threads.push(thread);
                     }
@@ -2930,6 +2959,181 @@ impl Sidebar {
 
     fn has_filter_query(&self, cx: &App) -> bool {
         !self.filter_editor.read(cx).text(cx).is_empty()
+    }
+
+    /// Kicks off an asynchronous search of every (non-draft) thread's message
+    /// content for the current filter query. This is the cross-thread analogue
+    /// of the in-thread search bar: the query is broadcast to every thread,
+    /// each thread's persisted content is searched (loading it on demand when
+    /// it isn't already in memory), and the set of matching threads is gathered
+    /// back into `content_matches`, which `rebuild_contents` ORs into the title
+    /// match so a thread surfaces when the query appears in the conversation,
+    /// not just in its title.
+    ///
+    /// The work runs off the main thread, is debounced, caches extracted thread
+    /// text by `updated_at`, and is cancelled when a newer query supersedes it.
+    /// The caller is responsible for calling `update_entries` afterwards; the
+    /// async completion path calls it itself once results land.
+    fn update_content_search(&mut self, cx: &mut Context<Self>) {
+        let query_text = self.filter_editor.read(cx).text(cx);
+        self.content_search_generation = self.content_search_generation.wrapping_add(1);
+        let generation = self.content_search_generation;
+
+        if query_text.trim().is_empty() {
+            self._content_search_task = Task::ready(());
+            self.content_matches.clear();
+            return;
+        }
+
+        let query = match SearchQuery::text(
+            query_text,
+            false,
+            false,
+            false,
+            PathMatcher::default(),
+            PathMatcher::default(),
+            false,
+            None,
+        ) {
+            Ok(query) => Arc::new(query),
+            Err(_) => {
+                self.content_matches.clear();
+                return;
+            }
+        };
+
+        let thread_store = ThreadStore::try_global(cx);
+
+        // Cheap, main-thread step: snapshot the candidate threads from
+        // metadata, plus a map of every thread currently *loaded* in an agent
+        // panel to its live `AcpThread`. The loaded map is what makes search
+        // work for external/ACP agent threads (and for unsaved, in-flight
+        // content): their messages live in memory, not in the native-agent
+        // SQLite DB that `load_thread` reads.
+        let candidates: Vec<(ThreadId, Option<acp::SessionId>, DateTime<Utc>)> =
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entries()
+                .map(|metadata| {
+                    (
+                        metadata.thread_id,
+                        metadata.session_id.clone(),
+                        metadata.updated_at,
+                    )
+                })
+                .collect();
+
+        let mut loaded_threads: HashMap<ThreadId, Entity<AcpThread>> = HashMap::new();
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
+            for workspace in workspaces {
+                let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+                    continue;
+                };
+                for view in agent_panel.read(cx).conversation_views() {
+                    let view = view.read(cx);
+                    let thread_id = view.parent_id();
+                    if let Some(thread_view) = view.root_thread_view() {
+                        loaded_threads
+                            .insert(thread_id, thread_view.read(cx).thread.clone());
+                    }
+                }
+            }
+        }
+
+        self._content_search_task = cx.spawn(async move |this, cx| {
+            // Debounce: a fresh keystroke bumps the generation, so when this
+            // timer fires we bail unless we are still the latest query.
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
+            if this
+                .update(cx, |this, _| this.content_search_generation)
+                .ok()
+                != Some(generation)
+            {
+                return;
+            }
+
+            let mut matched: HashSet<ThreadId> = HashSet::new();
+            for (thread_id, session_id, updated_at) in candidates {
+                // Abandon a stale search as soon as a newer query arrives.
+                if this
+                    .update(cx, |this, _| this.content_search_generation)
+                    .ok()
+                    != Some(generation)
+                {
+                    return;
+                }
+
+                // Tier 1: loaded threads search their own in-memory content.
+                // This covers external/ACP threads and live, unsaved messages.
+                let text: Option<Arc<str>> = if let Some(thread) =
+                    loaded_threads.get(&thread_id)
+                {
+                    this.update(cx, |_, cx| Arc::<str>::from(thread.read(cx).to_markdown(cx)))
+                        .ok()
+                } else if let Some(session_id) = session_id {
+                    // Tier 2: unloaded threads are loaded from the native-agent
+                    // DB on demand, cached by `updated_at`.
+                    let cached = this
+                        .update(cx, |this, _| {
+                            this.thread_text_cache
+                                .get(&session_id)
+                                .filter(|(ts, _)| *ts == updated_at)
+                                .map(|(_, text)| text.clone())
+                        })
+                        .ok()
+                        .flatten();
+                    match cached {
+                        Some(text) => Some(text),
+                        None => {
+                            let Some(thread_store) = thread_store.as_ref() else {
+                                continue;
+                            };
+                            let load = thread_store
+                                .update(cx, |store, cx| store.load_thread(session_id.clone(), cx));
+                            let Ok(Some(db_thread)) = load.await else {
+                                continue;
+                            };
+                            let mut text = String::new();
+                            for message in &db_thread.messages {
+                                text.push_str(&message.to_markdown());
+                                text.push('\n');
+                            }
+                            let text: Arc<str> = Arc::from(text);
+                            this.update(cx, |this, _| {
+                                this.thread_text_cache
+                                    .insert(session_id.clone(), (updated_at, text.clone()));
+                            })
+                            .ok();
+                            Some(text)
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let Some(text) = text else {
+                    continue;
+                };
+
+                if !query.search_str(&text).is_empty() {
+                    matched.insert(thread_id);
+                }
+            }
+
+            this.update(cx, |this, cx| {
+                if this.content_search_generation != generation {
+                    return;
+                }
+                if this.content_matches != matched {
+                    this.content_matches = matched;
+                    this.update_entries(cx);
+                }
+            })
+            .ok();
+        });
     }
 
     fn start_renaming_thread(

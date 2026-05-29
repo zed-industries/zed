@@ -4037,6 +4037,103 @@ async fn test_search_narrows_visible_threads_to_matches(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_search_matches_thread_message_content(cx: &mut TestAppContext) {
+    // Scenario: the user remembers something they *said* in a thread, but not
+    // the thread's title. Searching for that phrase should surface the thread
+    // even though the title doesn't contain it — the sidebar loads the thread's
+    // persisted content on demand and matches against it.
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let session_id = acp::SessionId::new(Arc::from("content-thread"));
+
+    // Persist a thread whose message content contains "watermelon" while its
+    // title deliberately does not.
+    let db_thread = agent::DbThread {
+        title: "Daily standup notes".into(),
+        messages: vec![Arc::new(agent::Message::User(agent::UserMessage {
+            id: acp_thread::UserMessageId::new(),
+            content: Arc::from(vec![agent::UserMessageContent::Text(
+                "please summarize the watermelon harvest report".into(),
+            )]),
+        }))],
+        updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        detailed_summary: None,
+        initial_project_snapshot: None,
+        cumulative_token_usage: Default::default(),
+        request_token_usage: Default::default(),
+        model: None,
+        profile: None,
+        imported: false,
+        subagent_context: None,
+        speed: None,
+        thinking_enabled: false,
+        thinking_effort: None,
+        draft_prompt: None,
+        ui_scroll_position: None,
+        sandboxed_terminal_temp_dir: None,
+    };
+    let save_task = cx.update(|_, cx| {
+        ThreadStore::global(cx).update(cx, |store, cx| {
+            store.save_thread(session_id.clone(), db_thread, PathList::default(), cx)
+        })
+    });
+    save_task.await.unwrap();
+    cx.run_until_parked();
+
+    // Lightweight sidebar metadata, same session id, title without "watermelon".
+    save_thread_metadata(
+        session_id.clone(),
+        Some("Daily standup notes".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Daily standup notes",
+        ]
+    );
+
+    // Title search for "watermelon" alone would hide the thread; content search
+    // brings it back once the async load + match completes.
+    type_in_search(&sidebar, "watermelon", cx);
+    cx.executor().advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+
+    // No `<== selected` marker: selection is set synchronously while typing
+    // (when the list is still empty, since the title doesn't match), and the
+    // content match arrives asynchronously afterwards without re-selecting.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Daily standup notes",
+        ],
+        "thread should surface because its message content matches the query"
+    );
+
+    // A query that matches neither title nor content hides it again.
+    type_in_search(&sidebar, "pineapple", cx);
+    cx.executor().advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        Vec::<String>::new()
+    );
+}
+
+#[gpui::test]
 async fn test_search_matches_regardless_of_case(cx: &mut TestAppContext) {
     // Scenario: A user remembers a thread title but not the exact casing.
     // Search should match case-insensitively so they can still find it.
