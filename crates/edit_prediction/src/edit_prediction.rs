@@ -2444,6 +2444,15 @@ impl EditPredictionStore {
         allow_jump: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let is_cloud_zeta = matches!(self.edit_prediction_model, EditPredictionModel::Zeta)
+            && !matches!(
+                all_language_settings(None, cx).edit_predictions.provider,
+                EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
+            );
+        if is_cloud_zeta && !self.client.cloud_client().has_credentials() {
+            return Task::ready(Ok(None));
+        }
+
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);

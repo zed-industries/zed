@@ -3107,11 +3107,18 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
 
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
 
-    let http_client = FakeHttpClient::create(|_req| async move {
-        Ok(gpui::http_client::Response::builder()
-            .status(401)
-            .body("Unauthorized".into())
-            .unwrap())
+    let request_count = Arc::new(std::sync::atomic::AtomicUsize::default());
+    let http_client = FakeHttpClient::create({
+        let request_count = request_count.clone();
+        move |_req| {
+            request_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move {
+                Ok(gpui::http_client::Response::builder()
+                    .status(401)
+                    .body("Unauthorized".into())
+                    .unwrap())
+            }
+        }
     });
 
     let client =
@@ -3144,11 +3151,8 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
-    let result = completion_task.await;
-    assert!(
-        result.is_err(),
-        "Without authentication and without custom URL, prediction should fail"
-    );
+    assert!(completion_task.await.unwrap().is_none());
+    assert_eq!(request_count.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
 #[gpui::test]
