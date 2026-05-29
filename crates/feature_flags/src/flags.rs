@@ -27,14 +27,6 @@ impl FeatureFlag for AcpBetaFeatureFlag {
 }
 register_feature_flag!(AcpBetaFeatureFlag);
 
-pub struct AgentSharingFeatureFlag;
-
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AgentSharingFeatureFlag);
-
 pub struct HandoffFeatureFlag;
 
 impl FeatureFlag for HandoffFeatureFlag {
