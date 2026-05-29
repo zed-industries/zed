@@ -830,6 +830,21 @@ impl ConversationView {
         cx.notify();
     }
 
+    /// True when the agent connection failed to load (e.g. the agent binary
+    /// wasn't found). The toolbar surfaces a retry button in this state.
+    pub(crate) fn is_load_error(&self) -> bool {
+        matches!(self.server_state, ServerState::LoadError { .. })
+    }
+
+    /// Re-attempts the agent connection after a failed launch. The failed
+    /// connection entry is dropped from the connection store on error, so this
+    /// starts a fresh connection rather than reusing the previous failure —
+    /// letting the user retry after fixing the cause (e.g. installing the
+    /// missing agent command).
+    pub(crate) fn retry_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reset(window, cx);
+    }
+
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (resume_session_id, work_dirs, title) = self
             .root_thread_view()

@@ -5253,6 +5253,28 @@ impl AgentPanel {
             BaseView::Terminal { .. } | BaseView::Uninitialized => None,
         };
 
+        // When the active thread's agent failed to launch, offer a retry button
+        // in the toolbar so the user can re-attempt the connection (e.g. after
+        // installing a missing agent command) without recreating the thread.
+        let retry_launch_view = match &self.base_view {
+            BaseView::AgentThread { conversation_view }
+                if conversation_view.read(cx).is_load_error() =>
+            {
+                Some(conversation_view.clone())
+            }
+            _ => None,
+        };
+        let retry_launch_button = retry_launch_view.map(|conversation_view| {
+            IconButton::new("retry-agent-launch", IconName::RotateCw)
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text("Retry launching agent"))
+                .on_click(cx.listener(move |_this, _, window, cx| {
+                    conversation_view.update(cx, |conversation_view, cx| {
+                        conversation_view.retry_connection(window, cx);
+                    });
+                }))
+        });
+
         let new_thread_menu_builder: Rc<
             dyn Fn(&mut Window, &mut App) -> Option<Entity<ContextMenu>>,
         > = {
@@ -5675,6 +5697,7 @@ impl AgentPanel {
                         .gap_1()
                         .pl_1()
                         .pr_1()
+                        .when_some(retry_launch_button, |this, btn| this.child(btn))
                         .when(can_create_entries, |this| this.child(new_thread_menu))
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
