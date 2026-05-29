@@ -2928,7 +2928,7 @@ impl Thread {
         self.pending_message.get_or_insert_default()
     }
 
-    fn flush_pending_message(&mut self, cx: &mut Context<Self>) {
+    pub fn flush_pending_message(&mut self, cx: &mut Context<Self>) {
         let Some(mut message) = self.pending_message.take() else {
             return;
         };

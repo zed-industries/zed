@@ -1475,6 +1475,49 @@ impl ConversationView {
         }
     }
 
+    /// Rebuilds thread entry views after external updates (e.g. the agent HTTP API).
+    pub fn resync_session_entries(
+        &mut self,
+        session_id: &acp::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = self.thread_view(session_id) else {
+            return;
+        };
+        let thread = view.read(cx).thread.clone();
+        let entry_view_state = view.read(cx).entry_view_state.clone();
+        let list_state = view.read(cx).list_state.clone();
+        let count = thread.read(cx).entries().len();
+        let previous_count = entry_view_state.read(cx).entry_count();
+
+        entry_view_state.update(cx, |view_state, cx| {
+            for ix in 0..count {
+                view_state.sync_entry(ix, &thread, window, cx);
+            }
+            for ix in previous_count..count {
+                if let Some(handle) = view_state
+                    .entry(ix)
+                    .and_then(|entry| entry.focus_handle(cx))
+                {
+                    list_state.splice_focusable(ix..ix, [Some(handle)]);
+                }
+            }
+            if count > 0 && count <= previous_count {
+                list_state.remeasure_items(0..count);
+            }
+        });
+
+        view.update(cx, |active, cx| {
+            active.sync_editor_mode_for_empty_state(cx);
+            active.sync_generating_indicator(cx);
+            if active.list_state.is_following_tail() {
+                active.list_state.scroll_to_end();
+            }
+        });
+        cx.notify();
+    }
+
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,

@@ -4,7 +4,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 
-use acp_thread::AgentConnection as _;
 use agent_client_protocol::schema as acp;
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -14,7 +13,6 @@ use language_model::{LanguageModelRegistry, SelectedModel};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Response, Server};
-use util::path_list::PathList;
 
 use crate::global_native_agent;
 
@@ -33,6 +31,7 @@ impl Default for AgentHttpServerConfig {
 pub struct AgentHttpServerHandle {
     _shutdown: async_channel::Sender<()>,
     pub new_sessions: async_channel::Receiver<(acp::SessionId, PathBuf, Option<String>)>,
+    pub session_updates: async_channel::Receiver<acp::SessionId>,
 }
 
 enum AgentServerCommand {
@@ -108,8 +107,9 @@ pub fn start_agent_http_server(
     let (commands_tx, commands_rx) = async_channel::unbounded::<AgentServerCommand>();
     let (shutdown_tx, shutdown_rx) = async_channel::bounded::<()>(1);
     let (ns_tx, ns_rx) = async_channel::unbounded::<(acp::SessionId, PathBuf, Option<String>)>();
+    let (su_tx, su_rx) = async_channel::unbounded::<acp::SessionId>();
 
-    let listener = match TcpListener::bind(format!("127.0.0.1:{}", config.port)) {
+    let listener = match TcpListener::bind(format!("0.0.0.0:{}", config.port)) {
         Ok(l) => l,
         Err(e) => {
             log::warn!("Failed to bind :{}: {e}", config.port);
@@ -153,7 +153,7 @@ pub fn start_agent_http_server(
         let p = project.clone();
         let f = fs.clone();
         async move |cx| {
-            run_command_loop(p, f, ns_tx, commands_rx, cx).await;
+            run_command_loop(p, f, ns_tx, su_tx, commands_rx, cx).await;
         }
     })
     .detach();
@@ -161,6 +161,7 @@ pub fn start_agent_http_server(
     Some(AgentHttpServerHandle {
         _shutdown: shutdown_tx,
         new_sessions: ns_rx,
+        session_updates: su_rx,
     })
 }
 
@@ -373,6 +374,7 @@ async fn run_command_loop(
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     ns_tx: async_channel::Sender<(acp::SessionId, PathBuf, Option<String>)>,
+    su_tx: async_channel::Sender<acp::SessionId>,
     receiver: async_channel::Receiver<AgentServerCommand>,
     cx: &mut AsyncApp,
 ) {
@@ -385,7 +387,7 @@ async fn run_command_loop(
     while let Ok(cmd) = receiver.recv().await {
         match cmd {
             AgentServerCommand::CreateAgent { request, reply } => {
-                let r: Option<CreateAgentResponse> = cx.update(|cx| {
+                let r: Option<(CreateAgentResponse, gpui::Task<Result<()>>)> = cx.update(|cx| {
                     let dm = LanguageModelRegistry::global(cx).read(cx).default_model();
                     let (prov, mdl) = if let Some(ref d) = dm {
                         (d.provider.clone(), d.model.clone())
@@ -417,9 +419,12 @@ async fn run_command_loop(
                     let agent = global_native_agent(fs.clone(), cx);
                     let acp = agent.update(cx, |a, cx| a.new_session(project.clone(), cx));
                     let sid = acp.read_with(cx, |t, _| t.session_id().to_string());
+                    let session_id = acp::SessionId::new(sid.clone());
 
                     // Trigger save so session appears in panel
                     acp.update(cx, |_, cx| cx.notify());
+                    agent.update(cx, |a, cx| a.prepare_session_for_persist(&session_id, cx));
+                    let persist = agent.update(cx, |a, cx| a.persist_session(&session_id, cx));
 
                     sessions.insert(
                         sid.clone(),
@@ -435,16 +440,26 @@ async fn run_command_loop(
                             request.title.clone(),
                         ))
                         .ok();
-                    Some(CreateAgentResponse {
+                    Some((CreateAgentResponse {
                         session_id: sid,
                         model: mn,
                         workdir: wd.display().to_string(),
-                    })
+                    }, persist))
                 });
-                reply
-                    .send(r.ok_or_else(|| anyhow::anyhow!("Failed")))
-                    .await
-                    .ok();
+                match r {
+                    Some((response, persist)) => {
+                        if persist.await.is_err() {
+                            log::warn!("Failed to persist HTTP-created session to database");
+                        }
+                        reply.send(Ok(response)).await.ok();
+                    }
+                    None => {
+                        reply
+                            .send(Err(anyhow::anyhow!("Failed")))
+                            .await
+                            .ok();
+                    }
+                }
             }
             AgentServerCommand::PromptAgent {
                 session_id,
@@ -530,6 +545,17 @@ async fn run_command_loop(
                         continue;
                     }
                 };
+                let persist = cx.update(|cx| {
+                    let agent = global_native_agent(fs.clone(), cx);
+                    agent.update(cx, |a, cx| {
+                        a.prepare_session_for_persist(&sid, cx);
+                        a.persist_session(&sid, cx)
+                    })
+                });
+                if persist.await.is_err() {
+                    log::warn!("Failed to persist HTTP-prompted session to database");
+                }
+                su_tx.try_send(sid.clone()).ok();
                 reply.send(Ok(resp)).await.ok();
             }
             AgentServerCommand::GetAgentStatus { session_id, reply } => {
@@ -556,7 +582,7 @@ async fn run_command_loop(
                 reply.send(r).await.ok();
             }
             AgentServerCommand::CloseAgent { session_id, reply } => {
-                cx.update(|cx| {
+                cx.update(|_cx| {
                     sessions.remove(&session_id);
                 });
                 reply.send(Ok(())).await.ok();

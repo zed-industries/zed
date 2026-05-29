@@ -45,7 +45,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
+    App, AppContext, AsyncApp, Context, Entity, EntityId, Global, SharedString, Subscription, Task,
     TaskExt, WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
@@ -1451,11 +1451,51 @@ impl NativeAgent {
         session.pending_save
     }
 
+    /// Flushes any in-progress assistant message on the underlying thread before
+    /// persistence or UI refresh.
+    pub fn prepare_session_for_persist(
+        &mut self,
+        session_id: &acp::SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.sessions.get(session_id) else {
+            return;
+        };
+        session
+            .thread
+            .update(cx, |thread, cx| thread.flush_pending_message(cx));
+    }
+
+    /// Persists a session to the threads database, including when the thread has
+    /// no messages yet. Used by the HTTP API so sidebar entries can be opened in
+    /// the agent panel.
+    pub fn persist_session(
+        &mut self,
+        session_id: &acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(thread) = self
+            .sessions
+            .get(session_id)
+            .map(|session| session.thread.clone())
+        else {
+            return Task::ready(Err(anyhow!("session not found: {session_id:?}")));
+        };
+        self.save_thread_inner(thread, cx);
+        self.sessions
+            .get_mut(session_id)
+            .map(|session| std::mem::replace(&mut session.pending_save, Task::ready(Ok(()))))
+            .unwrap_or_else(|| Task::ready(Ok(())))
+    }
+
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
         if thread.read(cx).is_empty() {
             return;
         }
+        self.save_thread_inner(thread, cx);
+    }
 
+    fn save_thread_inner(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
         let id = thread.read(cx).id().clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;

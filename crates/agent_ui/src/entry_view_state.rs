@@ -51,6 +51,10 @@ impl EntryViewState {
         self.entries.get(index)
     }
 
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn sync_entry(
         &mut self,
         index: usize,

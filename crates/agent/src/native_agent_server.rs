@@ -11,7 +11,7 @@ use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegi
 use project::{AgentId, Project};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
-use crate::{NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates};
+use crate::{NativeAgentConnection, ThreadStore, global_native_agent};
 
 #[derive(Clone)]
 pub struct NativeAgentServer {
@@ -42,13 +42,9 @@ impl AgentServer for NativeAgentServer {
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::debug!("NativeAgentServer::connect");
         let fs = self.fs.clone();
-        let thread_store = self.thread_store.clone();
         cx.spawn(async move |cx| {
-            log::debug!("Creating templates for native agent");
-            let templates = Templates::new();
-
-            log::debug!("Creating native agent entity");
-            let agent = cx.update(|cx| NativeAgent::new(thread_store, templates, fs, cx));
+            log::debug!("Creating native agent connection");
+            let agent = cx.update(|cx| global_native_agent(fs, cx));
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

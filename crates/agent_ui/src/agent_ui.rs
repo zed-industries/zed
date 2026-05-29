@@ -72,6 +72,20 @@ pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStor
 pub use crate::agent_panel::{
     AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
 };
+
+/// Refreshes an open agent conversation after an external prompt (HTTP API).
+pub fn refresh_native_session_for_workspace(
+    workspace: &mut Workspace,
+    session_id: &acp::SessionId,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+        panel.update(cx, |panel, cx| {
+            panel.refresh_native_session(session_id, window, cx);
+        });
+    }
+}
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread_metadata_store::ThreadId;

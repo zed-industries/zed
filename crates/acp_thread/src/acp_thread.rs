@@ -1649,6 +1649,7 @@ impl AcpThread {
             chunks.push(chunk);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
+            cx.notify();
         } else {
             let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
@@ -1720,6 +1721,7 @@ impl AcpThread {
                     }
                 }
             }
+            cx.notify();
         } else {
             let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
@@ -1869,6 +1871,7 @@ impl AcpThread {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
+        cx.notify();
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {

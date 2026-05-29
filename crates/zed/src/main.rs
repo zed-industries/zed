@@ -740,6 +740,7 @@ fn main() {
                 if let Some(handle) = handle {
                     log::info!("agent-server: started successfully");
                     let new_sessions = handle.new_sessions.clone();
+                    let session_updates = handle.session_updates.clone();
                     let metadata_store =
                         agent_ui::thread_metadata_store::ThreadMetadataStore::global(cx);
                     cx.spawn(async move |_this, cx| {
@@ -766,6 +767,32 @@ fn main() {
                                     },
                                     cx,
                                 );
+                            });
+                        }
+                    })
+                    .detach();
+                    cx.spawn(async move |_this, cx| {
+                        while let Ok(session_id) = session_updates.recv().await {
+                            cx.update(|cx| {
+                                for &mut window_handle in cx.windows().iter_mut() {
+                                    let session_id = session_id.clone();
+                                    window_handle
+                                        .update(cx, |_, window, cx| {
+                                            if let Some(workspace) =
+                                                workspace::Workspace::for_window(window, cx)
+                                            {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    agent_ui::refresh_native_session_for_workspace(
+                                                        workspace,
+                                                        &session_id,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        })
+                                        .ok();
+                                }
                             });
                         }
                     })

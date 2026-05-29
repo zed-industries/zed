@@ -4179,6 +4179,57 @@ impl AgentPanel {
         );
     }
 
+    pub fn refresh_native_session(
+        &mut self,
+        session_id: &acp::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(store) = ThreadMetadataStore::try_global(cx) {
+            store.update(cx, |store, cx| {
+                if let Some(thread_id) = store.entry_by_session(session_id).map(|entry| entry.thread_id)
+                {
+                    store.update_interacted_at(&thread_id, Utc::now(), cx);
+                }
+            });
+        }
+
+        if let BaseView::AgentThread { conversation_view } = &self.base_view
+            && conversation_view
+                .read(cx)
+                .root_session_id
+                .as_ref()
+                .is_some_and(|id| id == session_id)
+        {
+            let thread_id = conversation_view.read(cx).thread_id;
+            self.external_thread(
+                Some(Agent::NativeAgent),
+                Some(thread_id),
+                None,
+                None,
+                None,
+                false,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+            return;
+        }
+
+        for conversation_view in self.retained_threads.values() {
+            if conversation_view
+                .read(cx)
+                .root_session_id
+                .as_ref()
+                .is_some_and(|id| id == session_id)
+            {
+                conversation_view.update(cx, |view, cx| {
+                    view.resync_session_entries(session_id, window, cx);
+                });
+            }
+        }
+    }
+
     pub fn load_agent_thread(
         &mut self,
         agent: Agent,
