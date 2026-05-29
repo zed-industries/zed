@@ -126,6 +126,20 @@ enum RetryStrategy {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AutoCompactPhase {
+    PreTurn,
+    MidTurn,
+}
+
+struct GenericCompactionInput {
+    id: ContextCompactionId,
+    model: Arc<dyn LanguageModel>,
+    request: LanguageModelRequest,
+    retained_user_messages: Vec<RetainedUserMessage>,
+    held_message: Option<Message>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Message {
     User(UserMessage),
@@ -775,6 +789,9 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
+    CompactionStarted(ContextCompactionId),
+    CompactionSucceeded(ContextCompactionId),
+    CompactionFailed(ContextCompactionId),
     Stop(acp::StopReason),
 }
 
@@ -2079,6 +2096,119 @@ impl Thread {
         )
     }
 
+    fn prepare_generic_compaction(
+        &self,
+        phase: AutoCompactPhase,
+        cx: &App,
+    ) -> Result<Option<GenericCompactionInput>> {
+        if !self.should_auto_compact(cx) {
+            return Ok(None);
+        }
+        let Some(model) = self.model.clone() else {
+            return Ok(None);
+        };
+
+        let (conversation, held_message) = self.conversation_for_compaction(phase);
+        if conversation.messages.is_empty() && conversation.seed.is_none() {
+            return Ok(None);
+        }
+
+        let retained_user_messages = retained_user_messages_from_messages(
+            &conversation.messages,
+            GENERIC_COMPACTION_RETAINED_USER_MESSAGE_TOKENS,
+        );
+        let mut request =
+            self.build_request_messages_for_conversation(&conversation, Vec::new(), cx, false);
+        request.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
+            cache: false,
+            reasoning_details: None,
+        });
+
+        Ok(Some(GenericCompactionInput {
+            id: ContextCompactionId::new(),
+            model: model.clone(),
+            request: LanguageModelRequest {
+                thread_id: Some(self.id.to_string()),
+                prompt_id: Some(self.prompt_id.to_string()),
+                intent: Some(CompletionIntent::ThreadContextSummarization),
+                messages: request,
+                tools: Vec::new(),
+                tool_choice: None,
+                stop: Vec::new(),
+                temperature: AgentSettings::temperature_for_model(&model, cx),
+                thinking_allowed: false,
+                thinking_effort: None,
+                speed: self.speed(),
+            },
+            retained_user_messages,
+            held_message,
+        }))
+    }
+
+    fn conversation_for_compaction(
+        &self,
+        phase: AutoCompactPhase,
+    ) -> (Conversation, Option<Message>) {
+        let mut conversation = self.current_conversation().clone();
+        let held_message = match phase {
+            AutoCompactPhase::PreTurn => {
+                if matches!(conversation.messages.last(), Some(Message::User(_))) {
+                    conversation.messages.pop()
+                } else {
+                    None
+                }
+            }
+            AutoCompactPhase::MidTurn => None,
+        };
+        (conversation, held_message)
+    }
+
+    fn install_generic_compaction(
+        &mut self,
+        id: ContextCompactionId,
+        summary: SharedString,
+        retained_user_messages: Vec<RetainedUserMessage>,
+        held_message: Option<Message>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if let Some(Message::User(held_user_message)) = &held_message {
+            let Some(Message::User(last_user_message)) = self.current_messages().last() else {
+                return Err(anyhow!(
+                    "compaction boundary user message was no longer present"
+                ));
+            };
+            if last_user_message.id != held_user_message.id {
+                return Err(anyhow!(
+                    "compaction boundary user message changed before commit"
+                ));
+            }
+            self.current_messages_mut().pop();
+        }
+
+        let baseline_tokens = estimate_generic_seed_tokens(&retained_user_messages, &summary);
+        self.conversations.push(Conversation {
+            marker: Some(ContextCompactionMarker { id }),
+            messages: Vec::new(),
+            request_token_usage: HashMap::default(),
+            seed: Some(CompactionSeed {
+                artifact: CompactionArtifact::Summary(summary),
+                retained_user_messages,
+                baseline_tokens,
+                baseline_observed: false,
+            }),
+        });
+
+        if let Some(held_message) = held_message {
+            self.current_messages_mut().push(held_message);
+        }
+
+        self.clear_summary();
+        cx.notify();
+        Ok(())
+    }
+
     fn log_auto_compact_hook(&self, phase: &str, cx: &App) {
         if self.should_auto_compact(cx) {
             let retained_user_message_count = self.generic_retained_user_messages().len();
@@ -2313,23 +2443,38 @@ impl Thread {
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
+            if attempt == 0 {
+                match intent {
+                    CompletionIntent::UserPrompt | CompletionIntent::Subagent => {
+                        Self::auto_compact_if_needed(
+                            this,
+                            event_stream,
+                            AutoCompactPhase::PreTurn,
+                            cancellation_rx.clone(),
+                            cx,
+                        )
+                        .await?;
+                    }
+                    CompletionIntent::ToolResults => {
+                        Self::auto_compact_if_needed(
+                            this,
+                            event_stream,
+                            AutoCompactPhase::MidTurn,
+                            cancellation_rx.clone(),
+                            cx,
+                        )
+                        .await?;
+                    }
+                    _ => {}
+                }
+            }
+
             let (model, request) = this.update(cx, |this, cx| {
                 let model = this
                     .model
                     .clone()
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
-                if attempt == 0 {
-                    match intent {
-                        CompletionIntent::UserPrompt | CompletionIntent::Subagent => {
-                            this.log_auto_compact_hook("pre-turn", cx);
-                        }
-                        CompletionIntent::ToolResults => {
-                            this.log_auto_compact_hook("mid-turn", cx);
-                        }
-                        _ => {}
-                    }
-                }
                 let request = this.build_completion_request(intent, cx)?;
                 anyhow::Ok((model, request))
             })??;
@@ -2520,6 +2665,96 @@ impl Thread {
                 attempt = 0;
             }
         }
+    }
+
+    async fn auto_compact_if_needed(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        phase: AutoCompactPhase,
+        mut cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let Some(input) = this.update(cx, |this, cx| {
+            let phase_name = match phase {
+                AutoCompactPhase::PreTurn => "pre-turn",
+                AutoCompactPhase::MidTurn => "mid-turn",
+            };
+            this.log_auto_compact_hook(phase_name, cx);
+            this.prepare_generic_compaction(phase, cx)
+        })??
+        else {
+            return Ok(());
+        };
+
+        event_stream.send_compaction_started(input.id.clone());
+        let compaction_id = input.id.clone();
+        let summary = match Self::run_generic_compaction(
+            input.model.clone(),
+            input.request,
+            cancellation_rx.clone(),
+            cx,
+        )
+        .await
+        {
+            Ok(Some(summary)) => summary,
+            Ok(None) => {
+                event_stream.send_compaction_failed(compaction_id);
+                return Ok(());
+            }
+            Err(error) => {
+                event_stream.send_compaction_failed(compaction_id);
+                return Err(error);
+            }
+        };
+
+        if *cancellation_rx.borrow() {
+            event_stream.send_compaction_failed(input.id);
+            return Ok(());
+        }
+
+        let succeeded_id = input.id.clone();
+        this.update(cx, |this, cx| {
+            this.install_generic_compaction(
+                input.id.clone(),
+                summary,
+                input.retained_user_messages,
+                input.held_message,
+                cx,
+            )
+        })??;
+        event_stream.send_compaction_succeeded(succeeded_id);
+        Ok(())
+    }
+
+    async fn run_generic_compaction(
+        model: Arc<dyn LanguageModel>,
+        request: LanguageModelRequest,
+        mut cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<SharedString>> {
+        if *cancellation_rx.borrow() {
+            return Ok(None);
+        }
+
+        let mut events = model.stream_completion(request, cx).await?;
+        let mut summary = String::new();
+        while let Some(event) = events.next().await {
+            if *cancellation_rx.borrow() {
+                return Ok(None);
+            }
+            match event? {
+                LanguageModelCompletionEvent::Text(text) => summary.push_str(&text),
+                LanguageModelCompletionEvent::Stop(StopReason::Refusal) => {
+                    return Err(CompletionError::Refusal.into());
+                }
+                LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
+                    return Err(CompletionError::MaxTokens.into());
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Some(summary.into()))
     }
 
     fn process_tool_result(
@@ -3427,9 +3662,24 @@ impl Thread {
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> Vec<LanguageModelRequestMessage> {
+        self.build_request_messages_for_conversation(
+            self.current_conversation(),
+            available_tools,
+            cx,
+            true,
+        )
+    }
+
+    fn build_request_messages_for_conversation(
+        &self,
+        conversation: &Conversation,
+        available_tools: Vec<SharedString>,
+        cx: &App,
+        include_pending_message: bool,
+    ) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
-            self.current_messages().len()
+            conversation.messages.len()
         );
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
@@ -3449,7 +3699,22 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        for message in self.current_messages() {
+
+        if let Some(seed) = conversation.seed.as_ref() {
+            match &seed.artifact {
+                CompactionArtifact::Summary(summary) => {
+                    for retained_message in &seed.retained_user_messages {
+                        if let Some(message) = retained_user_message_to_request(retained_message) {
+                            messages.push(message);
+                        }
+                    }
+                    messages.push(generic_summary_seed_message(summary));
+                }
+                CompactionArtifact::ProviderNative { .. } => {}
+            }
+        }
+
+        for message in &conversation.messages {
             messages.extend(message.to_request());
         }
 
@@ -3457,7 +3722,7 @@ impl Thread {
             last_message.cache = true;
         }
 
-        if let Some(message) = self.pending_message.as_ref() {
+        if include_pending_message && let Some(message) = self.pending_message.as_ref() {
             messages.extend(message.to_request());
         }
 
@@ -3666,6 +3931,62 @@ fn retained_user_messages_from_messages(
 
     retained_messages.reverse();
     retained_messages
+}
+
+fn retained_user_message_to_request(
+    message: &RetainedUserMessage,
+) -> Option<LanguageModelRequestMessage> {
+    let content = message
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            RetainedUserMessageContent::Text(text) if text.is_empty() => None,
+            RetainedUserMessageContent::Text(text) => {
+                Some(language_model::MessageContent::Text(text.clone()))
+            }
+            RetainedUserMessageContent::Image(image) => {
+                Some(language_model::MessageContent::Image(image.clone()))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if content.is_empty() {
+        None
+    } else {
+        Some(LanguageModelRequestMessage {
+            role: Role::User,
+            content,
+            cache: false,
+            reasoning_details: None,
+        })
+    }
+}
+
+fn generic_summary_seed_message(summary: &SharedString) -> LanguageModelRequestMessage {
+    LanguageModelRequestMessage {
+        role: Role::User,
+        content: vec![
+            format!(
+                "The previous conversation was compacted. Use this summary as context:\n\n{}",
+                summary
+            )
+            .into(),
+        ],
+        cache: false,
+        reasoning_details: None,
+    }
+}
+
+fn estimate_generic_seed_tokens(
+    retained_user_messages: &[RetainedUserMessage],
+    summary: &SharedString,
+) -> u64 {
+    let mut messages = retained_user_messages
+        .iter()
+        .filter_map(retained_user_message_to_request)
+        .collect::<Vec<_>>();
+    messages.push(generic_summary_seed_message(summary));
+    estimate_request_tokens(&messages)
 }
 
 fn retained_user_message_from_content(
@@ -4201,6 +4522,24 @@ impl ThreadEventStream {
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
+    }
+
+    fn send_compaction_started(&self, id: ContextCompactionId) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::CompactionStarted(id)))
+            .ok();
+    }
+
+    fn send_compaction_succeeded(&self, id: ContextCompactionId) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::CompactionSucceeded(id)))
+            .ok();
+    }
+
+    fn send_compaction_failed(&self, id: ContextCompactionId) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::CompactionFailed(id)))
+            .ok();
     }
 
     fn send_stop(&self, reason: acp::StopReason) {
@@ -5261,6 +5600,68 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_generic_compaction_installs_seeded_conversation(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let old_message_id = UserMessageId::new();
+        let live_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.conversations = vec![Conversation::legacy(
+                    vec![
+                        Message::User(UserMessage {
+                            id: old_message_id,
+                            content: vec!["old request".into()],
+                        }),
+                        Message::Agent(AgentMessage {
+                            content: vec![AgentMessageContent::Text("old answer".to_string())],
+                            ..Default::default()
+                        }),
+                    ],
+                    HashMap::default(),
+                )];
+
+                let live_message = Message::User(UserMessage {
+                    id: live_message_id.clone(),
+                    content: vec!["live request".into()],
+                });
+                thread.current_messages_mut().push(live_message.clone());
+
+                let compaction_id = ContextCompactionId::new();
+                thread
+                    .install_generic_compaction(
+                        compaction_id.clone(),
+                        "summary text".into(),
+                        vec![RetainedUserMessage {
+                            content: vec![RetainedUserMessageContent::Text(
+                                "retained text".to_string(),
+                            )],
+                        }],
+                        Some(live_message),
+                        cx,
+                    )
+                    .unwrap();
+
+                assert_eq!(thread.conversations.len(), 2);
+                assert_eq!(thread.conversations[0].messages.len(), 2);
+                assert_eq!(thread.conversations[1].marker.as_ref().unwrap().id, compaction_id);
+                assert_eq!(thread.conversations[1].messages.len(), 1);
+                assert!(
+                    matches!(&thread.conversations[1].messages[0], Message::User(message) if message.id == live_message_id)
+                );
+
+                let request = thread.build_request_messages(Vec::new(), cx);
+                assert_eq!(request[1].role, Role::User);
+                assert_eq!(request[1].string_contents(), "retained text");
+                assert_eq!(request[2].role, Role::User);
+                assert!(request[2].string_contents().contains("summary text"));
+                assert_eq!(request[3].role, Role::User);
+                assert_eq!(request[3].string_contents(), "live request");
+            });
+        });
     }
 
     struct ReplayImageTool;
