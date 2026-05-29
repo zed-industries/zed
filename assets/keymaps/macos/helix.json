@@ -1,6 +1,6 @@
 [
   {
-    "context": "Editor && vim_mode == normal",
+    "context": "Editor && (vim_mode == normal || vim_mode == helix_normal)",
     "bindings": {
       "space f": "file_finder::Toggle",
       "space b": "tab_switcher::Toggle",
@@ -51,7 +51,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == visual",
+    "context": "Editor && (vim_mode == visual || vim_mode == helix_select)",
     "bindings": {
       "space f": "file_finder::Toggle",
       "space b": "tab_switcher::Toggle",
