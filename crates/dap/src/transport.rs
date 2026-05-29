@@ -375,7 +375,11 @@ impl TransportDelegate {
                 .body
                 .clone()
                 .and_then(|body| serde_json::from_value::<ErrorResponse>(body).ok())
-                .and_then(|response| response.error.map(|msg| msg.format))
+                .and_then(|response| {
+                    response
+                        .error
+                        .map(|msg| interpolate_dap_format(&msg.format, &msg.variables))
+                })
                 .or_else(|| response.message.clone())
             {
                 anyhow::bail!(error_message);
@@ -1016,5 +1020,181 @@ impl Transport for FakeTransport {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
         self
+    }
+}
+
+fn interpolate_dap_format(format: &str, variables: &Option<serde_json::Value>) -> String {
+    let Some(serde_json::Value::Object(vars)) = variables else {
+        return format.to_string();
+    };
+
+    let mut result = String::with_capacity(format.len());
+    let mut rest = format;
+    while let Some(start) = rest.find('{') {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        if let Some((key, tail)) = after.split_once('}')
+            && let Some(value) = vars.get(key).and_then(serde_json::Value::as_str)
+        {
+            result.push_str(value);
+            rest = tail;
+        } else {
+            result.push('{');
+            rest = after;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_error_response(body: Option<serde_json::Value>) -> Response {
+        Response {
+            seq: 1,
+            request_seq: 1,
+            success: false,
+            command: "launch".to_string(),
+            message: Some("Failed".to_string()),
+            body,
+        }
+    }
+
+    #[test]
+    fn test_process_response_interpolates_variables() {
+        let response = make_error_response(Some(json!({
+            "error": {
+                "id": 1,
+                "format": "{response_message}",
+                "variables": {
+                    "response_message": "Please use the `program-binary` option to specify an executable"
+                }
+            }
+        })));
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Please use the `program-binary` option"),
+            "Expected interpolated message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_interpolates_multiple_variables() {
+        let response = make_error_response(Some(json!({
+            "error": {
+                "id": 1,
+                "format": "Error in {module}: {detail}",
+                "variables": {
+                    "module": "probe-rs",
+                    "detail": "connection failed"
+                }
+            }
+        })));
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Error in probe-rs: connection failed"),
+            "Expected interpolated message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_without_variables() {
+        let response = make_error_response(Some(json!({
+            "error": {
+                "id": 1,
+                "format": "A plain error message"
+            }
+        })));
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string().contains("A plain error message"),
+            "Expected plain format string, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_falls_back_to_response_message() {
+        let response = make_error_response(None);
+
+        let err = TransportDelegate::process_response(response).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed"),
+            "Expected fallback message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_process_response_success() {
+        let response = Response {
+            seq: 1,
+            request_seq: 1,
+            success: true,
+            command: "launch".to_string(),
+            message: None,
+            body: None,
+        };
+
+        assert!(TransportDelegate::process_response(response).is_ok());
+    }
+
+    #[test]
+    fn test_interpolate_does_not_double_substitute() {
+        let format = "{a} and {b}";
+        let variables = Some(json!({
+            "a": "{b}",
+            "b": "oops"
+        }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "{b} and oops");
+    }
+
+    #[test]
+    fn test_interpolate_no_variables() {
+        let result = interpolate_dap_format("plain message", &None);
+        assert_eq!(result, "plain message");
+    }
+
+    #[test]
+    fn test_interpolate_unknown_placeholder_kept() {
+        let format = "{known} and {unknown}";
+        let variables = Some(json!({ "known": "value" }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "value and {unknown}");
+    }
+
+    #[test]
+    fn test_interpolate_multibyte_key_does_not_drop_trailing_chars() {
+        let format = "{ñ}x";
+        let variables = Some(json!({ "ñ": "v" }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "vx");
+    }
+
+    #[test]
+    fn test_interpolate_unclosed_brace_kept_verbatim() {
+        let format = "{foo";
+        let variables = Some(json!({ "foo": "x" }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "{foo");
+    }
+
+    #[test]
+    fn test_interpolate_non_string_value_kept_verbatim() {
+        let format = "code {n}";
+        let variables = Some(json!({ "n": 42 }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "code {n}");
     }
 }
