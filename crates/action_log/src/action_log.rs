@@ -387,6 +387,11 @@ impl ActionLog {
                 let git_diff_base = git_diff.read(cx).base_text(cx).as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
+                    if buffer_text.len() == git_diff_base.len()
+                        && buffer_text.chars_at(0).eq(git_diff_base.chars_at(0))
+                    {
+                        return (Arc::<str>::from(git_diff_base.to_string()), git_diff_base);
+                    }
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
                     let committed_edits = language::line_diff(
                         &agent_diff_base.to_string(),
@@ -931,7 +936,11 @@ impl ActionLog {
         let mut undo_buffers = Vec::new();
         let mut futures = Vec::new();
 
-        for buffer in self.changed_buffers(cx).into_keys() {
+        for buffer in self
+            .changed_buffers(cx)
+            .map(|(buffer, _)| buffer)
+            .collect::<Vec<_>>()
+        {
             let buffer_ranges = vec![Anchor::min_max_range_for_buffer(
                 buffer.read(cx).remote_id(),
             )];
@@ -1018,17 +1027,19 @@ impl ActionLog {
     }
 
     /// Returns the set of buffers that contain edits that haven't been reviewed by the user.
-    pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, Entity<BufferDiff>> {
+    pub fn changed_buffers(
+        &self,
+        cx: &App,
+    ) -> impl Iterator<Item = (Entity<Buffer>, Entity<BufferDiff>)> {
         self.tracked_buffers
             .iter()
             .filter(|(_, tracked)| tracked.has_edits(cx))
             .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
-            .collect()
     }
 
     /// Returns the total number of lines added and removed across all unreviewed buffers.
     pub fn diff_stats(&self, cx: &App) -> DiffStats {
-        DiffStats::all_files(&self.changed_buffers(cx), cx)
+        DiffStats::all_files(self.changed_buffers(cx), cx)
     }
 
     /// Iterate over buffers changed since last read or edited by the model
@@ -1074,7 +1085,7 @@ impl DiffStats {
     }
 
     pub fn all_files(
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: impl IntoIterator<Item = (Entity<Buffer>, Entity<BufferDiff>)>,
         cx: &App,
     ) -> Self {
         let mut total = DiffStats::default();
@@ -1320,6 +1331,7 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
+    use indoc::indoc;
     use language::Point;
     use project::{FakeFs, Fs, Project, RemoveOptions};
     use rand::prelude::*;
@@ -1328,7 +1340,7 @@ mod tests {
     use std::env;
     use util::{RandomCharIter, path};
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
@@ -2703,6 +2715,86 @@ mod tests {
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
+    #[gpui::test]
+    async fn test_keep_edits_on_commit_with_shifted_diff_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let initial_text = indoc! {"
+            use crate::{Alpha, Beta};
+
+            fn keep() {
+                work();
+            }
+
+            fn remove() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": initial_text,
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", initial_text.into())],
+            "0000000",
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(path!("/project/file.rs"), cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let final_text = indoc! {"
+            use crate::{Alpha};
+
+            fn keep() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(final_text, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert!(!unreviewed_hunks(&action_log, cx).is_empty());
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", final_text.into())],
+            "0000001",
+        );
+        cx.run_until_parked();
+
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
     /// Regression test: when head_commit updates before the BufferDiff's base
     /// text does, an intermediate DiffChanged (e.g. from a buffer-edit diff
     /// recalculation) must NOT consume the commit signal.  The subscription
@@ -3168,21 +3260,21 @@ mod tests {
             child_log_1
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
         let child_2_changed: Vec<_> = cx.read(|cx| {
             child_log_2
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
         let parent_changed: Vec<_> = cx.read(|cx| {
             parent_log
                 .read(cx)
                 .changed_buffers(cx)
-                .into_keys()
+                .map(|(buffer, _)| buffer)
                 .collect()
         });
 
@@ -3408,7 +3500,6 @@ mod tests {
             action_log
                 .read(cx)
                 .changed_buffers(cx)
-                .into_iter()
                 .map(|(buffer, diff)| {
                     let snapshot = buffer.read(cx).snapshot();
                     (

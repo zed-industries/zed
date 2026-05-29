@@ -759,14 +759,10 @@ impl ThreadsArchiveView {
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
-                            let side = match AgentSettings::get_global(cx).sidebar_side() {
-                                settings::SidebarSide::Left => "left",
-                                settings::SidebarSide::Right => "right",
-                            };
                             telemetry::event!(
                                 "Archived Thread Opened",
                                 agent = thread.agent_id.as_ref(),
-                                side = side
+                                side = crate::agent_sidebar_side(cx)
                             );
                             this.unarchive_thread(thread.clone(), window, cx);
                         })
@@ -825,7 +821,11 @@ impl ThreadsArchiveView {
             let state = task.await?;
             let task = cx.update(|cx| {
                 if let Some(session_id) = &session_id {
-                    if let Some(list) = state.connection.session_list(cx) {
+                    if let Some(list) = state
+                        .connection
+                        .session_list(cx)
+                        .filter(|list| list.supports_delete(cx))
+                    {
                         list.delete_session(session_id, cx)
                     } else {
                         Task::ready(Ok(()))

@@ -238,7 +238,11 @@ impl BlameRenderer for GitBlameRenderer {
 
         let message = details
             .as_ref()
-            .map(|_| MarkdownElement::new(markdown.clone(), markdown_style).into_any())
+            .map(|_| {
+                MarkdownElement::new(markdown.clone(), markdown_style)
+                    .scroll_handle(scroll_handle.clone())
+                    .into_any()
+            })
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = details

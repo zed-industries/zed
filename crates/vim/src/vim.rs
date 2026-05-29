@@ -2067,7 +2067,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     self.visual_replace(text, window, cx)
                 }
-                Mode::HelixNormal => self.helix_replace(&text, window, cx),
+                Mode::HelixNormal | Mode::HelixSelect => self.helix_replace(&text, window, cx),
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::Digraph { first_char }) => {
@@ -2244,11 +2244,11 @@ impl Vim {
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
-            cursor_offset_on_selection: mode.is_visual() || mode.is_helix(),
+            cursor_offset_on_selection: self.mode.has_selection(),
             highlight_primary_local_selection: mode.is_helix(),
-            line_mode: matches!(mode, Mode::VisualLine),
-            hide_edit_predictions: !matches!(mode, Mode::Insert | Mode::Replace)
-                && !(mode.is_normal()
+            line_mode: matches!(self.mode, Mode::VisualLine),
+            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace)
+                && !(self.mode.is_normal()
                     && VimSettings::get_global(cx).show_edit_predictions_in_normal_mode),
         }
     }
