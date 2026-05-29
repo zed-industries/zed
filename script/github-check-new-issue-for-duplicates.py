@@ -284,6 +284,12 @@ def detect_areas(anthropic_key, issue, area_labels):
 
     system_prompt = """You analyze GitHub issues to identify which area labels apply.
 
+Decide the area from the user's stated symptom and reproduction steps. Issue bodies routinely
+contain pasted log output, crash dumps, stack traces, settings files, and template headers like
+"Attach Zed log file" or "Relevant Zed settings" — these are evidence about the symptom and
+should not push you toward labels like "logging" or "settings" unless the bug itself is about
+how that subsystem works.
+
 Respond with ONLY a comma-separated list of matching area names. No prose, no explanation,
 no markdown, no preamble — just the names.
 
