@@ -11,4 +11,5 @@ dependencies = [
     "typer>=0.15.1",
     "types-pytz>=2025.1.0.20250204",
     "types-requests>=2.32.0",
+    "urllib3>=2.7.0",
 ]
