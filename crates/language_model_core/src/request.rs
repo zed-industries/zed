@@ -362,6 +362,8 @@ pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
     pub prompt_id: Option<String>,
     pub intent: Option<CompletionIntent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_native_prefix: Option<Vec<serde_json::Value>>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
     pub tool_choice: Option<LanguageModelToolChoice>,

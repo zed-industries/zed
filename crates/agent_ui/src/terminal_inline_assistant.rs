@@ -268,6 +268,7 @@ impl TerminalInlineAssistant {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::TerminalInlineAssist),
+                provider_native_prefix: None,
                 messages: vec![request_message],
                 tools: Vec::new(),
                 tool_choice: None,

@@ -191,6 +191,7 @@ pub fn into_open_ai_response(
         thread_id,
         prompt_id: _,
         intent: _,
+        provider_native_prefix,
         messages,
         tools,
         tool_choice,
@@ -260,6 +261,7 @@ pub fn into_open_ai_response(
     ResponseRequest {
         model: model_id.into(),
         instructions: None,
+        native_input_prefix: provider_native_prefix.unwrap_or_default(),
         input: input_items,
         store: Some(false),
         include,
@@ -1347,6 +1349,7 @@ mod tests {
             thread_id: Some("thread-123".into()),
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::System,
@@ -1479,6 +1482,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
@@ -1567,6 +1571,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::Text("Done.".into())],
@@ -1632,11 +1637,44 @@ mod tests {
     }
 
     #[test]
+    fn into_open_ai_response_carries_native_prefix() {
+        let native_item = json!({
+            "type": "compaction",
+            "encrypted_content": "opaque"
+        });
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            provider_native_prefix: Some(vec![native_item.clone()]),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Continue".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let response = into_open_ai_response(request, "gpt-5", true, true, None, None, false);
+
+        assert_eq!(response.native_input_prefix, vec![native_item]);
+        assert_eq!(response.store, Some(false));
+    }
+
+    #[test]
     fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled_and_none_is_unsupported() {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("Hello".into())],
@@ -1672,6 +1710,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("Hello".into())],
@@ -1710,6 +1749,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("Hello".into())],
@@ -1750,6 +1790,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::Text("Done.".into())],
@@ -1841,6 +1882,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -1916,6 +1958,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![
@@ -2943,6 +2986,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::User,

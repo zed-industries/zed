@@ -43,6 +43,23 @@ impl Default for LanguageModelTextStream {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionStrategyKind {
+    Native,
+    GenericSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageModelNativeCompactionSource {
+    pub provider: LanguageModelProviderId,
+    pub api_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LanguageModelNativeCompaction {
+    pub items: Vec<serde_json::Value>,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -119,6 +136,28 @@ pub trait LanguageModel: Send + Sync {
     fn max_token_count(&self) -> u64;
     fn max_output_tokens(&self) -> Option<u64> {
         None
+    }
+
+    fn compaction_strategy(&self, _cx: &App) -> CompactionStrategyKind {
+        CompactionStrategyKind::GenericSummary
+    }
+
+    fn native_compaction_source(&self, _cx: &App) -> Option<LanguageModelNativeCompactionSource> {
+        None
+    }
+
+    fn compact(
+        &self,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelNativeCompaction, LanguageModelCompletionError>>
+    {
+        async move {
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "native compaction is not supported by this model"
+            )))
+        }
+        .boxed()
     }
 
     fn stream_completion(

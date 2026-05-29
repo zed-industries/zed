@@ -551,6 +551,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             stop: vec![],
             temperature: None,
             tools: vec![language_model_core::LanguageModelRequestTool {
@@ -655,6 +656,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             stop: vec![],
             temperature: None,
             tools: vec![language_model_core::LanguageModelRequestTool {
@@ -725,6 +727,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             stop: vec![],
             temperature: None,
             tools: vec![language_model_core::LanguageModelRequestTool {
@@ -768,6 +771,7 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
+            provider_native_prefix: None,
             stop: vec![],
             temperature: None,
             tools: vec![],

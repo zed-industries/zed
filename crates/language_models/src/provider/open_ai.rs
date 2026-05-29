@@ -5,16 +5,20 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
+    ApiKeyState, AuthenticateError, CompactionStrategyKind, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelNativeCompaction,
+    LanguageModelNativeCompactionSource, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
     OPEN_AI_API_URL, ResponseStreamEvent,
-    responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
+    responses::{
+        CompactRequest as ResponseCompactRequest, Request as ResponseRequest,
+        StreamEvent as ResponsesStreamEvent, compact_response, stream_response,
+    },
     stream_completion,
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
@@ -391,6 +395,38 @@ impl OpenAiLanguageModel {
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
+
+    fn compact_response(
+        &self,
+        request: ResponseCompactRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<open_ai::responses::CompactedResponse>> {
+        let http_client = self.http_client.clone();
+
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            (state.api_key_state.key(&api_url), api_url)
+        });
+
+        let provider = PROVIDER_NAME;
+        let future = self.request_limiter.run(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = compact_response(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+                vec![],
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?) }.boxed()
+    }
 }
 
 impl LanguageModel for OpenAiLanguageModel {
@@ -472,6 +508,66 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
+    }
+
+    fn compaction_strategy(&self, cx: &App) -> CompactionStrategyKind {
+        if self.native_compaction_source(cx).is_some() {
+            CompactionStrategyKind::Native
+        } else {
+            CompactionStrategyKind::GenericSummary
+        }
+    }
+
+    fn native_compaction_source(&self, cx: &App) -> Option<LanguageModelNativeCompactionSource> {
+        if !self.model.uses_responses_api() {
+            return None;
+        }
+
+        let api_url = OpenAiLanguageModelProvider::api_url(cx);
+        if api_url.as_ref() != OPEN_AI_API_URL {
+            return None;
+        }
+
+        Some(LanguageModelNativeCompactionSource {
+            provider: PROVIDER_ID,
+            api_url: Some(api_url.to_string()),
+        })
+    }
+
+    fn compact(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelNativeCompaction, LanguageModelCompletionError>>
+    {
+        if !self.model.uses_responses_api() {
+            return async move {
+                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "native compaction requires the OpenAI Responses API"
+                )))
+            }
+            .boxed();
+        }
+
+        let request = into_open_ai_response(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
+            self.max_output_tokens(),
+            default_thinking_reasoning_effort(&self.model),
+            self.model
+                .supported_reasoning_efforts()
+                .contains(&open_ai::ReasoningEffort::None),
+        );
+        let compacted = self.compact_response(request.into(), cx);
+
+        async move {
+            Ok(LanguageModelNativeCompaction {
+                items: compacted.await?.output,
+            })
+        }
+        .boxed()
     }
 
     fn stream_completion(

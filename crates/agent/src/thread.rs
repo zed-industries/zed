@@ -37,12 +37,12 @@ use gpui::{
 };
 use heck::ToSnakeCase as _;
 use language_model::{
-    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason,
-    TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    CompactionStrategyKind, CompletionIntent, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelImage, LanguageModelProviderId,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, Role,
+    SelectedModel, Speed, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -132,12 +132,21 @@ enum AutoCompactPhase {
     MidTurn,
 }
 
-struct GenericCompactionInput {
+struct CompactionInput {
     id: ContextCompactionId,
     model: Arc<dyn LanguageModel>,
     request: LanguageModelRequest,
-    retained_user_messages: Vec<RetainedUserMessage>,
+    strategy: PreparedCompactionStrategy,
     held_message: Option<Message>,
+}
+
+enum PreparedCompactionStrategy {
+    GenericSummary {
+        retained_user_messages: Vec<RetainedUserMessage>,
+    },
+    Native {
+        source: NativeCompactionSource,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2092,7 +2101,19 @@ impl Thread {
 
     fn estimate_model_visible_tokens(&self, cx: &App) -> u64 {
         let messages = self.build_request_messages(Vec::new(), cx);
-        estimate_request_tokens(&messages)
+        let prefix_tokens = self
+            .model
+            .as_ref()
+            .and_then(|model| {
+                self.provider_native_prefix_for_conversation(
+                    self.current_conversation(),
+                    model.as_ref(),
+                    cx,
+                )
+            })
+            .map(|prefix| estimate_native_seed_tokens(&prefix))
+            .unwrap_or(0);
+        estimate_request_tokens(&messages).saturating_add(prefix_tokens)
     }
 
     fn generic_retained_user_messages(&self) -> Vec<RetainedUserMessage> {
@@ -2102,11 +2123,11 @@ impl Thread {
         )
     }
 
-    fn prepare_generic_compaction(
+    fn prepare_compaction(
         &self,
         phase: AutoCompactPhase,
         cx: &App,
-    ) -> Result<Option<GenericCompactionInput>> {
+    ) -> Result<Option<CompactionInput>> {
         if !self.should_auto_compact(cx) {
             return Ok(None);
         }
@@ -2119,27 +2140,39 @@ impl Thread {
             return Ok(None);
         }
 
-        let retained_user_messages = retained_user_messages_from_messages(
-            &conversation.messages,
-            GENERIC_COMPACTION_RETAINED_USER_MESSAGE_TOKENS,
-        );
-        let mut request =
+        let native_source = native_compaction_source_for_model(model.as_ref(), cx);
+        let use_native = model.compaction_strategy(cx) == CompactionStrategyKind::Native;
+        let mut request_messages =
             self.build_request_messages_for_conversation(&conversation, Vec::new(), cx, false);
-        request.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
-            cache: false,
-            reasoning_details: None,
-        });
+        let provider_native_prefix =
+            self.provider_native_prefix_for_conversation(&conversation, model.as_ref(), cx);
 
-        Ok(Some(GenericCompactionInput {
+        let strategy = if let (true, Some(source)) = (use_native, native_source) {
+            PreparedCompactionStrategy::Native { source }
+        } else {
+            request_messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
+                cache: false,
+                reasoning_details: None,
+            });
+            PreparedCompactionStrategy::GenericSummary {
+                retained_user_messages: retained_user_messages_from_messages(
+                    &conversation.messages,
+                    GENERIC_COMPACTION_RETAINED_USER_MESSAGE_TOKENS,
+                ),
+            }
+        };
+
+        Ok(Some(CompactionInput {
             id: ContextCompactionId::new(),
             model: model.clone(),
             request: LanguageModelRequest {
                 thread_id: Some(self.id.to_string()),
                 prompt_id: Some(self.prompt_id.to_string()),
                 intent: Some(CompletionIntent::ThreadContextSummarization),
-                messages: request,
+                provider_native_prefix,
+                messages: request_messages,
                 tools: Vec::new(),
                 tool_choice: None,
                 stop: Vec::new(),
@@ -2148,7 +2181,7 @@ impl Thread {
                 thinking_effort: None,
                 speed: self.speed(),
             },
-            retained_user_messages,
+            strategy,
             held_message,
         }))
     }
@@ -2171,11 +2204,30 @@ impl Thread {
         (conversation, held_message)
     }
 
-    fn install_generic_compaction(
+    fn provider_native_prefix_for_conversation(
+        &self,
+        conversation: &Conversation,
+        model: &dyn LanguageModel,
+        cx: &App,
+    ) -> Option<Vec<serde_json::Value>> {
+        let seed = conversation.seed.as_ref()?;
+        let CompactionArtifact::ProviderNative { source, items } = &seed.artifact else {
+            return None;
+        };
+        let model_source = native_compaction_source_for_model(model, cx)?;
+        if native_compaction_sources_match(&model_source, source) {
+            Some(items.clone())
+        } else {
+            None
+        }
+    }
+
+    fn install_compaction(
         &mut self,
         id: ContextCompactionId,
-        summary: SharedString,
+        artifact: CompactionArtifact,
         retained_user_messages: Vec<RetainedUserMessage>,
+        baseline_tokens: u64,
         held_message: Option<Message>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -2193,13 +2245,12 @@ impl Thread {
             self.current_messages_mut().pop();
         }
 
-        let baseline_tokens = estimate_generic_seed_tokens(&retained_user_messages, &summary);
         self.conversations.push(Conversation {
             marker: Some(ContextCompactionMarker { id }),
             messages: Vec::new(),
             request_token_usage: HashMap::default(),
             seed: Some(CompactionSeed {
-                artifact: CompactionArtifact::Summary(summary),
+                artifact,
                 retained_user_messages,
                 baseline_tokens,
                 baseline_observed: false,
@@ -2219,7 +2270,7 @@ impl Thread {
         if self.should_auto_compact(cx) {
             let retained_user_message_count = self.generic_retained_user_messages().len();
             log::info!(
-                "auto-compaction threshold reached at {phase}; handoff is not wired yet; retained_user_messages={retained_user_message_count}"
+                "auto-compaction threshold reached at {phase}; retained_user_messages={retained_user_message_count}"
             );
         }
     }
@@ -2686,45 +2737,89 @@ impl Thread {
                 AutoCompactPhase::MidTurn => "mid-turn",
             };
             this.log_auto_compact_hook(phase_name, cx);
-            this.prepare_generic_compaction(phase, cx)
+            this.prepare_compaction(phase, cx)
         })??
         else {
             return Ok(());
         };
 
-        event_stream.send_compaction_started(input.id.clone());
-        let compaction_id = input.id.clone();
-        let summary = match Self::run_generic_compaction(
-            input.model.clone(),
-            input.request,
-            cancellation_rx.clone(),
-            cx,
-        )
-        .await
-        {
-            Ok(Some(summary)) => summary,
-            Ok(None) => {
-                event_stream.send_compaction_failed(compaction_id);
-                return Ok(());
+        let CompactionInput {
+            id,
+            model,
+            request,
+            strategy,
+            held_message,
+        } = input;
+
+        event_stream.send_compaction_started(id.clone());
+        let compaction_id = id.clone();
+        let (artifact, retained_user_messages, baseline_tokens) = match strategy {
+            PreparedCompactionStrategy::GenericSummary {
+                retained_user_messages,
+            } => {
+                let summary = match Self::run_generic_compaction(
+                    model.clone(),
+                    request,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await
+                {
+                    Ok(Some(summary)) => summary,
+                    Ok(None) => {
+                        event_stream.send_compaction_failed(compaction_id);
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        event_stream.send_compaction_failed(compaction_id);
+                        return Err(error);
+                    }
+                };
+                let baseline_tokens =
+                    estimate_generic_seed_tokens(&retained_user_messages, &summary);
+                (
+                    CompactionArtifact::Summary(summary),
+                    retained_user_messages,
+                    baseline_tokens,
+                )
             }
-            Err(error) => {
-                event_stream.send_compaction_failed(compaction_id);
-                return Err(error);
+            PreparedCompactionStrategy::Native { source } => {
+                let items =
+                    match Self::run_native_compaction(model, request, cancellation_rx.clone(), cx)
+                        .await
+                    {
+                        Ok(Some(items)) => items,
+                        Ok(None) => {
+                            event_stream.send_compaction_failed(compaction_id);
+                            return Ok(());
+                        }
+                        Err(error) => {
+                            event_stream.send_compaction_failed(compaction_id);
+                            return Err(error);
+                        }
+                    };
+                let baseline_tokens = estimate_native_seed_tokens(&items);
+                (
+                    CompactionArtifact::ProviderNative { source, items },
+                    Vec::new(),
+                    baseline_tokens,
+                )
             }
         };
 
         if *cancellation_rx.borrow() {
-            event_stream.send_compaction_failed(input.id);
+            event_stream.send_compaction_failed(id);
             return Ok(());
         }
 
-        let succeeded_id = input.id.clone();
+        let succeeded_id = id.clone();
         this.update(cx, |this, cx| {
-            this.install_generic_compaction(
-                input.id.clone(),
-                summary,
-                input.retained_user_messages,
-                input.held_message,
+            this.install_compaction(
+                id.clone(),
+                artifact,
+                retained_user_messages,
+                baseline_tokens,
+                held_message,
                 cx,
             )
         })??;
@@ -2761,6 +2856,24 @@ impl Thread {
         }
 
         Ok(Some(summary.into()))
+    }
+
+    async fn run_native_compaction(
+        model: Arc<dyn LanguageModel>,
+        request: LanguageModelRequest,
+        mut cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<Vec<serde_json::Value>>> {
+        if *cancellation_rx.borrow() {
+            return Ok(None);
+        }
+
+        let compacted = model.compact(request, cx).await?;
+        if *cancellation_rx.borrow() {
+            return Ok(None);
+        }
+
+        Ok(Some(compacted.items))
     }
 
     fn process_tool_result(
@@ -3497,12 +3610,18 @@ impl Thread {
 
         log::debug!("Request includes {} tools", available_tools.len());
         let messages = self.build_request_messages(available_tools, cx);
+        let provider_native_prefix = self.provider_native_prefix_for_conversation(
+            self.current_conversation(),
+            model.as_ref(),
+            cx,
+        );
         log::debug!("Request will include {} messages", messages.len());
 
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(completion_intent),
+            provider_native_prefix,
             messages,
             tools,
             tool_choice: None,
@@ -3993,6 +4112,31 @@ fn estimate_generic_seed_tokens(
         .collect::<Vec<_>>();
     messages.push(generic_summary_seed_message(summary));
     estimate_request_tokens(&messages)
+}
+
+fn estimate_native_seed_tokens(items: &[serde_json::Value]) -> u64 {
+    serde_json::to_string(items)
+        .map(|items| estimate_text_tokens(&items))
+        .unwrap_or(0)
+}
+
+fn native_compaction_source_for_model(
+    model: &dyn LanguageModel,
+    cx: &App,
+) -> Option<NativeCompactionSource> {
+    model
+        .native_compaction_source(cx)
+        .map(|source| NativeCompactionSource {
+            provider: source.provider.to_string(),
+            api_url: source.api_url,
+        })
+}
+
+fn native_compaction_sources_match(
+    current: &NativeCompactionSource,
+    stored: &NativeCompactionSource,
+) -> bool {
+    current.provider == stored.provider && current.api_url == stored.api_url
 }
 
 fn retained_user_message_from_content(
@@ -5637,15 +5781,18 @@ mod tests {
                 thread.current_messages_mut().push(live_message.clone());
 
                 let compaction_id = ContextCompactionId::new();
+                let summary: SharedString = "summary text".into();
+                let retained_user_messages = vec![RetainedUserMessage {
+                    content: vec![RetainedUserMessageContent::Text("retained text".to_string())],
+                }];
+                let baseline_tokens =
+                    estimate_generic_seed_tokens(&retained_user_messages, &summary);
                 thread
-                    .install_generic_compaction(
+                    .install_compaction(
                         compaction_id.clone(),
-                        "summary text".into(),
-                        vec![RetainedUserMessage {
-                            content: vec![RetainedUserMessageContent::Text(
-                                "retained text".to_string(),
-                            )],
-                        }],
+                        CompactionArtifact::Summary(summary),
+                        retained_user_messages,
+                        baseline_tokens,
                         Some(live_message),
                         cx,
                     )

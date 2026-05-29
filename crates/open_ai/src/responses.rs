@@ -11,6 +11,8 @@ pub struct Request {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
+    #[serde(skip)]
+    pub native_input_prefix: Vec<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -35,6 +37,43 @@ pub struct Request {
     pub reasoning: Option<ReasoningConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct CompactRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(skip)]
+    pub native_input_prefix: Vec<Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<ResponseInputItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+}
+
+impl From<Request> for CompactRequest {
+    fn from(request: Request) -> Self {
+        Self {
+            model: request.model,
+            instructions: request.instructions,
+            native_input_prefix: request.native_input_prefix,
+            input: request.input,
+            parallel_tool_calls: request.parallel_tool_calls,
+            tool_choice: request.tool_choice,
+            tools: request.tools,
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct CompactedResponse {
+    #[serde(default)]
+    pub output: Vec<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -411,10 +450,10 @@ pub async fn stream_response(
     }
 
     let is_streaming = request.stream;
+    let body = serialize_body_with_native_prefix(&request, &request.native_input_prefix)
+        .map_err(|e| RequestError::Other(e.into()))?;
     let request = request_builder
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
+        .body(AsyncBody::from(body))
         .map_err(|e| RequestError::Other(e.into()))?;
 
     let mut response = client.send(request).await?;
@@ -567,5 +606,123 @@ pub async fn stream_response(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+pub async fn compact_response(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: CompactRequest,
+    extra_headers: Vec<(String, String)>,
+) -> Result<CompactedResponse, RequestError> {
+    let uri = format!("{api_url}/responses/compact");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
+    for (name, value) in &extra_headers {
+        request_builder = request_builder.header(name.as_str(), value.as_str());
+    }
+
+    let body = serialize_body_with_native_prefix(&request, &request.native_input_prefix)
+        .map_err(|e| RequestError::Other(e.into()))?;
+    let request = request_builder
+        .body(AsyncBody::from(body))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    if response.status().is_success() {
+        serde_json::from_str::<CompactedResponse>(&body).map_err(|error| {
+            log::error!(
+                "Failed to parse OpenAI compact response: `{}`\nResponse: `{}`",
+                error,
+                body,
+            );
+            RequestError::Other(anyhow!(error))
+        })
+    } else {
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
+fn serialize_body_with_native_prefix<T: Serialize>(
+    request: &T,
+    native_input_prefix: &[Value],
+) -> serde_json::Result<String> {
+    let mut body = serde_json::to_value(request)?;
+
+    if !native_input_prefix.is_empty() {
+        if let Value::Object(object) = &mut body {
+            let input = object
+                .entry("input")
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Value::Array(input) = input {
+                let mut prefixed_input = native_input_prefix.to_vec();
+                prefixed_input.append(input);
+                *input = prefixed_input;
+            }
+        }
+    }
+
+    serde_json::to_string(&body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn native_input_prefix_is_prepended_to_responses_body() {
+        let native_item = json!({
+            "type": "compaction",
+            "encrypted_content": "opaque"
+        });
+        let request = Request {
+            model: "gpt-5".to_string(),
+            instructions: None,
+            native_input_prefix: vec![native_item.clone()],
+            input: vec![ResponseInputItem::Message(ResponseMessageItem {
+                role: Role::User,
+                content: vec![ResponseInputContent::Text {
+                    text: "Continue".to_string(),
+                }],
+                phase: None,
+            })],
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: Some(false),
+        };
+
+        let body = serialize_body_with_native_prefix(&request, &request.native_input_prefix)
+            .expect("request should serialize");
+        let body: Value = serde_json::from_str(&body).expect("body should be valid JSON");
+        let input = body["input"].as_array().expect("input should be an array");
+
+        assert_eq!(input.first(), Some(&native_item));
+        assert_eq!(body["store"], json!(false));
     }
 }
