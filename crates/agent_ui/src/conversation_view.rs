@@ -25,6 +25,8 @@ use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
 use feature_flags::AgentSharingFeatureFlag;
+#[cfg(test)]
+use feature_flags::FeatureFlagAppExt as _;
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
