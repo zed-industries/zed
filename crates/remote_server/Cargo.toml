@@ -105,6 +105,7 @@ language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 zlog.workspace = true
 
 [build-dependencies]

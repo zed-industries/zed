@@ -150,7 +150,7 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -161,7 +161,7 @@ impl LspInstaller for JsonLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -213,7 +213,7 @@ impl LspInstaller for JsonLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -221,13 +221,9 @@ impl LspInstaller for JsonLspAdapter {
 
         async move {
             let server_path = container_dir.join(SERVER_PATH);
-            let latest_version = latest_version.to_string();
 
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::PACKAGE_NAME, latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::PACKAGE_NAME])
+                .await?;
 
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
@@ -438,7 +434,7 @@ impl LspInstaller for NodeVersionAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -475,7 +471,7 @@ impl LspInstaller for NodeVersionAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
