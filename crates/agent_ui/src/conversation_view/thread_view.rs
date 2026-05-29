@@ -11,7 +11,7 @@ use acp_thread::{ContentBlock, PlanEntry};
 use agent::{SkillLoadingError, SkillLoadingErrorsUpdated, UserAgentsMd};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use feature_flags::AcpBetaFeatureFlag;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -5150,6 +5150,19 @@ impl ThreadView {
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
+            AgentThreadEntry::ContextCompaction => h_flex()
+                .id(("context_compaction", entry_ix))
+                .px_5()
+                .py_1()
+                .gap_2()
+                .child(Divider::horizontal())
+                .child(
+                    Label::new("Context Compacted")
+                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                        .color(Color::Muted),
+                )
+                .child(Divider::horizontal())
+                .into_any(),
         };
 
         let is_subagent_output = self.is_subagent()
@@ -5727,13 +5740,16 @@ impl ThreadView {
 
     /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
     pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
-        let is_generating = matches!(self.thread.read(cx).status(), ThreadStatus::Generating);
+        let show_generating_indicator = {
+            let thread = self.thread.read(cx);
+            matches!(thread.status(), ThreadStatus::Generating) || thread.is_compacting_context()
+        };
 
-        if is_generating && !self.generating_indicator_in_list {
+        if show_generating_indicator && !self.generating_indicator_in_list {
             let entries_count = self.thread.read(cx).entries().len();
             self.list_state.splice(entries_count..entries_count, 1);
             self.generating_indicator_in_list = true;
-        } else if !is_generating && self.generating_indicator_in_list {
+        } else if !show_generating_indicator && self.generating_indicator_in_list {
             let entries_count = self.thread.read(cx).entries().len();
             self.list_state.splice(entries_count..entries_count + 1, 0);
             self.generating_indicator_in_list = false;
@@ -5764,6 +5780,7 @@ impl ThreadView {
                     .map(|tokens| crate::humanize_token_count(tokens))
             })
             .flatten();
+        let is_compacting_context = self.thread.read(cx).is_compacting_context();
 
         let arrow_icon = if is_waiting {
             IconName::ArrowUp
@@ -5777,7 +5794,21 @@ impl ThreadView {
             .px(rems_from_px(22.))
             .gap_2()
             .map(|this| {
-                if confirmation {
+                if is_compacting_context {
+                    this.child(
+                        h_flex()
+                            .w_2()
+                            .justify_center()
+                            .child(GeneratingSpinnerElement::new(SpinnerVariant::Sand)),
+                    )
+                    .child(
+                        div().min_w(rems(8.)).child(
+                            LoadingLabel::new("Compacting Context")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                } else if confirmation {
                     this.child(
                         h_flex()
                             .w_2()
@@ -6259,7 +6290,8 @@ impl ThreadView {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction => {}
             }
         }
 
@@ -9286,7 +9318,10 @@ impl ThreadView {
     }
 
     fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        if self.token_limit_callout_dismissed || self.as_native_thread(cx).is_none() {
+        if cx.has_flag::<HandoffFeatureFlag>()
+            || self.token_limit_callout_dismissed
+            || self.as_native_thread(cx).is_none()
+        {
             return None;
         }
 

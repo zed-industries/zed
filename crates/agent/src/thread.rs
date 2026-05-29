@@ -1326,6 +1326,12 @@ impl Thread {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream(tx);
         for conversation in &self.conversations {
+            if cx.has_flag::<HandoffFeatureFlag>()
+                && let Some(marker) = &conversation.marker
+            {
+                stream.send_compaction_succeeded(marker.id.clone());
+            }
+
             for message in &conversation.messages {
                 match message {
                     Message::User(user_message) => stream.send_user_message(user_message),

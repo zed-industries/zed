@@ -1912,9 +1912,21 @@ impl NativeAgentConnection {
                                     thread.update_retry_status(status, cx)
                                 })?;
                             }
-                            ThreadEvent::CompactionStarted(_)
-                            | ThreadEvent::CompactionSucceeded(_)
-                            | ThreadEvent::CompactionFailed(_) => {}
+                            ThreadEvent::CompactionStarted(_) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.context_compaction_started(cx);
+                                })?;
+                            }
+                            ThreadEvent::CompactionSucceeded(_) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.context_compaction_succeeded(cx);
+                                })?;
+                            }
+                            ThreadEvent::CompactionFailed(_) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.clear_context_compaction(cx);
+                                })?;
+                            }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
                                 return Ok(acp::PromptResponse::new(stop_reason));

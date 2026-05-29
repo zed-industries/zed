@@ -180,6 +180,7 @@ pub enum AgentThreadEntry {
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
     CompletedPlan(Vec<PlanEntry>),
+    ContextCompaction,
 }
 
 impl AgentThreadEntry {
@@ -189,6 +190,7 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
             Self::CompletedPlan(_) => false,
+            Self::ContextCompaction => false,
         }
     }
 
@@ -205,6 +207,7 @@ impl AgentThreadEntry {
                 }
                 md
             }
+            Self::ContextCompaction => "--- Context Compacted ---".to_string(),
         }
     }
 
@@ -1117,6 +1120,7 @@ pub struct AcpThread {
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
+    compacting_context: bool,
     connection: Rc<dyn AgentConnection>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
@@ -1178,6 +1182,8 @@ pub enum AcpThreadEvent {
     ToolAuthorizationReceived(acp::ToolCallId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
+    CompactionStarted,
+    CompactionFinished,
     Stopped(acp::StopReason),
     Error,
     LoadError(LoadError),
@@ -1324,6 +1330,7 @@ impl AcpThread {
             provisional_title: None,
             project,
             running_turn: None,
+            compacting_context: false,
             turn_id: 0,
             connection,
             session_id,
@@ -1450,6 +1457,10 @@ impl AcpThread {
         }
     }
 
+    pub fn is_compacting_context(&self) -> bool {
+        self.compacting_context
+    }
+
     pub fn had_error(&self) -> bool {
         self.had_error
     }
@@ -1464,7 +1475,8 @@ impl AcpThread {
                 }) => return true,
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction => {}
             }
         }
         false
@@ -1492,7 +1504,8 @@ impl AcpThread {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction => {}
             }
         }
 
@@ -1511,7 +1524,8 @@ impl AcpThread {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction => {}
             }
         }
 
@@ -1522,9 +1536,9 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
-                AgentThreadEntry::AssistantMessage(..) | AgentThreadEntry::CompletedPlan(..) => {
-                    continue;
-                }
+                AgentThreadEntry::AssistantMessage(..)
+                | AgentThreadEntry::CompletedPlan(..)
+                | AgentThreadEntry::ContextCompaction => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
             }
         }
@@ -1866,6 +1880,25 @@ impl AcpThread {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
+    }
+
+    pub fn context_compaction_started(&mut self, cx: &mut Context<Self>) {
+        if !self.compacting_context {
+            self.compacting_context = true;
+            cx.emit(AcpThreadEvent::CompactionStarted);
+        }
+    }
+
+    pub fn context_compaction_succeeded(&mut self, cx: &mut Context<Self>) {
+        self.push_entry(AgentThreadEntry::ContextCompaction, cx);
+        self.clear_context_compaction(cx);
+    }
+
+    pub fn clear_context_compaction(&mut self, cx: &mut Context<Self>) {
+        if self.compacting_context {
+            self.compacting_context = false;
+            cx.emit(AcpThreadEvent::CompactionFinished);
+        }
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
@@ -2433,6 +2466,7 @@ impl AcpThread {
 
                         if r.stop_reason == acp::StopReason::MaxTokens {
                             this.had_error = true;
+                            this.clear_context_compaction(cx);
                             cx.emit(AcpThreadEvent::Error);
                             log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
 
@@ -2465,6 +2499,7 @@ impl AcpThread {
                         // Handle refusal - distinguish between user prompt and tool call refusals
                         if let acp::StopReason::Refusal = r.stop_reason {
                             this.had_error = true;
+                            this.clear_context_compaction(cx);
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
                                 // Check if there's a completed tool call with results after the last user message
                                 // This indicates the refusal is in response to tool output, not the user's prompt
@@ -2507,6 +2542,7 @@ impl AcpThread {
                             cx.emit(AcpThreadEvent::TokenUsageUpdated);
                         }
 
+                        this.clear_context_compaction(cx);
                         cx.emit(AcpThreadEvent::Stopped(r.stop_reason));
                         Ok(Some(r))
                     }
@@ -2514,6 +2550,7 @@ impl AcpThread {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
 
                         this.had_error = true;
+                        this.clear_context_compaction(cx);
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
                         Err(e)
@@ -2531,6 +2568,7 @@ impl AcpThread {
         self.connection.cancel(&self.session_id, cx);
 
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+        self.clear_context_compaction(cx);
         self.mark_pending_tools_as_canceled();
 
         // Wait for the send task to complete

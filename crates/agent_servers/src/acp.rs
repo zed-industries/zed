@@ -3464,6 +3464,7 @@ mod tests {
                     acp_thread::AgentThreadEntry::AssistantMessage(_) => "assistant",
                     acp_thread::AgentThreadEntry::ToolCall(_) => "tool_call",
                     acp_thread::AgentThreadEntry::CompletedPlan(_) => "plan",
+                    acp_thread::AgentThreadEntry::ContextCompaction => "context_compaction",
                 })
                 .collect::<Vec<_>>()
         });

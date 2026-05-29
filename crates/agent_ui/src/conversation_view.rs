@@ -24,7 +24,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::AgentSharingFeatureFlag;
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -288,6 +288,8 @@ impl Conversation {
                     | AcpThreadEvent::EntriesRemoved(_)
                     | AcpThreadEvent::Retry(_)
                     | AcpThreadEvent::SubagentSpawned(_)
+                    | AcpThreadEvent::CompactionStarted
+                    | AcpThreadEvent::CompactionFinished
                     | AcpThreadEvent::Stopped(_)
                     | AcpThreadEvent::Error
                     | AcpThreadEvent::LoadError(_)
@@ -487,6 +489,8 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::ModeUpdated(_)
         | AcpThreadEvent::ConfigOptionsUpdated(_)
         | AcpThreadEvent::SubagentSpawned(_)
+        | AcpThreadEvent::CompactionStarted
+        | AcpThreadEvent::CompactionFinished
         | AcpThreadEvent::PromptUpdated => false,
     }
 }
@@ -1530,6 +1534,13 @@ impl ConversationView {
                 if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status = Some(retry.clone());
+                    });
+                }
+            }
+            AcpThreadEvent::CompactionStarted | AcpThreadEvent::CompactionFinished => {
+                if let Some(active) = self.thread_view(&session_id) {
+                    active.update(cx, |active, cx| {
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
