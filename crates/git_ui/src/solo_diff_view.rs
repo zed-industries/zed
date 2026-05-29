@@ -85,7 +85,7 @@ impl SoloDiffView {
         };
 
         let project = workspace_entity.read(cx).project().clone();
-        let repo_path = entry.repo_path.clone();
+        let repo_path = entry.repo_path;
         window.spawn(cx, async move |cx| {
             let buffer = project
                 .update(cx, |project, cx| {
