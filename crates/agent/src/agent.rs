@@ -30,9 +30,9 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
-    SkillIndex, SkillLoadError, SkillScopeId, SkillSource, SkillSummary, builtin_skills,
-    global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
+    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
+    SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillScopeId, SkillSource, SkillSummary,
+    builtin_skills, global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
     project_skills_relative_path, read_skill_body_from_content,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -342,6 +342,12 @@ static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
         .collect()
 });
 
+static AGENTS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
+    RelPath::unix(AGENTS_DIR_NAME)
+        .ok()
+        .map(|path| path.into_arc())
+});
+
 static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
     RelPath::unix(project_skills_relative_path())
         .ok()
@@ -352,6 +358,52 @@ struct ProjectSkillFile {
     relative_path: Arc<RelPath>,
     display_path: PathBuf,
     size: u64,
+}
+
+async fn expand_worktree_directory(
+    worktree: &Entity<Worktree>,
+    path: &RelPath,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let expand_task = worktree.update(cx, |worktree, cx| {
+        let entry_id = worktree
+            .entry_for_path(path)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.id);
+        entry_id.and_then(|entry_id| worktree.expand_entry(entry_id, cx))
+    });
+
+    if let Some(expand_task) = expand_task {
+        expand_task.await?;
+    }
+
+    Ok(())
+}
+
+async fn expand_project_skills_directories(
+    worktree: &Entity<Worktree>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let agents_dir = RelPath::unix(AGENTS_DIR_NAME)?;
+    let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
+        return Ok(());
+    };
+
+    expand_worktree_directory(worktree, agents_dir, cx).await?;
+    expand_worktree_directory(worktree, skills_prefix, cx).await?;
+
+    let skill_dirs = worktree.update(cx, |worktree, _cx| {
+        worktree
+            .child_entries(skills_prefix)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>()
+    });
+    for skill_dir in skill_dirs {
+        expand_worktree_directory(worktree, &skill_dir, cx).await?;
+    }
+
+    Ok(())
 }
 
 fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFile> {
@@ -910,6 +962,13 @@ impl NativeAgent {
                     if let Some(scan_complete) = scan_complete {
                         scan_complete.await;
                     }
+                    if let Err(error) = expand_project_skills_directories(&worktree, cx).await {
+                        project_skills_results.push(vec![Err(SkillLoadError {
+                            path: PathBuf::from(project_skills_relative_path()),
+                            message: format!("Failed to scan project skills: {}", error),
+                        })]);
+                        continue;
+                    }
 
                     let skill_files = worktree.update(cx, |worktree, _cx| {
                         project_skill_files_from_worktree(worktree)
@@ -1158,7 +1217,7 @@ impl NativeAgent {
                     RULES_FILE_REL_PATHS
                         .iter()
                         .any(|rules_path| path_ref == rules_path.as_ref())
-                        || SKILLS_PREFIX
+                        || AGENTS_PREFIX
                             .as_ref()
                             .is_some_and(|prefix| path_ref.starts_with(prefix))
                 }) {
@@ -3084,12 +3143,12 @@ fn skill_body_resolver_for_project(
             let project = project.clone();
             cx.spawn(async move |cx| {
                 let worktree_id = WorktreeId::from_usize(worktree_id.0);
-                let relative_path = project.update(cx, |project, cx| {
-                    let worktree = project
-                        .worktree_for_id(worktree_id, cx)
-                        .context("no such worktree")?;
-                    let worktree = worktree.read(cx);
-                    project_skill_files_from_worktree(&worktree)
+                let worktree = project
+                    .update(cx, |project, cx| project.worktree_for_id(worktree_id, cx))
+                    .context("no such worktree")?;
+                expand_project_skills_directories(&worktree, cx).await?;
+                let relative_path = worktree.update(cx, |worktree, _cx| {
+                    project_skill_files_from_worktree(worktree)
                         .into_iter()
                         .find(|skill_file| skill_file.display_path == skill.skill_file_path)
                         .map(|skill_file| skill_file.relative_path)
