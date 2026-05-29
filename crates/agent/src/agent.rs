@@ -30,9 +30,10 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, Skill, SkillIndex, SkillLoadError,
-    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
-    load_skills_from_directory, project_skills_relative_path,
+    MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
+    SkillIndex, SkillLoadError, SkillScopeId, SkillSource, SkillSummary, builtin_skills,
+    global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
+    project_skills_relative_path, read_skill_body_from_content,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -48,7 +49,8 @@ use gpui::{
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{
-    AgentId, Project, ProjectItem, ProjectPath, Worktree, trusted_worktrees::TrustedWorktrees,
+    AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
+    trusted_worktrees::TrustedWorktrees,
 };
 use prompt_store::{ProjectContext, RULES_FILE_NAMES, RulesFileContext, WorktreeContext};
 use serde::{Deserialize, Serialize};
@@ -346,6 +348,49 @@ static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
         .map(|path| path.into_arc())
 });
 
+struct ProjectSkillFile {
+    relative_path: Arc<RelPath>,
+    display_path: PathBuf,
+    size: u64,
+}
+
+fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFile> {
+    let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(skill_file_name) = RelPath::unix(SKILL_FILE_NAME) else {
+        return Vec::new();
+    };
+
+    let mut skill_files = Vec::new();
+    for skill_dir in worktree.child_entries(skills_prefix) {
+        if !skill_dir.is_dir() {
+            continue;
+        }
+
+        let relative_path = skill_dir.path.join(skill_file_name);
+        let Some(skill_file) = worktree.entry_for_path(&relative_path) else {
+            continue;
+        };
+        if !skill_file.is_file() {
+            continue;
+        }
+
+        skill_files.push(ProjectSkillFile {
+            display_path: worktree.absolutize(&relative_path),
+            relative_path,
+            size: skill_file.size,
+        });
+    }
+
+    skill_files.sort_by(|a, b| {
+        a.relative_path
+            .as_unix_str()
+            .cmp(b.relative_path.as_unix_str())
+    });
+    skill_files
+}
+
 impl NativeAgent {
     pub fn new(
         thread_store: Entity<ThreadStore>,
@@ -585,9 +630,9 @@ impl NativeAgent {
             // after the thread is constructed are still visible to the
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
-            thread.add_tool(SkillTool::new(
+            thread.add_tool(SkillTool::with_body_resolver(
                 skills_resolver_for_project(weak.clone(), project_id),
-                self.fs.clone(),
+                skill_body_resolver_for_project(project.clone(), self.fs.clone()),
             ));
         });
 
@@ -830,9 +875,8 @@ impl NativeAgent {
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
         let worktree_store = project.read(cx).worktree_store();
         let project_skills_task = {
-            let project_skills_futures: Vec<
-                futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,
-            > = worktrees
+            let project = project.clone();
+            let trusted_worktrees = worktrees
                 .iter()
                 .filter_map(|worktree| {
                     let worktree_id = worktree.read(cx).id();
@@ -844,36 +888,88 @@ impl NativeAgent {
                     if !is_trusted {
                         return None;
                     }
+
                     let worktree_snapshot = worktree.read(cx);
-                    let abs_path = worktree_snapshot.abs_path();
                     let worktree_root_name: Arc<str> = worktree_snapshot.root_name_str().into();
-                    // Capture scan_complete *before* spawning so we don't have to re-borrow
-                    // the worktree from inside the async task (which would require a cx).
                     let scan_complete = worktree_snapshot
                         .as_local()
                         .map(|local| local.scan_complete());
-                    let skills_dir = abs_path.join(project_skills_relative_path());
-                    let fs = fs.clone();
-                    Some(
-                        async move {
-                            if let Some(scan_complete) = scan_complete {
-                                scan_complete.await;
-                            }
-                            load_skills_from_directory(
-                                &fs,
-                                &skills_dir,
-                                SkillSource::ProjectLocal {
-                                    worktree_id: SkillScopeId(worktree_id.to_usize()),
-                                    worktree_root_name,
-                                },
-                            )
-                            .await
-                        }
-                        .boxed(),
-                    )
+                    Some((
+                        worktree.clone(),
+                        worktree_id,
+                        worktree_root_name,
+                        scan_complete,
+                    ))
                 })
-                .collect();
-            cx.background_spawn(async move { future::join_all(project_skills_futures).await })
+                .collect::<Vec<_>>();
+
+            cx.spawn(async move |cx| {
+                let mut project_skills_results = Vec::new();
+                for (worktree, worktree_id, worktree_root_name, scan_complete) in trusted_worktrees
+                {
+                    if let Some(scan_complete) = scan_complete {
+                        scan_complete.await;
+                    }
+
+                    let skill_files = worktree.update(cx, |worktree, _cx| {
+                        project_skill_files_from_worktree(worktree)
+                    });
+                    let source = SkillSource::ProjectLocal {
+                        worktree_id: SkillScopeId(worktree_id.to_usize()),
+                        worktree_root_name,
+                    };
+
+                    let mut worktree_results = Vec::new();
+                    for skill_file in skill_files {
+                        if skill_file.size > MAX_SKILL_FILE_SIZE as u64 {
+                            worktree_results.push(Err(SkillLoadError {
+                                path: skill_file.display_path.clone(),
+                                message: format!(
+                                    "SKILL.md file exceeds maximum size of {}KB",
+                                    MAX_SKILL_FILE_SIZE / 1024
+                                ),
+                            }));
+                            continue;
+                        }
+
+                        let buffer = match project
+                            .update(cx, |project, cx| {
+                                project.open_buffer(
+                                    (worktree_id, skill_file.relative_path.clone()),
+                                    cx,
+                                )
+                            })
+                            .await
+                        {
+                            Ok(buffer) => buffer,
+                            Err(error) => {
+                                worktree_results.push(Err(SkillLoadError {
+                                    path: skill_file.display_path.clone(),
+                                    message: format!("Failed to read file: {}", error),
+                                }));
+                                continue;
+                            }
+                        };
+
+                        let content = cx
+                            .update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+
+                        worktree_results.push(
+                            parse_skill_frontmatter(
+                                &skill_file.display_path,
+                                &content,
+                                source.clone(),
+                            )
+                            .map_err(|error| SkillLoadError {
+                                path: skill_file.display_path,
+                                message: error.to_string(),
+                            }),
+                        );
+                    }
+                    project_skills_results.push(worktree_results);
+                }
+                project_skills_results
+            })
         };
         cx.spawn(async move |_cx| {
             let worktrees = future::join_all(worktree_tasks).await;
@@ -1600,7 +1696,8 @@ impl NativeAgent {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
         let path_style = state.project.read(cx).path_style(cx);
-        let fs = self.fs.clone();
+        let read_skill_body =
+            skill_body_resolver_for_project(state.project.clone(), self.fs.clone());
 
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
@@ -1624,14 +1721,12 @@ impl NativeAgent {
             let body = if let Some(embedded) = skill.embedded_body {
                 embedded.to_string()
             } else {
-                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to read skill body from {}",
-                            skill.skill_file_path.display()
-                        )
-                    })?
+                read_skill_body(skill.clone(), cx).await.with_context(|| {
+                    format!(
+                        "Failed to read skill body from {}",
+                        skill.skill_file_path.display()
+                    )
+                })?
             };
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
@@ -2977,6 +3072,49 @@ pub(crate) fn skills_resolver_for_project(
                     .map(|state| Arc::new(apply_skill_overrides(&state.skills)))
             })
             .unwrap_or_else(|| Arc::new(Vec::new()))
+    }
+}
+
+fn skill_body_resolver_for_project(
+    project: Entity<Project>,
+    fs: Arc<dyn Fs>,
+) -> impl Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static {
+    move |skill, cx| match skill.source.clone() {
+        SkillSource::ProjectLocal { worktree_id, .. } => {
+            let project = project.clone();
+            cx.spawn(async move |cx| {
+                let worktree_id = WorktreeId::from_usize(worktree_id.0);
+                let relative_path = project.update(cx, |project, cx| {
+                    let worktree = project
+                        .worktree_for_id(worktree_id, cx)
+                        .context("no such worktree")?;
+                    let worktree = worktree.read(cx);
+                    project_skill_files_from_worktree(&worktree)
+                        .into_iter()
+                        .find(|skill_file| skill_file.display_path == skill.skill_file_path)
+                        .map(|skill_file| skill_file.relative_path)
+                        .context("skill file is no longer in the worktree snapshot")
+                })?;
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer((worktree_id, relative_path), cx)
+                    })
+                    .await?;
+                let content =
+                    cx.update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+
+                read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
+            })
+        }
+        SkillSource::BuiltIn | SkillSource::Global => {
+            let fs = fs.clone();
+            cx.background_spawn(async move {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .map_err(Into::into)
+            })
+        }
     }
 }
 

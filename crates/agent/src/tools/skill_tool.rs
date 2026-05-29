@@ -2,7 +2,7 @@ use agent_client_protocol::schema as acp;
 use agent_skills::Skill;
 use anyhow::Result;
 use fs::Fs;
-use gpui::{App, SharedString, Task};
+use gpui::{App, AppContext as _, AsyncApp, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -115,10 +115,12 @@ impl From<SkillToolOutput> for LanguageModelToolResultContent {
 /// thread-build time), so the model can invoke skills that were added to
 /// the project after the thread was created.
 pub type SkillsResolver = Arc<dyn Fn(&App) -> Arc<Vec<Skill>> + Send + Sync>;
+pub type SkillBodyResolver =
+    Arc<dyn Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync>;
 
 pub struct SkillTool {
     skills: SkillsResolver,
-    fs: Arc<dyn Fs>,
+    body_resolver: SkillBodyResolver,
 }
 
 impl SkillTool {
@@ -126,9 +128,24 @@ impl SkillTool {
     where
         F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
     {
+        Self::with_body_resolver(skills, move |skill, cx| {
+            let fs = fs.clone();
+            cx.background_spawn(async move {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .map_err(Into::into)
+            })
+        })
+    }
+
+    pub fn with_body_resolver<F, R>(skills: F, body_resolver: R) -> Self
+    where
+        F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
+        R: Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static,
+    {
         Self {
             skills: Arc::new(skills),
-            fs,
+            body_resolver: Arc::new(body_resolver),
         }
     }
 }
@@ -206,11 +223,11 @@ impl AgentTool for SkillTool {
             let body = if let Some(embedded) = skill.embedded_body {
                 embedded.to_string()
             } else {
-                agent_skills::read_skill_body(self.fs.as_ref(), &skill.skill_file_path)
-                    .await
-                    .map_err(|e| SkillToolOutput::Error {
+                (self.body_resolver)(skill.clone(), cx).await.map_err(|e| {
+                    SkillToolOutput::Error {
                         error: e.to_string(),
-                    })?
+                    }
+                })?
             };
             let rendered = render_skill_envelope(&skill, &body);
 

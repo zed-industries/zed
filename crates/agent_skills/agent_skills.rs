@@ -620,7 +620,14 @@ pub async fn read_skill_body(
         message: format!("Failed to read file: {}", e),
     })?;
 
-    let (_metadata, body) = extract_frontmatter(&content).map_err(|e| SkillLoadError {
+    read_skill_body_from_content(skill_file_path, &content)
+}
+
+pub fn read_skill_body_from_content(
+    skill_file_path: &Path,
+    content: &str,
+) -> Result<String, SkillLoadError> {
+    let (_metadata, body) = parse_skill_file_content(content).map_err(|e| SkillLoadError {
         path: skill_file_path.to_path_buf(),
         message: e.to_string(),
     })?;
