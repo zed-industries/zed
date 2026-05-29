@@ -274,12 +274,15 @@ impl DapStore {
                 let user_env = dap_settings.and_then(|s| s.env.clone());
 
                 let worktree_id = worktree.read(cx).id();
-                let wait_until_downloads_allowed =
+                let wait_until_downloads_allowed = if user_installed_path.is_some() {
+                    None
+                } else {
                     BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
                         binary_downloads.update(cx, |binary_downloads, cx| {
                             binary_downloads.wait_until_allowed(Some(worktree_id), cx)
                         })
-                    });
+                    })
+                };
 
                 let delegate = self.delegate(worktree, console, cx);
                 let adapter_name = adapter.name();

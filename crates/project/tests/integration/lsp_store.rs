@@ -219,6 +219,68 @@ async fn test_allow_binary_downloads_can_be_enabled_for_a_project(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn test_user_installed_lsp_starts_with_downloads_disabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| project::binary_downloads::init(cx));
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+
+    let settings_json = json!({
+        "languages": { "Rust": { "language_servers": ["user-installed-language-server"] } },
+        "lsp": {
+            "user-installed-language-server": {
+                "binary": { "path": path!(".bin/user-installed-language-server.exe").to_string() }
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": { "settings.json": settings_json.to_string() },
+            ".bin": { "user-installed-language-server.exe": "" },
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "user-installed-language-server",
+            ..Default::default()
+        },
+    );
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut next_server = fake_servers.next().fuse();
+    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+    futures::select! {
+        server = next_server => assert_eq!(server.is_some(), true),
+        _ = timeout => {
+            panic!("user-installed language server should start even while downloads are disabled")
+        }
+    }
+}
+
+#[gpui::test]
 async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();

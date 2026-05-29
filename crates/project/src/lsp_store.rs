@@ -715,10 +715,10 @@ impl LocalLspStore {
         {
             let settings = settings.clone();
             let languages = self.languages.clone();
+            drop(wait_until_downloads_allowed);
             return cx.background_spawn(async move {
-                await_tool_permissions(
+                await_worktree_trust(
                     wait_until_worktree_trust,
-                    wait_until_downloads_allowed,
                     &worktree_abs_path,
                     adapter.name(),
                     &languages,
@@ -745,8 +745,14 @@ impl LocalLspStore {
             let language_server_name = adapter.name.clone();
             let languages = self.languages.clone();
             return cx.spawn(async move |_| {
-                await_tool_permissions(
+                await_worktree_trust(
                     wait_until_worktree_trust,
+                    &worktree_abs_path,
+                    language_server_name.clone(),
+                    &languages,
+                )
+                .await;
+                await_lsp_downloads_allowed(
                     wait_until_downloads_allowed,
                     &worktree_abs_path,
                     language_server_name.clone(),
@@ -785,9 +791,8 @@ impl LocalLspStore {
 
         let languages = self.languages.clone();
         cx.spawn(async move |cx| {
-            await_tool_permissions(
+            await_worktree_trust(
                 wait_until_worktree_trust,
-                wait_until_downloads_allowed,
                 &worktree_abs_path,
                 adapter.name(),
                 &languages,
@@ -800,28 +805,70 @@ impl LocalLspStore {
                 .await
                 .await;
 
-            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+            let downloads_allowed_now = wait_until_downloads_allowed
+                .as_ref()
+                .map_or(true, |wait| *wait.borrow());
 
             let mut binary = match (existing_binary, maybe_download_binary) {
-                (binary, None) => binary?,
-                (Err(_), Some(downloader)) => downloader.await?,
+                (binary, None) => {
+                    delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+                    binary?
+                }
+                (Err(_), Some(downloader)) => {
+                    if !downloads_allowed_now {
+                        let reason = language::BinaryDownloadsDisabled::new(format!(
+                            "language server {}",
+                            adapter.name()
+                        ))
+                        .to_string();
+                        delegate.update_status(adapter.name(), BinaryStatus::Disabled { reason });
+                    }
+                    await_lsp_downloads_allowed(
+                        wait_until_downloads_allowed,
+                        &worktree_abs_path,
+                        adapter.name(),
+                        &languages,
+                    )
+                    .await;
+                    delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+                    downloader.await?
+                }
                 (Ok(existing_binary), Some(downloader)) => {
-                    let mut download_timeout = cx
-                        .background_executor()
-                        .timer(SERVER_DOWNLOAD_TIMEOUT)
-                        .fuse();
-                    let mut downloader = downloader.fuse();
-                    futures::select! {
-                        _ = download_timeout => {
-                            // Return existing binary and kick the existing work to the background.
-                            cx.spawn(async move |_| downloader.await).detach();
-                            Ok(existing_binary)
-                        },
-                        downloaded_or_existing_binary = downloader => {
-                            // If download fails, this results in the existing binary.
-                            downloaded_or_existing_binary
-                        }
-                    }?
+                    delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+                    if !downloads_allowed_now {
+                        let languages = languages.clone();
+                        let name = adapter.name();
+                        let worktree_abs_path = worktree_abs_path.clone();
+                        cx.spawn(async move |_| {
+                            await_lsp_downloads_allowed(
+                                wait_until_downloads_allowed,
+                                &worktree_abs_path,
+                                name,
+                                &languages,
+                            )
+                            .await;
+                            downloader.await
+                        })
+                        .detach();
+                        existing_binary
+                    } else {
+                        let mut download_timeout = cx
+                            .background_executor()
+                            .timer(SERVER_DOWNLOAD_TIMEOUT)
+                            .fuse();
+                        let mut downloader = downloader.fuse();
+                        futures::select! {
+                            _ = download_timeout => {
+                                // Return existing binary and kick the existing work to the background.
+                                cx.spawn(async move |_| downloader.await).detach();
+                                Ok(existing_binary)
+                            },
+                            downloaded_or_existing_binary = downloader => {
+                                // If download fails, this results in the existing binary.
+                                downloaded_or_existing_binary
+                            }
+                        }?
+                    }
                 }
             };
             let mut shell_env = delegate.shell_env().await;
@@ -13667,18 +13714,12 @@ fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabi
     )
 }
 
-/// Awaits worktree-trust and binary-downloads approvals (whichever ones are
-/// pending) before letting a language-server start proceed. Once both gates
-/// are open the server's binary status is bumped to [`BinaryStatus::Starting`]
-/// so the UI catches up.
-async fn await_tool_permissions(
+async fn await_worktree_trust(
     wait_until_worktree_trust: Option<watch::Receiver<bool>>,
-    wait_until_downloads_allowed: Option<watch::Receiver<bool>>,
     worktree_abs_path: &Path,
     name: LanguageServerName,
     languages: &Arc<LanguageRegistry>,
 ) {
-    let was_waiting = wait_until_worktree_trust.is_some() || wait_until_downloads_allowed.is_some();
     if let Some(mut wait) = wait_until_worktree_trust
         && !*wait.borrow()
     {
@@ -13691,12 +13732,21 @@ async fn await_tool_permissions(
             }
         }
         log::info!("Worktree {worktree_abs_path:?} is trusted, starting language server {name}");
+        languages.update_lsp_binary_status(name, BinaryStatus::Starting);
     }
+}
+
+async fn await_lsp_downloads_allowed(
+    wait_until_downloads_allowed: Option<watch::Receiver<bool>>,
+    worktree_abs_path: &Path,
+    name: LanguageServerName,
+    languages: &Arc<LanguageRegistry>,
+) {
     if let Some(mut wait) = wait_until_downloads_allowed
         && !*wait.borrow()
     {
         log::info!(
-            "Waiting for binary downloads to be allowed for {worktree_abs_path:?}, before starting language server {name}"
+            "Waiting for binary downloads to be allowed for {worktree_abs_path:?}, before downloading language server {name}"
         );
         while let Some(allowed) = wait.recv().await {
             if allowed {
@@ -13704,10 +13754,8 @@ async fn await_tool_permissions(
             }
         }
         log::info!(
-            "Binary downloads allowed for {worktree_abs_path:?}, starting language server {name}"
+            "Binary downloads allowed for {worktree_abs_path:?}, downloading language server {name}"
         );
-    }
-    if was_waiting {
         languages.update_lsp_binary_status(name, BinaryStatus::Starting);
     }
 }
