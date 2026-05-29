@@ -3070,12 +3070,15 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let search_source = match &log_source {
-                LogSource::LineRange { path, .. } => LogSource::Path(path.clone()),
-                other => other.clone(),
+            let line_range_arg: String;
+            let mut args: Vec<&str> = match &log_source {
+                LogSource::LineRange { path, start, end } => {
+                    line_range_arg =
+                        format!("{},{}:{}", start, end, path.as_unix_str());
+                    vec!["log", SEARCH_COMMIT_FORMAT, "-L", &line_range_arg]
+                }
+                _ => vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?],
             };
-
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, search_source.get_arg()?];
 
             args.push("--fixed-strings");
 
@@ -3086,7 +3089,7 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
-            if let LogSource::Path(path) = &search_source {
+            if let LogSource::Path(path) = &log_source {
                 args.extend(["--", path.as_unix_str()]);
             }
 
