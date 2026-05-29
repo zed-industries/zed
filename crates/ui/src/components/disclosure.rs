@@ -109,43 +109,37 @@ impl Component for Disclosure {
         ComponentScope::Input
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "An interactive element used to show or hide content, typically used in expandable sections or tree-like structures.",
-        )
+    fn description() -> &'static str {
+        "An interactive element used to show or hide content, \
+            typically used in expandable sections or tree-like structures."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Disclosure States",
-                        vec![
-                            single_example(
-                                "Closed",
-                                Disclosure::new("closed", false).into_any_element(),
-                            ),
-                            single_example(
-                                "Open",
-                                Disclosure::new("open", true).into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Interactive Example",
-                        vec![single_example(
-                            "Toggleable",
-                            v_flex()
-                                .gap_2()
-                                .child(Disclosure::new("interactive", false).into_any_element())
-                                .child(Label::new("Click to toggle"))
-                                .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Disclosure States",
+                    vec![
+                        single_example(
+                            "Closed",
+                            Disclosure::new("closed", false).into_any_element(),
+                        ),
+                        single_example("Open", Disclosure::new("open", true).into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Interactive Example",
+                    vec![single_example(
+                        "Toggleable",
+                        v_flex()
+                            .gap_2()
+                            .child(Disclosure::new("interactive", false).into_any_element())
+                            .child(Label::new("Click to toggle"))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

@@ -172,48 +172,45 @@ impl Component for UpdateButton {
         "UpdateButton"
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A button component displayed in the title bar to show auto-update status and allow users to restart Zed.",
-        )
+    fn description() -> &'static str {
+        "A button component displayed in the title bar to \
+        show auto-update status and allow users to restart Zed."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let version = "1.3.0+stable.2025051";
 
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Progress States",
-                        vec![
-                            single_example("Checking", UpdateButton::checking().into_any_element()),
-                            single_example(
-                                "Downloading",
-                                UpdateButton::downloading(version).into_any_element(),
-                            ),
-                            single_example(
-                                "Installing",
-                                UpdateButton::installing(version).into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Actionable States",
-                        vec![
-                            single_example(
-                                "Ready to Update",
-                                UpdateButton::updated(version).into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                UpdateButton::errored("Network timeout").into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Progress States",
+                    vec![
+                        single_example("Checking", UpdateButton::checking().into_any_element()),
+                        single_example(
+                            "Downloading",
+                            UpdateButton::downloading(version).into_any_element(),
+                        ),
+                        single_example(
+                            "Installing",
+                            UpdateButton::installing(version).into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Actionable States",
+                    vec![
+                        single_example(
+                            "Ready to Update",
+                            UpdateButton::updated(version).into_any_element(),
+                        ),
+                        single_example(
+                            "Error",
+                            UpdateButton::errored("Network timeout").into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

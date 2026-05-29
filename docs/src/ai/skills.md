@@ -39,10 +39,17 @@ The **User** tab shows your global skills. The **Project** tab shows skills for 
 
 For each skill you can:
 
+- **Copy Share Link** — copies a `zed://skill` link that embeds the skill, ready to send to someone else (see [Sharing Skills](#sharing-skills))
 - **Open** — opens the skill's `SKILL.md` file in the editor
 - **Delete** — removes the skill folder from disk
 
 If no skills are installed, the page shows a **Create a Skill** button that opens the Skill Creator.
+
+## Sharing Skills {#sharing-skills}
+
+You can hand a skill to a teammate without hosting it anywhere. In the Skills settings page, click the **link** icon on a skill row to copy a `zed://skill?data=…` link to your clipboard. The link is self-contained: it embeds the full `SKILL.md` contents (base64url-encoded), so the recipient doesn't need access to your project or any registry.
+
+When someone opens that link (for example by pasting it into their browser or clicking it in a chat), Zed launches the Skill Creator pre-filled with the shared skill. The recipient can review the name, description, and full body, choose a scope (global or project-local), and click **Save** to install it. Nothing is written to disk until they explicitly save, so a shared link can never silently install instructions into someone's agent.
 
 ## Managing Skills {#managing-skills}
 
