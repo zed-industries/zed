@@ -122,6 +122,35 @@ message GetDocumentSymbolsResponse {
   repeated DocumentSymbol symbols = 1;
 }
 
+message GetDocumentLinks {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentLinksResponse {
+  repeated DocumentLinkProto links = 1;
+  repeated VectorClockEntry version = 2;
+}
+
+message DocumentLinkProto {
+  optional AnchorRange range = 1;
+  optional string target = 2;
+  optional string tooltip = 3;
+  optional string data = 4;
+}
+
+message ResolveDocumentLink {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  uint64 language_server_id = 3;
+  bytes lsp_link = 4;
+}
+
+message ResolveDocumentLinkResponse {
+  bytes lsp_link = 1;
+}
+
 message DocumentSymbol {
   string name = 1;
   int32 kind = 2;
@@ -853,6 +882,7 @@ message LspQuery {
     SemanticTokens semantic_tokens = 16;
     GetFoldingRanges get_folding_ranges = 17;
     GetDocumentSymbols get_document_symbols = 18;
+    GetDocumentLinks get_document_links = 19;
   }
 }
 
@@ -879,6 +909,7 @@ message LspResponse {
     SemanticTokensResponse semantic_tokens_response = 14;
     GetFoldingRangesResponse get_folding_ranges_response = 15;
     GetDocumentSymbolsResponse get_document_symbols_response = 16;
+    GetDocumentLinksResponse get_document_links_response = 17;
   }
   uint64 server_id = 7;
 }

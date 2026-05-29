@@ -608,7 +608,7 @@ pub trait LspInstaller {
     type BinaryVersion;
     fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> impl Future<Output = Option<LanguageServerBinary>> {
@@ -617,7 +617,7 @@ pub trait LspInstaller {
 
     fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> impl Future<Output = Result<Self::BinaryVersion>>;
@@ -684,7 +684,7 @@ where
         delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
         let latest_version = self
-            .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
+            .fetch_latest_server_version(delegate, pre_release, cx)
             .await?;
 
         if let Some(binary) = cx
@@ -730,7 +730,7 @@ where
             // for each worktree we might have open.
             if binary_options.allow_path_lookup
                 && let Some(binary) = self
-                    .check_if_user_installed(delegate.as_ref(), toolchain, &mut cx)
+                    .check_if_user_installed(&delegate, toolchain, &mut cx)
                     .await
             {
                 log::info!(
@@ -1400,7 +1400,7 @@ impl LspInstaller for FakeLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -1409,7 +1409,7 @@ impl LspInstaller for FakeLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {

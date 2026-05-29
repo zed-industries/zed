@@ -18,11 +18,13 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 /// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
+///
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
     /// The fully-qualified path of the directory to list in the project.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill directory under `~/.agents/skills`.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -40,6 +42,10 @@ pub struct ListDirectoryToolInput {
     /// - bar
     ///
     /// If you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.
+    /// </example>
+    ///
+    /// <example>
+    /// To list a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.
     /// </example>
     pub path: String,
 }
@@ -234,7 +240,7 @@ impl AgentTool for ListDirectoryTool {
 
             // Fast path: a global skill resource lives outside any worktree, so
             // standard project-path resolution would refuse it. If the path
-            // resolves under the global skills tree, list it directly.
+            // expands and resolves under the global skills tree, list it directly.
             if let Some(skill_path) =
                 resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
             {

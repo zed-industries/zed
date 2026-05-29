@@ -2709,10 +2709,7 @@ impl GitGraph {
                             })
                             .when_some(remote.clone(), |this, remote| {
                                 let provider_name = remote.host.name();
-                                let icon = match provider_name.as_str() {
-                                    "GitHub" => IconName::Github,
-                                    _ => IconName::Link,
-                                };
+                                let icon = git_ui::get_provider_icon(provider_name.as_str());
                                 let parsed_remote = ParsedGitRemote {
                                     owner: remote.owner.as_ref().into(),
                                     repo: remote.repo.as_ref().into(),
