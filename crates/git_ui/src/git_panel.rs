@@ -2789,7 +2789,7 @@ impl GitPanel {
                         .and_then(|user_agents_md| user_agents_md.content().cloned())
                 });
 
-                let prompt = BuiltInPrompt::CommitMessage.default_content();
+                let prompt = include_str!("../src/commit_message_prompt.txt");
 
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor
