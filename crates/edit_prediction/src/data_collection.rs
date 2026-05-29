@@ -1,74 +1,136 @@
-use crate::StoredEvent;
-use anyhow::Result;
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use crate::{EditPredictionStore, StoredEvent};
+use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
-use gpui::{AsyncApp, Entity};
-use language::{Buffer, BufferSnapshot};
+use gpui::{Context, Entity, Task};
+use language::BufferSnapshot;
 use project::{Project, WorktreeId};
-use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
+use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc};
 use text::{OffsetRangeExt, Point};
 
-// todo! make this a Vec. Usages just use it like vec. Identity provided by path key is not helpful
-type UncomittedDiffSnapshot = HashMap<Arc<Path>, (BufferSnapshot, BufferDiffSnapshot)>;
+pub type UncommittedDiffSnapshot = Vec<(Arc<Path>, BufferSnapshot, BufferDiffSnapshot)>;
 
-pub async fn uncommitted_diff_for_events(
+pub fn uncommitted_diffs_for_events(
     project: Entity<Project>,
     worktree_id: WorktreeId,
-    root_name: String,
-    mut events: Vec<StoredEvent>,
-    uncommitted_diffs_by_path: HashMap<Arc<Path>, Entity<BufferDiff>>,
-    cx: &mut AsyncApp,
-) -> Result<(UncomittedDiffSnapshot, Vec<StoredEvent>)> {
-    let mut diff_buffers_by_path: HashMap<Arc<Path>, (Entity<Buffer>, Entity<BufferDiff>)> =
-        HashMap::default();
-    for stored_event in &events {
-        let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-        let Some((project_path, relative_path)) = project.read_with(cx, |project, cx| {
-            let project_path = project
-                .find_project_path(path, cx)
-                .filter(|path| path.worktree_id == worktree_id)?;
-            let relative_path: Arc<Path> = project_path.path.as_std_path().into();
-            Some((project_path, relative_path))
-        }) else {
-            continue;
-        };
+    events: Vec<StoredEvent>,
+    cx: &Context<'_, EditPredictionStore>,
+) -> Task<Option<(UncommittedDiffSnapshot, Vec<StoredEvent>)>> {
+    let project_id = project.entity_id();
+    let git_store = project.read_with(cx, |project, _| project.git_store().clone());
 
-        if let hash_map::Entry::Vacant(entry) = diff_buffers_by_path.entry(relative_path) {
-            let Some(diff) = uncommitted_diffs_by_path.get(entry.key()).cloned() else {
+    cx.spawn(async move |store, cx| {
+        let events_with_paths = events
+            .into_iter()
+            .filter_map(|stored_event| {
+                let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
+                project
+                    .read_with(cx, |project, cx| {
+                        let project_path = project
+                            .find_project_path(path, cx)
+                            .filter(|path| path.worktree_id == worktree_id)?;
+                        let relative_path: Arc<Path> = project_path.path.as_std_path().into();
+                        Some((project_path, relative_path))
+                    })
+                    .map(|(project_path, relative_path)| {
+                        (stored_event, project_path, relative_path)
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        let mut snapshots_by_path: HashMap<Arc<Path>, (BufferSnapshot, BufferDiffSnapshot)> =
+            HashMap::default();
+        for (stored_event, project_path, relative_path) in events_with_paths.iter().rev() {
+            if snapshots_by_path.contains_key(relative_path) {
                 continue;
-            };
+            }
+
             let buffer = project
                 .update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
                 })
-                .await?;
-            entry.insert((buffer, diff));
-        }
-    }
+                .await
+                .ok()?;
+            let old_snapshot_remote_id = stored_event.old_snapshot.remote_id();
+            let new_snapshot_version = stored_event.new_snapshot_version.clone();
+            let zeta_prompt::Event::BufferChange {
+                path: event_path, ..
+            } = stored_event.event.as_ref();
+            let cached_diff = stored_event.uncommitted_diff.clone().or_else(|| {
+                store
+                    .update(cx, |store, _| {
+                        store
+                            .projects
+                            .get(&project_id)?
+                            .events
+                            .iter()
+                            .find(|event| {
+                                event.old_snapshot.remote_id() == old_snapshot_remote_id
+                                    && event.new_snapshot_version == new_snapshot_version
+                            })?
+                            .uncommitted_diff
+                            .clone()
+                    })
+                    .ok()
+                    .flatten()
+            });
+            let diff = match cached_diff {
+                Some(diff) => diff,
+                None => {
+                    let diff = git_store
+                        .update(cx, |git_store, cx| {
+                            git_store.open_uncommitted_diff(buffer.clone(), cx)
+                        })
+                        .await
+                        .ok()?;
+                    store
+                        .update(cx, |store, _| {
+                            if let Some(project) = store.projects.get_mut(&project_id) {
+                                for event in project.events.iter_mut() {
+                                    let zeta_prompt::Event::BufferChange { path, .. } =
+                                        event.event.as_ref();
+                                    if old_snapshot_remote_id == event.old_snapshot.remote_id()
+                                        && path == event_path
+                                    {
+                                        event.uncommitted_diff = Some(diff.clone());
+                                    }
+                                }
+                            }
+                        })
+                        .ok()?;
+                    diff
+                }
+            };
 
-    events.retain(|stored_event| {
-        let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-        let relative_path = path.strip_prefix(&root_name).unwrap_or(path);
-        diff_buffers_by_path.contains_key(relative_path)
-    });
-
-    let uncommitted_diff_snapshots = diff_buffers_by_path
-        .into_iter()
-        .map(|(relative_path, (buffer, diff))| {
-            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
             let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
-            (relative_path, (snapshot, diff_snapshot))
-        })
-        .collect();
+            snapshots_by_path.insert(relative_path.clone(), (buffer_snapshot, diff_snapshot));
+        }
 
-    Ok((uncommitted_diff_snapshots, events))
+        let events = events_with_paths
+            .into_iter()
+            .filter_map(|(stored_event, _, relative_path)| {
+                snapshots_by_path
+                    .contains_key(&relative_path)
+                    .then_some(stored_event)
+            })
+            .collect();
+
+        let uncommitted_diff_snapshots = snapshots_by_path
+            .into_iter()
+            .map(|(relative_path, (snapshot, diff_snapshot))| {
+                (relative_path, snapshot, diff_snapshot)
+            })
+            .collect();
+
+        Some((uncommitted_diff_snapshots, events))
+    })
 }
 
-pub fn compute_uncommitted_diff(snapshot: UncomittedDiffSnapshot) -> String {
+pub fn compute_uncommitted_diff(snapshot: UncommittedDiffSnapshot) -> String {
     let mut uncommitted_diff = String::new();
-    let mut snapshots_by_path = snapshot.into_iter().collect::<Vec<_>>();
-    snapshots_by_path.sort_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path));
-    for (relative_path, (buffer_snapshot, diff_snapshot)) in snapshots_by_path {
+    let mut snapshots_by_path = snapshot;
+    snapshots_by_path.sort_by(|(left_path, _, _), (right_path, _, _)| left_path.cmp(right_path));
+    for (relative_path, buffer_snapshot, diff_snapshot) in snapshots_by_path {
         let base_snapshot = diff_snapshot.base_text();
         let is_existing_file = diff_snapshot.base_text_exists();
 
@@ -147,9 +209,9 @@ pub fn compute_uncommitted_diff(snapshot: UncomittedDiffSnapshot) -> String {
     uncommitted_diff
 }
 
-pub fn estimate_uncomitted_diff_byte_size(snapshot: &UncomittedDiffSnapshot) -> usize {
+pub fn estimate_uncomitted_diff_byte_size(snapshot: &UncommittedDiffSnapshot) -> usize {
     let mut size = 0;
-    for (_, (buffer_snapshot, diff_snapshot)) in snapshot {
+    for (_, buffer_snapshot, diff_snapshot) in snapshot {
         for hunk in diff_snapshot.hunks(buffer_snapshot) {
             size += hunk.diff_base_byte_range.len();
             size += hunk.range.to_offset(buffer_snapshot).len();

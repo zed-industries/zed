@@ -1,11 +1,9 @@
 use crate::{
     StoredEvent,
-    data_collection::{compute_uncommitted_diff, uncommitted_diff_for_events},
+    data_collection::{UncommittedDiffSnapshot, compute_uncommitted_diff},
     example_spec::{ExampleSpec, RecentFile},
 };
 use anyhow::Result;
-use buffer_diff::BufferDiff;
-use collections::HashMap;
 use gpui::{App, Entity, Task};
 use language::Buffer;
 use project::Project;
@@ -19,7 +17,7 @@ pub fn capture_example(
     events: Vec<StoredEvent>,
     recently_opened_files: Vec<RecentFile>,
     recently_viewed_files: Vec<RecentFile>,
-    uncommitted_diffs_by_path: HashMap<Arc<Path>, Entity<BufferDiff>>,
+    uncommitted_diff_snapshot: UncommittedDiffSnapshot,
     populate_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
@@ -42,18 +40,9 @@ pub fn capture_example(
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
     Some(cx.spawn(async move |cx| {
-        let (uncommitted_diff_events, events) = uncommitted_diff_for_events(
-            project.clone(),
-            worktree_id,
-            root_name.clone(),
-            events,
-            uncommitted_diffs_by_path,
-            cx,
-        )
-        .await?;
         let uncommitted_diff = cx
             .background_executor()
-            .spawn(async move { compute_uncommitted_diff(uncommitted_diff_events) })
+            .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshot) })
             .await;
 
         let line_comment_prefix = snapshot
@@ -206,6 +195,7 @@ fn generate_timestamp_name() -> String {
 mod tests {
     use super::*;
     use crate::EditPredictionStore;
+    use crate::data_collection::uncommitted_diffs_for_events;
     use client::RefreshLlmTokenListener;
     use client::{Client, UserStore};
     use clock::FakeSystemClock;
@@ -398,12 +388,13 @@ mod tests {
         );
 
         let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
-        let uncommitted_diffs_by_path = ep_store
-            .update(cx, |store, cx| {
-                store.uncommitted_diffs_for_events(project.clone(), worktree_id, events.clone(), cx)
+        let (uncommitted_diffs_by_path, events) = ep_store
+            .update(cx, |_store, cx| {
+                uncommitted_diffs_for_events(project.clone(), worktree_id, events.clone(), cx)
             })
             .await
             .unwrap();
+
         let mut example = cx
             .update(|cx| {
                 capture_example(

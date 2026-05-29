@@ -1,17 +1,14 @@
 use std::{
     ops::Range,
-    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result};
-use buffer_diff::BufferDiff;
 pub use cloud_api_types::JumpExampleTrigger;
 use cloud_api_types::{
     JumpExampleRecentFile, JumpExampleSpec, SubmitJumpExampleBody, SubmitJumpExampleResponse,
 };
-use collections::HashMap;
 use futures::future::Shared;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, TaskExt as _, WeakEntity};
 use language::{BufferSnapshot, File, Point};
@@ -24,7 +21,7 @@ use util::rel_path::RelPath;
 use crate::{
     EditPredictionStore, ProjectState, StoredEvent,
     data_collection::{
-        compute_uncommitted_diff, estimate_uncomitted_diff_byte_size, uncommitted_diff_for_events,
+        UncommittedDiffSnapshot, compute_uncommitted_diff, estimate_uncomitted_diff_byte_size,
     },
     example_spec::RecentFile,
     zeta,
@@ -62,7 +59,7 @@ pub struct PendingJumpExampleCaptureKey {
 
 pub fn try_start_jump_example_capture(
     project_state: &ProjectState,
-    uncommitted_diffs: Shared<Task<Option<HashMap<Arc<Path>, Entity<BufferDiff>>>>>,
+    uncommitted_diffs: Shared<Task<Option<(UncommittedDiffSnapshot, Vec<StoredEvent>)>>>,
     project: Entity<Project>,
     snapshot: BufferSnapshot,
     position: language::Anchor,
@@ -80,8 +77,8 @@ pub fn try_start_jump_example_capture(
         file_path: file.path().clone(),
         row_bucket: position.to_point(&snapshot).row / 10,
     };
-    let should_capture_example = !project_state.pending_jump_example_captures.len()
-        >= JUMP_EXAMPLE_MAX_PENDING_CAPTURE_COUNT
+    let should_capture_example = project_state.pending_jump_example_captures.len()
+        < JUMP_EXAMPLE_MAX_PENDING_CAPTURE_COUNT
         && !project_state
             .pending_jump_example_captures
             .iter()
@@ -95,21 +92,13 @@ pub fn try_start_jump_example_capture(
         let Some(ep_store) = ep_store.upgrade() else {
             return anyhow::Ok(());
         };
-        let (repository, worktree_id, worktree_info) = project.read_with(cx, |project, cx| {
+        let (repository, worktree) = project.read_with(cx, |project, cx| {
             let repository = project.active_repository(cx);
             let worktree_id = file.worktree_id(cx);
             let worktree = project.worktree_for_id(worktree_id, cx);
-            let worktree_info = worktree.map(|worktree| {
-                (
-                    worktree.read_with(cx, |worktree, _| {
-                        worktree.root_name().as_unix_str().to_string()
-                    }),
-                    worktree,
-                )
-            });
-            (repository, worktree_id, worktree_info)
+            (repository, worktree)
         });
-        let Some((worktree_root_name, worktree)) = worktree_info else {
+        let Some(worktree) = worktree else {
             return Ok(());
         };
 
@@ -124,20 +113,10 @@ pub fn try_start_jump_example_capture(
             if repository.is_none() {
                 break 'uncomitted_diff (None, stored_events.clone());
             }
-            let uncommitted_diffs = uncommitted_diffs
+            // todo! why does this return events?
+            let (uncommitted_diff_snapshot, edit_history_events) = uncommitted_diffs
                 .await
                 .context("failed to get uncommitted diffs for events")?;
-            // todo! why does this return events?
-            // todo! investigate split between this, and above uncomitted diffs function
-            let (uncommitted_diff_snapshot, edit_history_events) = uncommitted_diff_for_events(
-                project.clone(),
-                worktree_id,
-                worktree_root_name.clone(),
-                stored_events,
-                uncommitted_diffs,
-                cx,
-            )
-            .await?;
             let estimated_byte_size =
                 estimate_uncomitted_diff_byte_size(&uncommitted_diff_snapshot);
             if estimated_byte_size > JUMP_EXAMPLE_MAX_UNCOMMITTED_DIFF_SIZE {
