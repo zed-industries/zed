@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{path::{Path, PathBuf}, str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result, bail};
 
@@ -24,9 +24,7 @@ use task::Shell;
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
-    ProjectEnvironment, ProjectPath,
-    manifest_tree::{ManifestQueryDelegate, ManifestTree},
-    worktree_store::WorktreeStore,
+    ProjectEnvironment, ProjectEntryId, ProjectPath, WorktreeStoreEvent, manifest_tree::{ManifestQueryDelegate, ManifestTree}, worktree_store::{WorktreeStore}
 };
 
 pub struct ToolchainStore {
@@ -34,6 +32,7 @@ pub struct ToolchainStore {
     user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     worktree_store: Entity<WorktreeStore>,
     _sub: Subscription,
+    _worktree_sub : Option<Subscription>,
 }
 
 enum ToolchainStoreInner {
@@ -74,11 +73,18 @@ impl ToolchainStore {
         let _sub = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
         });
+
+        let _worktree_sub = cx.subscribe(&worktree_store, |this, _, event: &WorktreeStoreEvent, cx| {
+            if let WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, entry_id) = event {
+                let _ = this.on_worktree_deleted_entry(*worktree_id, *entry_id, cx);
+            }
+        });
         Self {
             mode: ToolchainStoreInner::Local(entity),
             worktree_store,
             user_toolchains: Default::default(),
             _sub,
+            _worktree_sub: Some(_worktree_sub),
         }
     }
 
@@ -97,6 +103,7 @@ impl ToolchainStore {
             user_toolchains: Default::default(),
             worktree_store,
             _sub,
+            _worktree_sub: None,
         }
     }
     pub(crate) fn activate_toolchain(
@@ -186,7 +193,7 @@ impl ToolchainStore {
             .filter(|(scope, _)| {
                 if let ToolchainScope::Subproject(subproject_root_path, relative_path) = scope {
                     target_root_path == *subproject_root_path
-                        && relative_path.starts_with(&path.path)
+                        && path.path.starts_with(relative_path)
                 } else {
                     true
                 }
@@ -243,6 +250,39 @@ impl ToolchainStore {
             }
         }
     }
+
+    pub(crate) fn on_worktree_deleted_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let Some(worktree) = self.worktree_store.read(cx).worktree_for_id(worktree_id, cx) else {
+            return Task::ready(());
+        };
+
+        let Some(entry) = worktree.read(cx).entry_for_id(entry_id) else {
+            return Task::ready(());
+        };
+
+        if !entry.is_dir() {
+            return Task::ready(());
+        }
+
+        let deleted_rel_path = entry.path.clone();
+        let deleted_abs = worktree.read(cx).absolutize(&deleted_rel_path);
+
+        self.validate_and_cleanup_toolchains(&deleted_abs, cx);
+
+        if let ToolchainStoreInner::Local(local) = &self.mode {
+            local.update(cx, |local, cx| {
+                local.on_worktree_deleted_entry(worktree_id, &deleted_abs, cx);
+            });
+        }
+
+        Task::ready(())
+    }
+
     async fn handle_activate_toolchain(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ActivateToolchain>,
@@ -408,6 +448,33 @@ impl ToolchainStore {
             ToolchainStoreInner::Remote(_) => None,
         }
     }
+
+    pub(crate) fn validate_and_cleanup_toolchains(
+        &mut self,
+        deleted_abs: &Path,
+        cx: &mut Context<Self>,
+    ) {
+        let toolchains_to_remove: Vec<(ToolchainScope, Toolchain)> = self
+            .user_toolchains
+            .iter()
+            .flat_map(|(scope, toolchains)| {
+                toolchains
+                    .iter()
+                    .filter_map(|toolchain| {
+                        if Path::new(toolchain.path.as_str()).starts_with(deleted_abs) {
+                            Some((scope.clone(), toolchain.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        for (scope, toolchain) in toolchains_to_remove {
+            self.remove_toolchain(toolchain, scope, cx);
+        }
+    }
 }
 
 pub struct LocalToolchainStore {
@@ -472,6 +539,7 @@ struct RemoteStore(WeakEntity<RemoteToolchainStore>);
 pub enum ToolchainStoreEvent {
     ToolchainActivated,
     CustomToolchainsModified,
+    ToolchainsValidated,
 }
 
 impl EventEmitter<ToolchainStoreEvent> for LocalToolchainStore {}
@@ -512,7 +580,7 @@ impl LocalToolchainStore {
                 .await
                 .ok()?;
             let toolchains = language.toolchain_lister()?;
-            let manifest_name = toolchains.meta().manifest_name;
+            let metadata = toolchains.meta();
             let (snapshot, worktree) = this
                 .update(cx, |this, cx| {
                     this.worktree_store
@@ -528,13 +596,18 @@ impl LocalToolchainStore {
                 Arc::from(ManifestQueryDelegate::new(snapshot)) as Arc<dyn ManifestDelegate>;
             let relative_path = manifest_tree
                 .update(cx, |this, cx| {
-                    this.root_for_path(&path, &manifest_name, &delegate, cx)
+                    this.root_for_path_with_indicators(
+                        &path,
+                        &metadata.root_indicators,
+                        &delegate,
+                        cx,
+                    )
                 })
-                .ok()?
-                .unwrap_or_else(|| ProjectPath {
-                    path: Arc::from(RelPath::empty()),
-                    worktree_id,
-                });
+                .ok()?;
+            let relative_path = relative_path.unwrap_or_else(|| ProjectPath {
+                path: Arc::from(RelPath::empty()),
+                worktree_id,
+            });
             let abs_path = worktree.update(cx, |this, _| this.absolutize(&relative_path.path));
 
             let project_env = environment
@@ -564,16 +637,27 @@ impl LocalToolchainStore {
         relative_path: &Arc<RelPath>,
         language_name: LanguageName,
     ) -> Option<Toolchain> {
+        self.active_toolchain_for_path(worktree_id, relative_path, &language_name)
+            .map(|(_, toolchain)| toolchain)
+    }
+
+    pub(crate) fn active_toolchain_for_path(
+        &self,
+        worktree_id: WorktreeId,
+        relative_path: &Arc<RelPath>,
+        language_name: &LanguageName,
+    ) -> Option<(Arc<RelPath>, Toolchain)> {
         let ancestors = relative_path.ancestors();
 
         self.active_toolchains
-            .get(&(worktree_id, language_name))
+            .get(&(worktree_id, language_name.clone()))
             .and_then(|paths| {
-                ancestors
-                    .into_iter()
-                    .find_map(|root_path| paths.get(root_path))
+                ancestors.into_iter().find_map(|root_path| {
+                    paths
+                        .get(root_path)
+                        .map(|toolchain| (root_path.into(), toolchain.clone()))
+                })
             })
-            .cloned()
     }
 
     fn resolve_toolchain(
@@ -605,6 +689,30 @@ impl LocalToolchainStore {
             cx.background_spawn(async move { toolchain_lister.resolve(path, project_env).await })
                 .await
         })
+    }
+
+    pub(crate) fn on_worktree_deleted_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        deleted_abs: &Path,
+        cx: &mut Context<Self>,
+    ) {
+        let mut did_remove = false;
+        for ((w_id, _), paths) in self.active_toolchains.iter_mut() {
+            if *w_id != worktree_id {
+                continue;
+            }
+            let before = paths.len();
+            paths.retain(|_, toolchain| {
+                !Path::new(toolchain.path.as_str()).starts_with(deleted_abs)
+            });
+            if paths.len() != before {
+                did_remove = true;
+            }
+        }
+        if did_remove {
+            cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+        }
     }
 }
 

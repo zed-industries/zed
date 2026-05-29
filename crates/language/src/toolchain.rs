@@ -18,7 +18,10 @@ use util::rel_path::RelPath;
 use crate::LanguageName;
 
 // Re-export core data types from language_core.
-pub use language_core::{Toolchain, ToolchainList, ToolchainMetadata, ToolchainScope};
+pub use language_core::{
+    Toolchain, ToolchainList, ToolchainMetadata, ToolchainRootIndicator, ToolchainRootMarker,
+    ToolchainRootMarkerKind, ToolchainScope,
+};
 
 #[async_trait]
 pub trait ToolchainLister: Send + Sync + 'static {

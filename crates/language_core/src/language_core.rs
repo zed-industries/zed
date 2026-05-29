@@ -36,4 +36,7 @@ pub use lsp_adapter::{
 };
 pub use manifest::ManifestName;
 pub use queries::{LanguageQueries, QUERY_FILENAME_PREFIXES};
-pub use toolchain::{Toolchain, ToolchainList, ToolchainMetadata, ToolchainScope};
+pub use toolchain::{
+    Toolchain, ToolchainList, ToolchainMetadata, ToolchainRootIndicator, ToolchainRootMarker,
+    ToolchainRootMarkerKind, ToolchainScope,
+};

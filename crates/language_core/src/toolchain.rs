@@ -86,13 +86,58 @@ impl ToolchainScope {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
+pub enum ToolchainRootMarkerKind {
+    File,
+    Directory,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct ToolchainRootMarker {
+    pub name: SharedString,
+    pub kind: ToolchainRootMarkerKind,
+    pub required_child: Option<SharedString>,
+}
+
+impl ToolchainRootMarker {
+    pub fn file(name: SharedString) -> Self {
+        Self {
+            name,
+            kind: ToolchainRootMarkerKind::File,
+            required_child: None,
+        }
+    }
+
+    pub fn directory(name: SharedString) -> Self {
+        Self {
+            name,
+            kind: ToolchainRootMarkerKind::Directory,
+            required_child: None,
+        }
+    }
+
+    pub fn directory_with_required_child(name: SharedString, required_child: SharedString) -> Self {
+        Self {
+            name,
+            kind: ToolchainRootMarkerKind::Directory,
+            required_child: Some(required_child),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum ToolchainRootIndicator {
+    Manifest(ManifestName),
+    Marker(ToolchainRootMarker),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ToolchainMetadata {
     /// Returns a term which we should use in UI to refer to toolchains produced by a given `ToolchainLister`.
     pub term: SharedString,
     /// A user-facing placeholder describing the semantic meaning of a path to a new toolchain.
     pub new_toolchain_placeholder: SharedString,
-    /// The name of the manifest file for this toolchain.
-    pub manifest_name: ManifestName,
+    /// Ordered project root indicators for this toolchain.
+    pub root_indicators: Vec<ToolchainRootIndicator>,
 }
 
 type DefaultIndex = usize;

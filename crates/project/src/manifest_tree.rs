@@ -11,7 +11,10 @@ use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, sync::
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Subscription};
-use language::{ManifestDelegate, ManifestName, ManifestQuery};
+use language::{
+    ManifestDelegate, ManifestName, ManifestQuery, ToolchainRootIndicator, ToolchainRootMarker,
+    ToolchainRootMarkerKind,
+};
 pub use manifest_store::ManifestProvidersStore;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
@@ -190,6 +193,57 @@ impl ManifestTree {
             })
     }
 
+    pub(crate) fn root_for_path_with_indicators(
+        &mut self,
+        project_path: &ProjectPath,
+        root_indicators: &[ToolchainRootIndicator],
+        delegate: &Arc<dyn ManifestDelegate>,
+        cx: &mut App,
+    ) -> Option<ProjectPath> {
+        debug_assert_eq!(delegate.worktree_id(), project_path.worktree_id);
+        for candidate_root in project_path.path.ancestors() {
+            for root_indicator in root_indicators {
+                let is_root = match root_indicator {
+                    ToolchainRootIndicator::Manifest(manifest_name) => {
+                        self.manifest_matches_root(candidate_root, manifest_name, delegate, cx)
+                    }
+                    ToolchainRootIndicator::Marker(root_marker) => {
+                        marker_matches_root(candidate_root, root_marker, delegate)
+                    }
+                };
+
+                if is_root {
+                    return Some(ProjectPath {
+                        worktree_id: project_path.worktree_id,
+                        path: candidate_root.into(),
+                    });
+                }
+            }
+        }
+
+        None
+    }
+
+    fn manifest_matches_root(
+        &mut self,
+        candidate_root: &RelPath,
+        manifest_name: &ManifestName,
+        delegate: &Arc<dyn ManifestDelegate>,
+        cx: &mut App,
+    ) -> bool {
+        ManifestProvidersStore::global(cx)
+            .get(manifest_name.borrow())
+            .and_then(|provider| {
+                provider.search(ManifestQuery {
+                    path: Arc::from(candidate_root),
+                    depth: 1,
+                    delegate: delegate.clone(),
+                })
+            })
+            .as_deref()
+            .is_some_and(|root| root == candidate_root)
+    }
+
     fn on_worktree_store_event(
         &mut self,
         _: Entity<WorktreeStore>,
@@ -222,4 +276,35 @@ impl ManifestDelegate for ManifestQueryDelegate {
     fn worktree_id(&self) -> WorktreeId {
         self.worktree.id()
     }
+}
+
+fn marker_matches_root(
+    candidate_root: &RelPath,
+    root_marker: &ToolchainRootMarker,
+    delegate: &Arc<dyn ManifestDelegate>,
+) -> bool {
+    let Ok(marker_name) = RelPath::unix(root_marker.name.as_ref()) else {
+        return false;
+    };
+    let marker_path = candidate_root.join(marker_name);
+    let marker_is_dir = match root_marker.kind {
+        ToolchainRootMarkerKind::File => false,
+        ToolchainRootMarkerKind::Directory => true,
+    };
+
+    if !delegate.exists(&marker_path, Some(marker_is_dir)) {
+        return false;
+    }
+
+    if let Some(required_child) = root_marker.required_child.as_ref() {
+        let Ok(required_child) = RelPath::unix(required_child.as_ref()) else {
+            return false;
+        };
+        let required_child_path = marker_path.join(required_child);
+        if !delegate.exists(&required_child_path, Some(false)) {
+            return false;
+        }
+    }
+
+    true
 }
