@@ -94,53 +94,51 @@ impl Component for ProgressBar {
         ComponentScope::Status
     }
 
-    fn description() -> Option<&'static str> {
-        Some(Self::DOCS)
+    fn description() -> &'static str {
+        Self::DOCS
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let max_value = 180.0;
         let container = || v_flex().w_full().gap_1();
 
-        Some(
-            example_group(vec![single_example(
-                "Examples",
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        container()
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .child(Label::new("0%"))
-                                    .child(Label::new("Empty")),
-                            )
-                            .child(ProgressBar::new("empty", 0.0, max_value, cx)),
-                    )
-                    .child(
-                        container()
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .child(Label::new("38%"))
-                                    .child(Label::new("Partial")),
-                            )
-                            .child(ProgressBar::new("partial", max_value * 0.35, max_value, cx)),
-                    )
-                    .child(
-                        container()
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .child(Label::new("100%"))
-                                    .child(Label::new("Complete")),
-                            )
-                            .child(ProgressBar::new("filled", max_value, max_value, cx)),
-                    )
-                    .into_any_element(),
-            )])
-            .into_any_element(),
-        )
+        example_group(vec![single_example(
+            "Examples",
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    container()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(Label::new("0%"))
+                                .child(Label::new("Empty")),
+                        )
+                        .child(ProgressBar::new("empty", 0.0, max_value, cx)),
+                )
+                .child(
+                    container()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(Label::new("38%"))
+                                .child(Label::new("Partial")),
+                        )
+                        .child(ProgressBar::new("partial", max_value * 0.35, max_value, cx)),
+                )
+                .child(
+                    container()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(Label::new("100%"))
+                                .child(Label::new("Complete")),
+                        )
+                        .child(ProgressBar::new("filled", max_value, max_value, cx)),
+                )
+                .into_any_element(),
+        )])
+        .into_any_element()
     }
 }

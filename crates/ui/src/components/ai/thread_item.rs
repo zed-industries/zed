@@ -610,7 +610,12 @@ impl Component for ThreadItem {
         ComponentScope::Agent
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A row representing an agent thread in a list, showing its title, status, \
+        timestamp, and contextual metadata such as worktree and branch information."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let color = cx.theme().colors();
         let bg = color
             .title_bar_background
@@ -947,10 +952,8 @@ impl Component for ThreadItem {
             ),
         ];
 
-        Some(
-            example_group(thread_item_examples)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(thread_item_examples)
+            .vertical()
+            .into_any_element()
     }
 }
