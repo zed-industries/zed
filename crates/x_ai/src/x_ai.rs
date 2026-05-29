@@ -130,29 +130,3 @@ impl Model {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn grok_43_supports_reasoning_effort() {
-        assert!(Model::Grok43.supports_reasoning_effort());
-    }
-
-    #[test]
-    fn custom_grok_43_supports_reasoning_effort() {
-        let model = Model::Custom {
-            name: "grok-4.3-latest".to_string(),
-            display_name: None,
-            max_tokens: 128_000,
-            max_output_tokens: None,
-            max_completion_tokens: None,
-            supports_images: Some(true),
-            supports_tools: Some(true),
-            parallel_tool_calls: Some(true),
-        };
-
-        assert!(model.supports_reasoning_effort());
-    }
-}

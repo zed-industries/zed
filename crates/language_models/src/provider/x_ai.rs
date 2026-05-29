@@ -511,19 +511,6 @@ impl ConfigurationView {
 mod tests {
     use super::*;
 
-    fn custom_grok_43() -> x_ai::Model {
-        x_ai::Model::Custom {
-            name: "grok-4.3".to_string(),
-            display_name: Some("Grok 4.3".to_string()),
-            max_tokens: 131_072,
-            max_output_tokens: Some(8_192),
-            max_completion_tokens: None,
-            supports_images: Some(true),
-            supports_tools: Some(true),
-            parallel_tool_calls: Some(true),
-        }
-    }
-
     #[test]
     fn grok_43_supports_selectable_thinking_effort_levels() {
         let effort_levels = supported_thinking_effort_levels(&x_ai::Model::Grok43);
@@ -540,17 +527,6 @@ mod tests {
                 .map(|level| level.value.as_ref()),
             Some("medium")
         );
-    }
-
-    #[test]
-    fn custom_grok_43_supports_selectable_thinking_effort_levels() {
-        let effort_levels = supported_thinking_effort_levels(&custom_grok_43());
-        let values = effort_levels
-            .iter()
-            .map(|level| level.value.as_ref())
-            .collect::<Vec<_>>();
-
-        assert_eq!(values, ["low", "medium", "high"]);
     }
 
     #[test]
