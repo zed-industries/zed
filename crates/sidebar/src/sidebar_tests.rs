@@ -595,7 +595,7 @@ fn visible_entries_as_strings(
                         }
                     }
                     ListEntry::Terminal(terminal) => {
-                        let title = &terminal.metadata.title;
+                        let title = terminal.metadata.display_title();
                         let worktree = format_linked_worktree_chips(&terminal.worktrees);
                         format!("  {title}{worktree}{selected}")
                     }
@@ -1712,7 +1712,7 @@ async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAp
         );
         assert!(
             sidebar.contents.entries.iter().any(|entry| {
-                matches!(entry, ListEntry::Terminal(terminal) if terminal.metadata.terminal_id == terminal_id && terminal.metadata.title.as_ref() == "Dev Server")
+                matches!(entry, ListEntry::Terminal(terminal) if terminal.metadata.terminal_id == terminal_id && terminal.metadata.display_title().as_ref() == "Dev Server")
             }),
             "expected the inserted terminal to appear in sidebar contents",
         );
@@ -1722,7 +1722,12 @@ async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAp
         let metadata = store
             .entry(terminal_id)
             .expect("terminal metadata should be persisted");
-        assert_eq!(metadata.title.as_ref(), "Dev Server");
+        assert_eq!(metadata.title.as_ref(), "");
+        assert_eq!(
+            metadata.custom_title.as_ref().map(|title| title.as_ref()),
+            Some("Dev Server")
+        );
+        assert_eq!(metadata.display_title().as_ref(), "Dev Server");
         assert!(
             metadata
                 .folder_paths()
