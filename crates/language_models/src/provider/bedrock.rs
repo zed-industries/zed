@@ -671,11 +671,21 @@ impl LanguageModel for BedrockModel {
                     is_default: true,
                 },
                 language_model::LanguageModelEffortLevel {
+                    name: "XHigh".into(),
+                    value: "xhigh".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
                     name: "Max".into(),
                     value: "max".into(),
                     is_default: false,
                 },
             ]
+            .into_iter()
+            .filter(|effort_level| {
+                effort_level.value != "xhigh" || self.model.supports_xhigh_adaptive_thinking()
+            })
+            .collect()
         } else {
             Vec::new()
         }
@@ -1128,6 +1138,7 @@ pub fn into_bedrock(
                             "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
                             "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
                             "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
+                            "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
                             "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
                             _ => None,
                         })

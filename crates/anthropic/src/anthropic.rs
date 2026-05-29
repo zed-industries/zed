@@ -15,6 +15,7 @@ pub mod batches;
 pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
+const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -121,9 +122,6 @@ impl Model {
 
         let mut supported_effort_levels = Vec::new();
         if let Some(effort) = entry.capabilities.as_ref().and_then(|e| e.effort.as_ref()) {
-            // The `xhigh` effort level reported by the API has no
-            // corresponding `Effort` variant in the request enum, so it is
-            // intentionally dropped here.
             for (level, supported) in [
                 (Effort::Low, effort.low.as_ref()),
                 (Effort::Medium, effort.medium.as_ref()),
@@ -147,7 +145,15 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = matches!(entry.id.as_str(), "claude-opus-4-6" | "claude-opus-4-7");
+        let supports_speed = matches!(
+            entry.id.as_str(),
+            "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
+        );
+
+        let mut extra_beta_headers = Vec::new();
+        if supports_speed {
+            extra_beta_headers.push(FAST_MODE_BETA_HEADER.to_string());
+        }
 
         Self {
             display_name: entry.display_name,
@@ -162,7 +168,7 @@ impl Model {
             supports_speed,
             supported_effort_levels,
             tool_override: None,
-            extra_beta_headers: Vec::new(),
+            extra_beta_headers,
         }
     }
 
@@ -670,6 +676,8 @@ pub enum Effort {
     Low,
     Medium,
     High,
+    #[serde(rename = "xhigh")]
+    #[strum(serialize = "xhigh")]
     XHigh,
     Max,
 }
@@ -1048,6 +1056,17 @@ mod tests {
         assert!(!model.supports_thinking);
         assert!(!model.supports_adaptive_thinking);
         assert_eq!(model.mode, AnthropicModelMode::Default);
+    }
+
+    #[test]
+    fn from_listed_enables_fast_mode_for_opus_4_8() {
+        let model = Model::from_listed(listed_entry(
+            "claude-opus-4-8",
+            ModelCapabilities::default(),
+        ));
+
+        assert!(model.supports_speed);
+        assert_eq!(model.beta_headers().as_deref(), Some(FAST_MODE_BETA_HEADER));
     }
 
     #[test]

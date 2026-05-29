@@ -2,7 +2,7 @@ use std::{ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
-use language::{Buffer, BufferSnapshot};
+use language::{Buffer, BufferEditSource, BufferSnapshot};
 use rope::Point;
 use sum_tree::{Dimensions, SumTree};
 use text::{Bias, BufferId, Edit, OffsetRangeExt, Patch};
@@ -603,7 +603,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
         cx.emit(Event::BufferRangesUpdated {
             buffer,
@@ -687,7 +687,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
         cx.notify();
     }

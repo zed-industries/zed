@@ -237,6 +237,24 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
         ItemBufferKind::None
     }
+
+    /// Returns the project path that should be treated as active for this item.
+    ///
+    /// Singleton items use their only project item by default. Items backed by
+    /// multiple buffers should override this to return the path for the buffer
+    /// under the primary cursor or otherwise selected sub-item.
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        if self.buffer_kind(cx) != ItemBufferKind::Singleton {
+            return None;
+        }
+
+        let mut result = None;
+        self.for_each_project_item(cx, &mut |_, item| {
+            result = item.project_path(cx);
+        });
+        result
+    }
+
     fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
 
     fn can_split(&self) -> bool {
@@ -646,14 +664,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        let this = self.read(cx);
-        let mut result = None;
-        if this.buffer_kind(cx) == ItemBufferKind::Singleton {
-            this.for_each_project_item(cx, &mut |_, item| {
-                result = item.project_path(cx);
-            });
-        }
-        result
+        <T as Item>::active_project_path(self.read(cx), cx)
     }
 
     fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings {
@@ -910,6 +921,16 @@ impl<T: Item> ItemHandle for Entity<T> {
                             }
                         }
 
+                        ItemEvent::UpdateBreadcrumbs => {
+                            if &pane == workspace.active_pane()
+                                && pane.read(cx).active_item().is_some_and(|active_item| {
+                                    active_item.item_id() == item.item_id()
+                                })
+                            {
+                                workspace.active_item_path_changed(false, window, cx);
+                            }
+                        }
+
                         ItemEvent::Edit => {
                             let autosave = item.workspace_settings(cx).autosave;
 
@@ -932,8 +953,6 @@ impl<T: Item> ItemHandle for Entity<T> {
                             }
                             pane.update(cx, |pane, cx| pane.handle_item_edit(item.item_id(), cx));
                         }
-
-                        _ => {}
                     });
                 },
             ));

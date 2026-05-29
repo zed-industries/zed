@@ -15,7 +15,7 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent::{UserAgentsMdState, init_user_agents_md};
+use agent_settings::{UserAgentsMdState, init_user_agents_md};
 use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -49,7 +49,6 @@ use language_tools::lsp_log_view::LspLogToolbarItemView;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::migrate_keymap;
-use onboarding::DOCS_URL;
 use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -102,8 +101,11 @@ use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::OpenGpuiDevtools;
 use zed_actions::{
     About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile,
-    OpenZedUrl, Quit,
+    OpenStatusPage, OpenZedUrl, Quit,
 };
+
+const DOCS_URL: &str = "https://zed.dev/docs/";
+const STATUS_URL: &str = "https://status.zed.dev";
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
 
@@ -868,6 +870,8 @@ fn register_actions(
     });
 
     workspace
+        .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))
         .register_action(
             |workspace: &mut Workspace,
              _: &input_latency_ui::DumpInputLatencyHistogram,
@@ -1559,7 +1563,7 @@ fn open_about_window(cx: &mut App) {
             window_bounds: Some(WindowBounds::centered(window_size, cx)),
             is_resizable: false,
             is_minimizable: false,
-            kind: WindowKind::Normal,
+            kind: WindowKind::Floating,
             app_id: Some(ReleaseChannel::global(cx).app_id().to_owned()),
             ..Default::default()
         },
@@ -1887,8 +1891,8 @@ fn init_cursor_hide_mode(cx: &mut App) {
 /// Starts watching `~/.config/zed/AGENTS.md` (or the platform equivalent) and
 /// surfaces any read errors using the same notification UI as settings errors.
 ///
-/// The file itself is loaded into [`agent::UserAgentsMd`] for inclusion in the
-/// native agent's system prompt.
+/// The file itself is loaded into [`agent_settings::UserAgentsMd`] for inclusion
+/// in prompts.
 pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     struct UserAgentsMdParseError;
     let notification_id = NotificationId::unique::<UserAgentsMdParseError>();
@@ -4183,7 +4187,7 @@ mod tests {
         let (editor_1, buffer) = workspace.update_in(cx, |_, window, cx| {
             pane_1.update(cx, |pane_1, cx| {
                 let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
-                assert_eq!(editor.project_path(cx), Some(file1.clone()));
+                assert_eq!(editor.read(cx).active_project_path(cx), Some(file1.clone()));
                 let buffer = editor.update(cx, |editor, cx| {
                     editor.insert("dirt", window, cx);
                     editor.buffer().downgrade()
@@ -4739,7 +4743,7 @@ mod tests {
                     let scroll_position = editor_ref.scroll_position(cx);
 
                     (
-                        editor_ref.project_path(cx).unwrap(),
+                        editor_ref.active_project_path(cx).unwrap(),
                         selections[0].start,
                         scroll_position.y,
                     )
@@ -5261,6 +5265,7 @@ mod tests {
                 "search",
                 "settings_editor",
                 "settings_profile_selector",
+                "skill_creator",
                 "snippets",
                 "stash_picker",
                 "svg",

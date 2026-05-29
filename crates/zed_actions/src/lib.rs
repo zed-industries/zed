@@ -67,6 +67,8 @@ actions!(
         OpenDocs,
         /// Views open source licenses.
         OpenLicenses,
+        /// Opens the Zed status page.
+        OpenStatusPage,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -90,7 +92,6 @@ pub enum ExtensionCategoryFilter {
     Grammars,
     LanguageServers,
     ContextServers,
-    AgentServers,
     Snippets,
     DebugAdapters,
 }
@@ -266,6 +267,11 @@ pub enum NewWorktreeBranchTarget {
     CurrentBranch,
     /// Create a detached worktree at the tip of an existing branch.
     ExistingBranch { name: String },
+    /// Create a detached worktree at the tip of a remote-tracking branch.
+    RemoteBranch {
+        remote_name: String,
+        branch_name: String,
+    },
 }
 
 /// Creates a new git worktree and switches the workspace to it.
@@ -517,10 +523,6 @@ pub mod agent {
             ResetAgentZoom,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
-            /// Opens the "Skills have replaced Rules" explainer modal,
-            /// describing the one-time migration of non-Default Rules to
-            /// global Skills. Dispatched from the title-bar banner.
-            OpenRulesToSkillsMigrationInfo,
         ]
     );
 
@@ -577,6 +579,16 @@ pub mod assistant {
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus,
             FocusAgent,
+            /// Opens the skill creator window for creating a new skill.
+            OpenSkillCreator,
+            /// Opens the skill creator window to import a skill from a GitHub URL.
+            CreateSkillFromUrl,
+            /// Opens the user-global AGENTS.md rules file.
+            #[action(name = "OpenGlobalAGENTS.mdRules")]
+            OpenGlobalAgentsMdRules,
+            /// Opens the project AGENTS.md rules file.
+            #[action(name = "OpenProjectAGENTS.mdRules")]
+            OpenProjectAgentsMdRules,
         ]
     );
 

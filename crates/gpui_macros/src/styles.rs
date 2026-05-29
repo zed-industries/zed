@@ -410,6 +410,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(0.),
                 spread_radius: px(0.),
+                inset: false,
             }]);
             self
         }
@@ -425,6 +426,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(2.),
                 spread_radius: px(0.),
+                inset: false,
             }]);
             self
         }
@@ -441,12 +443,14 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
                     offset: point(px(0.), px(1.)),
                     blur_radius: px(3.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.1),
                     offset: point(px(0.), px(1.)),
                     blur_radius: px(2.),
                     spread_radius: px(-1.),
+                    inset: false,
                 }
             ]);
             self
@@ -464,12 +468,14 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
                     offset: point(px(0.), px(4.)),
                     blur_radius: px(6.),
                     spread_radius: px(-1.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.1),
                     offset: point(px(0.), px(2.)),
                     blur_radius: px(4.),
                     spread_radius: px(-2.),
+                    inset: false,
                 }
             ]);
             self
@@ -487,12 +493,14 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
                     offset: point(px(0.), px(10.)),
                     blur_radius: px(15.),
                     spread_radius: px(-3.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.1),
                     offset: point(px(0.), px(4.)),
                     blur_radius: px(6.),
                     spread_radius: px(-4.),
+                    inset: false,
                 }
             ]);
             self
@@ -510,12 +518,14 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
                     offset: point(px(0.), px(20.)),
                     blur_radius: px(25.),
                     spread_radius: px(-5.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.1),
                     offset: point(px(0.), px(8.)),
                     blur_radius: px(10.),
                     spread_radius: px(-6.),
+                    inset: false,
                 }
             ]);
             self
@@ -532,6 +542,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
                 offset: point(px(0.), px(25.)),
                 blur_radius: px(50.),
                 spread_radius: px(-12.),
+                inset: false,
             }]);
             self
         }

@@ -34,6 +34,12 @@ impl Editor {
             cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
+
+        cx.emit(EditorEvent::InputHandled {
+            utf16_range_to_replace: relative_utf16_range.clone(),
+            text: text.into(),
+        });
+
         if let Some(relative_utf16_range) = relative_utf16_range {
             let selections = self
                 .selections
