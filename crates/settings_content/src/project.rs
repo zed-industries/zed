@@ -89,7 +89,8 @@ pub struct ProjectSettingsContent {
 
     /// When `allow_binary_downloads` is disabled and a tool needed by the
     /// project cannot be found locally, whether to prompt to install just
-    /// that tool instead of silently blocking the download.
+    /// that tool instead of silently blocking the download. Global-only: a
+    /// per-project `.zed/settings.json` value is ignored.
     ///
     /// Default: true
     pub prompt_to_install_binaries: Option<bool>,

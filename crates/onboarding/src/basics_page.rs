@@ -466,6 +466,48 @@ fn render_worktree_auto_trust_switch(tab_index: &mut isize, cx: &mut App) -> imp
     .tooltip(Tooltip::text(tooltip_description))
 }
 
+fn render_binary_downloads_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
+    let toggle_state = if ProjectSettings::get_global(cx).allow_binary_downloads {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
+
+    let tooltip_description = "When disabled, Zed won't download new tool binaries (language servers, formatters, debug adapters, MCP servers, the managed Node runtime). Already-installed tools keep working, and Zed can prompt to install individual tools on demand.";
+
+    SwitchField::new(
+        "onboarding-allow-binary-downloads",
+        Some("Allow Binary Downloads"),
+        Some("Let Zed download tool binaries such as language servers and formatters".into()),
+        toggle_state,
+        {
+            let fs = <dyn Fs>::global(cx);
+            move |&selection, _, cx| {
+                let allow = match selection {
+                    ToggleState::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Indeterminate => {
+                        return;
+                    }
+                };
+                update_settings_file(fs.clone(), cx, move |setting, _| {
+                    setting.project.allow_binary_downloads = Some(allow);
+                });
+
+                telemetry::event!(
+                    "Welcome Page Binary Downloads Toggled",
+                    options = if allow { "on" } else { "off" }
+                );
+            }
+        },
+    )
+    .tab_index({
+        *tab_index += 1;
+        *tab_index - 1
+    })
+    .tooltip(Tooltip::text(tooltip_description))
+}
+
 fn render_setting_import_button(
     tab_index: isize,
     label: SharedString,
@@ -710,6 +752,7 @@ pub(crate) fn render_basics_page(user_store: &Entity<UserStore>, cx: &mut App) -
         .child(render_import_settings_section(&mut tab_index, cx))
         .child(render_vim_mode_switch(&mut tab_index, cx))
         .child(render_worktree_auto_trust_switch(&mut tab_index, cx))
+        .child(render_binary_downloads_switch(&mut tab_index, cx))
         .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
         .child(render_telemetry_section(&mut tab_index, cx))
 }

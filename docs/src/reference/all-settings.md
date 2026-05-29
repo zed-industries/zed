@@ -3092,7 +3092,7 @@ working because Zed does not need to download them.
 
 ### Prompting to install individual tools
 
-- Description: When `allow_binary_downloads` is disabled and a tool needed by the project cannot be found locally, whether to prompt to install just that tool instead of silently blocking the download. Has no effect while `allow_binary_downloads` is enabled. This can be overridden in project settings.
+- Description: When `allow_binary_downloads` is disabled and a tool needed by the project cannot be found locally, whether to prompt to install just that tool instead of silently blocking the download. Has no effect while `allow_binary_downloads` is enabled. This is a global-only setting: a per-project `.zed/settings.json` value is ignored, so a project can't silently turn the prompts off.
 - Setting: `prompt_to_install_binaries`
 - Default: `true`
 
@@ -3132,11 +3132,17 @@ them once -- nothing is ticked by default, and confirming does not change
 
 ### Project-scoped overrides
 
-This setting may be placed in either `~/.config/zed/settings.json` (global) or
-`.zed/settings.json` (per-project). The per-project value wins for tools
-resolved against that worktree (LSPs, formatters, debug adapters, prettier,
-and MCP servers). The global value still controls truly global resources such
-as the managed Node.js download and Copilot's npm install.
+`allow_binary_downloads` may be placed in either `~/.config/zed/settings.json`
+(global) or `.zed/settings.json` (per-project). The per-project value wins for
+tools resolved against that worktree (LSPs, formatters, debug adapters,
+prettier, and MCP servers). The global value still controls truly global
+resources such as the managed Node.js download and Copilot's npm install.
+
+Letting a project enable its own downloads stays relatively safe: a worktree's
+local `.zed/settings.json` only takes effect once the worktree is trusted.
+Until you trust it (Restricted Mode), Zed ignores the project's settings
+entirely, so a freshly cloned repository cannot turn its own downloads on
+behind your back.
 
 Example: keep downloads off everywhere by default but trust one project to
 download its language servers:

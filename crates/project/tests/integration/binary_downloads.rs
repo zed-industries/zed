@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
 use fs::FakeFs;
 use futures::{FutureExt, StreamExt};
@@ -9,8 +9,8 @@ use project::{
     binary_downloads::{self, BinaryDownloads, BinaryDownloadsEvent},
 };
 use serde_json::json;
-use settings::{SettingsStore, WorktreeId};
-use util::path;
+use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, WorktreeId};
+use util::{path, rel_path::RelPath};
 
 use crate::init_test;
 
@@ -53,6 +53,111 @@ fn collect_install_requests(
         }
     });
     requests
+}
+
+fn collect_resolved_installs(
+    cx: &mut TestAppContext,
+) -> Rc<RefCell<Vec<(Option<WorktreeId>, String)>>> {
+    let resolved: Rc<RefCell<Vec<(Option<WorktreeId>, String)>>> = Rc::default();
+    cx.update({
+        let resolved = resolved.clone();
+        |cx| {
+            let store = BinaryDownloads::try_get_global(cx).expect("global should be initialized");
+            cx.subscribe(&store, move |_, event, _| {
+                if let BinaryDownloadsEvent::InstallResolved(request) = event {
+                    resolved
+                        .borrow_mut()
+                        .push((request.worktree_id, request.tool.to_string()));
+                }
+            })
+            .detach();
+        }
+    });
+    resolved
+}
+
+#[gpui::test]
+async fn test_prompt_to_install_setting_is_global_only(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| binary_downloads::init(cx));
+    disable_downloads(cx);
+
+    let requests = collect_install_requests(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/proj"), json!({ "a.rs": "" })).await;
+    let project = Project::test(fs, [path!("/proj").as_ref()], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    // A per-project attempt to turn prompts off must be ignored.
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store
+            .set_local_settings(
+                worktree_id,
+                LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "prompt_to_install_binaries": false }"#),
+                cx,
+            )
+            .unwrap();
+    });
+
+    let store = cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
+    store.update(cx, |store, cx| {
+        store.request_tool_install(Some(worktree_id), "lsp-a", cx)
+    });
+
+    assert_eq!(
+        requests.borrow().clone(),
+        vec![(Some(worktree_id), "lsp-a".to_string())],
+        "a per-project prompt_to_install_binaries=false is ignored; prompts still fire"
+    );
+}
+
+#[gpui::test]
+async fn test_install_resolved_emitted_on_approval_and_setting_flip(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| binary_downloads::init(cx));
+    disable_downloads(cx);
+
+    let resolved = collect_resolved_installs(cx);
+    let store = cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
+
+    // Approving a tool resolves it.
+    store.update(cx, |store, cx| {
+        store.request_tool_install(None, "lsp-a", cx)
+    });
+    store.update(cx, |store, cx| {
+        store.resolve_tool_install(None, "lsp-a", true, cx);
+    });
+    assert_eq!(
+        resolved.borrow().clone(),
+        vec![(None, "lsp-a".to_string())],
+        "approving a tool emits InstallResolved"
+    );
+
+    // A still-pending (declined) tool resolves when the setting flips on.
+    store.update(cx, |store, cx| {
+        store.resolve_tool_install(None, "lsp-b", false, cx);
+    });
+    store.update(cx, |store, cx| {
+        store.request_tool_install(None, "lsp-b", cx)
+    });
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(true);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        resolved.borrow().contains(&(None, "lsp-b".to_string())),
+        true,
+        "flipping the setting on resolves pending tools"
+    );
 }
 
 #[gpui::test]
@@ -109,8 +214,13 @@ async fn test_install_prompt_emitted_and_starts_server_when_approved(cx: &mut Te
 
     cx.update(|cx| {
         let store = BinaryDownloads::try_get_global(cx).unwrap();
-        store.update(cx, |store, _| {
-            store.resolve_tool_install(Some(worktree_id), "needs-download-language-server", true);
+        store.update(cx, |store, cx| {
+            store.resolve_tool_install(
+                Some(worktree_id),
+                "needs-download-language-server",
+                true,
+                cx,
+            );
         });
     });
 
@@ -217,8 +327,8 @@ async fn test_install_prompt_requested_once_per_tool(cx: &mut TestAppContext) {
     );
 
     // Approving lets future requests proceed without prompting again.
-    store.update(cx, |store, _| {
-        store.resolve_tool_install(None, "lsp-a", true);
+    store.update(cx, |store, cx| {
+        store.resolve_tool_install(None, "lsp-a", true, cx);
     });
     let after_approval = store.update(cx, |store, cx| {
         store.request_tool_install(None, "lsp-a", cx)
@@ -251,8 +361,8 @@ async fn test_declined_install_still_unblocks_when_setting_flips(cx: &mut TestAp
         .expect("a waiter is returned while downloads are disabled");
     assert_eq!(*receiver.borrow(), false);
 
-    store.update(cx, |store, _| {
-        store.resolve_tool_install(None, "lsp-a", false);
+    store.update(cx, |store, cx| {
+        store.resolve_tool_install(None, "lsp-a", false, cx);
     });
 
     // Declining does not re-prompt on a subsequent request.

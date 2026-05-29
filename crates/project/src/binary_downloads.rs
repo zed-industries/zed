@@ -72,6 +72,10 @@ pub enum BinaryDownloadsEvent {
     /// [`BinaryDownloadsStore::resolve_tool_install`]. Emitted at most once per
     /// [`ToolInstall`] for the lifetime of the store.
     InstallRequested(ToolInstall),
+    /// A tool's install request no longer needs a decision: it was approved or
+    /// the effective setting was turned back on. Any prompt UI for it should be
+    /// dismissed.
+    InstallResolved(ToolInstall),
 }
 
 impl EventEmitter<BinaryDownloadsEvent> for BinaryDownloadsStore {}
@@ -167,13 +171,11 @@ impl BinaryDownloadsStore {
         ProjectSettings::get(location, cx).allow_binary_downloads
     }
 
-    /// Returns the effective `prompt_to_install_binaries` value for the scope.
-    pub fn prompt_to_install_binaries(worktree_id: Option<WorktreeId>, cx: &App) -> bool {
-        let location = worktree_id.map(|worktree_id| SettingsLocation {
-            worktree_id,
-            path: RelPath::empty(),
-        });
-        ProjectSettings::get(location, cx).prompt_to_install_binaries
+    /// Whether to prompt for one-off installs. Intentionally global-only: a
+    /// per-worktree `.zed/settings.json` cannot silently turn the prompts off,
+    /// so the value is always read from the user/default settings.
+    pub fn prompt_to_install_binaries(cx: &App) -> bool {
+        ProjectSettings::get_global(cx).prompt_to_install_binaries
     }
 
     /// Like [`Self::wait_until_allowed`], but for the case where a subsystem
@@ -213,8 +215,7 @@ impl BinaryDownloadsStore {
             .or_insert_with(|| watch::channel::<bool>().0);
         let receiver = sender.subscribe();
 
-        if !already_pending && !already_decided && Self::prompt_to_install_binaries(worktree_id, cx)
-        {
+        if !already_pending && !already_decided && Self::prompt_to_install_binaries(cx) {
             cx.emit(BinaryDownloadsEvent::InstallRequested(key));
         }
         Some(receiver)
@@ -229,14 +230,18 @@ impl BinaryDownloadsStore {
         worktree_id: Option<WorktreeId>,
         tool: impl Into<SharedString>,
         install: bool,
+        cx: &mut Context<Self>,
     ) {
         let key = ToolInstall {
             worktree_id,
             tool: tool.into(),
         };
         self.tool_decisions.insert(key.clone(), install);
-        if install && let Some(mut sender) = self.tool_waiters.remove(&key) {
-            sender.blocking_send(true).ok();
+        if install {
+            if let Some(mut sender) = self.tool_waiters.remove(&key) {
+                sender.blocking_send(true).ok();
+            }
+            cx.emit(BinaryDownloadsEvent::InstallResolved(key));
         }
     }
 
@@ -247,7 +252,7 @@ impl BinaryDownloadsStore {
         self.tool_waiters.keys().cloned().collect()
     }
 
-    fn flush_tool_waiters(&mut self, cx: &App) {
+    fn flush_tool_waiters(&mut self, cx: &mut Context<Self>) {
         let allowed_keys = self
             .tool_waiters
             .keys()
@@ -258,6 +263,7 @@ impl BinaryDownloadsStore {
             if let Some(mut sender) = self.tool_waiters.remove(&key) {
                 sender.blocking_send(true).ok();
             }
+            cx.emit(BinaryDownloadsEvent::InstallResolved(key));
         }
     }
 

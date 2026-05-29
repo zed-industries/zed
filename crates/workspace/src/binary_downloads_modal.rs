@@ -103,10 +103,9 @@ impl ModalView for BinaryDownloadsModal {
                 telemetry::event!("Enable Downloads", source = "Binary Downloads Modal");
                 DismissDecision::Dismiss(true)
             }
-            Some(DismissOutcome::InstalledTools) => {
-                telemetry::event!("Install Tools Once", source = "Binary Downloads Modal");
-                DismissDecision::Dismiss(true)
-            }
+            // The "Install Tools Once" event is emitted in `confirm_and_dismiss`
+            // where the approved tool count is available.
+            Some(DismissOutcome::InstalledTools) => DismissDecision::Dismiss(true),
             None => DismissDecision::Dismiss(false),
         }
     }
@@ -170,9 +169,14 @@ impl BinaryDownloadsModal {
         }
         if let Some(store) = self.store.as_ref().and_then(|store| store.upgrade()) {
             let selected = std::mem::take(&mut self.selected);
-            store.update(cx, |store, _| {
+            telemetry::event!(
+                "Install Tools Once",
+                source = "Binary Downloads Modal",
+                count = selected.len()
+            );
+            store.update(cx, |store, cx| {
                 for install in selected {
-                    store.resolve_tool_install(install.worktree_id, install.tool, true);
+                    store.resolve_tool_install(install.worktree_id, install.tool, true, cx);
                 }
             });
         }

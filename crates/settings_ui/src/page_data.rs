@@ -303,7 +303,7 @@ fn general_page(cx: &App) -> SettingsPage {
                     },
                 }),
                 metadata: None,
-                files: USER | PROJECT,
+                files: USER,
             }),
         ]
     }
