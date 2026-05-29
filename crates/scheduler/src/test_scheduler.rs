@@ -162,9 +162,11 @@ impl TestScheduler {
     /// Create a local executor for this scheduler.
     pub fn foreground(self: &Arc<Self>) -> LocalExecutor {
         let session_id = self.allocate_session_id();
-        let scheduler = self.clone();
+        let scheduler = Arc::downgrade(self);
         LocalExecutor::new(session_id, self.clone(), move |runnable| {
-            scheduler.schedule_local(session_id, runnable);
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler.schedule_local(session_id, runnable);
+            }
         })
     }
 
@@ -678,9 +680,11 @@ impl Scheduler for TestScheduler {
         >,
     ) -> Task<Box<dyn Any + Send + Sync>> {
         let session_id = self.allocate_session_id();
-        let scheduler = self.clone();
+        let scheduler = Arc::downgrade(&self);
         let executor = LocalExecutor::new(session_id, self, move |runnable| {
-            scheduler.schedule_local(session_id, runnable);
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler.schedule_local(session_id, runnable);
+            }
         });
         executor.spawn(f(executor.clone()))
     }

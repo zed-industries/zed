@@ -41,9 +41,11 @@ impl PlatformScheduler {
 
     pub fn foreground_executor(self: &Arc<Self>) -> LocalExecutor {
         let session_id = self.next_session_id();
-        let scheduler = self.clone();
+        let scheduler = Arc::downgrade(self);
         LocalExecutor::new(session_id, self.clone(), move |runnable| {
-            scheduler.schedule_local(session_id, runnable);
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler.schedule_local(session_id, runnable);
+            }
         })
     }
 
