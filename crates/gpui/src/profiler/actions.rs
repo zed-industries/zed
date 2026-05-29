@@ -7,18 +7,6 @@ use itertools::Itertools;
 
 use crate::action::Action;
 
-// Foreground pauses:
-// We have a 4ms frame budget, IIRC we have .5ms or less, of space in that.
-// - Question: How do we maintain this? I'd like to see, every foreground "effect", that takes longer than 1ms
-//      Statistics: over 30 minutes, 20 futures took > 1ms, and the three tasks associated with them are: file/line/col, etc. etc.
-//  Send to axiom a packet: For this profiling frame, we had 124 polls that took > 1ms, and that was split across tasks: A, and B, and C
-//  Integrated with telemety: You can see all of the telemetry events, generated within a profiling snapshot
-
-// Background pauses:
-// - tasks take > 10s, or thread pool is filled up, or something
-
-// Hangs
-
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct ActionStatistics {
@@ -69,7 +57,9 @@ impl Default for ActionStatistics {
 impl ActionStatistics {
     const fn new() -> Self {
         Self {
-            runtime_to_beat: Duration::ZERO,
+            // This keeps more calls on the fast path by only tracking
+            // problematic polls
+            runtime_to_beat: Duration::from_micros(100),
             longest_runtimes: heapless::Vec::new(),
             running: None,
         }

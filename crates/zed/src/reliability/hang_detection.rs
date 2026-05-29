@@ -79,21 +79,12 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
     let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new(foreground_thread)));
-    let mut log = logging::Reporter::new(
-        monitor_interval,
-        report_longer_then,
-        foreground_thread,
-    );
+    let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
 
     let telemetry2 = Arc::clone(&telemetry);
     cx.on_app_quit({
         move |_| {
-            let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
-            // TODO!(yara) make this include running now
-            let action_stats = profiler::take_action_stats();
-            telemetry2
-                .lock()
-                .update_and_report(&task_stats, &action_stats);
+            telemetry2.lock().send();
             client.telemetry().flush_events()
         }
     })
@@ -108,17 +99,18 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
             // they are not observed by the user and to lower on clutter from the reporter
             thread::sleep(Duration::from_millis(200));
             loop {
-                thread::sleep(log.monitor_interval);
-                let task_stats = profiler::take_all_stats(TasksIncluded::OnlyCompleted);
+                thread::sleep(monitor_interval);
+                // TODO!(yara) need a way to post getting this cut out or
+                // include the running items
+                let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let action_stats = profiler::take_action_stats();
 
-                telemetry
-                    .lock()
-                    .update_and_report(&task_stats, &action_stats);
+                {
+                    let mut telemetry = telemetry.lock();
+                    telemetry.update(&task_stats, &action_stats);
+                    telemetry.send_periodically();
+                }
 
-                // TODO!(yara) getting this twice is bad (critical section for foreground)
-                // deduplicate it.
-                let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let should_write_trace = log.check_and_report(&task_stats, &action_stats);
                 if should_write_trace {
                     if let Some(path) = task_traces::save_any(foreground_thread) {

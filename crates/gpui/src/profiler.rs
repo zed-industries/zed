@@ -82,10 +82,12 @@ impl TaskTiming {
         }
     }
 
+    #[inline(always)]
     pub fn poll_duration(&self) -> Duration {
         self.end.0 - self.start
     }
 
+    #[inline(always)]
     fn since_spawn(&self) -> Duration {
         self.end.0 - self.spawned.0
     }
@@ -426,8 +428,10 @@ impl std::fmt::Display for TaskStatistics {
 impl Default for TaskStatistics {
     fn default() -> Self {
         Self {
-            poll_time_to_beat: Duration::ZERO,
-            runtime_to_beat: Duration::ZERO,
+            // Do not track polls that are not problematic
+            // this keeps more calls on the fast path
+            poll_time_to_beat: Duration::from_micros(100),
+            runtime_to_beat: Duration::from_micros(100),
             longest_poll_times: [TaskTiming::placeholder(); 5],
             longest_runtimes: [TaskTiming::placeholder(); 5],
         }
@@ -435,6 +439,7 @@ impl Default for TaskStatistics {
 }
 
 impl TaskStatistics {
+    #[inline(always)]
     fn add_yield_timing(&mut self, task: TaskTiming) {
         let yielded_after = task.poll_duration();
         if yielded_after >= self.poll_time_to_beat {
@@ -455,6 +460,7 @@ impl TaskStatistics {
         }
     }
 
+    #[inline(always)]
     fn add_runtime(&mut self, task: TaskTiming) {
         let runtime = task.since_spawn();
         if runtime >= self.runtime_to_beat {

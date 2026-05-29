@@ -188,6 +188,10 @@ impl<T: Hang> Hangs<T> {
 
         report
     }
+
+    fn is_empty(&self) -> bool {
+        self.hangs.is_empty()
+    }
 }
 
 pub struct Reporter {
@@ -212,7 +216,7 @@ impl Reporter {
         }
     }
 
-    pub fn update_and_report(
+    pub fn update(
         &mut self,
         task_stats: &[gpui::ThreadTaskStatistics],
         action_stats: &gpui::ActionStatistics,
@@ -220,23 +224,32 @@ impl Reporter {
         self.process_foreground(task_stats);
         self.process_background(task_stats);
         self.process_actions(action_stats);
+    }
 
+    pub fn send_periodically(&mut self) {
+        // this should be a long period otherwise things like
+        // hang density get
         if self.last_send.elapsed() > Duration::from_mins(30) {
-            let report = TelemetryReport {
-                foreground: self.foreground.report_and_reset(),
-                background: self.background.report_and_reset(),
-                actions: self.actions.report_and_reset(),
-            };
-            telemetry::event!("Hang Report", report);
-            self.last_send = Instant::now();
+            self.send()
         }
+    }
+
+    pub fn send(&mut self) {
+        self.last_send = Instant::now();
+        if self.nothing_to_report() {
+            return;
+        }
+        let report = TelemetryReport {
+            foreground: self.foreground.report_and_reset(),
+            background: self.background.report_and_reset(),
+            actions: self.actions.report_and_reset(),
+        };
+
+        telemetry::event!("Hang Report", report);
     }
 
     fn process_foreground(
         &mut self,
-        // TODO!(yara) take these from the profiler aka reset it
-        // Take care of what is the common case for recording on the profiler
-        // side (is the cold branch still cold?)
         task_stats: &[gpui::ThreadTaskStatistics],
     ) {
         let foreground_thread = self.foreground_thread;
@@ -279,5 +292,9 @@ impl Reporter {
         {
             self.actions.add(hang);
         }
+    }
+
+    fn nothing_to_report(&self) -> bool {
+        self.actions.is_empty() && self.foreground.is_empty() && self.background.is_empty()
     }
 }

@@ -8119,6 +8119,7 @@ dependencies = [
  "foreign-types 0.5.0",
  "futures 0.3.32",
  "futures-concurrency",
+ "futures-lite 1.13.0",
  "getrandom 0.3.4",
  "gpui_macros",
  "gpui_platform",
