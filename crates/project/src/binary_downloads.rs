@@ -9,11 +9,15 @@
 //! registers its [`WorktreeStore`] via [`track_binary_downloads`].
 
 use collections::{HashMap, HashSet};
+use futures::{
+    StreamExt as _,
+    channel::{mpsc, oneshot},
+};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Subscription,
     WeakEntity,
 };
-use postage::{sink::Sink as _, watch};
+use postage::{sink::Sink as _, stream::Stream as _, watch};
 use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::rel_path::RelPath;
 
@@ -242,6 +246,7 @@ impl BinaryDownloadsStore {
                 sender.blocking_send(true).ok();
             }
             cx.emit(BinaryDownloadsEvent::InstallResolved(key));
+            cx.notify();
         }
     }
 
@@ -265,6 +270,7 @@ impl BinaryDownloadsStore {
             }
             cx.emit(BinaryDownloadsEvent::InstallResolved(key));
         }
+        cx.notify();
     }
 
     fn add_worktree_store(
@@ -298,6 +304,18 @@ impl BinaryDownloadsStore {
             self.refresh(weak, cx);
         }
         self.flush_tool_waiters(cx);
+        cx.notify();
+    }
+
+    /// True when downloads are enabled in any scope, or any one-off install was
+    /// approved.
+    pub fn node_downloads_allowed(&self, cx: &App) -> bool {
+        Self::allow_binary_downloads(None, cx)
+            || self
+                .snapshots
+                .values()
+                .any(|per_worktree| per_worktree.values().any(|&allowed| allowed))
+            || self.tool_decisions.values().any(|&approved| approved)
     }
 
     fn on_worktree_store_event(
@@ -359,6 +377,100 @@ impl BinaryDownloadsStore {
             cx.emit(BinaryDownloadsEvent::Disallowed(weak, disallowed));
         }
     }
+}
+
+/// Looks up the global store and calls
+/// [`BinaryDownloadsStore::request_tool_install`], returning `None` when the
+/// download may proceed immediately.
+pub fn request_tool_install(
+    worktree_id: Option<WorktreeId>,
+    tool: impl Into<SharedString>,
+    cx: &mut App,
+) -> Option<watch::Receiver<bool>> {
+    BinaryDownloads::try_get_global(cx).and_then(|store| {
+        store.update(cx, |store, cx| {
+            store.request_tool_install(worktree_id, tool, cx)
+        })
+    })
+}
+
+/// A `Send + Sync` handle for gating downloads from contexts that cannot hold
+/// an [`gpui::AsyncApp`] (e.g. a `Send` `DapDelegate` or `node_runtime`). Call
+/// [`DownloadGate::permit`] at the point a download happens. Backed by a
+/// foreground task that runs [`request_tool_install`].
+#[derive(Clone)]
+pub struct DownloadGate {
+    requests: mpsc::UnboundedSender<GateRequest>,
+}
+
+struct GateRequest {
+    tool: SharedString,
+    respond: oneshot::Sender<Option<watch::Receiver<bool>>>,
+}
+
+impl DownloadGate {
+    /// Returns `None` when no binary-downloads store is installed.
+    pub fn new(worktree_id: Option<WorktreeId>, cx: &mut App) -> Option<Self> {
+        let store = BinaryDownloads::try_get_global(cx)?;
+        let (requests_tx, mut requests_rx) = mpsc::unbounded::<GateRequest>();
+        cx.spawn(async move |cx| {
+            while let Some(request) = requests_rx.next().await {
+                let receiver = cx.update(|cx| {
+                    store.update(cx, |store, cx| {
+                        store.request_tool_install(worktree_id, request.tool, cx)
+                    })
+                });
+                request.respond.send(receiver).ok();
+            }
+        })
+        .detach();
+        Some(Self {
+            requests: requests_tx,
+        })
+    }
+
+    /// Blocks until downloading `tool` is permitted.
+    pub async fn permit(&self, tool: &str) {
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let request = GateRequest {
+            tool: tool.to_string().into(),
+            respond: respond_tx,
+        };
+        if self.requests.unbounded_send(request).is_err() {
+            return;
+        }
+        let Ok(receiver) = respond_rx.await else {
+            return;
+        };
+        await_downloads_allowed(receiver, tool).await;
+    }
+}
+
+/// Whether the managed Node.js runtime may be downloaded: true when downloads
+/// are enabled in any scope or any one-off install was approved.
+pub fn node_downloads_allowed(cx: &App) -> bool {
+    match BinaryDownloads::try_get_global(cx) {
+        Some(store) => store.read(cx).node_downloads_allowed(cx),
+        None => ProjectSettings::get_global(cx).allow_binary_downloads,
+    }
+}
+
+/// Awaits until binary downloads become allowed, returning immediately when
+/// `wait` is `None` or already signalled.
+pub async fn await_downloads_allowed(wait: Option<watch::Receiver<bool>>, description: &str) {
+    let Some(mut wait) = wait else {
+        return;
+    };
+    if *wait.borrow() {
+        return;
+    }
+    log::info!("Waiting for binary downloads approval before installing {description}");
+    while let Some(allowed) = wait.recv().await {
+        if allowed {
+            break;
+        }
+    }
+    log::info!("Binary downloads allowed, installing {description}");
 }
 
 fn compute_snapshot(worktree_store: &Entity<WorktreeStore>, cx: &App) -> HashMap<WorktreeId, bool> {

@@ -28,7 +28,7 @@ use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, channel::oneshot, future};
+use futures::{FutureExt, StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
@@ -528,12 +528,13 @@ fn main() {
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
-        let (mut tx, rx) = watch::channel(None);
-        cx.observe_global::<SettingsStore>(move |cx| {
+        let (tx, rx) = watch::channel(None);
+        let tx = Rc::new(RefCell::new(tx));
+        fn node_binary_options(cx: &App) -> NodeBinaryOptions {
             let settings = ProjectSettings::get_global(cx);
-            let options = NodeBinaryOptions {
+            NodeBinaryOptions {
                 allow_path_lookup: !settings.node.ignore_system_version,
-                allow_binary_downloads: settings.allow_binary_downloads,
+                allow_binary_downloads: project::binary_downloads::node_downloads_allowed(cx),
                 use_paths: settings.node.path.as_ref().map(|node_path| {
                     let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
                     let npm_path = settings
@@ -549,13 +550,39 @@ fn main() {
                         }),
                     )
                 }),
-            };
-            tx.send(Some(options)).log_err();
+            }
+        }
+        cx.observe_global::<SettingsStore>({
+            let tx = tx.clone();
+            move |cx| {
+                tx.borrow_mut()
+                    .send(Some(node_binary_options(cx)))
+                    .log_err();
+            }
         })
         .detach();
+        if let Some(store) = project::binary_downloads::BinaryDownloads::try_get_global(cx) {
+            let tx = tx.clone();
+            cx.observe(&store, move |_, cx| {
+                tx.borrow_mut()
+                    .send(Some(node_binary_options(cx)))
+                    .log_err();
+            })
+            .detach();
+        }
         ui::on_new_scrollbars::<SettingsStore>(cx);
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+
+        if let Some(gate) = project::binary_downloads::DownloadGate::new(None, cx) {
+            let install_gate: node_runtime::NpmInstallGate = std::sync::Arc::new(move |package| {
+                let gate = gate.clone();
+                async move { gate.permit(&package).await }.boxed()
+            });
+            let node_runtime = node_runtime.clone();
+            cx.background_spawn(async move { node_runtime.set_install_gate(install_gate).await })
+                .detach();
+        }
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);

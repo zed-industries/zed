@@ -838,26 +838,28 @@ impl LocalLspStore {
                 }
                 (Ok(existing_binary), Some(downloader)) => {
                     delegate.update_status(adapter.name.clone(), BinaryStatus::None);
-                    // A working local binary already exists, so the user isn't
-                    // blocked. Don't prompt for an install; just refresh the
-                    // download in the background once downloads are allowed.
+                    // A working local binary already exists, so the server
+                    // starts from disk right away. If downloads are disabled,
+                    // silently refresh it in the background once they're
+                    // enabled, without blocking, prompting, or touching status.
                     let wait_until_downloads_allowed =
                         wait_until_lsp_downloads_allowed(worktree_id, cx);
                     if wait_until_downloads_allowed
                         .as_ref()
                         .is_some_and(|wait| !*wait.borrow())
                     {
-                        let languages = languages.clone();
                         let name = adapter.name();
-                        let worktree_abs_path = worktree_abs_path.clone();
                         cx.spawn(async move |_| {
-                            await_lsp_downloads_allowed(
-                                wait_until_downloads_allowed,
-                                &worktree_abs_path,
-                                name,
-                                &languages,
-                            )
-                            .await;
+                            if let Some(mut wait) = wait_until_downloads_allowed {
+                                log::debug!(
+                                    "Language server {name} started from disk; will refresh once binary downloads are enabled"
+                                );
+                                while let Some(allowed) = wait.recv().await {
+                                    if allowed {
+                                        break;
+                                    }
+                                }
+                            }
                             downloader.await
                         })
                         .detach();

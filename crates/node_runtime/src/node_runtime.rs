@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
-use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::BoxFuture, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::Version;
@@ -32,6 +32,10 @@ pub struct NodeBinaryOptions {
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
 
+/// Awaited (by package name) before each npm package install. Set via
+/// [`NodeRuntime::set_install_gate`].
+pub type NpmInstallGate = Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
+
 /// Use this when you need to launch npm as a long-lived process (for example, an agent server),
 /// so the invocation and environment stay consistent with the Node runtime's proxy and CA setup.
 #[derive(Clone, Debug)]
@@ -57,6 +61,7 @@ struct NodeRuntimeState {
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
+    install_gate: Option<NpmInstallGate>,
 }
 
 impl NodeRuntime {
@@ -71,7 +76,12 @@ impl NodeRuntime {
             last_options: None,
             options,
             shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            install_gate: None,
         })))
+    }
+
+    pub async fn set_install_gate(&self, gate: NpmInstallGate) {
+        self.0.lock().await.install_gate = Some(gate);
     }
 
     pub fn unavailable() -> Self {
@@ -81,6 +91,7 @@ impl NodeRuntime {
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
+            install_gate: None,
         })))
     }
 
@@ -288,6 +299,12 @@ impl NodeRuntime {
     ) -> Result<()> {
         if packages.is_empty() {
             return Ok(());
+        }
+
+        if let Some(gate) = self.0.lock().await.install_gate.clone() {
+            for (name, _) in packages {
+                gate(name.to_string()).await;
+            }
         }
 
         log::debug!(

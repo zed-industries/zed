@@ -47,12 +47,14 @@ use smol::{
     stream::StreamExt as _,
 };
 use std::{
+    cell::RefCell,
     env,
     ffi::OsStr,
     fs::File,
     io::Write,
     mem,
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr,
     sync::{Arc, LazyLock},
     time::Instant,
@@ -676,6 +678,18 @@ pub fn execute_run(
             let node_runtime =
                 NodeRuntime::new(http_client.clone(), shell_env_loaded_rx, node_settings_rx);
 
+            if let Some(gate) = binary_downloads::DownloadGate::new(None, cx) {
+                let install_gate: node_runtime::NpmInstallGate = Arc::new(move |package| {
+                    let gate = gate.clone();
+                    async move { gate.permit(&package).await }.boxed()
+                });
+                let node_runtime = node_runtime.clone();
+                cx.background_spawn(
+                    async move { node_runtime.set_install_gate(install_gate).await },
+                )
+                .detach();
+            }
+
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
             let languages = Arc::new(languages);
@@ -1212,13 +1226,11 @@ fn initialize_settings(
         }
     });
 
-    let (mut tx, rx) = watch::channel(None);
-    let mut last_options = None;
-    cx.observe_global::<SettingsStore>(move |cx| {
+    fn node_binary_options(cx: &App) -> NodeBinaryOptions {
         let settings = ProjectSettings::get_global(cx);
-        let options = NodeBinaryOptions {
+        NodeBinaryOptions {
             allow_path_lookup: !settings.node.ignore_system_version,
-            allow_binary_downloads: settings.allow_binary_downloads,
+            allow_binary_downloads: binary_downloads::node_downloads_allowed(cx),
             use_paths: settings.node.path.as_ref().map(|node_path| {
                 let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
                 let npm_path = settings
@@ -1234,14 +1246,25 @@ fn initialize_settings(
                     }),
                 )
             }),
-        };
-        if last_options.as_ref() != Some(&options) {
-            log::info!("Got new node options: {options:?}");
-            last_options = Some(options.clone());
-            tx.send(Some(options)).ok();
+        }
+    }
+
+    let (tx, rx) = watch::channel(None);
+    let tx = Rc::new(RefCell::new(tx));
+    cx.observe_global::<SettingsStore>({
+        let tx = tx.clone();
+        move |cx| {
+            tx.borrow_mut().send(Some(node_binary_options(cx))).ok();
         }
     })
     .detach();
+    if let Some(store) = binary_downloads::BinaryDownloads::try_get_global(cx) {
+        let tx = tx.clone();
+        cx.observe(&store, move |_, cx| {
+            tx.borrow_mut().send(Some(node_binary_options(cx))).ok();
+        })
+        .detach();
+    }
 
     rx
 }

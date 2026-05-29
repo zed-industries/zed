@@ -8,7 +8,7 @@ use remote::Interactive;
 
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
-    binary_downloads::BinaryDownloads,
+    binary_downloads::DownloadGate,
     debugger::session::SessionQuirks,
     project_settings::{DapBinary, ProjectSettings},
     worktree_store::WorktreeStore,
@@ -35,7 +35,6 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedStrin
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
-use postage::{stream::Stream as _, watch};
 use settings::InlayHintKind;
 
 use remote::RemoteClient;
@@ -273,27 +272,10 @@ impl DapStore {
                 let user_args = dap_settings.and_then(|s| s.args.clone());
                 let user_env = dap_settings.and_then(|s| s.env.clone());
 
-                let worktree_id = worktree.read(cx).id();
-                let wait_until_downloads_allowed = if user_installed_path.is_some() {
-                    None
-                } else {
-                    BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
-                        binary_downloads.update(cx, |binary_downloads, cx| {
-                            binary_downloads.wait_until_allowed(Some(worktree_id), cx)
-                        })
-                    })
-                };
-
                 let delegate = self.delegate(worktree, console, cx);
-                let adapter_name = adapter.name();
 
                 let worktree = worktree.clone();
                 cx.spawn(async move |this, cx| {
-                    await_dap_downloads_allowed(
-                        wait_until_downloads_allowed,
-                        adapter_name.as_ref(),
-                    )
-                    .await;
                     let mut binary = adapter
                         .get_binary(
                             &delegate,
@@ -622,6 +604,8 @@ impl DapStore {
             unimplemented!("Starting session on remote side");
         };
 
+        let binary_downloads = DownloadGate::new(Some(worktree.read(cx).id()), cx);
+
         Arc::new(DapAdapterDelegate::new(
             local_store.fs.clone(),
             worktree.read(cx).snapshot(),
@@ -633,6 +617,7 @@ impl DapStore {
                 .environment
                 .update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx)),
             local_store.is_headless,
+            binary_downloads,
         ))
     }
 
@@ -964,6 +949,7 @@ pub struct DapAdapterDelegate {
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
     is_headless: bool,
+    binary_downloads: Option<DownloadGate>,
 }
 
 impl DapAdapterDelegate {
@@ -976,6 +962,7 @@ impl DapAdapterDelegate {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
         is_headless: bool,
+        binary_downloads: Option<DownloadGate>,
     ) -> Self {
         Self {
             fs,
@@ -986,6 +973,7 @@ impl DapAdapterDelegate {
             toolchain_store,
             load_shell_env_task,
             is_headless,
+            binary_downloads,
         }
     }
 }
@@ -1036,6 +1024,12 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         task.await.unwrap_or_default()
     }
 
+    async fn await_binary_downloads_allowed(&self, tool: &str) {
+        if let Some(gate) = &self.binary_downloads {
+            gate.permit(tool).await;
+        }
+    }
+
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         self.toolchain_store.clone()
     }
@@ -1053,26 +1047,4 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     fn is_headless(&self) -> bool {
         self.is_headless
     }
-}
-
-/// Mirrors the worktree-trust wait: if a debug adapter is about to be
-/// downloaded but the user has not yet approved binary downloads, block here
-/// until they do. Returning early when there's nothing to wait on keeps the
-/// happy path zero-cost.
-async fn await_dap_downloads_allowed(wait: Option<watch::Receiver<bool>>, adapter_name: &str) {
-    let Some(mut wait) = wait else {
-        return;
-    };
-    if *wait.borrow() {
-        return;
-    }
-    log::info!(
-        "Waiting for binary downloads approval before installing debug adapter {adapter_name}"
-    );
-    while let Some(allowed) = wait.recv().await {
-        if allowed {
-            break;
-        }
-    }
-    log::info!("Binary downloads allowed, installing debug adapter {adapter_name}");
 }

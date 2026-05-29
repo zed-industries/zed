@@ -13,7 +13,7 @@ use futures::{
     future::{self, Shared},
     stream::FuturesUnordered,
 };
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     Buffer, LanguageRegistry, LocalFile, OffsetUtf16,
     language_settings::{Formatter, LanguageSettings},
@@ -21,15 +21,14 @@ use language::{
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
-use postage::{stream::Stream as _, watch};
 use prettier::Prettier;
 use settings::Settings;
 use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 
 use crate::{
-    File, PathChange, ProjectEntryId, Worktree, binary_downloads::BinaryDownloads,
-    lsp_store::WorktreeId, project_settings::ProjectSettings, worktree_store::WorktreeStore,
+    File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
+    project_settings::ProjectSettings, worktree_store::WorktreeStore,
 };
 
 pub struct PrettierStore {
@@ -136,23 +135,13 @@ impl PrettierStore {
                     {
                         Ok(ControlFlow::Break(())) => None,
                         Ok(ControlFlow::Continue(None)) => {
-                            let wait_until_downloads_allowed = lsp_store
+                            let default_task = lsp_store
                                 .update(cx, |lsp_store, cx| {
                                     lsp_store
                                         .prettiers_per_worktree
                                         .entry(worktree_id)
                                         .or_default()
                                         .insert(None);
-                                    Self::wait_until_downloads_allowed(Some(worktree_id), cx)
-                                })
-                                .ok()?;
-                            await_downloads_allowed(
-                                wait_until_downloads_allowed,
-                                "default prettier",
-                            )
-                            .await;
-                            let default_task = lsp_store
-                                .update(cx, |lsp_store, cx| {
                                     lsp_store.default_prettier.prettier_task(
                                         &node,
                                         Some(worktree_id),
@@ -222,12 +211,8 @@ impl PrettierStore {
                 })
             }
             None => {
-                let wait_until_downloads_allowed = Self::wait_until_downloads_allowed(None, cx);
                 let new_task = self.default_prettier.prettier_task(&node, None, cx);
-                cx.spawn(async move |_, _| {
-                    await_downloads_allowed(wait_until_downloads_allowed, "default prettier").await;
-                    Some((None, new_task?.log_err().await?))
-                })
+                cx.spawn(async move |_, _| Some((None, new_task?.log_err().await?)))
             }
         }
     }
@@ -551,20 +536,6 @@ impl PrettierStore {
             .detach();
     }
 
-    /// Returns a watch channel that resolves once downloads become allowed for
-    /// the given worktree (or globally when `None`), or `None` when downloads
-    /// are already allowed.
-    fn wait_until_downloads_allowed(
-        worktree: Option<WorktreeId>,
-        cx: &mut App,
-    ) -> Option<watch::Receiver<bool>> {
-        BinaryDownloads::try_get_global(cx).and_then(|binary_downloads| {
-            binary_downloads.update(cx, |binary_downloads, cx| {
-                binary_downloads.wait_until_allowed(worktree, cx)
-            })
-        })
-    }
-
     pub fn install_default_prettier(
         &mut self,
         worktree: Option<WorktreeId>,
@@ -581,7 +552,6 @@ impl PrettierStore {
         }
 
         let mut new_plugins = plugins.collect::<HashSet<_>>();
-        let wait_until_downloads_allowed = Self::wait_until_downloads_allowed(worktree, cx);
         let node = self.node.clone();
 
         new_plugins.retain(|plugin| !self.default_prettier.installed_plugins.contains(plugin));
@@ -615,7 +585,6 @@ impl PrettierStore {
         let fs = Arc::clone(&self.fs);
         let new_installation_task = cx
             .spawn(async move  |prettier_store, cx| {
-                await_downloads_allowed(wait_until_downloads_allowed, "default prettier").await;
                 cx.background_executor().timer(Duration::from_millis(30)).await;
                 let location_data = prettier_store.update(cx, |prettier_store, cx| {
                     worktree.and_then(|worktree_id| {
@@ -752,24 +721,6 @@ impl PrettierStore {
             );
         }
     }
-}
-
-/// Mirrors the worktree-trust wait: if downloads are pending approval, blocks
-/// here until the user enables them; otherwise returns immediately.
-async fn await_downloads_allowed(wait: Option<watch::Receiver<bool>>, description: &str) {
-    let Some(mut wait) = wait else {
-        return;
-    };
-    if *wait.borrow() {
-        return;
-    }
-    log::info!("Waiting for binary downloads approval before installing {description}");
-    while let Some(allowed) = wait.recv().await {
-        if allowed {
-            break;
-        }
-    }
-    log::info!("Binary downloads allowed, installing {description}");
 }
 
 pub fn prettier_plugins_for_language(

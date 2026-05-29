@@ -461,6 +461,8 @@ impl DebugAdapter for GoDebugAdapter {
                 .await
                 .context("Go not found in path. Please install Go first, then Dlv will be installed automatically.")?;
 
+            delegate.await_binary_downloads_allowed("dlv").await;
+
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
 
             let install_output = util::command::new_command(&go)
