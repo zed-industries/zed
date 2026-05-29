@@ -154,7 +154,7 @@ No action needed. A maintainer will review this shortly.
                 f" — {m['explanation']}"
                 for m in related_closed_issues
             ]
-            parts.append("**Recently closed, possibly related:**\n\n" + "\n".join(lines))
+            parts.append("**Recently closed, possibly the same bug:**\n\n" + "\n".join(lines))
         body = "\n\n".join(parts)
         sections.append(f"""<details>
 <summary>Additional recent context for triagers</summary>
@@ -558,34 +558,60 @@ Examples of things that are NOT duplicates:
 For OPEN duplicates (either bucket), false positives are MUCH worse than false negatives — they
 waste the time of both the issue author and the maintainers. When in doubt, omit.
 
-# (b) Related closed issues — CLOSED candidates only
+# (b) Closed candidates that may be the same bug — CLOSED candidates only
 
-The goal is to give triagers useful technical context, NOT to fill a section. Empty is
-preferable to weak filler — triagers lose trust in this section quickly if it's stretched.
-The same false-positives-are-worse asymmetry as for duplicates applies here.
+The goal is NOT a "related reading" list. The goal is to surface closed issues where the
+new issue is plausibly the SAME bug — a duplicate that just happens to be filed against a
+closed predecessor instead of an open one. Empty is preferable to weak filler — triagers
+lose trust in this section quickly if it's stretched. The same false-positives-are-worse
+asymmetry as for duplicates applies here.
 
-The bar: name a specific shared technical claim — a mechanism, code path, regression, or
-known design limitation. Surface overlap (same area label, same broad symptom, "both involve
-feature X") is NOT sufficient.
+The bar: a triager reading this should be able to act — ask the reporter to retest a fix,
+point at a known design decision that already declined this request, or point at the
+canonical bug this is a duplicate of. "Useful context" or "shared area" is NOT a reason
+to include.
 
-Worth surfacing:
-- A recently fixed (state_reason "completed") issue describing the same specific symptom and
-  trigger — reporter may need to retest on the latest build.
-- A cluster of issues closed as "not_planned" about the exact same request — known design
-  choice the triager can point to.
-- A previously triaged duplicate (state_reason "duplicate") that points at the same canonical
-  issue, or shares an identical mechanism.
+Omit a candidate if ANY of these apply (in observed practice, almost everything does):
 
-NOT worth surfacing — examples of false positives we want to avoid:
-- "ARM compile failure" alongside "ARM runtime perf" — same area, different mechanism.
-- "Worktree path bug" alongside "worktree display label confusion" — same feature, unrelated.
-- A vague closed issue (e.g. "Zed is slow") that could be cited next to almost any new bug.
-  If you'd reuse the same closed issue across many unrelated new issues, it's filler — omit.
-- A closed issue whose only connection is a shared area:* label or a single shared keyword.
+1. Self-contradiction. If you find yourself writing "while focused on X rather than Y",
+   "although this is about A, the new issue is about B", "this issue focuses on... rather
+   than...", or any acknowledgment that the candidate isn't on the same topic — STOP.
+   You've already made the case for omitting it.
 
-If your explanation reads like "may indicate similar...", "could provide context for...",
-"shows recent attention to...", or "demonstrates a pattern of..." — STOP. You don't have a
-real claim. Omit.
+2. Fabricated specifics. Every concrete claim about the candidate (its trigger, its scope,
+   its conditions) must be visible in the candidate's title or body preview. Specifics
+   like "when X happens", "under Y conditions", "specifically affecting Z" that aren't
+   supported by the candidate's actual text mean you're inventing details to fit the new
+   issue. Omit.
+
+3. Weasel phrases. Paraphrases of these all indicate you don't have a real claim:
+   "may indicate similar...", "could provide context for...", "shows / demonstrates recent
+   attention to...", "indicates the team has considered...", "demonstrates a pattern
+   of...", "may provide useful context...". STOP and omit.
+
+4. Retest by default. The "reporter may need to retest on the latest build" framing only
+   applies when the candidate's symptom is literally the same as the new issue's. It is
+   NOT a default justification for "this was a recent fix in roughly the same area."
+
+5. Same area / feature, different mechanism. Examples to omit:
+   - "ARM compile failure" alongside "ARM runtime perf" — same area, different mechanism.
+   - "Worktree path bug" alongside "worktree display label confusion" — same feature,
+     unrelated.
+
+6. Vague catch-all candidate. A closed issue like "Zed is slow" / "performance" / "agent
+   panel UX" that could be cited next to almost any new bug is filler. If you'd reuse the
+   same closed issue across many unrelated new issues, omit.
+
+7. Label or single-keyword overlap. A closed issue whose only connection is a shared
+   area:* label or one shared keyword is not relevant.
+
+Worth surfacing — strict examples:
+- A recently fixed ("completed") issue with the SAME specific trigger as the new issue —
+  triager can ask the reporter to retest on the latest build.
+- A cluster of "not_planned" closures about the EXACT same request — known design choice
+  the triager can point to.
+- A previously triaged "duplicate" pointing at the same canonical issue, or sharing the
+  same specific mechanism.
 
 Count: typically 0 or 1. Never more than 2 unless there's an obvious cluster of identical
 "not_planned" reports. 0 is a normal outcome.
@@ -673,6 +699,131 @@ Return empty arrays where nothing relevant is found."""
     return likely, possible, closed
 
 
+CRITIQUE_SYSTEM_PROMPT = """You are evaluating ONE recently closed GitHub issue to decide whether a triager looking
+at a brand-new bug report would find it useful to be told about that closed issue.
+
+There is no slate to fill. There is no quota. You will be shown exactly one candidate.
+The default verdict is OMIT. Zero is the expected outcome for most candidates.
+
+A candidate is worth surfacing ONLY if the new issue is plausibly the SAME BUG as the
+closed one — a duplicate that happens to be filed against a closed predecessor. Concretely,
+the legitimate cases are exactly three:
+
+- The candidate was closed as "completed" (a fix shipped) AND the new issue has the same
+  specific trigger / symptom. The triager will ask the reporter to retest.
+- The candidate was closed as "not_planned" AND the new issue is the EXACT same request
+  (a feature decision the team already declined). The triager will point at it.
+- The candidate was closed as "duplicate" AND it pointed at the same canonical bug the new
+  issue describes, or it shares the same specific mechanism.
+
+"Same broad area", "similar-sounding symptom", or "recent attention to this subsystem" are
+NOT reasons to include. Omit them.
+
+Return "omit" if ANY of the following apply (in observed practice, almost everything does):
+
+1. Self-contradiction. If your reasoning includes "while focused on X rather than Y",
+   "although this is about A, the new issue is about B", "this issue focuses on... rather
+   than...", or any acknowledgment the candidate is on a different topic — you've already
+   decided to omit.
+2. Fabricated specifics. Every concrete claim about the candidate (its trigger, scope,
+   conditions) must be visible in the candidate's title or body preview. If you find
+   yourself describing the candidate using details that aren't in its text, you're
+   inventing details to fit the new issue. Omit.
+3. Weasel phrases. Paraphrases of "may indicate similar...", "could provide context
+   for...", "shows / demonstrates recent attention to...", "indicates the team has
+   considered...", "demonstrates a pattern of...", "may provide useful context..." —
+   these mean you don't have a real claim. Omit.
+4. Retest by default. The "reporter may need to retest on the latest build" framing only
+   applies when the closed issue's symptom is LITERALLY the same as the new issue's. "This
+   was a recent fix in roughly the same area" is not enough.
+5. Same area / feature, different mechanism. Same area label but different bug, different
+   code path, different trigger. Omit.
+6. Vague catch-all candidate. A closed issue like "Zed is slow" / "performance" / "agent
+   panel UX" that you could cite next to many unrelated new bugs. Omit.
+7. Label or single-keyword overlap. Only connection is a shared area:* label or one shared
+   keyword. Omit.
+
+Output only valid JSON (no markdown code blocks):
+{
+  "verdict": "include" | "omit",
+  "rule_violated": null | 1 | 2 | 3 | 4 | 5 | 6 | 7,
+  "rationale": "one concise sentence explaining the verdict"
+}
+
+When "verdict" is "include", "rule_violated" must be null.
+When "verdict" is "omit", "rule_violated" should be the most relevant rule number, or null
+if the candidate is simply too unrelated for any rule to specifically apply."""
+
+
+def critique_closed_candidates(anthropic_key, issue, proposed, search_results):
+    """Run a strict per-candidate critique pass over the proposer's closed candidates.
+
+    For each proposed match, call Claude with only the new issue and that single candidate
+    (blind to the proposer's rationale) and ask for a yes/no verdict. Default is omit.
+    Returns the subset of `proposed` that passes critique.
+    """
+    if not proposed:
+        return []
+
+    results_by_number = {r["number"]: r for r in search_results}
+    kept = []
+    for match in proposed:
+        number = match["number"]
+        candidate = results_by_number.get(number)
+        if candidate is None:
+            # Should not happen — analyze_duplicates only emits numbers from candidates it
+            # was given — but be defensive rather than crash the bot.
+            log(f"  Critique: dropping #{number} — candidate context not found")
+            continue
+
+        state_reason = candidate.get("state_reason") or "unknown"
+        user_content = f"""## New Issue #{issue['number']}
+**Title:** {issue['title']}
+
+**Body:**
+{issue['body'][:3000]}
+
+## Closed Candidate #{number}
+**Title:** {candidate.get('title', '')}
+**State reason:** {state_reason}
+
+**Body preview:**
+{candidate.get('body_preview', '')}"""
+
+        log(f"  Critique: evaluating #{number}")
+        try:
+            response = call_claude(anthropic_key, CRITIQUE_SYSTEM_PROMPT, user_content, max_tokens=300)
+        except requests.RequestException as e:
+            # If the critique call fails, prefer omitting the candidate over posting noise.
+            log(f"  Critique: API call failed for #{number} ({e}); omitting candidate")
+            continue
+
+        fence = re.match(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", response, re.DOTALL)
+        if fence:
+            response = fence.group(1)
+
+        try:
+            verdict_data = json.loads(response)
+        except json.JSONDecodeError as e:
+            log(f"  Critique: failed to parse verdict for #{number} ({e}); omitting candidate")
+            log(f"    Raw response: {response}")
+            continue
+
+        verdict = verdict_data.get("verdict")
+        rule = verdict_data.get("rule_violated")
+        rationale = verdict_data.get("rationale", "")
+
+        if verdict == "include":
+            log(f"  Critique: keeping #{number} — {rationale}")
+            kept.append(match)
+        else:
+            rule_str = f"rule {rule}" if rule else "no specific rule"
+            log(f"  Critique: omitting #{number} ({rule_str}) — {rationale}")
+
+    log(f"  Critique: kept {len(kept)} of {len(proposed)} closed candidates")
+    return kept
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Identify potential duplicate issues")
     parser.add_argument("issue_number", type=int, help="Issue number to analyze")
@@ -711,6 +862,13 @@ if __name__ == "__main__":
     # analyze candidates
     likely_duplicates, possible_duplicates, related_closed_issues = analyze_duplicates(
         anthropic_key, issue, relevant_magnets, search_results
+    )
+
+    # second-pass critique: prompt iteration on the proposer hit a ceiling around 30% noise.
+    # Re-evaluate each proposed closed candidate in isolation with a stricter prompt that
+    # has no slate to fill and is blind to the proposer's rationale.
+    related_closed_issues = critique_closed_candidates(
+        anthropic_key, issue, related_closed_issues, search_results
     )
 
     # resolve close reason from our search results (the source of truth) so we don't depend
