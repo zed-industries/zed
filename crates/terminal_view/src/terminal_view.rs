@@ -2253,7 +2253,7 @@ fn show_terminal_notification(
                 TerminalNotificationEvent::Accepted => {
                     cx.activate(true);
                     window.activate_window();
-                    terminal_view.focus_handle.focus(window);
+                    terminal_view.focus_handle.focus(window, cx);
                     if let Some((w, _)) = terminal_view.notification.take() {
                         w.update(cx, |_, window, _| window.remove_window()).ok();
                     }
