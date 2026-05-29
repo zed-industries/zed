@@ -2030,6 +2030,13 @@
   //
   // Default: true
   "allow_binary_downloads": true,
+  // When `allow_binary_downloads` is disabled and a tool needed by the project
+  // cannot be found locally, whether to prompt to install just that tool
+  // instead of silently blocking the download. Has no effect while
+  // `allow_binary_downloads` is enabled.
+  //
+  // Default: true
+  "prompt_to_install_binaries": true,
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
   //

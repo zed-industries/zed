@@ -62,11 +62,12 @@ use futures::{
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
-    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds, WindowHandle,
-    WindowId, WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    Context, CursorStyle, Decorations, DismissEvent, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView,
+    MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful,
+    Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds,
+    WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
+    transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -99,6 +100,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
+    binary_downloads::{BinaryDownloads, BinaryDownloadsEvent, BinaryDownloadsStore},
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
@@ -1754,7 +1756,7 @@ impl Workspace {
             Self::serialize_items(&this, serializable_items_rx, cx).await
         });
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe_window_activation(window, Self::on_window_activation_changed),
             cx.observe_window_bounds(window, move |this, window, cx| {
                 if this.bounds_save_task_queued.is_some() {
@@ -1789,6 +1791,9 @@ impl Workspace {
                 }
             }),
         ];
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            subscriptions.push(cx.subscribe(&binary_downloads, Self::on_binary_downloads_event));
+        }
 
         cx.defer_in(window, move |this, window, cx| {
             this.update_window_title(window, cx);
@@ -8024,6 +8029,69 @@ impl Workspace {
         });
     }
 
+    /// Offers a one-off "install this tool" prompt when a subsystem needs to
+    /// download a tool that has no local copy while `allow_binary_downloads` is
+    /// disabled. Shown only in the workspace whose project owns the worktree;
+    /// the store guarantees the event is emitted at most once per tool, and the
+    /// per-tool notification id dedupes within this window.
+    fn on_binary_downloads_event(
+        &mut self,
+        store: Entity<BinaryDownloadsStore>,
+        event: &BinaryDownloadsEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let BinaryDownloadsEvent::InstallRequested(request) = event else {
+            return;
+        };
+        if let Some(worktree_id) = request.worktree_id
+            && self
+                .project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .is_none()
+        {
+            return;
+        }
+
+        struct BinaryDownloadInstallPrompt;
+
+        let worktree_id = request.worktree_id;
+        let tool = request.tool.clone();
+        let store = store.downgrade();
+        let id = NotificationId::composite::<BinaryDownloadInstallPrompt>(tool.clone());
+        self.show_notification(id, cx, |cx| {
+            let message = format!(
+                "Binary downloads are disabled and {tool} isn't installed. Install it for this project?"
+            );
+            cx.new(move |cx| {
+                MessageNotification::new(message, cx)
+                    .primary_message("Install")
+                    .primary_icon(IconName::CloudDownload)
+                    .primary_on_click({
+                        let store = store.clone();
+                        let tool = tool.clone();
+                        move |_, cx| {
+                            store
+                                .update(cx, |store, _| {
+                                    store.resolve_tool_install(worktree_id, tool.clone(), true);
+                                })
+                                .ok();
+                            cx.emit(DismissEvent);
+                        }
+                    })
+                    .secondary_message("Not Now")
+                    .secondary_on_click(move |_, cx| {
+                        store
+                            .update(cx, |store, _| {
+                                store.resolve_tool_install(worktree_id, tool.clone(), false);
+                            })
+                            .ok();
+                        cx.emit(DismissEvent);
+                    })
+            })
+        });
+    }
+
     pub fn show_worktree_trust_security_modal(
         &mut self,
         toggle: bool,
@@ -8069,7 +8137,10 @@ impl Workspace {
         if let Some(scope) =
             crate::binary_downloads_modal::scope_for_project(self.project().read(cx), cx)
         {
-            self.toggle_modal(window, cx, |_, cx| BinaryDownloadsModal::new(scope, cx));
+            let project = self.project().clone();
+            self.toggle_modal(window, cx, |_, cx| {
+                BinaryDownloadsModal::new(&project, scope, cx)
+            });
         }
     }
 }

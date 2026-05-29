@@ -87,6 +87,13 @@ pub struct ProjectSettingsContent {
     /// Default: true
     pub allow_binary_downloads: Option<bool>,
 
+    /// When `allow_binary_downloads` is disabled and a tool needed by the
+    /// project cannot be found locally, whether to prompt to install just
+    /// that tool instead of silently blocking the download.
+    ///
+    /// Default: true
+    pub prompt_to_install_binaries: Option<bool>,
+
     /// Whether to disable all AI features in Zed.
     ///
     /// Default: false

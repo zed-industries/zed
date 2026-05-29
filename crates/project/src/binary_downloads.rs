@@ -9,7 +9,10 @@
 //! registers its [`WorktreeStore`] via [`track_binary_downloads`].
 
 use collections::{HashMap, HashSet};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, WeakEntity};
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Subscription,
+    WeakEntity,
+};
 use postage::{sink::Sink as _, watch};
 use settings::{Settings as _, SettingsLocation, SettingsStore, WorktreeId};
 use util::rel_path::RelPath;
@@ -47,6 +50,15 @@ impl BinaryDownloads {
     }
 }
 
+/// Identifies a single one-off install prompt: a tool needed by a worktree
+/// while downloads are disabled. `worktree_id` is `None` for tools that aren't
+/// worktree-scoped.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ToolInstall {
+    pub worktree_id: Option<WorktreeId>,
+    pub tool: SharedString,
+}
+
 #[derive(Debug)]
 pub enum BinaryDownloadsEvent {
     /// `allow_binary_downloads` flipped from `false` to `true` for the listed
@@ -55,6 +67,11 @@ pub enum BinaryDownloadsEvent {
     /// `allow_binary_downloads` flipped from `true` to `false` for the listed
     /// worktrees of the given store.
     Disallowed(WeakEntity<WorktreeStore>, HashSet<WorktreeId>),
+    /// A subsystem needs to install `tool` while downloads are disabled and no
+    /// local copy was found. The UI should prompt the user and call back into
+    /// [`BinaryDownloadsStore::resolve_tool_install`]. Emitted at most once per
+    /// [`ToolInstall`] for the lifetime of the store.
+    InstallRequested(ToolInstall),
 }
 
 impl EventEmitter<BinaryDownloadsEvent> for BinaryDownloadsStore {}
@@ -71,6 +88,15 @@ pub struct BinaryDownloadsStore {
     /// Parallel waiter for callers that don't have a worktree in hand (e.g. a
     /// buffer with no file backing it).
     global_waiter: Option<watch::Sender<bool>>,
+    /// One-off per-tool install decisions made through the install prompt.
+    /// `true` means "allow installing this tool even though downloads are off";
+    /// `false` means the user declined. Either way we never prompt again for
+    /// the same [`ToolInstall`].
+    tool_decisions: HashMap<ToolInstall, bool>,
+    /// In-flight per-tool install waiters. Each fires `true` once the user
+    /// approves the prompt or the effective setting flips back on, letting the
+    /// awaiting subsystem proceed with the download.
+    tool_waiters: HashMap<ToolInstall, watch::Sender<bool>>,
     _worktree_subscriptions: HashMap<WeakEntity<WorktreeStore>, Subscription>,
     _settings_subscription: Subscription,
 }
@@ -84,6 +110,8 @@ impl BinaryDownloadsStore {
             global_snapshot,
             waiters: HashMap::default(),
             global_waiter: None,
+            tool_decisions: HashMap::default(),
+            tool_waiters: HashMap::default(),
             _worktree_subscriptions: HashMap::default(),
             _settings_subscription: settings_subscription,
         }
@@ -139,6 +167,100 @@ impl BinaryDownloadsStore {
         ProjectSettings::get(location, cx).allow_binary_downloads
     }
 
+    /// Returns the effective `prompt_to_install_binaries` value for the scope.
+    pub fn prompt_to_install_binaries(worktree_id: Option<WorktreeId>, cx: &App) -> bool {
+        let location = worktree_id.map(|worktree_id| SettingsLocation {
+            worktree_id,
+            path: RelPath::empty(),
+        });
+        ProjectSettings::get(location, cx).prompt_to_install_binaries
+    }
+
+    /// Like [`Self::wait_until_allowed`], but for the case where a subsystem
+    /// found no local copy of `tool` and would have to download it. When
+    /// `prompt_to_install_binaries` is enabled, the first such request for a
+    /// given [`ToolInstall`] emits [`BinaryDownloadsEvent::InstallRequested`]
+    /// so the UI can offer a one-off "install this tool" prompt; subsequent
+    /// requests reuse the same pending waiter without re-prompting.
+    ///
+    /// Returns `None` when the download may proceed immediately (downloads are
+    /// already allowed, or this tool was previously approved). Otherwise
+    /// returns a receiver that yields `true` once the user approves or the
+    /// effective setting flips on.
+    pub fn request_tool_install(
+        &mut self,
+        worktree_id: Option<WorktreeId>,
+        tool: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Option<watch::Receiver<bool>> {
+        let key = ToolInstall {
+            worktree_id,
+            tool: tool.into(),
+        };
+        if Self::allow_binary_downloads(worktree_id, cx) {
+            self.tool_waiters.remove(&key);
+            return None;
+        }
+        if self.tool_decisions.get(&key).copied() == Some(true) {
+            return None;
+        }
+
+        let already_pending = self.tool_waiters.contains_key(&key);
+        let already_decided = self.tool_decisions.contains_key(&key);
+        let sender = self
+            .tool_waiters
+            .entry(key.clone())
+            .or_insert_with(|| watch::channel::<bool>().0);
+        let receiver = sender.subscribe();
+
+        if !already_pending && !already_decided && Self::prompt_to_install_binaries(worktree_id, cx)
+        {
+            cx.emit(BinaryDownloadsEvent::InstallRequested(key));
+        }
+        Some(receiver)
+    }
+
+    /// Records the user's answer to an install prompt. Approving fires the
+    /// pending waiter so the awaiting download proceeds; declining keeps the
+    /// waiter registered (so a later settings flip still unblocks it) but
+    /// ensures we never prompt again for the same [`ToolInstall`].
+    pub fn resolve_tool_install(
+        &mut self,
+        worktree_id: Option<WorktreeId>,
+        tool: impl Into<SharedString>,
+        install: bool,
+    ) {
+        let key = ToolInstall {
+            worktree_id,
+            tool: tool.into(),
+        };
+        self.tool_decisions.insert(key.clone(), install);
+        if install && let Some(mut sender) = self.tool_waiters.remove(&key) {
+            sender.blocking_send(true).ok();
+        }
+    }
+
+    /// The tools that have requested a one-off install while downloads are
+    /// disabled and are still waiting for a decision (pending or previously
+    /// declined). Approved tools are removed once their download proceeds.
+    pub fn pending_tool_installs(&self) -> Vec<ToolInstall> {
+        self.tool_waiters.keys().cloned().collect()
+    }
+
+    fn flush_tool_waiters(&mut self, cx: &App) {
+        let allowed_keys = self
+            .tool_waiters
+            .keys()
+            .filter(|key| Self::allow_binary_downloads(key.worktree_id, cx))
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in allowed_keys {
+            if let Some(mut sender) = self.tool_waiters.remove(&key) {
+                sender.blocking_send(true).ok();
+            }
+        }
+    }
+
     fn add_worktree_store(
         &mut self,
         worktree_store: Entity<WorktreeStore>,
@@ -169,6 +291,7 @@ impl BinaryDownloadsStore {
         for weak in keys {
             self.refresh(weak, cx);
         }
+        self.flush_tool_waiters(cx);
     }
 
     fn on_worktree_store_event(

@@ -3090,6 +3090,46 @@ Anything already installed locally still runs. Tools resolved via explicit
 `node.path` / `user_installed_path` / `lsp.<server>.binary.path` settings keep
 working because Zed does not need to download them.
 
+### Prompting to install individual tools
+
+- Description: When `allow_binary_downloads` is disabled and a tool needed by the project cannot be found locally, whether to prompt to install just that tool instead of silently blocking the download. Has no effect while `allow_binary_downloads` is enabled. This can be overridden in project settings.
+- Setting: `prompt_to_install_binaries`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+With downloads disabled, the first time a language server has no local copy Zed
+shows a notification ("Binary downloads are disabled and `<tool>` isn't
+installed. Install it for this project?") offering a one-off **Install**. This
+grants a single tool permission to download without flipping
+`allow_binary_downloads` for the whole project, mirroring the
+worktree-trust prompts.
+
+Approving installs and runs the tool while leaving `allow_binary_downloads`
+disabled. Because the tool is then cached on disk, it keeps starting on
+subsequent restarts without prompting again.
+
+Zed prompts at most once per tool per worktree. Declining (or dismissing) the
+notification keeps the download blocked but won't re-ask; the server still
+starts later if `allow_binary_downloads` is turned on. Set
+`prompt_to_install_binaries` to `false` to suppress these prompts entirely and
+fall back to silently waiting for the setting to be enabled.
+
+Because each prompt is shown only once, the tools awaiting a decision are also
+listed in the binary-downloads modal (opened from the title-bar "Downloads
+Off" indicator). There you can tick individual tools and confirm to install
+them once -- nothing is ticked by default, and confirming does not change
+`allow_binary_downloads`.
+
+```json [global settings]
+{
+  "allow_binary_downloads": false,
+  "prompt_to_install_binaries": false
+}
+```
+
 ### Project-scoped overrides
 
 This setting may be placed in either `~/.config/zed/settings.json` (global) or

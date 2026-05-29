@@ -251,7 +251,7 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
         ]
     }
-    fn security_section() -> [SettingsPageItem; 3] {
+    fn security_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Security"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -285,6 +285,21 @@ fn general_page(cx: &App) -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.project.allow_binary_downloads = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prompt To Install Binaries",
+                description: "When binary downloads are disabled and a tool needed by the project cannot be found locally, whether to prompt to install just that tool instead of silently blocking the download.",
+                field: Box::new(SettingField {
+                    json_path: Some("prompt_to_install_binaries"),
+                    pick: |settings_content| {
+                        settings_content.project.prompt_to_install_binaries.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.project.prompt_to_install_binaries = value;
                     },
                 }),
                 metadata: None,
