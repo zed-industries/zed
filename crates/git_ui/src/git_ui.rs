@@ -53,6 +53,18 @@ pub mod worktree_service;
 
 pub use conflict_view::MergeConflictIndicator;
 
+pub fn get_provider_icon(name: &str) -> IconName {
+    match name {
+        "Bitbucket" => IconName::Bitbucket,
+        "Codeberg" => IconName::Codeberg,
+        "Forgejo Self-Hosted" => IconName::Forgejo,
+        "GitHub" => IconName::Github,
+        "GitLab" => IconName::Gitlab,
+        "Gitea" => IconName::Gitea,
+        _ => IconName::Link,
+    }
+}
+
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
@@ -1026,7 +1038,12 @@ impl Component for GitStatusIcon {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "An icon that visually represents the git status of a file, \
+        using a distinct glyph and color for modified, added, deleted, and conflicted states."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         fn tracked_file_status(code: StatusCode) -> FileStatus {
             FileStatus::Tracked(git::status::TrackedStatus {
                 index_status: code,
@@ -1043,20 +1060,18 @@ impl Component for GitStatusIcon {
         }
         .into();
 
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group(vec![
-                    single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
-                    single_example("Added", GitStatusIcon::new(added).into_any_element()),
-                    single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
-                    single_example(
-                        "Conflicted",
-                        GitStatusIcon::new(conflict).into_any_element(),
-                    ),
-                ])])
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .children(vec![example_group(vec![
+                single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
+                single_example("Added", GitStatusIcon::new(added).into_any_element()),
+                single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
+                single_example(
+                    "Conflicted",
+                    GitStatusIcon::new(conflict).into_any_element(),
+                ),
+            ])])
+            .into_any_element()
     }
 }
 

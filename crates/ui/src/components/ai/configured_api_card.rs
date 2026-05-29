@@ -57,7 +57,12 @@ impl Component for ConfiguredApiCard {
         ComponentScope::Agent
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A card used in AI provider settings to indicate that an API has been \
+        configured, with an optional action button to manage or reconfigure it."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             v_flex()
                 .w_72()
@@ -101,7 +106,7 @@ impl Component for ConfiguredApiCard {
             ),
         ];
 
-        Some(example_group(examples).into_any_element())
+        example_group(examples).into_any_element()
     }
 }
 

@@ -11,7 +11,7 @@ use http_client::{
 pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, future::Future};
+use std::{convert::TryFrom, future::Future, time::Duration};
 use strum::EnumIter;
 use thiserror::Error;
 
@@ -342,6 +342,30 @@ impl Model {
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
     }
+
+    /// Whether OpenAI's Priority processing tier is available for this model.
+    /// Sourced from <https://openai.com/api-priority-processing/>. The `*-pro`,
+    /// `*-nano`, and legacy `gpt-4` variants are not eligible.
+    pub fn supports_priority(&self) -> bool {
+        match self {
+            Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointThreeCodex
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFive => true,
+            Self::Four
+            | Self::FiveNano
+            | Self::FivePointFourNano
+            | Self::FivePointFourPro
+            | Self::FivePointFivePro
+            | Self::Custom { .. } => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +480,23 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+}
+
+/// Service tier for OpenAI requests. Maps to the top-level `service_tier`
+/// field on Responses and Chat Completions. We only ever send `Priority`
+/// today (in response to Fast Mode being enabled); the other variants are
+/// included for symmetry with the API and so deserialization of echoed
+/// values does not fail.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTier {
+    Auto,
+    Default,
+    Flex,
+    Scale,
+    Priority,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -643,6 +684,8 @@ pub enum RequestError {
         body: String,
         headers: HeaderMap<HeaderValue>,
     },
+    #[error("response headers from {provider}'s API timed out after {timeout:?}")]
+    ResponseHeaderTimeout { provider: String, timeout: Duration },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -862,6 +905,10 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
 
                 Self::from_http_status(provider.into(), status_code, body, retry_after)
             }
+            RequestError::ResponseHeaderTimeout { provider, timeout } => Self::HttpSend {
+                provider: provider.into(),
+                error: anyhow!("response headers timed out after {timeout:?}"),
+            },
             RequestError::Other(e) => Self::Other(e),
         }
     }

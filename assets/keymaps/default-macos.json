@@ -785,6 +785,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "menu::Confirm",
+      "shift-r": "agent::RenameSelectedThread",
     },
   },
   {
@@ -1656,6 +1657,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-w": "workspace::CloseWindow",
+      "cmd-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
     },
@@ -1665,6 +1667,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-w": "workspace::CloseWindow",
+      "cmd-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
     },
