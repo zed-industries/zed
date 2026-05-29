@@ -729,6 +729,65 @@ fn main() {
         );
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
+        // Start the agent HTTP server when the first workspace opens
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            let started = std::sync::Arc::new(AtomicBool::new(false));
+            let fs = app_state.fs.clone();
+            cx.observe_new(move |workspace: &mut workspace::Workspace, _window, cx| {
+                log::info!("agent-server: observe_new fired for Workspace");
+                if started.swap(true, Ordering::SeqCst) {
+                    log::info!("agent-server: already started, skipping");
+                    return;
+                }
+                let project = workspace.project().clone();
+                log::info!("agent-server: starting on port 8765");
+                let handle = agent::start_agent_http_server(
+                    agent::AgentHttpServerConfig::default(),
+                    project,
+                    fs.clone(),
+                    cx,
+                );
+                if let Some(handle) = handle {
+                    log::info!("agent-server: started successfully");
+                    let new_sessions = handle.new_sessions.clone();
+                    let metadata_store =
+                        agent_ui::thread_metadata_store::ThreadMetadataStore::global(cx);
+                    cx.spawn(async move |_this, cx| {
+                        use agent_ui::thread_metadata_store::{ThreadId, ThreadMetadata};
+                        use chrono::Utc;
+                        use project::WorktreePaths;
+                        while let Ok((session_id, workdir, title)) = new_sessions.recv().await {
+                            let path_list = util::path_list::PathList::new(&[&workdir]);
+                            let worktree_paths = WorktreePaths::from_folder_paths(&path_list);
+                            metadata_store.update(cx, |store, cx| {
+                                store.save(
+                                    ThreadMetadata {
+                                        thread_id: ThreadId::new(),
+                                        session_id: Some(session_id),
+                                        agent_id: project::AgentId::new("Zed Agent"),
+                                        title: title.map(|t| t.into()),
+                                        title_override: None,
+                                        updated_at: Utc::now(),
+                                        created_at: Some(Utc::now()),
+                                        interacted_at: None,
+                                        worktree_paths,
+                                        remote_connection: None,
+                                        archived: false,
+                                    },
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+                    .detach();
+                } else {
+                    log::error!("agent-server: failed to start");
+                }
+            })
+            .detach();
+        }
+
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
         dev_container::init(cx);

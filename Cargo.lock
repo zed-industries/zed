@@ -291,6 +291,7 @@ dependencies = [
  "text",
  "theme",
  "thiserror 2.0.17",
+ "tiny_http",
  "ui",
  "unindent",
  "url",

@@ -1,3 +1,4 @@
+mod agent_server;
 mod db;
 mod legacy_thread;
 mod native_agent_server;
@@ -13,6 +14,7 @@ mod tool_permissions;
 mod tools;
 
 use context_server::ContextServerId;
+pub use agent_server::*;
 pub use db::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
@@ -332,6 +334,23 @@ enum SkillsState {
 }
 
 impl gpui::EventEmitter<SkillLoadingErrorsUpdated> for NativeAgent {}
+
+struct GlobalNativeAgent(Entity<NativeAgent>);
+
+impl Global for GlobalNativeAgent {}
+
+/// Returns the process-wide [`NativeAgent`] used by the in-process Zed agent,
+/// the HTTP API, and [`NativeAgentServer`].
+pub fn global_native_agent(fs: Arc<dyn Fs>, cx: &mut App) -> Entity<NativeAgent> {
+    if let Some(global) = cx.try_global::<GlobalNativeAgent>() {
+        return global.0.clone();
+    }
+
+    let thread_store = ThreadStore::global(cx);
+    let agent = NativeAgent::new(thread_store, Templates::new(), fs, cx);
+    cx.set_global(GlobalNativeAgent(agent.clone()));
+    agent
+}
 
 static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
     RULES_FILE_NAMES
