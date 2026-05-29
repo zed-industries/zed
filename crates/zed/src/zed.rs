@@ -5252,7 +5252,6 @@ mod tests {
                 "recent_projects",
                 "remote_debug",
                 "repl",
-                "rules_library",
                 "search",
                 "settings_editor",
                 "settings_profile_selector",
