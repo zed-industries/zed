@@ -160,6 +160,11 @@ pub struct ItemSettingsContent {
     ///
     /// Default: false
     pub show_close_button: Option<ShowCloseButton>,
+    /// Whether to show a dot on tabs and buffer headers when a file has unsaved edits.
+    /// Merge conflicts still show a warning dot when this is disabled.
+    ///
+    /// Default: true
+    pub show_dirty_indicator: Option<bool>,
 }
 
 #[with_fallible_options]

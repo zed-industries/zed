@@ -4913,7 +4913,12 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &App) -> Option<Indi
     maybe!({
         let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
             (true, _) => Color::Warning,
-            (_, true) => Color::Accent,
+            (_, true) => {
+                if !ItemSettings::get_global(cx).show_dirty_indicator {
+                    return None;
+                }
+                Color::Accent
+            }
             (false, false) => return None,
         };
 

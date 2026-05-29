@@ -8444,7 +8444,9 @@ pub(crate) fn render_buffer_header(
         let buffer = buffer.read(cx);
         let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
             (true, _) => Some(Color::Warning),
-            (_, true) => Some(Color::Accent),
+            (_, true) => ItemSettings::get_global(cx)
+                .show_dirty_indicator
+                .then_some(Color::Accent),
             (false, false) => None,
         };
         indicator_color.map(|indicator_color| Indicator::dot().color(indicator_color))

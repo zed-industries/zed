@@ -1364,7 +1364,8 @@ or
     "git_status": false,
     "activate_on_close": "history",
     "show_close_button": "hover",
-    "show_diagnostics": "off"
+    "show_diagnostics": "off",
+    "show_dirty_indicator": true
   }
 }
 ```
@@ -1522,6 +1523,16 @@ or
   }
 }
 ```
+
+### Show dirty indicator
+
+- Description: Whether to show a dot on tabs and buffer headers when a file has unsaved edits. When disabled, merge conflicts still show a warning dot.
+- Setting: `show_dirty_indicator`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ### Show Inline Code Actions
 
