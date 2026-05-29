@@ -6035,7 +6035,7 @@ impl Dismissable for TrialEndUpsell {
 #[cfg(any(test, feature = "test-support"))]
 impl AgentPanel {
     pub fn test_new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::new(workspace, None, window, cx)
+        Self::new(workspace, window, cx)
     }
 
     /// Drops a thread's `ConversationView` from `retained_threads` without
