@@ -4134,6 +4134,90 @@ async fn test_search_matches_thread_message_content(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_search_surfaces_archived_thread_by_content(cx: &mut TestAppContext) {
+    // Scenario: a thread the user archived still matches a content search. It's
+    // normally hidden from the list, but should surface (rendered demoted) when
+    // the query appears in its conversation.
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let session_id = acp::SessionId::new(Arc::from("archived-thread"));
+
+    let db_thread = agent::DbThread {
+        title: "Archived standup notes".into(),
+        messages: vec![Arc::new(agent::Message::User(agent::UserMessage {
+            id: acp_thread::UserMessageId::new(),
+            content: Arc::from(vec![agent::UserMessageContent::Text(
+                "the kumquat migration is finally done".into(),
+            )]),
+        }))],
+        updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        detailed_summary: None,
+        initial_project_snapshot: None,
+        cumulative_token_usage: Default::default(),
+        request_token_usage: Default::default(),
+        model: None,
+        profile: None,
+        imported: false,
+        subagent_context: None,
+        speed: None,
+        thinking_enabled: false,
+        thinking_effort: None,
+        draft_prompt: None,
+        ui_scroll_position: None,
+        sandboxed_terminal_temp_dir: None,
+    };
+    let save_task = cx.update(|_, cx| {
+        ThreadStore::global(cx).update(cx, |store, cx| {
+            store.save_thread(session_id.clone(), db_thread, PathList::default(), cx)
+        })
+    });
+    save_task.await.unwrap();
+    cx.run_until_parked();
+
+    // Seed *archived* metadata for the same session, with the project's
+    // worktree paths so it indexes under the `[my-project]` group.
+    let worktree_paths = cx.update(|_, cx| project.read(cx).worktree_paths(cx));
+    let metadata = ThreadMetadata {
+        thread_id: ThreadId::new(),
+        session_id: Some(session_id.clone()),
+        agent_id: agent::ZED_AGENT_ID.clone(),
+        title: Some("Archived standup notes".into()),
+        title_override: None,
+        updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        created_at: None,
+        interacted_at: None,
+        worktree_paths,
+        remote_connection: None,
+        archived: true,
+    };
+    seed_thread_metadata(metadata, cx);
+
+    // Archived threads don't show in the normal (unfiltered) list.
+    assert!(
+        !visible_entries_as_strings(&sidebar, cx)
+            .iter()
+            .any(|row| row.contains("Archived standup notes")),
+        "archived thread should be hidden before searching"
+    );
+
+    // Content search surfaces it (title has no "kumquat").
+    type_in_search(&sidebar, "kumquat", cx);
+    cx.executor().advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+
+    assert!(
+        visible_entries_as_strings(&sidebar, cx)
+            .iter()
+            .any(|row| row.contains("Archived standup notes")),
+        "archived thread should surface when its content matches the query, got: {:?}",
+        visible_entries_as_strings(&sidebar, cx)
+    );
+}
+
+#[gpui::test]
 async fn test_search_matches_regardless_of_case(cx: &mut TestAppContext) {
     // Scenario: A user remembers a thread title but not the exact casing.
     // Search should match case-insensitively so they can still find it.

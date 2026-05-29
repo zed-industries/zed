@@ -1599,6 +1599,28 @@ impl Sidebar {
                     }
                 }
 
+                // Surface archived threads whose *content* matches the active
+                // query. They're excluded from every query above, so we add
+                // them here; `render_thread` renders them demoted via
+                // `ThreadItem::archived`. Only runs while filtering.
+                if !query.is_empty() {
+                    for row in thread_store
+                        .read(cx)
+                        .archived_entries_for_main_worktree_path(
+                            group_key.path_list(),
+                            group_host.as_ref(),
+                        )
+                        .filter(|metadata| self.content_matches.contains(&metadata.thread_id))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                    {
+                        if !seen_thread_ids.insert(row.thread_id) {
+                            continue;
+                        }
+                        let workspace = resolve_workspace(row.folder_paths());
+                        threads.push(make_thread_entry(row, workspace));
+                    }
+                }
                 for thread in &mut threads {
                     if thread.draft.is_none() {
                         continue;
@@ -5902,6 +5924,7 @@ impl Sidebar {
         ThreadItem::new(id, title.clone())
             .base_bg(sidebar_bg)
             .icon(icon)
+            .archived(thread.metadata.archived)
             .when(is_draft, |this| {
                 this.icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.2)))
             })

@@ -654,6 +654,23 @@ impl ThreadMetadataStore {
             .filter(move |s| s.matches_remote_connection(remote_connection))
     }
 
+    /// Like [`Self::entries_for_main_worktree_path`], but returns only
+    /// *archived* threads. Used by the sidebar to surface archived threads
+    /// inline (visually demoted) when a content search matches them.
+    pub fn archived_entries_for_main_worktree_path<'a>(
+        &'a self,
+        path_list: &PathList,
+        remote_connection: Option<&'a RemoteConnectionOptions>,
+    ) -> impl Iterator<Item = &'a ThreadMetadata> + 'a {
+        self.threads_by_main_paths
+            .get(path_list)
+            .into_iter()
+            .flatten()
+            .filter_map(|s| self.threads.get(s))
+            .filter(|s| s.archived)
+            .filter(move |s| s.matches_remote_connection(remote_connection))
+    }
+
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let db = self.db.clone();
         self.reload_task.take();
