@@ -406,15 +406,6 @@ CREATE SEQUENCE public.servers_id_seq
 
 ALTER SEQUENCE public.servers_id_seq OWNED BY public.servers.id;
 
-CREATE TABLE public.shared_threads (
-    id uuid NOT NULL,
-    user_id integer NOT NULL,
-    title text NOT NULL,
-    data bytea NOT NULL,
-    created_at timestamp without time zone DEFAULT now() NOT NULL,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL
-);
-
 CREATE TABLE public.users (
     id integer NOT NULL,
     github_login character varying,
@@ -596,9 +587,6 @@ ALTER TABLE ONLY public.rooms
 ALTER TABLE ONLY public.servers
     ADD CONSTRAINT servers_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.shared_threads
-    ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
@@ -613,8 +601,6 @@ ALTER TABLE ONLY public.worktree_settings_files
 
 ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (project_id, id);
-
-CREATE INDEX idx_shared_threads_user_id ON public.shared_threads USING btree (user_id);
 
 CREATE INDEX index_breakpoints_on_project_id ON public.breakpoints USING btree (project_id);
 
@@ -833,9 +819,6 @@ ALTER TABLE ONLY public.room_participants
 
 ALTER TABLE ONLY public.rooms
     ADD CONSTRAINT rooms_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.shared_threads
-    ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.worktree_diagnostic_summaries
     ADD CONSTRAINT worktree_diagnostic_summaries_project_id_worktree_id_fkey FOREIGN KEY (project_id, worktree_id) REFERENCES public.worktrees(project_id, id) ON DELETE CASCADE;
