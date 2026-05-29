@@ -474,13 +474,12 @@ impl VsCodeSettings {
     }
 
     fn minimap_content(&self) -> Option<MinimapContent> {
-        let minimap_enabled = self.read_bool("editor.minimap.enabled");
-        let autohide = self.read_bool("editor.minimap.autohide");
+        let minimap_enabled = self.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let autohide = self.read_bool("editor.minimap.autohide").unwrap_or(false);
         let show = match (minimap_enabled, autohide) {
-            (Some(true), Some(false)) => Some(ShowMinimap::Always),
-            (Some(true), _) => Some(ShowMinimap::Auto),
-            (Some(false), _) => Some(ShowMinimap::Never),
-            _ => None,
+            (true, false) => Some(ShowMinimap::Always),
+            (true, true) => Some(ShowMinimap::Auto),
+            (false, _) => Some(ShowMinimap::Never),
         };
 
         skip_default(MinimapContent {

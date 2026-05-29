@@ -455,6 +455,13 @@ impl TerminalBuilder {
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
+        #[cfg(not(windows))]
+        let child_signal_mask = match tty::SignalMask::current()
+            .context("failed to capture terminal child signal mask")
+        {
+            Ok(signal_mask) => Some(signal_mask),
+            Err(error) => return Task::ready(Err(error)),
+        };
         let fut = async move {
             // Remove SHLVL so the spawned shell initializes it to 1, matching
             // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
@@ -544,6 +551,12 @@ impl TerminalBuilder {
                     working_directory: working_directory.clone(),
                     drain_on_exit: true,
                     env: env.clone().into_iter().collect(),
+                    // We pass in the foreground thread's signal mask to the child process via pty_options,
+                    // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
+                    // otherwise the terminal would inherit the background executor's signal mask which blocks
+                    // some terminal signals
+                    #[cfg(not(windows))]
+                    child_signal_mask,
                     #[cfg(windows)]
                     escape_args: shell_kind.tty_escape_args(),
                 }
@@ -692,12 +705,7 @@ impl TerminalBuilder {
                 events_rx,
             })
         };
-        // the thread we spawn things on has an effect on signal handling
-        if !cfg!(target_os = "windows") {
-            cx.spawn(async move |_| fut.await)
-        } else {
-            cx.background_spawn(fut)
-        }
+        cx.background_spawn(fut)
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
@@ -1007,7 +1015,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(Some(9), cx),
+            AlacTermEvent::Exit => self.register_task_finished(None, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -1031,8 +1039,8 @@ impl Terminal {
                     .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
-            AlacTermEvent::ChildExit(raw_status) => {
-                self.register_task_finished(Some(raw_status), cx);
+            AlacTermEvent::ChildExit(exit_status) => {
+                self.register_task_finished(Some(exit_status), cx);
             }
         }
     }
@@ -2369,18 +2377,11 @@ impl Terminal {
         Task::ready(None)
     }
 
-    fn register_task_finished(&mut self, raw_status: Option<i32>, cx: &mut Context<Terminal>) {
-        let exit_status: Option<ExitStatus> = raw_status.map(|value| {
-            #[cfg(unix)]
-            {
-                std::os::unix::process::ExitStatusExt::from_raw(value)
-            }
-            #[cfg(windows)]
-            {
-                std::os::windows::process::ExitStatusExt::from_raw(value as u32)
-            }
-        });
-
+    fn register_task_finished(
+        &mut self,
+        exit_status: Option<ExitStatus>,
+        cx: &mut Context<Terminal>,
+    ) {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(exit_status).ok();
         }

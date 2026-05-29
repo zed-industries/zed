@@ -721,7 +721,13 @@ impl Component for ZedAiConfiguration {
         ComponentScope::Onboarding
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "The configuration surface for Zed's hosted AI models, \
+        showing the user's connection status, current plan, trial eligibility, \
+        and entry points for enabling the Zed model provider."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         struct PreviewConfiguration {
             plan: Option<Plan>,
             is_connected: bool,
@@ -741,94 +747,92 @@ impl Component for ZedAiConfiguration {
             .into_any_element()
         };
 
-        Some(
-            v_flex()
-                .p_4()
-                .gap_4()
-                .children(vec![
-                    single_example(
-                        "Not connected",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: false,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                    single_example(
-                        "Accept Terms of Service",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "No Plan - Not eligible for trial",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                    single_example(
-                        "No Plan - Eligible for trial",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Free Plan",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedFree),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Zed Pro Trial Plan",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedProTrial),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Zed Pro Plan",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedPro),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Business Plan - Zed models enabled",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedBusiness),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                    single_example(
-                        "Business Plan - Zed models disabled",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedBusiness),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: false,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                ])
-                .into_any_element(),
-        )
+        v_flex()
+            .p_4()
+            .gap_4()
+            .children(vec![
+                single_example(
+                    "Not connected",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: false,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: false,
+                    }),
+                ),
+                single_example(
+                    "Accept Terms of Service",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "No Plan - Not eligible for trial",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: false,
+                    }),
+                ),
+                single_example(
+                    "No Plan - Eligible for trial",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Free Plan",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedFree),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Zed Pro Trial Plan",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedProTrial),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Zed Pro Plan",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedPro),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Business Plan - Zed models enabled",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedBusiness),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: false,
+                    }),
+                ),
+                single_example(
+                    "Business Plan - Zed models disabled",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedBusiness),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: false,
+                        eligible_for_trial: false,
+                    }),
+                ),
+            ])
+            .into_any_element()
     }
 }

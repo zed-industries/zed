@@ -49,7 +49,7 @@ fn reasoning_effort_display(effort: ReasoningEffort) -> (&'static str, &'static 
         ReasoningEffort::Low => ("Low", "low"),
         ReasoningEffort::Medium => ("Medium", "medium"),
         ReasoningEffort::High => ("High", "high"),
-        ReasoningEffort::XHigh => ("Max", "max"),
+        ReasoningEffort::XHigh => ("XHigh", "xhigh"),
     }
 }
 

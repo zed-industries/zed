@@ -16,7 +16,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
-use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
+use language::{
+    Anchor, Buffer, BufferEditSource, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff,
+};
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
@@ -773,6 +775,7 @@ impl ContentBlock {
                     None,
                     MarkdownOptions {
                         render_mermaid_diagrams: true,
+                        render_metadata_blocks: true,
                         ..Default::default()
                     },
                     cx,
@@ -2912,7 +2915,9 @@ impl AcpThread {
                 });
 
                 let format_on_save = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction();
                     buffer.edit(edits, None, cx);
+                    buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
 
                     let settings =
                         language::language_settings::LanguageSettings::for_buffer(buffer, cx);

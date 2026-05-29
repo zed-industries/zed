@@ -1550,6 +1550,8 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
 
     // Default, should cycle through all diagnostics
     go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
+    go!(GoToDiagnosticSeverityFilter::default());
     cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
     go!(GoToDiagnosticSeverityFilter::default());
     cx.assert_editor_state(indoc! {"error ˇwarning info hint"});

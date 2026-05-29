@@ -683,7 +683,6 @@ impl ThreadView {
         project: WeakEntity<Project>,
         code_span_resolver: AgentCodeSpanResolver,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
         window: &mut Window,
@@ -703,7 +702,6 @@ impl ThreadView {
                 workspace.clone(),
                 project.clone(),
                 thread_store,
-                prompt_store,
                 session_capabilities.clone(),
                 agent_id.clone(),
                 &placeholder,
@@ -3047,15 +3045,6 @@ impl ThreadView {
         )
     }
 
-    /// Returns true when the entry has been measured and sits entirely below
-    /// the current viewport.
-    fn entry_is_below_viewport(&self, entry_ix: usize) -> bool {
-        let viewport_bounds = self.list_state.viewport_bounds();
-        self.list_state
-            .bounds_for_item(entry_ix)
-            .is_some_and(|entry_bounds| entry_bounds.top() >= viewport_bounds.bottom())
-    }
-
     pub(crate) fn render_main_agent_awaiting_permission(
         &self,
         window: &Window,
@@ -3073,9 +3062,13 @@ impl ThreadView {
         let thread = self.thread.read(cx);
         let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
 
-        if !self.entry_is_below_viewport(entry_ix) {
+        let scroll_icon = if self.list_state.item_is_above_viewport(entry_ix)? {
+            IconName::ArrowUp
+        } else if self.list_state.item_is_below_viewport(entry_ix)? {
+            IconName::ArrowDown
+        } else {
             return None;
-        }
+        };
 
         let focus_handle = self.focus_handle(cx);
 
@@ -3118,7 +3111,7 @@ impl ThreadView {
                 Button::new("main-agent-permission-scroll-to", "Scroll")
                     .label_size(LabelSize::Small)
                     .end_icon(
-                        Icon::new(IconName::ArrowDown)
+                        Icon::new(scroll_icon)
                             .size(IconSize::XSmall)
                             .color(Color::Default),
                     )
@@ -10013,17 +10006,6 @@ pub(crate) fn open_link(
                         panel.open_thread(id, None, Some(name.into()), window, cx)
                     });
                 }
-            }
-            MentionUri::Rule { id, .. } => {
-                let PromptId::User { uuid } = id else {
-                    return;
-                };
-                window.dispatch_action(
-                    Box::new(OpenRulesLibrary {
-                        prompt_to_select: Some(uuid.0),
-                    }),
-                    cx,
-                )
             }
             MentionUri::Fetch { url } => {
                 cx.open_url(url.as_str());

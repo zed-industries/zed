@@ -12,7 +12,9 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
-use language::{Buffer, IndentKind, LanguageName, Point, TransactionId, line_diff};
+use language::{
+    Buffer, BufferEditSource, IndentKind, LanguageName, Point, TransactionId, line_diff,
+};
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
@@ -978,7 +980,7 @@ impl CodegenAlternative {
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
             buffer.edit(edits, None, cx);
-            buffer.end_transaction(cx)
+            buffer.end_transaction_with_source(BufferEditSource::Agent, cx)
         });
 
         if let Some(transaction) = transaction {
