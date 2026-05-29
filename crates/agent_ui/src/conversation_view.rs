@@ -42,7 +42,6 @@ use markdown::{
 };
 use parking_lot::{Mutex, RwLock};
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
-use prompt_store::{PromptId, PromptStore};
 
 use crate::message_editor::SessionCapabilities;
 use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
@@ -70,13 +69,11 @@ use util::{
     size::format_file_size,
     time::duration_alt_display,
 };
-use workspace::PathList;
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
+    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Toast, Workspace,
     path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
-use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
@@ -532,7 +529,6 @@ pub struct ConversationView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    prompt_store: Option<Entity<PromptStore>>,
     pub(crate) thread_id: ThreadId,
     pub(crate) root_session_id: Option<acp::SessionId>,
     server_state: ServerState,
@@ -739,7 +735,6 @@ impl ConversationView {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -796,7 +791,6 @@ impl ConversationView {
             workspace,
             project: project.clone(),
             thread_store,
-            prompt_store,
             thread_id,
             root_session_id: resume_session_id.clone(),
             server_state: Self::initial_state(
@@ -1105,7 +1099,6 @@ impl ConversationView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                self.prompt_store.clone(),
                 session_capabilities.clone(),
                 self.agent.agent_id(),
             )
@@ -1274,7 +1267,6 @@ impl ConversationView {
                 self.project.downgrade(),
                 self.code_span_resolver.clone(),
                 self.thread_store.clone(),
-                self.prompt_store.clone(),
                 initial_content,
                 subscriptions,
                 window,
@@ -2492,7 +2484,6 @@ impl ConversationView {
                 let mut editor = MessageEditor::new(
                     workspace.clone(),
                     project.clone(),
-                    None,
                     None,
                     session_capabilities.clone(),
                     agent_name.clone(),
@@ -3722,7 +3713,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -3859,7 +3849,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -3941,7 +3930,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4080,7 +4068,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4365,7 +4352,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             workspace.focus_panel::<crate::AgentPanel>(window, cx);
             panel
@@ -4406,7 +4393,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4505,7 +4491,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4581,7 +4566,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4649,7 +4633,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4725,7 +4708,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace1.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             // Open the dock and activate the agent panel so it's visible
@@ -4771,7 +4754,6 @@ pub(crate) mod tests {
                     workspace1.downgrade(),
                     project1.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4993,7 +4975,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -5652,7 +5633,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store.clone()),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -8114,9 +8094,17 @@ pub(crate) mod tests {
     async fn test_permission_row_hidden_when_inline_bounds_unavailable(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (_view, thread_view, _entry_ix, cx) =
+        let (_view, thread_view, entry_ix, cx) =
             setup_pending_permission_thread("perm-no-bounds", cx).await;
 
+        // Pin the scroll top to the entry so it isn't treated as above the
+        // viewport, forcing the unmeasured-bounds path we want to exercise.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            });
+        });
         thread_view.update_in(cx, |view, window, cx| {
             assert!(
                 view.render_main_agent_awaiting_permission(window, cx)
@@ -8177,8 +8165,8 @@ pub(crate) mod tests {
         let (_view, thread_view, entry_ix, cx) =
             setup_pending_permission_thread("perm-scroll", cx).await;
 
-        // Start off-screen below the viewport — row visible because the item
-        // has bounds that do not intersect the viewport.
+        // Start off-screen below the viewport. The row is visible because the
+        // item has bounds that do not intersect the viewport.
         draw_thread_list_at(
             &thread_view,
             ListOffset {
@@ -8213,6 +8201,69 @@ pub(crate) mod tests {
             cx,
         );
 
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear after scrolling brings the inline prompt into view"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_shown_when_inline_prompt_is_above_viewport(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-above", cx).await;
+
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            let result = thread.handle_session_update(
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "More content".into(),
+                )),
+                cx,
+            );
+            assert!(
+                result.is_ok(),
+                "following assistant message should be accepted"
+            );
+        });
+
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix + 1,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                entry_ix < view.list_state.logical_scroll_top().item_ix,
+                "The tool call entry should be above the logical scroll top"
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some(),
+                "Floating row should be visible when the inline prompt is above the viewport"
+            );
+        });
+
+        // Scrolling up to the entry brings it back into view.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
         thread_view.update_in(cx, |view, window, cx| {
             assert!(
                 view.render_main_agent_awaiting_permission(window, cx)
@@ -8557,7 +8608,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,

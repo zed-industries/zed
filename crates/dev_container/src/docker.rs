@@ -291,6 +291,7 @@ impl DockerClient for Docker {
         &self,
         config_files: &Vec<PathBuf>,
         project_name: &str,
+        services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
         if !self.is_podman() {
@@ -301,6 +302,9 @@ impl DockerClient for Docker {
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.arg("build");
+        if let Some(services) = services {
+            command.args(services);
+        }
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error running docker compose up: {e}");
@@ -457,6 +461,7 @@ pub(crate) trait DockerClient {
         &self,
         config_files: &Vec<PathBuf>,
         project_name: &str,
+        services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError>;
     async fn run_docker_exec(
         &self,

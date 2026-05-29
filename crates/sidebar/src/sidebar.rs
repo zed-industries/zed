@@ -1781,7 +1781,8 @@ impl Sidebar {
                 let mut matched_terminals: Vec<TerminalEntry> = Vec::new();
                 for mut terminal in terminals {
                     let mut terminal_matched = false;
-                    if let Some(positions) = fuzzy_match_positions(&query, &terminal.metadata.title)
+                    let terminal_title = terminal.metadata.display_title();
+                    if let Some(positions) = fuzzy_match_positions(&query, terminal_title.as_ref())
                     {
                         terminal.highlight_positions = positions;
                         terminal_matched = true;
@@ -5924,7 +5925,7 @@ impl Sidebar {
         );
         let is_remote = terminal.workspace.is_remote(cx);
 
-        ThreadItem::new(id, terminal.metadata.title.clone())
+        ThreadItem::new(id, terminal.metadata.display_title())
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
             .is_remote(is_remote)
