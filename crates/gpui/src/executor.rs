@@ -294,9 +294,11 @@ impl ForegroundExecutor {
 
         #[cfg(any(test, feature = "test-support"))]
         let inner = {
-            let scheduler_for_dispatch = scheduler.clone();
+            let scheduler_for_dispatch = Arc::downgrade(&scheduler);
             scheduler::LocalExecutor::new(session_id, scheduler, move |runnable| {
-                scheduler_for_dispatch.schedule_local(session_id, runnable);
+                if let Some(scheduler) = scheduler_for_dispatch.upgrade() {
+                    scheduler.schedule_local(session_id, runnable);
+                }
             })
         };
 
