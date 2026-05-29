@@ -84,9 +84,23 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
-    fn content_width(&self, _window: &Window, _cx: &App) -> Option<Pixels> {
+
+    /// Optionally return the size necessary to fit all of the contents in the
+    /// panel.
+    /// The `axis` argument can be used in order to determine whether the dock
+    /// this panel is in is either [`Axis::Vertical`] or [`Axis::Horizontal`],
+    /// so the panel can decided whether to support fit contents behavior
+    /// depending on where it's docked.
+    fn fitted_size(
+        &self,
+        _axis: Axis,
+        _current_size: Pixels,
+        _window: &Window,
+        _cx: &App,
+    ) -> Option<Pixels> {
         None
     }
+
     fn is_agent_panel(&self) -> bool {
         false
     }
@@ -125,9 +139,15 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
-    fn content_width(&self, window: &Window, cx: &App) -> Option<Pixels>;
     fn is_agent_panel(&self, cx: &App) -> bool;
     fn hide_button_setting(&self, cx: &App) -> Option<HideStatusItem>;
+    fn fitted_size(
+        &self,
+        axis: Axis,
+        current_size: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Pixels>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -253,8 +273,14 @@ where
         self.read(cx).enabled(cx)
     }
 
-    fn content_width(&self, window: &Window, cx: &App) -> Option<Pixels> {
-        self.read(cx).content_width(window, cx)
+    fn fitted_size(
+        &self,
+        axis: Axis,
+        current_size: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Pixels> {
+        self.read(cx).fitted_size(axis, current_size, window, cx)
     }
 
     fn is_agent_panel(&self, cx: &App) -> bool {
@@ -1094,6 +1120,26 @@ impl Dock {
             .flatten()
             .and_then(|json| serde_json::from_str::<PanelSizeState>(&json).log_err())
     }
+
+    /// Determines the size to use for the currently active panel in order to
+    /// fit its contents, in the case the panel isn't using flexible width and
+    /// it has implemented [`Panel::fitted_size`] otherwise returns `None`.
+    fn fitted_active_panel_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        let entry = self.active_panel_entry()?;
+
+        if panel_uses_flexible_width(self.position, entry.panel.as_ref(), window, cx) {
+            return None;
+        }
+
+        let current_size = entry
+            .size_state
+            .size
+            .unwrap_or_else(|| entry.panel.default_size(window, cx));
+
+        entry
+            .panel
+            .fitted_size(self.position.axis(), current_size, window, cx)
+    }
 }
 
 impl Render for Dock {
@@ -1118,10 +1164,8 @@ impl Render for Dock {
                         MouseButton::Left,
                         cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                let auto_size = dock
-                                    .active_panel_entry()
-                                    .and_then(|entry| entry.panel.content_width(window, cx));
-                                dock.resize_active_panel(auto_size, None, window, cx);
+                                let fitted_size = dock.fitted_active_panel_size(window, cx);
+                                dock.resize_active_panel(fitted_size, None, window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.serialize_workspace(window, cx);
