@@ -51,6 +51,15 @@
           # we'll just put it on `$PATH`:
           nodejs_22
           zig
+
+          # A11y testing infra
+          gobject-introspection 
+          at-spi2-core 
+          (python3.withPackages (ps: [
+            ps.pyatspi
+            ps.pygobject3
+          ]))
+          accerciser
         ];
 
         env =

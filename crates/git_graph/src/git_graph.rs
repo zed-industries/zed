@@ -4,11 +4,16 @@ use editor::Editor;
 use git::repository::InitialGraphCommitData;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
+    commit::ParsedCommitMessage,
     parse_git_remote_url,
     repository::{CommitDiff, CommitFile, LogOrder, LogSource, RepoPath, SearchCommitArgs},
     status::{FileStatus, StatusCode, TrackedStatus},
 };
-use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
+use git_ui::{
+    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
+    commit_view::CommitView,
+    git_status_icon,
+};
 #[cfg(test)]
 use gpui::point;
 use gpui::{
@@ -1034,7 +1039,7 @@ impl GitGraph {
                 let subject: SharedString;
                 let author_name: SharedString;
 
-                if let CommitDataState::Loaded(data) = data {
+                if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
                     formatted_time = format_timestamp(data.commit_timestamp);
@@ -1089,12 +1094,12 @@ impl GitGraph {
                             (!ranges.is_empty()).then_some(ranges)
                         })
                         .unwrap_or_default();
-                    HighlightedLabel::from_ranges(subject.clone(), highlight_ranges)
+                    HighlightedLabel::from_ranges(subject, highlight_ranges)
                         .when(!is_selected, |c| c.color(Color::Muted))
                         .truncate()
                         .into_any_element()
                 } else {
-                    column_label(subject.clone())
+                    column_label(subject)
                 };
 
                 vec![
@@ -1102,7 +1107,46 @@ impl GitGraph {
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
                         .when(!has_context_menu, |this| {
-                            this.tooltip(Tooltip::text(subject))
+                            if let CommitDataState::Loaded(commit_data) = &data {
+                                let sha = commit.data.sha.to_string();
+                                let author_name = commit_data.author_name.clone();
+                                let author_email = commit_data.author_email.clone();
+                                let message = commit_data.message.clone();
+                                let commit_timestamp = commit_data.commit_timestamp;
+                                let workspace = self.workspace.clone();
+                                let repository = repository.clone();
+                                this.hoverable_tooltip(move |_window, cx| {
+                                    let remote_url = repository.read(cx).default_remote_url();
+                                    let provider_registry =
+                                        GitHostingProviderRegistry::default_global(cx);
+                                    let commit_details = CommitDetails {
+                                        sha: sha.clone().into(),
+                                        author_name: author_name.clone(),
+                                        author_email: author_email.clone(),
+                                        commit_time: OffsetDateTime::from_unix_timestamp(
+                                            commit_timestamp,
+                                        )
+                                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                                        message: Some(ParsedCommitMessage::parse(
+                                            sha.clone(),
+                                            message.to_string(),
+                                            remote_url.as_deref(),
+                                            Some(provider_registry),
+                                        )),
+                                    };
+                                    cx.new(|cx| {
+                                        CommitTooltip::new(
+                                            commit_details,
+                                            repository.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        )
+                                    })
+                                    .into()
+                                })
+                            } else {
+                                this
+                            }
                         })
                         .child(
                             h_flex()
@@ -2184,10 +2228,7 @@ impl GitGraph {
                             })
                             .when_some(remote.clone(), |this, remote| {
                                 let provider_name = remote.host.name();
-                                let icon = match provider_name.as_str() {
-                                    "GitHub" => IconName::Github,
-                                    _ => IconName::Link,
-                                };
+                                let icon = git_ui::get_provider_icon(provider_name.as_str());
                                 let parsed_remote = ParsedGitRemote {
                                     owner: remote.owner.as_ref().into(),
                                     repo: remote.repo.as_ref().into(),

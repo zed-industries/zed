@@ -5,7 +5,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
-  ZED_EXTENSION_CLI_SHA: 1fa7f1a3ec28ea1eae6db2e937d7a538fb10c0c7
+  ZED_EXTENSION_CLI_SHA: 2a00db06ce6d01089bfafd207b6348078e980df9
 on:
   workflow_call:
     inputs:
