@@ -1,7 +1,6 @@
 use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
-use prompt_store::{PromptId, UserPromptId};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -35,10 +34,6 @@ pub enum MentionUri {
     },
     Thread {
         id: acp::SessionId,
-        name: String,
-    },
-    Rule {
-        id: PromptId,
         name: String,
     },
     Diagnostics {
@@ -205,13 +200,6 @@ impl MentionUri {
                         id: acp::SessionId::new(thread_id),
                         name,
                     })
-                } else if let Some(rule_id) = path.strip_prefix("/agent/rule/") {
-                    let name = single_query_param(&url, "name")?.context("Missing rule name")?;
-                    let rule_id = UserPromptId(rule_id.parse()?);
-                    Ok(Self::Rule {
-                        id: rule_id.into(),
-                        name,
-                    })
                 } else if path == "/agent/diagnostics" {
                     let mut include_errors = default_include_errors();
                     let mut include_warnings = false;
@@ -342,7 +330,6 @@ impl MentionUri {
             MentionUri::PastedImage { name } => name.clone(),
             MentionUri::Symbol { name, .. } => name.clone(),
             MentionUri::Thread { name, .. } => name.clone(),
-            MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
             MentionUri::TerminalSelection { line_count } => {
                 if *line_count == 1 {
@@ -443,7 +430,6 @@ impl MentionUri {
                 .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
-            MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
@@ -523,12 +509,6 @@ impl MentionUri {
             MentionUri::Thread { name, id } => {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path(&format!("/agent/thread/{id}"));
-                url.query_pairs_mut().append_pair("name", name);
-                url
-            }
-            MentionUri::Rule { name, id } => {
-                let mut url = Url::parse("zed:///").unwrap();
-                url.set_path(&format!("/agent/rule/{id}"));
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
@@ -809,20 +789,6 @@ mod tests {
             _ => panic!("Expected Thread variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), thread_uri);
-    }
-
-    #[test]
-    fn test_parse_rule_uri() {
-        let rule_uri = "zed:///agent/rule/d8694ff2-90d5-4b6f-be33-33c1763acd52?name=Some+rule";
-        let parsed = MentionUri::parse(rule_uri, PathStyle::local()).unwrap();
-        match &parsed {
-            MentionUri::Rule { id, name } => {
-                assert_eq!(id.to_string(), "d8694ff2-90d5-4b6f-be33-33c1763acd52");
-                assert_eq!(name, "Some rule");
-            }
-            _ => panic!("Expected Rule variant"),
-        }
-        assert_eq!(parsed.to_uri().to_string(), rule_uri);
     }
 
     #[test]
