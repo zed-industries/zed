@@ -8681,6 +8681,9 @@ fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
             LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
             LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
             LogSource::Path(path) => proto::git_log_source::Source::Path(path.to_proto()),
+            LogSource::LineRange { path, .. } => {
+                proto::git_log_source::Source::Path(path.to_proto())
+            }
         }),
     }
 }

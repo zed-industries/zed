@@ -49,6 +49,8 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Shows the git history for the selected line range.
+        LineHistory,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.

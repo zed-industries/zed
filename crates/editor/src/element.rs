@@ -37,7 +37,7 @@ use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
-use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
+use git::{LineHistory, Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DispatchPhase,
@@ -126,6 +126,11 @@ struct InlineBlameLayout {
     bounds: Bounds<Pixels>,
     buffer_id: BufferId,
     entry: BlameEntry,
+}
+
+struct InlineLineHistoryLayout {
+    element: AnyElement,
+    bounds: Bounds<Pixels>,
 }
 
 impl SelectionLayout {
@@ -2876,6 +2881,70 @@ impl EditorElement {
             buffer_id,
             entry,
         })
+    }
+
+    fn layout_inline_line_history(
+        &self,
+        display_row: DisplayRow,
+        line_layout: &LineWithInvisibles,
+        content_origin: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        line_height: Pixels,
+        em_width: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InlineLineHistoryLayout> {
+        {
+            let sel = self.editor.read(cx).selections.newest_anchor().clone();
+            if sel.start == sel.end {
+                return None;
+            }
+        }
+
+        let editor = self.editor.read(cx);
+        let has_git_repo = editor.blame.is_some()
+            || editor
+                .project
+                .as_ref()
+                .map(|p| !p.read(cx).git_store().read(cx).repositories().is_empty())
+                .unwrap_or(false);
+        if !has_git_repo {
+            return None;
+        }
+
+        const PADDING_EM_WIDTHS: f32 = 3.0;
+        let padding = PADDING_EM_WIDTHS * em_width;
+
+        let start_y = content_origin.y
+            + line_height * ((display_row.as_f64() - scroll_position.y) as f32);
+
+        let line_end = Pixels::from(
+            ScrollPixelOffset::from(content_origin.x + line_layout.width)
+                - scroll_pixel_position.x,
+        );
+        let start_x = line_end + padding;
+
+        let mut element = div()
+            .id("inline-line-history")
+            .cursor_pointer()
+            .child(
+                Label::new("View Line History")
+                    .size(LabelSize::Small)
+                    .color(Color::Hint),
+            )
+            .hover(|style| style.text_color(cx.theme().colors().text_accent))
+            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                window.dispatch_action(Box::new(LineHistory), cx);
+            })
+            .into_any_element();
+
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+        let origin = point(start_x, start_y);
+        let bounds = Bounds::new(origin, size);
+        element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
+
+        Some(InlineLineHistoryLayout { element, bounds })
     }
 
     fn layout_blame_popover(
@@ -6650,6 +6719,7 @@ impl EditorElement {
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
+                self.paint_inline_line_history(layout, window, cx);
                 self.paint_inline_code_actions(layout, window, cx);
                 self.paint_diff_hunk_controls(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
@@ -7462,6 +7532,19 @@ impl EditorElement {
         if let Some(mut blame_layout) = layout.inline_blame_layout.take() {
             window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
                 blame_layout.element.paint(window, cx);
+            })
+        }
+    }
+
+    fn paint_inline_line_history(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(mut history_layout) = layout.inline_line_history_layout.take() {
+            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+                history_layout.element.paint(window, cx);
             })
         }
     }
@@ -10771,6 +10854,7 @@ impl Element for EditorElement {
                     );
 
                     let mut inline_blame_layout = None;
+                    let mut inline_line_history_layout = None;
                     let mut inline_code_actions = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
@@ -10811,6 +10895,18 @@ impl Element for EditorElement {
                                     inline_blame_layout = Some(layout);
                                     // Blame overrides inline diagnostics
                                     inline_diagnostics.remove(&display_row);
+                                } else if let Some(layout) = self.layout_inline_line_history(
+                                    display_row,
+                                    line_layout,
+                                    content_origin,
+                                    scroll_position,
+                                    scroll_pixel_position,
+                                    line_height,
+                                    em_width,
+                                    window,
+                                    cx,
+                                ) {
+                                    inline_line_history_layout = Some(layout);
                                 }
                             } else {
                                 log::error!(
@@ -11291,6 +11387,7 @@ impl Element for EditorElement {
                         blamed_display_rows,
                         inline_diagnostics,
                         inline_blame_layout,
+                        inline_line_history_layout,
                         inline_code_actions,
                         blocks,
                         spacer_blocks,
@@ -11506,6 +11603,7 @@ pub struct EditorLayout {
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     inline_blame_layout: Option<InlineBlameLayout>,
+    inline_line_history_layout: Option<InlineLineHistoryLayout>,
     inline_code_actions: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
     spacer_blocks: Vec<BlockLayout>,

@@ -886,6 +886,30 @@ pub fn init(cx: &mut App) {
                     })
                 },
             )
+            .when_some(
+                resolve_line_history_target(workspace, window, cx),
+                |div, (repo_id, log_source)| {
+                    let git_store = workspace.project().read(cx).git_store().clone();
+                    let workspace = workspace.weak_handle();
+
+                    div.on_action(move |_: &git::LineHistory, window, cx| {
+                        let git_store = git_store.clone();
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                open_or_reuse_graph(
+                                    workspace,
+                                    repo_id,
+                                    git_store,
+                                    log_source.clone(),
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    })
+                },
+            )
             .when(
                 workspace.project().read(cx).active_repository(cx).is_some(),
                 |div| {
@@ -995,6 +1019,51 @@ fn resolve_file_history_target(
         .read(cx)
         .repository_and_path_for_project_path(&project_path, cx)?;
     Some((repo.read(cx).id, LogSource::Path(repo_path)))
+}
+
+fn resolve_line_history_target(
+    workspace: &Workspace,
+    _window: &Window,
+    cx: &App,
+) -> Option<(RepositoryId, LogSource)> {
+    let editor = workspace.active_item_as::<Editor>(cx)?;
+    let editor_ref = editor.read(cx);
+
+    let selection = editor_ref.selections.newest_anchor().clone();
+    if selection.start == selection.end {
+        return None;
+    }
+
+    let snapshot = editor_ref.buffer().read(cx).snapshot(cx);
+    let start = editor::ToPoint::to_point(&selection.start, &snapshot);
+    let end = editor::ToPoint::to_point(&selection.end, &snapshot);
+
+    let start_line = start.row + 1;
+    let end_line = if end.column == 0 && end.row > start.row {
+        end.row
+    } else {
+        end.row + 1
+    };
+
+    let file = editor_ref.file_at(selection.head(), cx)?;
+    let project_path = ProjectPath {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().clone(),
+    };
+
+    let git_store = workspace.project().read(cx).git_store();
+    let (repo, repo_path) = git_store
+        .read(cx)
+        .repository_and_path_for_project_path(&project_path, cx)?;
+
+    Some((
+        repo.read(cx).id,
+        LogSource::LineRange {
+            path: repo_path,
+            start: start_line,
+            end: end_line,
+        },
+    ))
 }
 
 fn open_or_reuse_graph(
@@ -1179,7 +1248,7 @@ impl GitGraph {
             .read(cx)
             .preview_fractions(window.rem_size());
 
-        let is_path_history = matches!(self.log_source, LogSource::Path(_));
+        let is_path_history = matches!(self.log_source, LogSource::Path(_) | LogSource::LineRange { .. });
         let graph_fraction = if is_path_history { 0.0 } else { fractions[0] };
         let offset = if is_path_history { 0 } else { 1 };
 
@@ -1263,7 +1332,7 @@ impl GitGraph {
             state
         });
 
-        let column_widths = if matches!(log_source, LogSource::Path(_)) {
+        let column_widths = if matches!(log_source, LogSource::Path(_) | LogSource::LineRange { .. }) {
             cx.new(|_cx| {
                 RedistributableColumnsState::new(
                     4,
@@ -3352,7 +3421,7 @@ impl Render for GitGraph {
                     this.child(self.render_loading_spinner(cx))
                 })
         } else {
-            let is_path_history = matches!(self.log_source, LogSource::Path(_));
+            let is_path_history = matches!(self.log_source, LogSource::Path(_) | LogSource::LineRange { .. });
             let header_resize_info =
                 HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
             let header_context = TableRenderContext::for_column_widths(
@@ -3668,19 +3737,19 @@ impl Item for GitGraph {
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
         });
-        let path_history_path = match &self.log_source {
-            LogSource::Path(path) => Some(path.as_unix_str().to_string()),
-            _ => None,
+        let (tooltip_title, path_history_path) = match &self.log_source {
+            LogSource::Path(path) => ("Path History", Some(path.as_unix_str().to_string())),
+            LogSource::LineRange { path, start, end } => (
+                "Line History",
+                Some(format!("{}:{}-{}", path.as_unix_str(), start, end)),
+            ),
+            _ => ("Git Graph", None),
         };
 
         Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
             move |_, _| {
                 v_flex()
-                    .child(Label::new(if path_history_path.is_some() {
-                        "Path History"
-                    } else {
-                        "Git Graph"
-                    }))
+                    .child(Label::new(tooltip_title))
                     .when_some(path_history_path.clone(), |this, path| {
                         this.child(Label::new(path).color(Color::Muted).size(LabelSize::Small))
                     })
@@ -3693,12 +3762,23 @@ impl Item for GitGraph {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        if let LogSource::Path(path) = &self.log_source {
-            return path
-                .as_ref()
-                .file_name()
-                .map(|name| SharedString::from(name.to_string()))
-                .unwrap_or_else(|| SharedString::from(path.as_unix_str().to_string()));
+        match &self.log_source {
+            LogSource::Path(path) => {
+                return path
+                    .as_ref()
+                    .file_name()
+                    .map(|name| SharedString::from(name.to_string()))
+                    .unwrap_or_else(|| SharedString::from(path.as_unix_str().to_string()));
+            }
+            LogSource::LineRange { path, start, end } => {
+                let filename = path
+                    .as_ref()
+                    .file_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| path.as_unix_str().to_string());
+                return SharedString::from(format!("{} :{}-{}", filename, start, end));
+            }
+            _ => {}
         }
 
         self.get_repository(cx)
@@ -3940,6 +4020,7 @@ mod persistence {
     pub const LOG_SOURCE_BRANCH: i32 = 1;
     pub const LOG_SOURCE_SHA: i32 = 2;
     pub const LOG_SOURCE_PATH: i32 = 3;
+    pub const LOG_SOURCE_LINE_RANGE: i32 = 4;
 
     pub const LOG_ORDER_DATE: i32 = 0;
     pub const LOG_ORDER_TOPO: i32 = 1;
@@ -3952,6 +4033,7 @@ mod persistence {
             LogSource::Branch(_) => LOG_SOURCE_BRANCH,
             LogSource::Sha(_) => LOG_SOURCE_SHA,
             LogSource::Path(_) => LOG_SOURCE_PATH,
+            LogSource::LineRange { .. } => LOG_SOURCE_LINE_RANGE,
         }
     }
 
@@ -3961,6 +4043,9 @@ mod persistence {
             LogSource::Branch(branch) => Some(branch.to_string()),
             LogSource::Sha(oid) => Some(oid.to_string()),
             LogSource::Path(path) => Some(path.as_unix_str().to_string()),
+            LogSource::LineRange { path, start, end } => {
+                Some(format!("{}:{}:{}", path.as_unix_str(), start, end))
+            }
         }
     }
 
@@ -3992,6 +4077,17 @@ mod persistence {
                 .as_ref()
                 .and_then(|v| RepoPath::new(v).ok())
                 .map(LogSource::Path)
+                .unwrap_or_default(),
+            Some(LOG_SOURCE_LINE_RANGE) => state
+                .log_source_value
+                .as_ref()
+                .and_then(|v| {
+                    let mut parts = v.splitn(3, ':');
+                    let path = RepoPath::new(parts.next()?).ok()?;
+                    let start = parts.next()?.parse::<u32>().ok()?;
+                    let end = parts.next()?.parse::<u32>().ok()?;
+                    Some(LogSource::LineRange { path, start, end })
+                })
                 .unwrap_or_default(),
             None | Some(_) => LogSource::default(),
         }
