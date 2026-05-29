@@ -540,12 +540,24 @@ fn add_message_content_part(
 
 pub struct OpenAiEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    think_tag_parsing: bool,
+    pending_thinking: Option<String>,
 }
 
 impl OpenAiEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            think_tag_parsing: false,
+            pending_thinking: None,
+        }
+    }
+
+    pub fn with_think_tag_parsing(think_tag_parsing: bool) -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+            think_tag_parsing,
+            pending_thinking: None,
         }
     }
 
@@ -594,7 +606,11 @@ impl OpenAiEventMapper {
             }
             if let Some(content) = delta.content.clone() {
                 if !content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                    if self.think_tag_parsing {
+                        self.parse_thinking_content(&content, &mut events);
+                    } else {
+                        events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                    }
                 }
             }
 
@@ -676,6 +692,61 @@ impl OpenAiEventMapper {
         }
 
         events
+    }
+
+    fn parse_thinking_content(
+        &mut self,
+        content: &str,
+        events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+    ) {
+        let start_tag = "<think>";
+        let end_tag = "</think>";
+
+        let mut remaining = content;
+
+        if let Some(pending) = self.pending_thinking.take() {
+            if let Some(end_pos) = remaining.find(end_tag) {
+                let thinking = format!("{}{}", pending, &remaining[..end_pos]);
+                if !thinking.trim().is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking,
+                        signature: None,
+                    }));
+                }
+                remaining = &remaining[end_pos + end_tag.len()..];
+            } else {
+                self.pending_thinking = Some(format!("{}{}", pending, remaining));
+                return;
+            }
+        }
+
+        while let Some(start_pos) = remaining.find(start_tag) {
+            if start_pos > 0 {
+                let text_before = &remaining[..start_pos];
+                if !text_before.trim().is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(text_before.to_string())));
+                }
+            }
+
+            let after_start = &remaining[start_pos + start_tag.len()..];
+            if let Some(end_pos) = after_start.find(end_tag) {
+                let thinking = &after_start[..end_pos];
+                if !thinking.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking.to_string(),
+                        signature: None,
+                    }));
+                }
+                remaining = &after_start[end_pos + end_tag.len()..];
+            } else {
+                self.pending_thinking = Some(after_start.to_string());
+                return;
+            }
+        }
+
+        if !remaining.is_empty() && !remaining.trim().is_empty() {
+            events.push(Ok(LanguageModelCompletionEvent::Text(remaining.to_string())));
+        }
     }
 }
 
@@ -3270,5 +3341,202 @@ mod tests {
                 LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
             )
         }));
+    }
+
+    #[test]
+    fn think_tag_parsing_parses_think_tags_when_enabled() {
+        let events = vec![
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some("Hello ".into()),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some("<think>\nLet me think about this.\n</think>\nHere".into()),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some(" is my answer.".into()),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("stop".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        let mut mapper = OpenAiEventMapper::with_think_tag_parsing(true);
+        let mapped: Vec<_> = events
+            .into_iter()
+            .flat_map(|e| mapper.map_event(e))
+            .filter_map(|e| e.ok())
+            .collect();
+
+        assert_eq!(mapped.len(), 5);
+
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Text(ref text) if text == "Hello "
+        ));
+
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Thinking { ref text, .. } if text == "\nLet me think about this.\n"
+        ));
+
+        assert!(matches!(
+            mapped[2],
+            LanguageModelCompletionEvent::Text(ref text) if text == "\nHere"
+        ));
+
+        assert!(matches!(
+            mapped[3],
+            LanguageModelCompletionEvent::Text(ref text) if text == " is my answer."
+        ));
+
+        assert!(matches!(
+            mapped[4],
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn)
+        ));
+    }
+
+    #[test]
+    fn think_tag_parsing_disabled_passes_content_as_text() {
+        let events = vec![
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some("<think>\nSome thinking\n</think> and regular text.".into()),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("stop".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        let mut mapper = OpenAiEventMapper::new();
+        let mapped: Vec<_> = events
+            .into_iter()
+            .flat_map(|e| mapper.map_event(e))
+            .filter_map(|e| e.ok())
+            .collect();
+
+        assert_eq!(mapped.len(), 2);
+
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Text(ref text) if text.contains("<think>")
+        ));
+
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn)
+        ));
+    }
+
+    #[test]
+    fn think_tag_parsing_handles_chunked_think_tags() {
+        let events = vec![
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some("<think>\nThinking".into()),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some(" continues...\n</think>\nAnswer".into()),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("stop".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        let mut mapper = OpenAiEventMapper::with_think_tag_parsing(true);
+        let mapped: Vec<_> = events
+            .into_iter()
+            .flat_map(|e| mapper.map_event(e))
+            .filter_map(|e| e.ok())
+            .collect();
+
+        assert_eq!(mapped.len(), 3);
+
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Thinking { ref text, .. } if text == "\nThinking continues...\n"
+        ));
+
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Text(ref text) if text == "\nAnswer"
+        ));
+
+        assert!(matches!(
+            mapped[2],
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn)
+        ));
     }
 }
