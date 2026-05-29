@@ -138,6 +138,7 @@ pub enum Event {
     BreadcrumbsChanged,
     CloseTerminal,
     Bell,
+    Notification(String),
     Wakeup,
     BlinkChanged(bool),
     SelectionsChanged,
@@ -992,6 +993,9 @@ impl Terminal {
             }
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
+            }
+            AlacTermEvent::Notification(message) => {
+                cx.emit(Event::Notification(message));
             }
             AlacTermEvent::Exit => self.register_task_finished(None, cx),
             AlacTermEvent::MouseCursorDirty => {
