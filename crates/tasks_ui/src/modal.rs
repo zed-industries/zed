@@ -1068,7 +1068,7 @@ mod tests {
                 )),
             ))),
         ));
-        let _fake_servers = language_registry.register_fake_lsp(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Test",
             FakeLspAdapter {
                 name: TEST_LSP_NAME,
@@ -1095,6 +1095,12 @@ mod tests {
             .await
             .unwrap();
         cx.executor().run_until_parked();
+        let fake_server = fake_servers
+            .try_recv()
+            .expect("fake LSP server should have started");
+        use project::lsp_store::lsp_ext_command::Runnables;
+        fake_server
+            .set_request_handler::<Runnables, _, _>(move |_, _| async move { Ok(Vec::new()) });
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
