@@ -1950,24 +1950,35 @@ impl Thread {
         // Clear pending message since cancel will try to flush it asynchronously,
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
-        let Some(position) = self.current_messages().iter().position(
-            |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
-        ) else {
+        let Some((conversation_ix, message_ix)) =
+            self.conversations
+                .iter()
+                .enumerate()
+                .find_map(|(conversation_ix, conversation)| {
+                    let message_ix = conversation.messages.iter().position(|message| {
+                        matches!(message, Message::User(UserMessage { id, .. }) if id == &message_id)
+                    })?;
+                    Some((conversation_ix, message_ix))
+                })
+        else {
             return Err(anyhow!("Message not found"));
         };
 
-        let removed_user_message_ids = self
-            .current_messages_mut()
-            .drain(position..)
+        self.conversations.truncate(conversation_ix + 1);
+        let current_conversation = self.current_conversation_mut();
+        let removed_user_message_ids = current_conversation
+            .messages
+            .drain(message_ix..)
             .filter_map(|message| match message {
                 Message::User(message) => Some(message.id),
                 Message::Agent(_) | Message::Resume => None,
             })
             .collect::<Vec<_>>();
         for message_id in removed_user_message_ids {
-            self.current_conversation_mut()
-                .request_token_usage
-                .remove(&message_id);
+            current_conversation.request_token_usage.remove(&message_id);
+        }
+        if let Some(seed) = current_conversation.seed.as_mut() {
+            seed.baseline_observed = false;
         }
         self.clear_summary();
         cx.notify();
@@ -4713,6 +4724,149 @@ mod tests {
             }
             subagents
         })
+    }
+
+    #[gpui::test]
+    async fn test_truncate_drops_later_conversations(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let first_id = UserMessageId::new();
+        let second_id = UserMessageId::new();
+        let third_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let mut first_usage = HashMap::default();
+                first_usage.insert(
+                    first_id.clone(),
+                    TokenUsage {
+                        input_tokens: 10,
+                        output_tokens: 1,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                );
+                first_usage.insert(
+                    second_id.clone(),
+                    TokenUsage {
+                        input_tokens: 20,
+                        output_tokens: 2,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                );
+
+                let mut second_usage = HashMap::default();
+                second_usage.insert(
+                    third_id.clone(),
+                    TokenUsage {
+                        input_tokens: 30,
+                        output_tokens: 3,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                );
+
+                thread.conversations = vec![
+                    Conversation::legacy(
+                        vec![
+                            Message::User(UserMessage {
+                                id: first_id.clone(),
+                                content: vec!["first".into()],
+                            }),
+                            Message::Agent(AgentMessage {
+                                content: vec![AgentMessageContent::Text("answer".to_string())],
+                                ..Default::default()
+                            }),
+                            Message::User(UserMessage {
+                                id: second_id.clone(),
+                                content: vec!["second".into()],
+                            }),
+                        ],
+                        first_usage,
+                    ),
+                    Conversation {
+                        marker: Some(ContextCompactionMarker {
+                            id: ContextCompactionId::new(),
+                        }),
+                        messages: vec![Message::User(UserMessage {
+                            id: third_id.clone(),
+                            content: vec!["third".into()],
+                        })],
+                        request_token_usage: second_usage,
+                        seed: None,
+                    },
+                ];
+
+                thread.truncate(second_id.clone(), cx).unwrap();
+
+                assert_eq!(thread.conversations.len(), 1);
+                assert_eq!(thread.conversations[0].messages.len(), 2);
+                assert_eq!(
+                    thread.conversations[0]
+                        .request_token_usage
+                        .keys()
+                        .collect::<Vec<_>>(),
+                    vec![&first_id]
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_truncate_preserves_target_conversation_seed(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let first_id = UserMessageId::new();
+        let second_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                let mut second_usage = HashMap::default();
+                second_usage.insert(
+                    second_id.clone(),
+                    TokenUsage {
+                        input_tokens: 20,
+                        output_tokens: 2,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                );
+
+                thread.conversations = vec![
+                    Conversation::legacy(
+                        vec![Message::User(UserMessage {
+                            id: first_id,
+                            content: vec!["first".into()],
+                        })],
+                        HashMap::default(),
+                    ),
+                    Conversation {
+                        marker: Some(ContextCompactionMarker {
+                            id: ContextCompactionId::new(),
+                        }),
+                        messages: vec![Message::User(UserMessage {
+                            id: second_id.clone(),
+                            content: vec!["second".into()],
+                        })],
+                        request_token_usage: second_usage,
+                        seed: Some(CompactionSeed {
+                            artifact: CompactionArtifact::Summary("summary".into()),
+                            retained_user_messages: Vec::new(),
+                            baseline_tokens: 42,
+                            baseline_observed: true,
+                        }),
+                    },
+                ];
+
+                thread.truncate(second_id.clone(), cx).unwrap();
+
+                assert_eq!(thread.conversations.len(), 2);
+                assert!(thread.conversations[1].messages.is_empty());
+                let seed = thread.conversations[1].seed.as_ref().unwrap();
+                assert_eq!(seed.baseline_tokens, 42);
+                assert!(!seed.baseline_observed);
+                assert!(thread.conversations[1].request_token_usage.is_empty());
+            });
+        });
     }
 
     struct ReplayImageTool;
