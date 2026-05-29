@@ -14,7 +14,7 @@ use std::{
 };
 
 mod actions;
-pub use actions::{ActionStatistics, ActionTiming, get_action_stats};
+pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
 pub(crate) use actions::{save_action_timing, update_running_action};
 
 use serde::{Deserialize, Serialize};
@@ -33,14 +33,14 @@ pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTi
 }
 
 #[doc(hidden)]
-pub fn get_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
+pub fn take_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
     let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-    ThreadTaskStatistics::collect(&global_timings, included)
+    ThreadTaskStatistics::collect_and_reset(&global_timings, included)
 }
 
 #[doc(hidden)]
 #[derive(Debug, Copy, Clone)]
-pub struct YieldTime(Instant);
+pub struct YieldTime(pub Instant);
 
 #[doc(hidden)]
 #[derive(Copy, Clone)]
@@ -152,7 +152,10 @@ pub struct ThreadTaskStatistics {
 }
 
 impl ThreadTaskStatistics {
-    pub fn collect(timings: &[GlobalThreadTimings], include_running: TasksIncluded) -> Vec<Self> {
+    pub fn collect_and_reset(
+        timings: &[GlobalThreadTimings],
+        include_running: TasksIncluded,
+    ) -> Vec<Self> {
         timings
             .iter()
             .filter_map(|t| match t.timings.upgrade() {
@@ -160,10 +163,10 @@ impl ThreadTaskStatistics {
                 _ => None,
             })
             .map(|(thread_id, timings)| {
-                let timings = timings.lock();
+                let mut timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
 
-                let mut stats = timings.stats.clone();
+                let mut stats = std::mem::take(&mut timings.stats);
                 if let TasksIncluded::CompletedAndRunning = include_running
                     && let Some(ActiveTiming {
                         location,
@@ -420,8 +423,8 @@ impl std::fmt::Display for TaskStatistics {
     }
 }
 
-impl TaskStatistics {
-    pub fn new() -> Self {
+impl Default for TaskStatistics {
+    fn default() -> Self {
         Self {
             poll_time_to_beat: Duration::ZERO,
             runtime_to_beat: Duration::ZERO,
@@ -429,7 +432,9 @@ impl TaskStatistics {
             longest_runtimes: [TaskTiming::placeholder(); 5],
         }
     }
+}
 
+impl TaskStatistics {
     fn add_yield_timing(&mut self, task: TaskTiming) {
         let yielded_after = task.poll_duration();
         if yielded_after >= self.poll_time_to_beat {
@@ -513,7 +518,7 @@ impl ThreadTimings {
             thread_name,
             thread_id,
             timings: TaskTimings::new(),
-            stats: TaskStatistics::new(),
+            stats: TaskStatistics::default(),
             total_pushed: 0,
             running: None,
         }

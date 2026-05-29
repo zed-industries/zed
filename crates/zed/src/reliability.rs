@@ -19,7 +19,7 @@ use util::ResultExt;
 mod hang_detection;
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    hang_detection::start(cx);
+    hang_detection::start(client.clone(), cx);
 
     cx.on_flags_ready({
         let client = client.clone();

@@ -7,10 +7,23 @@ use itertools::Itertools;
 
 use crate::action::Action;
 
+// Foreground pauses:
+// We have a 4ms frame budget, IIRC we have .5ms or less, of space in that.
+// - Question: How do we maintain this? I'd like to see, every foreground "effect", that takes longer than 1ms
+//      Statistics: over 30 minutes, 20 futures took > 1ms, and the three tasks associated with them are: file/line/col, etc. etc.
+//  Send to axiom a packet: For this profiling frame, we had 124 polls that took > 1ms, and that was split across tasks: A, and B, and C
+//  Integrated with telemety: You can see all of the telemetry events, generated within a profiling snapshot
+
+// Background pauses:
+// - tasks take > 10s, or thread pool is filled up, or something
+
+// Hangs
+
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct ActionStatistics {
     runtime_to_beat: Duration,
+
     longest_runtimes: heapless::Vec<ActionTiming, 5>,
     running: Option<(&'static str, Instant)>,
 }
@@ -32,7 +45,7 @@ impl std::fmt::Display for ActionStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Actions that blocked the longest\n")?;
         for action in self
-            .longest_runtimes()
+            .longest_runtimes(true)
             .sorted_by_key(|action| action.runtime())
             .rev()
         {
@@ -47,6 +60,12 @@ impl std::fmt::Display for ActionStatistics {
     }
 }
 
+impl Default for ActionStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ActionStatistics {
     const fn new() -> Self {
         Self {
@@ -54,6 +73,12 @@ impl ActionStatistics {
             longest_runtimes: heapless::Vec::new(),
             running: None,
         }
+    }
+
+    pub fn take(&mut self) -> Self {
+        let taken = std::mem::take(self);
+        self.running = taken.running;
+        taken
     }
 
     pub fn is_empty(&self) -> bool {
@@ -105,15 +130,17 @@ impl ActionStatistics {
         }
     }
 
-    pub fn longest_runtimes(&self) -> impl Iterator<Item = ActionTiming> {
-        self.longest_runtimes
-            .iter()
-            .copied()
-            .chain(self.running.into_iter().map(|(name, start)| ActionTiming {
-                name,
-                start,
-                end: Instant::now(),
-            }))
+    pub fn longest_runtimes(&self, include_running: bool) -> impl Iterator<Item = ActionTiming> {
+        self.longest_runtimes.iter().copied().chain(
+            self.running
+                .into_iter()
+                .filter(move |_| include_running)
+                .map(|(name, start)| ActionTiming {
+                    name,
+                    start,
+                    end: Instant::now(),
+                }),
+        )
     }
 }
 
@@ -132,6 +159,12 @@ impl core::fmt::Debug for ActionTiming {
             .field("name", &self.name)
             .field("runtime", &self.runtime())
             .finish()
+    }
+}
+
+impl ActionTiming {
+    pub fn duration(&self) -> Duration {
+        self.end.saturating_duration_since(self.start)
     }
 }
 
@@ -161,6 +194,6 @@ pub(crate) fn save_action_timing() {
 }
 
 #[doc(hidden)]
-pub fn get_action_stats() -> ActionStatistics {
-    ACTION_STATISTICS.lock().clone()
+pub fn take_action_stats() -> ActionStatistics {
+    ACTION_STATISTICS.lock().take()
 }

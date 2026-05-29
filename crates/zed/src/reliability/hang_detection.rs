@@ -1,15 +1,15 @@
-use std::fmt::Display;
-use std::panic::Location;
-use std::thread::{self, ThreadId};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
-use collections::HashMap;
+use client::Client;
 use gpui::{AppContext, TasksIncluded, profiler};
-use itertools::Itertools;
-use log::info;
+use parking_lot::Mutex;
 use ui::App;
 
+mod logging;
 mod task_traces;
+mod telemetry;
 
 gpui::actions!(
     dev,
@@ -23,7 +23,7 @@ gpui::actions!(
     ]
 );
 
-pub(crate) fn start(cx: &mut App) {
+pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
     let hang_time = if cfg!(debug_assertions) {
         if cfg!(windows) {
             // yes windows debug builds are horribly slow
@@ -40,7 +40,7 @@ pub(crate) fn start(cx: &mut App) {
         log::warn!("debug build, only reporting hangs longer then {hang_time:?}");
     }
 
-    start_hang_detection(hang_time, cx);
+    start_hang_detection(hang_time, client, cx);
 
     cx.on_action(move |_: &HangAction, _| {
         log::warn!(
@@ -75,9 +75,29 @@ pub(crate) fn start(cx: &mut App) {
     });
 }
 
-// takes a &App simply to force this to start on the foreground thread
-fn start_hang_detection(report_longer_then: Duration, _cx: &App) {
+fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &App) {
     let foreground_thread = thread::current().id();
+    let monitor_interval = Duration::from_secs(1);
+    let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new(foreground_thread)));
+    let mut log = logging::Reporter::new(
+        monitor_interval,
+        report_longer_then,
+        foreground_thread,
+    );
+
+    let telemetry2 = Arc::clone(&telemetry);
+    cx.on_app_quit({
+        move |_| {
+            let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
+            // TODO!(yara) make this include running now
+            let action_stats = profiler::take_action_stats();
+            telemetry2
+                .lock()
+                .update_and_report(&task_stats, &action_stats);
+            client.telemetry().flush_events()
+        }
+    })
+    .detach();
 
     // an OS thread to insulate detection and reporting from hangs on the fore
     // or background.
@@ -87,194 +107,25 @@ fn start_hang_detection(report_longer_then: Duration, _cx: &App) {
             // allow "bad" tasks during startup. Not because we should but since here
             // they are not observed by the user and to lower on clutter from the reporter
             thread::sleep(Duration::from_millis(200));
-            let mut reporter = Reporter::new(Duration::from_secs(1));
             loop {
-                thread::sleep(reporter.monitor_interval);
-                let task_stats = profiler::get_all_stats(TasksIncluded::CompletedAndRunning);
+                thread::sleep(log.monitor_interval);
+                let task_stats = profiler::take_all_stats(TasksIncluded::OnlyCompleted);
+                let action_stats = profiler::take_action_stats();
 
-                let mut reported_task_hangs = false;
-                reported_task_hangs |= reporter.report_hanging_foreground(
-                    &task_stats,
-                    report_longer_then,
-                    foreground_thread,
-                );
-                reported_task_hangs |= reporter.report_hanging_background(
-                    &task_stats,
-                    report_longer_then,
-                    foreground_thread,
-                );
-                reporter.report_hanging_actions(report_longer_then);
+                telemetry
+                    .lock()
+                    .update_and_report(&task_stats, &action_stats);
 
-                if reported_task_hangs && let Some(path) = task_traces::save_any(foreground_thread)
-                {
-                    log::info!("Task trace has been saved to: {}", path.display());
+                // TODO!(yara) getting this twice is bad (critical section for foreground)
+                // deduplicate it.
+                let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
+                let should_write_trace = log.check_and_report(&task_stats, &action_stats);
+                if should_write_trace {
+                    if let Some(path) = task_traces::save_any(foreground_thread) {
+                        log::info!("Task trace has been saved to: {}", path.display());
+                    }
                 }
             }
         })
         .expect("App can always spawn threads");
-}
-
-#[derive(Debug, Hash, Eq, PartialEq)]
-enum PerfIssue {
-    Foreground(&'static Location<'static>),
-    Background(&'static Location<'static>),
-    Action(&'static str),
-}
-
-struct Reporter {
-    monitor_interval: Duration,
-    forget_after: Duration,
-    history: HashMap<PerfIssue, Instant>,
-}
-
-impl Reporter {
-    fn hold_report(&self, issue: PerfIssue) -> bool {
-        self.history
-            .get(&issue)
-            .map(Instant::elapsed)
-            .is_some_and(|since_report| since_report > self.monitor_interval)
-    }
-    fn update_reported(&mut self, new: impl Iterator<Item = PerfIssue>) {
-        let now = Instant::now();
-        for issue in new {
-            if self
-                .history
-                .get(&issue)
-                .is_none_or(|s| s.elapsed() > self.forget_after)
-            {
-                self.history.insert(issue, now);
-            }
-        }
-    }
-    fn new(monitor_interval: Duration) -> Self {
-        Self {
-            monitor_interval,
-            forget_after: Duration::from_mins(5),
-            history: HashMap::default(),
-        }
-    }
-}
-
-type ReportMade = bool;
-impl Reporter {
-    fn report_hanging_foreground(
-        &mut self,
-        task_stats: &[gpui::ThreadTaskStatistics],
-        report_longer_then: Duration,
-        foreground_thread: ThreadId,
-    ) -> ReportMade {
-        let foreground = task_stats
-            .iter()
-            .find(|t| t.thread_id == foreground_thread)
-            .expect("main thread should be in all statistics");
-
-        let hangs: Vec<_> = foreground
-            .stats
-            .longest_poll_times
-            .into_iter()
-            .filter(|task| task.poll_duration() > report_longer_then)
-            .filter(|task| !self.hold_report(PerfIssue::Foreground(task.location)))
-            .collect();
-        self.update_reported(
-            hangs
-                .iter()
-                .map(|task| PerfIssue::Foreground(task.location)),
-        );
-        if !hangs.is_empty() {
-            info!("New foreground hang detected:\n{}", DisplayTasks(&hangs));
-        }
-
-        !hangs.is_empty()
-    }
-
-    fn report_hanging_background(
-        &mut self,
-        task_stats: &[gpui::ThreadTaskStatistics],
-        report_longer_then: Duration,
-        foreground_thread: ThreadId,
-    ) -> ReportMade {
-        let background = task_stats
-            .iter()
-            .filter(|t| t.thread_id != foreground_thread);
-
-        let mut report_made = false;
-        for worker in background {
-            let hangs: Vec<_> = worker
-                .stats
-                .longest_poll_times
-                .into_iter()
-                .filter(|stat| stat.poll_duration() > report_longer_then)
-                .filter(|task| !self.hold_report(PerfIssue::Background(task.location)))
-                .collect();
-
-            if hangs.is_empty() {
-                continue;
-            }
-
-            self.update_reported(
-                hangs
-                    .iter()
-                    .map(|task| PerfIssue::Background(task.location)),
-            );
-
-            info!(
-                "Background hang detected on {}:\n{}",
-                worker.thread_name.as_deref().unwrap_or_else(|| "Unknown"),
-                DisplayTasks(&hangs)
-            );
-            report_made = true;
-        }
-        report_made
-    }
-
-    fn report_hanging_actions(&mut self, report_longer_then: Duration) {
-        let hangs: Vec<_> = profiler::get_action_stats()
-            .longest_runtimes()
-            .filter(|action| action.runtime() > report_longer_then)
-            .filter(|action| !self.hold_report(PerfIssue::Action(action.name)))
-            .collect();
-
-        self.update_reported(hangs.iter().map(|action| PerfIssue::Action(action.name)));
-        if !hangs.is_empty() {
-            info!("Action hang detected:\n{}", DisplayActions(hangs));
-        }
-    }
-}
-
-struct DisplayActions(Vec<gpui::profiler::ActionTiming>);
-struct DisplayTasks<'a>(&'a [gpui::TaskTiming]);
-
-impl Display for DisplayActions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Actions(s) that ran too long\n")?;
-        for action in self.0.iter().sorted_by_key(|action| action.runtime()).rev() {
-            f.write_fmt(format_args!(
-                "{:<20} - {}",
-                format!("{:?}", action.runtime()), // impl dbg does not support alignment
-                action.name
-            ))?;
-            writeln!(f)?;
-        }
-        Ok(())
-    }
-}
-
-impl<'a> Display for DisplayTasks<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Tasks(s) that ran too long\n")?;
-        for task in self
-            .0
-            .iter()
-            .sorted_by_key(|task| task.poll_duration())
-            .rev()
-        {
-            f.write_fmt(format_args!(
-                "{:<20} - {}",
-                format!("{:?}", task.poll_duration()), // impl dbg does not support alignment
-                task.location
-            ))?;
-            writeln!(f)?;
-        }
-        Ok(())
-    }
 }
