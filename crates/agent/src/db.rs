@@ -54,6 +54,8 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
 pub struct DbThread {
     pub title: SharedString,
     pub messages: Vec<DbMessage>,
+    #[serde(default)]
+    pub conversations: Option<Vec<crate::Conversation>>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub detailed_summary: Option<SharedString>,
@@ -116,6 +118,7 @@ impl SharedThread {
         DbThread {
             title: format!("🔗 {}", self.title).into(),
             messages: self.messages,
+            conversations: None,
             updated_at: self.updated_at,
             detailed_summary: None,
             initial_project_snapshot: None,
@@ -291,6 +294,7 @@ impl DbThread {
         Ok(Self {
             title: thread.summary,
             messages,
+            conversations: None,
             updated_at: thread.updated_at,
             detailed_summary: match thread.detailed_summary_state {
                 crate::legacy_thread::DetailedSummaryState::NotGenerated
@@ -680,6 +684,7 @@ mod tests {
         DbThread {
             title: title.to_string().into(),
             messages: Vec::new(),
+            conversations: None,
             updated_at,
             detailed_summary: None,
             initial_project_snapshot: None,

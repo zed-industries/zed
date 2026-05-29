@@ -10,8 +10,8 @@ use crate::{
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
-    UpdateTitleToolFeatureFlag,
+    FeatureFlagAppExt as _, HandoffFeatureFlag, LspToolFeatureFlag, RenameToolFeatureFlag,
+    UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
 };
 
 use agent_client_protocol::schema as acp;
@@ -184,6 +184,84 @@ pub enum UserMessageContent {
     Text(String),
     Mention { uri: MentionUri, content: String },
     Image(LanguageModelImage),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ContextCompactionId(Arc<str>);
+
+impl ContextCompactionId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextCompactionMarker {
+    pub id: ContextCompactionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeCompactionSource {
+    pub provider: String,
+    pub api_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CompactionArtifact {
+    Summary(SharedString),
+    ProviderNative {
+        source: NativeCompactionSource,
+        items: Vec<serde_json::Value>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetainedUserMessage {
+    pub content: Vec<RetainedUserMessageContent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RetainedUserMessageContent {
+    Text(String),
+    Image(LanguageModelImage),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompactionSeed {
+    pub artifact: CompactionArtifact,
+    pub retained_user_messages: Vec<RetainedUserMessage>,
+    pub baseline_tokens: u64,
+    pub baseline_observed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Conversation {
+    pub marker: Option<ContextCompactionMarker>,
+    pub messages: Vec<Message>,
+    pub request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
+    pub seed: Option<CompactionSeed>,
+}
+
+impl Conversation {
+    fn legacy(
+        messages: Vec<Message>,
+        request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
+    ) -> Self {
+        Self {
+            marker: None,
+            messages,
+            request_token_usage,
+            seed: None,
+        }
+    }
+
+    fn empty() -> Self {
+        Self::legacy(Vec::new(), HashMap::default())
+    }
+
+    fn has_handoff_metadata(&self) -> bool {
+        self.marker.is_some() || self.seed.is_some()
+    }
 }
 
 impl UserMessage {
@@ -963,7 +1041,7 @@ pub struct Thread {
     title_generation_failed: bool,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
-    messages: Vec<Message>,
+    conversations: Vec<Conversation>,
     user_store: Entity<UserStore>,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -974,7 +1052,6 @@ pub struct Thread {
     has_queued_message: bool,
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
-    request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
@@ -1010,6 +1087,53 @@ impl Thread {
         acp::PromptCapabilities::new()
             .image(image)
             .embedded_context(true)
+    }
+
+    fn current_conversation(&self) -> &Conversation {
+        self.conversations
+            .last()
+            .expect("thread should always have at least one conversation")
+    }
+
+    fn current_conversation_mut(&mut self) -> &mut Conversation {
+        self.conversations
+            .last_mut()
+            .expect("thread should always have at least one conversation")
+    }
+
+    fn current_messages(&self) -> &[Message] {
+        &self.current_conversation().messages
+    }
+
+    fn current_messages_mut(&mut self) -> &mut Vec<Message> {
+        &mut self.current_conversation_mut().messages
+    }
+
+    fn flattened_messages(&self) -> Vec<Message> {
+        self.conversations
+            .iter()
+            .flat_map(|conversation| conversation.messages.iter().cloned())
+            .collect()
+    }
+
+    fn flattened_request_token_usage(&self) -> HashMap<UserMessageId, language_model::TokenUsage> {
+        self.conversations
+            .iter()
+            .flat_map(|conversation| {
+                conversation
+                    .request_token_usage
+                    .iter()
+                    .map(|(id, usage)| (id.clone(), *usage))
+            })
+            .collect()
+    }
+
+    fn has_handoff_metadata(&self) -> bool {
+        self.conversations.len() > 1
+            || self
+                .conversations
+                .iter()
+                .any(Conversation::has_handoff_metadata)
     }
 
     pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
@@ -1095,13 +1219,12 @@ impl Thread {
             title_generation_failed: false,
             pending_summary_generation: None,
             summary: None,
-            messages: Vec::new(),
+            conversations: vec![Conversation::empty()],
             user_store: project.read(cx).user_store(),
             running_turn: None,
             has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
-            request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project.clone(), cx);
@@ -1182,29 +1305,31 @@ impl Thread {
     ) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream(tx);
-        for message in &self.messages {
-            match message {
-                Message::User(user_message) => stream.send_user_message(user_message),
-                Message::Agent(assistant_message) => {
-                    for content in &assistant_message.content {
-                        match content {
-                            AgentMessageContent::Text(text) => stream.send_text(text),
-                            AgentMessageContent::Thinking { text, .. } => {
-                                stream.send_thinking(text)
-                            }
-                            AgentMessageContent::RedactedThinking(_) => {}
-                            AgentMessageContent::ToolUse(tool_use) => {
-                                self.replay_tool_call(
-                                    tool_use,
-                                    assistant_message.tool_results.get(&tool_use.id),
-                                    &stream,
-                                    cx,
-                                );
+        for conversation in &self.conversations {
+            for message in &conversation.messages {
+                match message {
+                    Message::User(user_message) => stream.send_user_message(user_message),
+                    Message::Agent(assistant_message) => {
+                        for content in &assistant_message.content {
+                            match content {
+                                AgentMessageContent::Text(text) => stream.send_text(text),
+                                AgentMessageContent::Thinking { text, .. } => {
+                                    stream.send_thinking(text)
+                                }
+                                AgentMessageContent::RedactedThinking(_) => {}
+                                AgentMessageContent::ToolUse(tool_use) => {
+                                    self.replay_tool_call(
+                                        tool_use,
+                                        assistant_message.tool_results.get(&tool_use.id),
+                                        &stream,
+                                        cx,
+                                    );
+                                }
                             }
                         }
                     }
+                    Message::Resume => {}
                 }
-                Message::Resume => {}
             }
         }
         rx
@@ -1401,6 +1526,22 @@ impl Thread {
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let conversations = if cx.has_flag::<HandoffFeatureFlag>() {
+            db_thread
+                .conversations
+                .filter(|conversations| !conversations.is_empty())
+                .unwrap_or_else(|| {
+                    vec![Conversation::legacy(
+                        db_thread.messages.clone(),
+                        db_thread.request_token_usage.clone(),
+                    )]
+                })
+        } else {
+            vec![Conversation::legacy(
+                db_thread.messages.clone(),
+                db_thread.request_token_usage.clone(),
+            )]
+        };
 
         Self {
             id,
@@ -1414,13 +1555,12 @@ impl Thread {
             title_generation_failed: false,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
-            messages: db_thread.messages,
+            conversations,
             user_store: project.read(cx).user_store(),
             running_turn: None,
             has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
-            request_token_usage: db_thread.request_token_usage.clone(),
             cumulative_token_usage: db_thread.cumulative_token_usage,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
@@ -1451,14 +1591,18 @@ impl Thread {
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
+        let conversations = self
+            .has_handoff_metadata()
+            .then(|| self.conversations.clone());
         let mut thread = DbThread {
             title: self.title().unwrap_or_default(),
-            messages: self.messages.clone(),
+            messages: self.flattened_messages(),
+            conversations,
             updated_at: self.updated_at,
             detailed_summary: self.summary.clone(),
             initial_project_snapshot: None,
             cumulative_token_usage: self.cumulative_token_usage,
-            request_token_usage: self.request_token_usage.clone(),
+            request_token_usage: self.flattened_request_token_usage(),
             model: self.model.as_ref().map(|model| DbLanguageModel {
                 provider: model.provider_id().to_string(),
                 model: model.id().0.to_string(),
@@ -1514,7 +1658,10 @@ impl Thread {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.messages.is_empty() && self.title.is_none()
+        self.conversations
+            .iter()
+            .all(|conversation| conversation.messages.is_empty())
+            && self.title.is_none()
     }
 
     pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
@@ -1639,7 +1786,7 @@ impl Thread {
     }
 
     pub fn last_message(&self) -> Option<&Message> {
-        self.messages.last()
+        self.current_messages().last()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1647,7 +1794,7 @@ impl Thread {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
         } else {
-            self.messages.last().cloned()
+            self.current_messages().last().cloned()
         }
     }
 
@@ -1789,9 +1936,11 @@ impl Thread {
         let Some(last_user_message) = self.last_user_message() else {
             return;
         };
+        let last_user_message_id = last_user_message.id.clone();
 
-        self.request_token_usage
-            .insert(last_user_message.id.clone(), update);
+        self.current_conversation_mut()
+            .request_token_usage
+            .insert(last_user_message_id, update);
         cx.emit(TokenUsageUpdated(self.latest_token_usage()));
         cx.notify();
     }
@@ -1801,19 +1950,24 @@ impl Thread {
         // Clear pending message since cancel will try to flush it asynchronously,
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
-        let Some(position) = self.messages.iter().position(
+        let Some(position) = self.current_messages().iter().position(
             |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
             return Err(anyhow!("Message not found"));
         };
 
-        for message in self.messages.drain(position..) {
-            match message {
-                Message::User(message) => {
-                    self.request_token_usage.remove(&message.id);
-                }
-                Message::Agent(_) | Message::Resume => {}
-            }
+        let removed_user_message_ids = self
+            .current_messages_mut()
+            .drain(position..)
+            .filter_map(|message| match message {
+                Message::User(message) => Some(message.id),
+                Message::Agent(_) | Message::Resume => None,
+            })
+            .collect::<Vec<_>>();
+        for message_id in removed_user_message_ids {
+            self.current_conversation_mut()
+                .request_token_usage
+                .remove(&message_id);
         }
         self.clear_summary();
         cx.notify();
@@ -1822,7 +1976,10 @@ impl Thread {
 
     pub fn latest_request_token_usage(&self) -> Option<language_model::TokenUsage> {
         let last_user_message = self.last_user_message()?;
-        let tokens = self.request_token_usage.get(&last_user_message.id)?;
+        let tokens = self
+            .current_conversation()
+            .request_token_usage
+            .get(&last_user_message.id)?;
         Some(*tokens)
     }
 
@@ -1849,11 +2006,14 @@ impl Thread {
     pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
         let mut previous_user_message_id: Option<&UserMessageId> = None;
 
-        for message in &self.messages {
+        for message in self.current_messages() {
             if let Message::User(user_msg) = message {
                 if &user_msg.id == target_id {
                     let prev_id = previous_user_message_id?;
-                    let usage = self.request_token_usage.get(prev_id)?;
+                    let usage = self
+                        .current_conversation()
+                        .request_token_usage
+                        .get(prev_id)?;
                     return Some(total_input_tokens(*usage));
                 }
                 previous_user_message_id = Some(&user_msg.id);
@@ -1895,10 +2055,13 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.messages.push(Message::Resume);
+        self.current_messages_mut().push(Message::Resume);
         cx.notify();
 
-        log::debug!("Total messages in thread: {}", self.messages.len());
+        log::debug!(
+            "Total messages in thread: {}",
+            self.current_messages().len()
+        );
         self.run_turn(cx)
     }
 
@@ -1917,7 +2080,7 @@ impl Thread {
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
-        self.messages
+        self.current_messages_mut()
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
 
@@ -1935,7 +2098,10 @@ impl Thread {
         log::info!("Thread::send called with model: {}", model.name().0);
         self.advance_prompt_id();
 
-        log::debug!("Total messages in thread: {}", self.messages.len());
+        log::debug!(
+            "Total messages in thread: {}",
+            self.current_messages().len()
+        );
         self.run_turn(cx)
     }
 
@@ -1950,7 +2116,7 @@ impl Thread {
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
             .collect::<Vec<_>>();
-        self.messages
+        self.current_messages_mut()
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
     }
@@ -1969,10 +2135,11 @@ impl Thread {
             _ => "[unknown]".to_string(),
         };
 
-        self.messages.push(Message::Agent(AgentMessage {
-            content: vec![AgentMessageContent::Text(text)],
-            ..Default::default()
-        }));
+        self.current_messages_mut()
+            .push(Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Text(text)],
+                ..Default::default()
+            }));
         cx.notify();
     }
 
@@ -1988,7 +2155,7 @@ impl Thread {
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
-        let message_ix = self.messages.len().saturating_sub(1);
+        let message_ix = self.current_messages().len().saturating_sub(1);
         self.clear_summary();
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
@@ -2023,7 +2190,9 @@ impl Thread {
                         match error.downcast::<CompletionError>() {
                             Ok(CompletionError::Refusal) => {
                                 event_stream.send_stop(acp::StopReason::Refusal);
-                                _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
+                                _ = this.update(cx, |this, _| {
+                                    this.current_messages_mut().truncate(message_ix)
+                                });
                             }
                             Ok(CompletionError::MaxTokens) => {
                                 event_stream.send_stop(acp::StopReason::MaxTokens);
@@ -2230,10 +2399,10 @@ impl Thread {
                     }
                 }
                 this.update(cx, |this, _cx| {
-                    if let Some(Message::Agent(message)) = this.messages.last() {
+                    if let Some(Message::Agent(message)) = this.current_messages().last() {
                         if message.tool_results.is_empty() {
                             intent = CompletionIntent::UserPrompt;
-                            this.messages.push(Message::Resume);
+                            this.current_messages_mut().push(Message::Resume);
                         }
                     }
                 })?;
@@ -2762,7 +2931,7 @@ impl Thread {
             ..Default::default()
         };
 
-        for message in &self.messages {
+        for message in self.current_messages() {
             request.messages.extend(message.to_request());
         }
 
@@ -2825,7 +2994,7 @@ impl Thread {
             ..Default::default()
         };
 
-        for message in &self.messages {
+        for message in self.current_messages() {
             request.messages.extend(message.to_request());
         }
 
@@ -2892,7 +3061,7 @@ impl Thread {
     }
 
     fn last_user_message(&self) -> Option<&UserMessage> {
-        self.messages
+        self.current_messages()
             .iter()
             .rev()
             .find_map(|message| match message {
@@ -2936,7 +3105,7 @@ impl Thread {
             }
         }
 
-        self.messages.push(Message::Agent(message));
+        self.current_messages_mut().push(Message::Agent(message));
         self.updated_at = Utc::now();
         self.clear_summary();
         cx.notify()
@@ -3158,7 +3327,7 @@ impl Thread {
     ) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
-            self.messages.len()
+            self.current_messages().len()
         );
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
@@ -3178,7 +3347,7 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        for message in &self.messages {
+        for message in self.current_messages() {
             messages.extend(message.to_request());
         }
 
@@ -3195,16 +3364,24 @@ impl Thread {
 
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
-        for (ix, message) in self.messages.iter().enumerate() {
-            if ix > 0 {
-                markdown.push('\n');
+        for (conversation_ix, conversation) in self.conversations.iter().enumerate() {
+            if conversation_ix > 0 {
+                if !markdown.is_empty() {
+                    markdown.push('\n');
+                }
+                markdown.push_str("--- Context Compacted ---\n");
             }
-            match message {
-                Message::User(_) => markdown.push_str("## User\n\n"),
-                Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
-                Message::Resume => {}
+            for (message_ix, message) in conversation.messages.iter().enumerate() {
+                if !markdown.is_empty() && (conversation_ix > 0 || message_ix > 0) {
+                    markdown.push('\n');
+                }
+                match message {
+                    Message::User(_) => markdown.push_str("## User\n\n"),
+                    Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
+                    Message::Resume => {}
+                }
+                markdown.push_str(&message.to_markdown());
             }
-            markdown.push_str(&message.to_markdown());
         }
 
         if let Some(message) = self.pending_message.as_ref() {
@@ -4626,14 +4803,16 @@ mod tests {
                     },
                 );
 
-                thread.messages.push(Message::Agent(AgentMessage {
-                    content: vec![
-                        AgentMessageContent::ToolUse(registered_tool_use),
-                        AgentMessageContent::ToolUse(missing_tool_use),
-                    ],
-                    tool_results,
-                    reasoning_details: None,
-                }));
+                thread
+                    .current_messages_mut()
+                    .push(Message::Agent(AgentMessage {
+                        content: vec![
+                            AgentMessageContent::ToolUse(registered_tool_use),
+                            AgentMessageContent::ToolUse(missing_tool_use),
+                        ],
+                        tool_results,
+                        reasoning_details: None,
+                    }));
 
                 thread.replay(cx)
             })
@@ -4784,11 +4963,13 @@ mod tests {
             },
         );
 
-        thread.messages.push(Message::Agent(AgentMessage {
-            content: vec![AgentMessageContent::ToolUse(tool_use)],
-            tool_results,
-            reasoning_details: None,
-        }));
+        thread
+            .current_messages_mut()
+            .push(Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::ToolUse(tool_use)],
+                tool_results,
+                reasoning_details: None,
+            }));
     }
 
     #[gpui::test]
