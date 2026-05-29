@@ -68,6 +68,8 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+const GENERIC_COMPACTION_RETAINED_USER_MESSAGE_TOKENS: u64 = 20_000;
+const ESTIMATED_IMAGE_TOKEN_COUNT: u64 = 1024;
 
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
@@ -2070,9 +2072,19 @@ impl Thread {
         estimate_request_tokens(&messages)
     }
 
+    fn generic_retained_user_messages(&self) -> Vec<RetainedUserMessage> {
+        retained_user_messages_from_messages(
+            self.current_messages(),
+            GENERIC_COMPACTION_RETAINED_USER_MESSAGE_TOKENS,
+        )
+    }
+
     fn log_auto_compact_hook(&self, phase: &str, cx: &App) {
         if self.should_auto_compact(cx) {
-            log::info!("auto-compaction threshold reached at {phase}; handoff is not wired yet");
+            let retained_user_message_count = self.generic_retained_user_messages().len();
+            log::info!(
+                "auto-compaction threshold reached at {phase}; handoff is not wired yet; retained_user_messages={retained_user_message_count}"
+            );
         }
     }
 
@@ -3609,7 +3621,7 @@ fn estimate_request_tokens(messages: &[LanguageModelRequestMessage]) -> u64 {
                 language_model::MessageContent::RedactedThinking(text) => {
                     estimate_text_tokens(text)
                 }
-                language_model::MessageContent::Image(_) => 1024,
+                language_model::MessageContent::Image(_) => ESTIMATED_IMAGE_TOKEN_COUNT,
                 language_model::MessageContent::ToolUse(tool_use) => {
                     estimate_text_tokens(&tool_use.raw_input).saturating_add(256)
                 }
@@ -3618,7 +3630,7 @@ fn estimate_request_tokens(messages: &[LanguageModelRequestMessage]) -> u64 {
                     .iter()
                     .map(|content| match content {
                         LanguageModelToolResultContent::Text(text) => estimate_text_tokens(text),
-                        LanguageModelToolResultContent::Image(_) => 1024,
+                        LanguageModelToolResultContent::Image(_) => ESTIMATED_IMAGE_TOKEN_COUNT,
                     })
                     .sum(),
             })
@@ -3627,6 +3639,121 @@ fn estimate_request_tokens(messages: &[LanguageModelRequestMessage]) -> u64 {
 
 fn estimate_text_tokens(text: &str) -> u64 {
     text.len().div_ceil(4) as u64
+}
+
+fn retained_user_messages_from_messages(
+    messages: &[Message],
+    token_budget: u64,
+) -> Vec<RetainedUserMessage> {
+    let mut retained_messages = Vec::new();
+    let mut remaining_tokens = token_budget;
+
+    for message in messages.iter().rev() {
+        if remaining_tokens == 0 {
+            break;
+        }
+        let Message::User(user_message) = message else {
+            continue;
+        };
+
+        let (retained_message, used_tokens) =
+            retained_user_message_from_content(&user_message.content, remaining_tokens);
+        if let Some(retained_message) = retained_message {
+            retained_messages.push(retained_message);
+            remaining_tokens = remaining_tokens.saturating_sub(used_tokens);
+        }
+    }
+
+    retained_messages.reverse();
+    retained_messages
+}
+
+fn retained_user_message_from_content(
+    content: &[UserMessageContent],
+    token_budget: u64,
+) -> (Option<RetainedUserMessage>, u64) {
+    let mut retained_content = Vec::new();
+    let mut remaining_tokens = token_budget;
+    let mut used_tokens = 0_u64;
+
+    for content in content.iter().rev() {
+        if remaining_tokens == 0 {
+            break;
+        }
+
+        match retained_user_message_content(content) {
+            RetainedUserMessageContent::Text(text) => {
+                let text_tokens = estimate_text_tokens(&text);
+                let retained_text = if text_tokens <= remaining_tokens {
+                    text
+                } else {
+                    truncate_text_to_token_budget(&text, remaining_tokens)
+                };
+                if retained_text.is_empty() {
+                    continue;
+                }
+                let retained_tokens = estimate_text_tokens(&retained_text);
+                retained_content.push(RetainedUserMessageContent::Text(retained_text));
+                used_tokens = used_tokens.saturating_add(retained_tokens);
+                remaining_tokens = remaining_tokens.saturating_sub(retained_tokens);
+            }
+            RetainedUserMessageContent::Image(image) => {
+                if ESTIMATED_IMAGE_TOKEN_COUNT <= remaining_tokens {
+                    retained_content.push(RetainedUserMessageContent::Image(image));
+                    used_tokens = used_tokens.saturating_add(ESTIMATED_IMAGE_TOKEN_COUNT);
+                    remaining_tokens = remaining_tokens.saturating_sub(ESTIMATED_IMAGE_TOKEN_COUNT);
+                }
+            }
+        }
+    }
+
+    if retained_content.is_empty() {
+        (None, 0)
+    } else {
+        retained_content.reverse();
+        (
+            Some(RetainedUserMessage {
+                content: retained_content,
+            }),
+            used_tokens,
+        )
+    }
+}
+
+fn retained_user_message_content(content: &UserMessageContent) -> RetainedUserMessageContent {
+    match content {
+        UserMessageContent::Text(text) => RetainedUserMessageContent::Text(text.clone()),
+        UserMessageContent::Mention { uri, content } => {
+            let text = if content.is_empty() {
+                uri.as_link().to_string()
+            } else {
+                format!("{}\n\n{}", uri.as_link(), content)
+            };
+            RetainedUserMessageContent::Text(text)
+        }
+        UserMessageContent::Image(image) => RetainedUserMessageContent::Image(image.clone()),
+    }
+}
+
+fn truncate_text_to_token_budget(text: &str, token_budget: u64) -> String {
+    let Some(max_bytes) = usize::try_from(token_budget)
+        .ok()
+        .and_then(|tokens| tokens.checked_mul(4))
+    else {
+        return text.to_string();
+    };
+    if max_bytes == 0 {
+        return String::new();
+    }
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+
+    let mut start = text.len().saturating_sub(max_bytes);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_string()
 }
 
 struct RunningTurn {
@@ -5075,6 +5202,65 @@ mod tests {
                 assert!(seed.baseline_observed);
             });
         });
+    }
+
+    #[test]
+    fn test_retained_user_messages_truncates_oldest_text_to_budget() {
+        let messages = vec![
+            Message::User(UserMessage {
+                id: UserMessageId::new(),
+                content: vec![UserMessageContent::Text("abcdefghijklmnop".to_string())],
+            }),
+            Message::User(UserMessage {
+                id: UserMessageId::new(),
+                content: vec![UserMessageContent::Text("newer".to_string())],
+            }),
+        ];
+
+        let retained = retained_user_messages_from_messages(&messages, 5);
+
+        assert_eq!(
+            retained,
+            vec![
+                RetainedUserMessage {
+                    content: vec![RetainedUserMessageContent::Text("efghijklmnop".to_string())],
+                },
+                RetainedUserMessage {
+                    content: vec![RetainedUserMessageContent::Text("newer".to_string())],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_retained_user_messages_preserves_images_when_possible() {
+        let image = LanguageModelImage {
+            source: "image".into(),
+        };
+        let messages = vec![
+            Message::User(UserMessage {
+                id: UserMessageId::new(),
+                content: vec![UserMessageContent::Image(image.clone())],
+            }),
+            Message::User(UserMessage {
+                id: UserMessageId::new(),
+                content: vec![UserMessageContent::Text("new".to_string())],
+            }),
+        ];
+
+        let retained = retained_user_messages_from_messages(&messages, 1025);
+
+        assert_eq!(
+            retained,
+            vec![
+                RetainedUserMessage {
+                    content: vec![RetainedUserMessageContent::Image(image)],
+                },
+                RetainedUserMessage {
+                    content: vec![RetainedUserMessageContent::Text("new".to_string())],
+                },
+            ]
+        );
     }
 
     struct ReplayImageTool;
