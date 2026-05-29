@@ -9,7 +9,7 @@ use std::{
 
 #[derive(Default)]
 struct Matrix {
-    cells: Vec<f64>,
+    cells: Vec<f32>,
     rows: usize,
     cols: usize,
 }
@@ -52,7 +52,7 @@ impl Matrix {
         }
     }
 
-    fn get(&self, row: usize, col: usize) -> f64 {
+    fn get(&self, row: usize, col: usize) -> f32 {
         if row >= self.rows {
             panic!("row out of bounds")
         }
@@ -63,7 +63,7 @@ impl Matrix {
         self.cells[col * self.rows + row]
     }
 
-    fn set(&mut self, row: usize, col: usize, value: f64) {
+    fn set(&mut self, row: usize, col: usize, value: f32) {
         if row >= self.rows {
             panic!("row out of bounds")
         }
@@ -75,7 +75,7 @@ impl Matrix {
         self.cells[col * self.rows + row] = value;
     }
 
-    fn adjacent_columns_mut(&mut self, current_col: usize) -> (&[f64], &mut [f64]) {
+    fn adjacent_columns_mut(&mut self, current_col: usize) -> (&[f32], &mut [f32]) {
         if current_col == 0 || current_col >= self.cols {
             panic!("column out of bounds");
         }
@@ -122,9 +122,9 @@ pub struct StreamingDiff {
 }
 
 impl StreamingDiff {
-    const INSERTION_SCORE: f64 = -1.;
-    const DELETION_SCORE: f64 = -20.;
-    const EQUALITY_BASE: f64 = 1.8;
+    const INSERTION_SCORE: f32 = -1.;
+    const DELETION_SCORE: f32 = -20.;
+    const EQUALITY_BASE: f32 = 1.8;
     const MAX_EQUALITY_EXPONENT: i32 = 16;
 
     pub fn new(old: String) -> Self {
@@ -133,7 +133,7 @@ impl StreamingDiff {
         let mut scores = Matrix::new();
         scores.resize(old_len + 1, 1);
         for i in 0..=old_len {
-            scores.set(i, 0, i as f64 * Self::DELETION_SCORE);
+            scores.set(i, 0, i as f32 * Self::DELETION_SCORE);
         }
         Self {
             old,
@@ -161,7 +161,7 @@ impl StreamingDiff {
             let current_equal_runs = &mut self.current_equal_runs;
             let (previous_scores, current_scores) = self.scores.adjacent_columns_mut(relative_j);
 
-            current_scores[0] = j as f64 * Self::INSERTION_SCORE;
+            current_scores[0] = j as f32 * Self::INSERTION_SCORE;
             for i in 1..=old.len() {
                 let insertion_score = previous_scores[i] + Self::INSERTION_SCORE;
                 let deletion_score = current_scores[i - 1] + Self::DELETION_SCORE;
@@ -172,7 +172,7 @@ impl StreamingDiff {
                     let exponent = cmp::min(equal_run as i32 / 4, Self::MAX_EQUALITY_EXPONENT);
                     previous_scores[i - 1] + Self::EQUALITY_BASE.powi(exponent)
                 } else {
-                    f64::NEG_INFINITY
+                    f32::NEG_INFINITY
                 };
 
                 current_scores[i] = insertion_score.max(deletion_score).max(equality_score);
@@ -181,7 +181,7 @@ impl StreamingDiff {
             std::mem::swap(&mut self.previous_equal_runs, &mut self.current_equal_runs);
         }
 
-        let mut max_score = f64::NEG_INFINITY;
+        let mut max_score = f32::NEG_INFINITY;
         let mut next_old_text_ix = self.old_text_ix;
         let next_new_text_ix = self.new.len();
         for i in self.old_text_ix..=self.old.len() {
