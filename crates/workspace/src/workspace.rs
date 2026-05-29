@@ -93,12 +93,16 @@ pub use persistence::{
     },
     read_serialized_multi_workspaces,
 };
-use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
+use persistence::{
+    SerializedAxis, SerializedWindowBounds,
+    model::{SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace},
+};
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
     WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    git_store::{GitStoreEvent, RepositoryEvent},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
     trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
@@ -158,14 +162,8 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
+use crate::security_modal::SecurityModal;
 use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
-use crate::{
-    persistence::{
-        SerializedAxis,
-        model::{SerializedItem, SerializedPane, SerializedPaneGroup},
-    },
-    security_modal::SecurityModal,
-};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -1389,6 +1387,9 @@ pub struct Workspace {
     _schedule_serialize_workspace: Option<Task<()>>,
     _serialize_workspace_task: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
+    active_branch_session: Option<BranchSessionKey>,
+    _branch_session_task: Option<Task<Result<()>>>,
+    restoring_branch_session: bool,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1432,6 +1433,12 @@ pub enum AutoWatch {
     Off,
     Active { watched_peer: Option<PeerId> },
     Paused,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BranchSessionKey {
+    repository_path: Arc<Path>,
+    branch_name: String,
 }
 
 impl AutoWatch {
@@ -1749,7 +1756,11 @@ impl Workspace {
             Self::serialize_items(&this, serializable_items_rx, cx).await
         });
 
+        let git_store = project.read(cx).git_store().clone();
+        let active_branch_session = Self::branch_session_key_for_project(&project, cx);
+
         let subscriptions = vec![
+            cx.subscribe_in(&git_store, window, Self::on_git_store_event),
             cx.observe_window_activation(window, Self::on_window_activation_changed),
             cx.observe_window_bounds(window, move |this, window, cx| {
                 if this.bounds_save_task_queued.is_some() {
@@ -1831,6 +1842,9 @@ impl Workspace {
             _schedule_serialize_workspace: None,
             _serialize_workspace_task: None,
             _schedule_serialize_ssh_paths: None,
+            active_branch_session,
+            _branch_session_task: None,
+            restoring_branch_session: false,
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
@@ -3470,6 +3484,14 @@ impl Workspace {
         self.save_all_internal(SaveIntent::Close, true, window, cx)
     }
 
+    fn prompt_to_save_or_discard_dirty_items_before_branch_switch(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<bool>> {
+        self.save_all_internal(SaveIntent::Close, false, window, cx)
+    }
+
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
@@ -3967,6 +3989,7 @@ impl Workspace {
         if let Some(task) = self.close_all_internal(
             true,
             action.save_intent.unwrap_or(SaveIntent::Close),
+            false,
             window,
             cx,
         ) {
@@ -3983,6 +4006,7 @@ impl Workspace {
         if let Some(task) = self.close_all_internal(
             false,
             action.save_intent.unwrap_or(SaveIntent::Close),
+            false,
             window,
             cx,
         ) {
@@ -4049,6 +4073,7 @@ impl Workspace {
         &mut self,
         retain_active_pane: bool,
         save_intent: SaveIntent,
+        close_pinned: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -4061,7 +4086,7 @@ impl Workspace {
                 pane.close_other_items(
                     &CloseOtherItems {
                         save_intent: None,
-                        close_pinned: false,
+                        close_pinned,
                     },
                     None,
                     window,
@@ -4081,7 +4106,7 @@ impl Workspace {
                 pane.close_all_items(
                     &CloseAllItems {
                         save_intent: Some(save_intent),
-                        close_pinned: false,
+                        close_pinned,
                     },
                     window,
                     cx,
@@ -6769,6 +6794,244 @@ impl Workspace {
             .collect::<Vec<_>>()
     }
 
+    fn branch_session_key_for_project(
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Option<BranchSessionKey> {
+        let repository = project.read(cx).active_repository(cx)?;
+        let repository = repository.read(cx);
+        Some(BranchSessionKey {
+            repository_path: repository.work_directory_abs_path.clone(),
+            branch_name: repository.branch.as_ref()?.name().to_owned(),
+        })
+    }
+
+    fn on_git_store_event(
+        &mut self,
+        _git_store: &Entity<project::git_store::GitStore>,
+        event: &GitStoreEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(
+            event,
+            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::HeadChanged, true)
+        ) {
+            return;
+        }
+        if self.restoring_branch_session || self._branch_session_task.is_some() {
+            return;
+        }
+        if !self.project.read(cx).is_local()
+            || !workspace_settings::WorkspaceSettings::get_global(cx).restore_tabs_per_branch
+        {
+            self.active_branch_session = Self::branch_session_key_for_project(&self.project, cx);
+            return;
+        }
+
+        let previous_key = self.active_branch_session.clone();
+        let next_key = Self::branch_session_key_for_project(&self.project, cx);
+        if previous_key == next_key {
+            return;
+        }
+
+        let db = WorkspaceDb::global(cx);
+        self._branch_session_task = Some(cx.spawn_in(window, async move |this, cx| {
+            if let Some(previous_key) = previous_key.clone() {
+                let save = this.update_in(cx, |workspace, window, cx| {
+                    workspace.save_branch_workspace_layout(previous_key, window, cx)
+                })?;
+                save.await.log_err();
+            }
+
+            let confirmed = this
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.prompt_to_save_or_discard_dirty_items_before_branch_switch(window, cx)
+                })?
+                .await?;
+
+            if !confirmed {
+                this.update(cx, |workspace, _| {
+                    workspace.active_branch_session = previous_key;
+                    workspace._branch_session_task = None;
+                })?;
+                return anyhow::Ok(());
+            }
+
+            if let Some(next_key) = next_key.clone() {
+                let layout = if let Some(workspace_id) =
+                    this.read_with(cx, |workspace, _| workspace.database_id)?
+                {
+                    db.branch_workspace_layout(
+                        workspace_id,
+                        next_key.repository_path.clone(),
+                        next_key.branch_name.clone(),
+                    )
+                    .await
+                    .log_err()
+                    .flatten()
+                } else {
+                    None
+                };
+
+                if let Some(layout) = layout {
+                    this.update_in(cx, |workspace, window, cx| {
+                        workspace.restore_branch_workspace_layout(layout, window, cx)
+                    })?
+                    .await
+                    .log_err();
+                } else {
+                    if let Some(task) = this.update_in(cx, |workspace, window, cx| {
+                        workspace.close_all_internal(false, SaveIntent::Skip, true, window, cx)
+                    })? {
+                        task.await.log_err();
+                    }
+                }
+            }
+
+            this.update(cx, |workspace, _| {
+                workspace.active_branch_session = next_key;
+                workspace._branch_session_task = None;
+            })?;
+
+            anyhow::Ok(())
+        }));
+    }
+
+    fn capture_center_pane_group(
+        pane_group: &Member,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> SerializedPaneGroup {
+        match pane_group {
+            Member::Axis(PaneAxis {
+                axis,
+                members,
+                flexes,
+                bounding_boxes: _,
+            }) => SerializedPaneGroup::Group {
+                axis: SerializedAxis(*axis),
+                children: members
+                    .iter()
+                    .map(|member| Self::capture_center_pane_group(member, window, cx))
+                    .collect::<Vec<_>>(),
+                flexes: Some(flexes.lock().clone()),
+            },
+            Member::Pane(pane_handle) => {
+                let (items, active, pinned_count) = {
+                    let pane = pane_handle.read(cx);
+                    let active_item_id = pane.active_item().map(|item| item.item_id());
+                    (
+                        pane.items()
+                            .filter_map(|handle| {
+                                let handle = handle.to_serializable_item_handle(cx)?;
+
+                                Some(SerializedItem {
+                                    kind: Arc::from(handle.serialized_item_kind()),
+                                    item_id: handle.item_id().as_u64(),
+                                    active: Some(handle.item_id()) == active_item_id,
+                                    preview: pane.is_active_preview_item(handle.item_id()),
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                        pane.has_focus(window, cx),
+                        pane.pinned_count(),
+                    )
+                };
+
+                SerializedPaneGroup::Pane(SerializedPane::new(items, active, pinned_count))
+            }
+        }
+    }
+
+    fn save_branch_workspace_layout(
+        &mut self,
+        branch_key: BranchSessionKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(workspace_id) = self.database_id else {
+            return Task::ready(Ok(()));
+        };
+
+        let mut serialize_item_tasks = Vec::new();
+        let items = self
+            .items(cx)
+            .map(|item| item.boxed_clone())
+            .collect::<Vec<_>>();
+        for item in items {
+            if let Some(task) = item
+                .to_serializable_item_handle(cx)
+                .and_then(|item| item.serialize(self, false, window, cx))
+            {
+                serialize_item_tasks.push(task);
+            }
+        }
+
+        let center_group = Self::capture_center_pane_group(&self.center.root, window, cx);
+        let db = WorkspaceDb::global(cx);
+        cx.spawn(async move |_, _| {
+            for task in serialize_item_tasks {
+                task.await.log_err();
+            }
+
+            db.save_branch_workspace_layout(
+                workspace_id,
+                branch_key.repository_path,
+                branch_key.branch_name,
+                center_group,
+            )
+            .await
+        })
+    }
+
+    fn restore_branch_workspace_layout(
+        &mut self,
+        center_group: SerializedPaneGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(workspace_id) = self.database_id else {
+            return Task::ready(Ok(()));
+        };
+
+        self.restoring_branch_session = true;
+        cx.spawn_in(window, async move |workspace, cx| {
+            if let Some(close_task) = workspace.update_in(cx, |workspace, window, cx| {
+                workspace.close_all_internal(false, SaveIntent::Skip, true, window, cx)
+            })? {
+                close_task.await.log_err();
+            }
+
+            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
+            let restored = center_group
+                .deserialize(&project, workspace_id, workspace.clone(), cx)
+                .await;
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                if let Some((center_group, active_pane, _)) = restored {
+                    workspace.remove_panes(workspace.center.root.clone(), window, cx);
+                    workspace.center = PaneGroup::with_root(center_group);
+                    workspace.center.set_is_center(true);
+                    workspace.center.mark_positions(cx);
+
+                    if let Some(active_pane) = active_pane {
+                        workspace.set_active_pane(&active_pane, window, cx);
+                        cx.focus_self(window);
+                    } else {
+                        workspace.set_active_pane(&workspace.center.first_pane(), window, cx);
+                    }
+                }
+
+                workspace.restoring_branch_session = false;
+                workspace.serialize_workspace_internal(window, cx).detach();
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
+    }
+
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
@@ -7063,6 +7326,7 @@ impl Workspace {
     pub(crate) fn load_workspace(
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
+        cleanup_unloaded_items: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
@@ -7170,23 +7434,25 @@ impl Workspace {
             // the database filling up, we delete items that haven't been loaded now.
             //
             // The items that have been loaded, have been saved after they've been added to the workspace.
-            let clean_up_tasks = workspace.update_in(cx, |_, window, cx| {
-                item_ids_by_kind
-                    .into_iter()
-                    .map(|(item_kind, loaded_items)| {
-                        SerializableItemRegistry::cleanup(
-                            item_kind,
-                            serialized_workspace.id,
-                            loaded_items,
-                            window,
-                            cx,
-                        )
-                        .log_err()
-                    })
-                    .collect::<Vec<_>>()
-            })?;
+            if cleanup_unloaded_items {
+                let clean_up_tasks = workspace.update_in(cx, |_, window, cx| {
+                    item_ids_by_kind
+                        .into_iter()
+                        .map(|(item_kind, loaded_items)| {
+                            SerializableItemRegistry::cleanup(
+                                item_kind,
+                                serialized_workspace.id,
+                                loaded_items,
+                                window,
+                                cx,
+                            )
+                            .log_err()
+                        })
+                        .collect::<Vec<_>>()
+                })?;
 
-            futures::future::join_all(clean_up_tasks).await;
+                futures::future::join_all(clean_up_tasks).await;
+            }
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -8214,6 +8480,7 @@ fn open_items(
                 .map(|(_, project_path)| project_path)
                 .cloned()
                 .collect(),
+            true,
             window,
             cx,
         )

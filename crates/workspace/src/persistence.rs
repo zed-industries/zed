@@ -75,7 +75,7 @@ fn contains_wsl_path(paths: &PathList) -> bool {
             .any(|path| util::paths::WslPath::from_path(path).is_some())
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
 impl sqlez::bindable::StaticColumnCount for SerializedAxis {}
 impl sqlez::bindable::Bind for SerializedAxis {
@@ -1036,6 +1036,19 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
             ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
+        ),
+        sql!(
+            CREATE TABLE branch_workspace_layouts (
+                workspace_id INTEGER NOT NULL,
+                repository_path TEXT NOT NULL,
+                branch_name TEXT NOT NULL,
+                center_group TEXT NOT NULL,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                PRIMARY KEY (workspace_id, repository_path, branch_name),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            ) STRICT;
         ),
     ];
 
@@ -2396,6 +2409,59 @@ impl WorkspaceDb {
         Ok(())
     }
 
+    pub(crate) async fn save_branch_workspace_layout(
+        &self,
+        workspace_id: WorkspaceId,
+        repository_path: Arc<Path>,
+        branch_name: String,
+        center_group: SerializedPaneGroup,
+    ) -> Result<()> {
+        let repository_path = repository_path.to_string_lossy().into_owned();
+        let center_group = serde_json::to_string(&center_group)?;
+
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                INSERT INTO branch_workspace_layouts(
+                    workspace_id,
+                    repository_path,
+                    branch_name,
+                    center_group
+                )
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT DO UPDATE SET
+                    center_group = ?4,
+                    timestamp = CURRENT_TIMESTAMP
+            ))?((workspace_id, repository_path, branch_name, center_group))?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn branch_workspace_layout(
+        &self,
+        workspace_id: WorkspaceId,
+        repository_path: Arc<Path>,
+        branch_name: String,
+    ) -> Result<Option<SerializedPaneGroup>> {
+        let repository_path = repository_path.to_string_lossy().into_owned();
+
+        let mut center_groups = self.select_bound::<_, String>(sql!(
+            SELECT center_group
+            FROM branch_workspace_layouts
+            WHERE workspace_id = ?1
+                AND repository_path = ?2
+                AND branch_name = ?3
+        ))?((workspace_id, repository_path, branch_name))
+        .context("loading branch workspace layout")?;
+
+        center_groups
+            .pop()
+            .map(|center_group| serde_json::from_str(&center_group))
+            .transpose()
+            .map_err(Into::into)
+    }
+
     query! {
         pub async fn update_timestamp(workspace_id: WorkspaceId) -> Result<()> {
             UPDATE workspaces
@@ -3275,6 +3341,90 @@ mod tests {
             flexes: None,
             children,
         }
+    }
+
+    #[gpui::test]
+    async fn test_branch_workspace_layouts_are_scoped_by_branch() {
+        zlog::init_test();
+
+        let db =
+            WorkspaceDb::open_test_db("test_branch_workspace_layouts_are_scoped_by_branch").await;
+        let workspace = SerializedWorkspace {
+            id: WorkspaceId(1),
+            paths: PathList::new(&["/repo"]),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+        };
+        db.save_workspace(workspace).await;
+
+        let branch_a_layout = SerializedPaneGroup::Pane(SerializedPane::new(
+            vec![SerializedItem::new("Editor", 1, true, false)],
+            true,
+            0,
+        ));
+        let branch_b_layout = SerializedPaneGroup::Pane(SerializedPane::new(
+            vec![SerializedItem::new("Editor", 2, true, false)],
+            true,
+            0,
+        ));
+
+        db.save_branch_workspace_layout(
+            WorkspaceId(1),
+            Path::new("/repo").into(),
+            "branch-a".to_owned(),
+            branch_a_layout.clone(),
+        )
+        .await
+        .unwrap();
+        db.save_branch_workspace_layout(
+            WorkspaceId(1),
+            Path::new("/repo").into(),
+            "branch-b".to_owned(),
+            branch_b_layout.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            db.branch_workspace_layout(
+                WorkspaceId(1),
+                Path::new("/repo").into(),
+                "branch-a".to_owned()
+            )
+            .await
+            .unwrap(),
+            Some(branch_a_layout)
+        );
+        assert_eq!(
+            db.branch_workspace_layout(
+                WorkspaceId(1),
+                Path::new("/repo").into(),
+                "branch-b".to_owned()
+            )
+            .await
+            .unwrap(),
+            Some(branch_b_layout)
+        );
+        assert_eq!(
+            db.branch_workspace_layout(
+                WorkspaceId(1),
+                Path::new("/repo").into(),
+                "branch-c".to_owned()
+            )
+            .await
+            .unwrap(),
+            None
+        );
     }
 
     #[gpui::test]

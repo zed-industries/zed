@@ -3487,6 +3487,16 @@ List of strings containing any combination of:
 
 `boolean` values
 
+## Restore Tabs Per Branch
+
+- Description: Whether to restore open tabs and pane layout per active git branch.
+- Setting: `restore_tabs_per_branch`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Restore on Startup
 
 - Description: Controls session restoration on startup.

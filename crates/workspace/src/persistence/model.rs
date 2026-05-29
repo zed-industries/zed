@@ -230,7 +230,7 @@ impl Bind for DockData {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub(crate) enum SerializedPaneGroup {
     Group {
         axis: SerializedAxis,
@@ -335,7 +335,7 @@ impl SerializedPaneGroup {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Default, Clone)]
+#[derive(Debug, PartialEq, Eq, Default, Clone, Serialize, Deserialize)]
 pub struct SerializedPane {
     pub(crate) active: bool,
     pub(crate) children: Vec<SerializedItem>,
@@ -420,7 +420,7 @@ pub type GroupId = i64;
 pub type PaneId = i64;
 pub type ItemId = u64;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct SerializedItem {
     pub kind: Arc<str>,
     pub item_id: ItemId,

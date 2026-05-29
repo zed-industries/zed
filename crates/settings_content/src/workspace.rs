@@ -63,6 +63,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub restore_on_file_reopen: Option<bool>,
+    /// Whether to restore open tabs and pane layout per active git branch.
+    ///
+    /// Default: true
+    pub restore_tabs_per_branch: Option<bool>,
     /// The size of the workspace split drop targets on the outer edges.
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///

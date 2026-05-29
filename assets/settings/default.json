@@ -159,6 +159,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to restore open tabs and pane layout per active git branch.
+  "restore_tabs_per_branch": true,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
   // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
