@@ -589,6 +589,7 @@ mod tests {
             play_sound_when_agent_done: PlaySoundWhenAgentDone::default(),
             single_file_review: false,
             model_parameters: vec![],
+            auto_compact: Default::default(),
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,

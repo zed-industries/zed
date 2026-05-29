@@ -71,6 +71,46 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoCompactScope {
+    /// Count the full active request window against the threshold.
+    Total,
+    /// Count only growth after the compacted prefix baseline against the threshold.
+    #[default]
+    BodyAfterPrefix,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct AutoCompactSettingsContent {
+    /// Whether to automatically compact agent thread context near the model limit.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// Which part of the context window is measured against the threshold.
+    ///
+    /// Default: body_after_prefix
+    pub scope: Option<AutoCompactScope>,
+    /// Fraction of the model context window at which auto-compaction should run.
+    ///
+    /// Default: 0.9
+    pub threshold: Option<f32>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -162,6 +202,8 @@ pub struct AgentSettingsContent {
     /// Default: []
     #[serde(default)]
     pub model_parameters: Vec<LanguageModelParameters>,
+    /// Settings for automatic agent context compaction.
+    pub auto_compact: Option<AutoCompactSettingsContent>,
     /// Whether to show thumb buttons for feedback in the agent panel.
     ///
     /// Default: true

@@ -20,6 +20,7 @@ use settings::{
 };
 
 pub use crate::agent_profile::*;
+pub use settings::AutoCompactScope;
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
@@ -158,6 +159,7 @@ pub struct AgentSettings {
     pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
+    pub auto_compact: AutoCompactSettings,
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
@@ -168,6 +170,23 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutoCompactSettings {
+    pub enabled: bool,
+    pub scope: AutoCompactScope,
+    pub threshold: f32,
+}
+
+impl Default for AutoCompactSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            scope: AutoCompactScope::BodyAfterPrefix,
+            threshold: 0.9,
+        }
+    }
 }
 
 impl AgentSettings {
@@ -662,6 +681,14 @@ impl Settings for AgentSettings {
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
+            auto_compact: {
+                let auto_compact = agent.auto_compact.unwrap();
+                AutoCompactSettings {
+                    enabled: auto_compact.enabled.unwrap(),
+                    scope: auto_compact.scope.unwrap(),
+                    threshold: auto_compact.threshold.unwrap(),
+                }
+            },
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),

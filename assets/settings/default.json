@@ -1063,6 +1063,23 @@
       //   "temperature": 1.0
       // }
     ],
+    // Settings for automatically compacting agent thread context near the model's context limit.
+    "auto_compact": {
+      // Whether to automatically compact agent thread context.
+      //
+      // Default: true
+      "enabled": true,
+      // Which part of the context window is measured against the threshold.
+      // "total" - Count the full active request window
+      // "body_after_prefix" - Count only growth after the compacted prefix baseline
+      //
+      // Default: body_after_prefix
+      "scope": "body_after_prefix",
+      // Fraction of the model context window at which auto-compaction should run.
+      //
+      // Default: 0.9
+      "threshold": 0.9,
+    },
     // Permission rules for tool actions.
     //
     // The "default" setting applies when no tool-specific rules match.

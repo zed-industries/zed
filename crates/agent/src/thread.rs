@@ -16,7 +16,8 @@ use feature_flags::{
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, AutoCompactScope, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -1938,6 +1939,13 @@ impl Thread {
         };
         let last_user_message_id = last_user_message.id.clone();
 
+        if let Some(seed) = self.current_conversation_mut().seed.as_mut()
+            && !seed.baseline_observed
+        {
+            seed.baseline_tokens = total_input_tokens(update);
+            seed.baseline_observed = true;
+        }
+
         self.current_conversation_mut()
             .request_token_usage
             .insert(last_user_message_id, update);
@@ -2006,6 +2014,66 @@ impl Thread {
             input_tokens,
             output_tokens: usage.output_tokens,
         })
+    }
+
+    fn should_auto_compact(&self, cx: &App) -> bool {
+        if !cx.has_flag::<HandoffFeatureFlag>() {
+            return false;
+        }
+        let settings = &AgentSettings::get_global(cx).auto_compact;
+        if !settings.enabled {
+            return false;
+        }
+        let Some(model) = self.model.as_ref() else {
+            return false;
+        };
+        let active_tokens = self
+            .latest_request_token_usage()
+            .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens))
+            .unwrap_or_else(|| self.estimate_model_visible_tokens(cx));
+
+        self.auto_compact_threshold_reached(
+            settings.scope,
+            settings.threshold,
+            active_tokens,
+            model.max_token_count(),
+        )
+    }
+
+    fn auto_compact_threshold_reached(
+        &self,
+        scope: AutoCompactScope,
+        threshold: f32,
+        active_tokens: u64,
+        model_max_tokens: u64,
+    ) -> bool {
+        let limit = ((model_max_tokens as f64) * f64::from(threshold))
+            .max(0.0)
+            .ceil() as u64;
+
+        match scope {
+            AutoCompactScope::Total => active_tokens >= limit,
+            AutoCompactScope::BodyAfterPrefix => {
+                let baseline = self
+                    .current_conversation()
+                    .seed
+                    .as_ref()
+                    .map_or(0, |seed| seed.baseline_tokens);
+                let body_tokens = active_tokens.saturating_sub(baseline);
+                body_tokens >= limit || active_tokens >= model_max_tokens
+            }
+        }
+    }
+
+    fn estimate_model_visible_tokens(&self, cx: &App) -> u64 {
+        let messages = self.build_request_messages(Vec::new(), cx);
+        estimate_request_tokens(&messages)
+    }
+
+    fn log_auto_compact_hook(&self, phase: &str, cx: &App) {
+        if self.should_auto_compact(cx) {
+            log::info!("auto-compaction threshold reached at {phase}; handoff is not wired yet");
+        }
     }
 
     /// Get the total input token count as of the message before the given message.
@@ -2239,6 +2307,17 @@ impl Thread {
                     .clone()
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
+                if attempt == 0 {
+                    match intent {
+                        CompletionIntent::UserPrompt | CompletionIntent::Subagent => {
+                            this.log_auto_compact_hook("pre-turn", cx);
+                        }
+                        CompletionIntent::ToolResults => {
+                            this.log_auto_compact_hook("mid-turn", cx);
+                        }
+                        _ => {}
+                    }
+                }
                 let request = this.build_completion_request(intent, cx)?;
                 anyhow::Ok((model, request))
             })??;
@@ -3517,6 +3596,37 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+fn estimate_request_tokens(messages: &[LanguageModelRequestMessage]) -> u64 {
+    messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .fold(0_u64, |tokens, content| {
+            tokens.saturating_add(match content {
+                language_model::MessageContent::Text(text) => estimate_text_tokens(text),
+                language_model::MessageContent::Thinking { text, .. } => estimate_text_tokens(text),
+                language_model::MessageContent::RedactedThinking(text) => {
+                    estimate_text_tokens(text)
+                }
+                language_model::MessageContent::Image(_) => 1024,
+                language_model::MessageContent::ToolUse(tool_use) => {
+                    estimate_text_tokens(&tool_use.raw_input).saturating_add(256)
+                }
+                language_model::MessageContent::ToolResult(tool_result) => tool_result
+                    .content
+                    .iter()
+                    .map(|content| match content {
+                        LanguageModelToolResultContent::Text(text) => estimate_text_tokens(text),
+                        LanguageModelToolResultContent::Image(_) => 1024,
+                    })
+                    .sum(),
+            })
+        })
+}
+
+fn estimate_text_tokens(text: &str) -> u64 {
+    text.len().div_ceil(4) as u64
 }
 
 struct RunningTurn {
@@ -4865,6 +4975,104 @@ mod tests {
                 assert_eq!(seed.baseline_tokens, 42);
                 assert!(!seed.baseline_observed);
                 assert!(thread.conversations[1].request_token_usage.is_empty());
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_compact_threshold_scopes(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                assert!(!thread.auto_compact_threshold_reached(
+                    AutoCompactScope::Total,
+                    0.9,
+                    89,
+                    100
+                ));
+                assert!(thread.auto_compact_threshold_reached(
+                    AutoCompactScope::Total,
+                    0.9,
+                    90,
+                    100
+                ));
+
+                thread.current_conversation_mut().seed = Some(CompactionSeed {
+                    artifact: CompactionArtifact::Summary("summary".into()),
+                    retained_user_messages: Vec::new(),
+                    baseline_tokens: 50,
+                    baseline_observed: true,
+                });
+
+                assert!(!thread.auto_compact_threshold_reached(
+                    AutoCompactScope::BodyAfterPrefix,
+                    0.9,
+                    139,
+                    1000
+                ));
+                assert!(thread.auto_compact_threshold_reached(
+                    AutoCompactScope::BodyAfterPrefix,
+                    0.9,
+                    140,
+                    100
+                ));
+                assert!(thread.auto_compact_threshold_reached(
+                    AutoCompactScope::BodyAfterPrefix,
+                    0.9,
+                    100,
+                    100
+                ));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_usage_update_observes_compaction_baseline_once(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .current_conversation_mut()
+                    .messages
+                    .push(Message::User(UserMessage {
+                        id: user_message_id,
+                        content: vec!["hello".into()],
+                    }));
+                thread.current_conversation_mut().seed = Some(CompactionSeed {
+                    artifact: CompactionArtifact::Summary("summary".into()),
+                    retained_user_messages: Vec::new(),
+                    baseline_tokens: 12,
+                    baseline_observed: false,
+                });
+
+                thread.update_token_usage(
+                    TokenUsage {
+                        input_tokens: 30,
+                        output_tokens: 7,
+                        cache_creation_input_tokens: 5,
+                        cache_read_input_tokens: 0,
+                    },
+                    cx,
+                );
+                let seed = thread.current_conversation().seed.as_ref().unwrap();
+                assert_eq!(seed.baseline_tokens, 35);
+                assert!(seed.baseline_observed);
+
+                thread.update_token_usage(
+                    TokenUsage {
+                        input_tokens: 80,
+                        output_tokens: 9,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                    cx,
+                );
+                let seed = thread.current_conversation().seed.as_ref().unwrap();
+                assert_eq!(seed.baseline_tokens, 35);
+                assert!(seed.baseline_observed);
             });
         });
     }
