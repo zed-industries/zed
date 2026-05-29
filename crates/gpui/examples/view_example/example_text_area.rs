@@ -3,8 +3,8 @@
 //! string or an editor, exactly like [`Input`](crate::example_input::Input).
 
 use gpui::{
-    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, StyleRefinement, Window,
-    div, hsla, point, prelude::*, px, white,
+    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, StyleRefinement, Window, div,
+    hsla, point, prelude::*, px, white,
 };
 
 use crate::Enter;

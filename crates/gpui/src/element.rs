@@ -33,8 +33,8 @@
 
 use crate::{
     App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId, FocusHandle,
-    InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
-    util::FluentBuilder, window::with_element_arena,
+    InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window, util::FluentBuilder,
+    window::with_element_arena,
 };
 use derive_more::{Deref, DerefMut};
 use std::{
