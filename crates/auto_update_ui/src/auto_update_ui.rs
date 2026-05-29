@@ -223,6 +223,7 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                 "The Rules Library is making way for skills: your default rules are now in a global AGENTS.md, and your other rules have been converted to skills".into(),
             );
         }
+
         Some(AnnouncementContent {
             heading: "Introducing Skills Support".into(),
             description: "Extend the agent with focused instructions and domain knowledge.".into(),
