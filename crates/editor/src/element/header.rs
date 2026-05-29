@@ -39,7 +39,7 @@ use crate::{
 };
 
 pub(crate) struct StickyHeader {
-    pub(crate) sticky_row: DisplayRow,
+    sticky_row: DisplayRow,
     pub(crate) start_point: Point,
     pub(crate) offset: ScrollOffset,
 }
