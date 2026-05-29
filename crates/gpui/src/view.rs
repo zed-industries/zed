@@ -44,13 +44,15 @@ impl<V: Render> From<Entity<V>> for AnyView {
 }
 
 impl AnyView {
-    /// Enable caching with the given outer layout style.
+    /// Indicate that this view should be cached when using it as an element.
+    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
+    /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style.into());
         self
     }
 
-    /// Downgrade to a weak handle.
+    /// Convert this to a weak handle.
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
             entity: self.entity.downgrade(),
@@ -58,7 +60,8 @@ impl AnyView {
         }
     }
 
-    /// Downcast to a typed `Entity<T>`, returning `Err(self)` on type mismatch.
+    /// Convert this to a [Entity] of a specific type.
+    /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
     pub fn downcast<T: 'static>(self) -> Result<Entity<T>, Self> {
         match self.entity.downcast() {
             Ok(entity) => Ok(entity),
@@ -70,7 +73,7 @@ impl AnyView {
         }
     }
 
-    /// The [`TypeId`] of the underlying view.
+    /// Gets the [TypeId] of the underlying view.
     pub fn entity_type(&self) -> TypeId {
         self.entity.entity_type
     }
@@ -469,7 +472,7 @@ impl<V: View> Element for ViewElement<V> {
                 }
             })
         } else {
-            // Stateless path: isolate subtree via type name (like Component<C>).
+            // Stateless path: isolate subtree via type name (no entity identity).
             window.with_id(
                 ElementId::Name(std::any::type_name::<V>().into()),
                 |window| {
