@@ -6576,7 +6576,7 @@ mod tests {
 
         // Set up workspace A: with an active thread.
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         panel_a.update_in(cx, |panel, window, cx| {
@@ -6602,7 +6602,7 @@ mod tests {
 
         // Set up workspace B: ClaudeCode, no active thread.
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         panel_b.update(cx, |panel, _cx| {
@@ -6705,7 +6705,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -6900,7 +6900,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
         panel_a
             .update_in(cx, |panel, window, cx| {
@@ -6977,7 +6977,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         panel.update_in(cx, |panel, window, cx| {
@@ -7069,7 +7069,7 @@ mod tests {
         });
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         // Open a restored thread using a flaky server so the initial connect
@@ -7168,7 +7168,7 @@ mod tests {
             .unwrap();
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -7268,12 +7268,12 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -7648,7 +7648,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -7835,7 +7835,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -8064,7 +8064,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -8150,7 +8150,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -8240,7 +8240,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         (panel, cx)
@@ -8287,7 +8287,7 @@ mod tests {
         register_test_sidebar(threads_list_active, &mut cx);
 
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             workspace.focus_panel::<AgentPanel>(window, cx);
             panel
@@ -8417,7 +8417,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -8530,7 +8530,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -9773,7 +9773,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -10365,7 +10365,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         // Open thread A and send a message. With empty next_prompt_updates it
@@ -10634,7 +10634,7 @@ mod tests {
 
         // Set up workspace A with agent_a
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
         panel_a.update(cx, |panel, _cx| {
             panel.selected_agent = agent_a.clone();
@@ -10642,7 +10642,7 @@ mod tests {
 
         // Set up workspace B with agent_b
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
         panel_b.update(cx, |panel, _cx| {
             panel.selected_agent = agent_b.clone();
@@ -10713,7 +10713,7 @@ mod tests {
         };
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -10770,7 +10770,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -10860,7 +10860,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -10948,7 +10948,7 @@ mod tests {
         workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -11058,7 +11058,7 @@ mod tests {
         workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -11164,7 +11164,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -11663,7 +11663,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
         cx.run_until_parked();
@@ -11764,7 +11764,7 @@ mod tests {
 
         // Create the agent panel and add it to the workspace.
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -11974,7 +11974,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
 
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -12211,7 +12211,7 @@ mod tests {
 
         // Set up panel_a with an active thread and type draft text.
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -12235,7 +12235,7 @@ mod tests {
 
         // Set up panel_b on workspace_b — starts as a fresh, empty panel.
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -12305,7 +12305,7 @@ mod tests {
 
         // Set up panel_a with draft text.
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
@@ -12329,7 +12329,7 @@ mod tests {
 
         // Set up panel_b with its OWN content — this is a non-fresh panel.
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });

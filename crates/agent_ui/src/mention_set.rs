@@ -746,7 +746,7 @@ mod tests {
         fs.insert_tree("/project", json!({"file": ""})).await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
         let thread_store = None;
-        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store, None));
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store));
 
         let task = mention_set.update(cx, |mention_set, cx| {
             mention_set.confirm_mention_for_thread(acp::SessionId::new("thread-1"), cx)
@@ -772,7 +772,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
-        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None));
 
         let mention_task = mention_set.update(cx, |mention_set, cx| {
             let http_client = project.read(cx).client().http_client();

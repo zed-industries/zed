@@ -5232,7 +5232,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -5380,7 +5379,6 @@ mod tests {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),

@@ -1908,7 +1908,6 @@ pub mod evals {
                         workspace.downgrade(),
                         project.downgrade(),
                         thread_store,
-                        None,
                         Some(prompt),
                         window,
                         cx,

@@ -3713,7 +3713,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -3850,7 +3849,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -3932,7 +3930,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4071,7 +4068,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4356,7 +4352,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             workspace.focus_panel::<crate::AgentPanel>(window, cx);
             panel
@@ -4397,7 +4393,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4496,7 +4491,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4572,7 +4566,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4640,7 +4633,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4716,7 +4708,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace1.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             // Open the dock and activate the agent panel so it's visible
@@ -4762,7 +4754,6 @@ pub(crate) mod tests {
                     workspace1.downgrade(),
                     project1.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4984,7 +4975,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -5643,7 +5633,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store.clone()),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -8548,7 +8537,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
