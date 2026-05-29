@@ -1531,6 +1531,41 @@ description: A skill with no body content
     }
 
     #[gpui::test]
+    async fn test_load_symlinked_skill_directory(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/external/my-skill",
+            serde_json::json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: Symlinked skill\n---\n\n# Instructions"
+            }),
+        )
+        .await;
+        fs.create_dir(Path::new("/skills")).await.unwrap();
+        fs.create_symlink(
+            Path::new("/skills/my-skill"),
+            PathBuf::from("/external/my-skill"),
+        )
+        .await
+        .unwrap();
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        assert_eq!(results.len(), 1);
+        let skill = results[0].as_ref().expect("Should load successfully");
+        assert_eq!(skill.name, "my-skill");
+        assert_eq!(skill.description, "Symlinked skill");
+        assert_eq!(
+            skill.skill_file_path,
+            Path::new("/skills/my-skill/SKILL.md")
+        );
+    }
+
+    #[gpui::test]
     async fn test_load_nested_skills(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
