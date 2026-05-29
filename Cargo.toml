@@ -511,7 +511,7 @@ accesskit_unix = "0.21.0"
 accesskit_windows = "0.32.1"
 agent-client-protocol = { version = "=0.12.1", features = ["unstable"] }
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "fcf32feacb367b75ec84dd40f041e4fd411d3cc1" }
+alacritty_terminal = { git = "https://github.com/ober37/alacritty", rev = "41cdf3200f20b49b0db03f9da309b78fa593be52" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 ashpd = { version = "0.13", default-features = false, features = [
@@ -890,6 +890,7 @@ features = [
 ]
 
 [patch.crates-io]
+vte = { git = "https://github.com/ober37/vte", rev = "6cc83558790b8c3c7e0e52d29bc10024e88cac21" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }

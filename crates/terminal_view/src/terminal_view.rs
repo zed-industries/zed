@@ -11,8 +11,9 @@ use editor::{
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
     FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt, WeakEntity,
-    actions, anchored, deferred, div,
+    Pixels, PlatformDisplay, Point, Render, ScrollWheelEvent, Size, Styled, Subscription, Task,
+    TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowHandle, WindowKind, WindowOptions, actions, anchored, deferred, div, point,
 };
 use itertools::Itertools;
 use menu;
@@ -147,6 +148,7 @@ pub struct TerminalView {
     self_handle: WeakEntity<Self>,
     rename_editor: Option<Entity<Editor>>,
     rename_editor_subscription: Option<Subscription>,
+    notification: Option<(WindowHandle<TerminalNotification>, Subscription)>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -293,6 +295,7 @@ impl TerminalView {
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
             rename_editor_subscription: None,
+            notification: None,
             _subscriptions: subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
@@ -1077,6 +1080,12 @@ fn subscribe_for_terminal_events(
                         window.play_system_bell();
                     }
                     cx.emit(Event::Wakeup);
+                }
+
+                Event::Notification(message) => {
+                    if !terminal_view.focus_handle.is_focused(window) {
+                        show_terminal_notification(terminal_view, message, window, cx);
+                    }
                 }
 
                 Event::BlinkChanged(blinking) => {
@@ -2092,6 +2101,171 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     } else {
         // If worktree is a file, return its parent directory
         worktree_path.parent().map(|p| p.to_path_buf())
+    }
+}
+
+pub enum TerminalNotificationEvent {
+    Accepted,
+    Dismissed,
+}
+
+pub struct TerminalNotification {
+    message: SharedString,
+}
+
+impl EventEmitter<TerminalNotificationEvent> for TerminalNotification {}
+
+impl TerminalNotification {
+    fn new(message: impl Into<SharedString>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    fn window_options(screen: Rc<dyn PlatformDisplay>, _cx: &App) -> WindowOptions {
+        let size = Size {
+            width: px(450.),
+            height: px(72.),
+        };
+        let notification_margin_width = px(16.);
+        let notification_margin_height = px(-48.);
+        let bounds = gpui::Bounds::<Pixels> {
+            origin: screen.bounds().top_right()
+                - point(
+                    size.width + notification_margin_width,
+                    notification_margin_height,
+                ),
+            size,
+        };
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: None,
+            focus: false,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            display_id: Some(screen.id()),
+            window_background: WindowBackgroundAppearance::Transparent,
+            app_id: None,
+            window_min_size: None,
+            window_decorations: Some(WindowDecorations::Client),
+            tabbing_identifier: None,
+            ..Default::default()
+        }
+    }
+
+    fn accept(&mut self, cx: &mut Context<Self>) {
+        cx.emit(TerminalNotificationEvent::Accepted);
+    }
+
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
+        cx.emit(TerminalNotificationEvent::Dismissed);
+    }
+}
+
+impl Render for TerminalNotification {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = theme_settings::setup_ui_font(window, cx);
+        let line_height = window.line_height();
+
+        h_flex()
+            .id("terminal-notification")
+            .size_full()
+            .p_3()
+            .gap_4()
+            .justify_between()
+            .elevation_3(cx)
+            .text_ui(cx)
+            .font(ui_font)
+            .border_color(cx.theme().colors().border)
+            .rounded_xl()
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap_2()
+                    .flex_1()
+                    .child(
+                        h_flex().h(line_height).justify_center().child(
+                            Icon::new(IconName::Terminal)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .max_w(px(300.))
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .text_color(cx.theme().colors().text)
+                                    .truncate()
+                                    .child(self.message.clone()),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        Button::new("open", "View")
+                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .full_width()
+                            .on_click(cx.listener(|this, _, _, cx| this.accept(cx))),
+                    )
+                    .child(Button::new("dismiss", "Dismiss").full_width().on_click(
+                        cx.listener(|this, _, _, cx| this.dismiss(cx)),
+                    )),
+            )
+    }
+}
+
+fn show_terminal_notification(
+    terminal_view: &mut TerminalView,
+    message: &String,
+    window: &mut Window,
+    cx: &mut Context<TerminalView>,
+) {
+    // Dismiss any existing notification before showing a new one.
+    if let Some((existing_window, _sub)) = terminal_view.notification.take() {
+        existing_window
+            .update(cx, |_, window, _| window.remove_window())
+            .ok();
+    }
+
+    let Some(screen) = window.display(cx) else {
+        return;
+    };
+    let options = TerminalNotification::window_options(screen, cx);
+
+    if let Some(notification_window) = cx
+        .open_window(options, |_, cx| {
+            cx.new(|_cx| TerminalNotification::new(message.clone()))
+        })
+        .log_err()
+        && let Some(notification_entity) = notification_window.entity(cx).log_err()
+    {
+        let subscription = cx.subscribe_in(
+            &notification_entity,
+            window,
+            |terminal_view, _, event, window, cx| match event {
+                TerminalNotificationEvent::Accepted => {
+                    cx.activate(true);
+                    window.activate_window();
+                    terminal_view.focus_handle.focus(window);
+                    if let Some((w, _)) = terminal_view.notification.take() {
+                        w.update(cx, |_, window, _| window.remove_window()).ok();
+                    }
+                }
+                TerminalNotificationEvent::Dismissed => {
+                    if let Some((w, _)) = terminal_view.notification.take() {
+                        w.update(cx, |_, window, _| window.remove_window()).ok();
+                    }
+                }
+            },
+        );
+        terminal_view.notification = Some((notification_window, subscription));
     }
 }
 
