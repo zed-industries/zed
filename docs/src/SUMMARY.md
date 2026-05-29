@@ -18,6 +18,7 @@
 - [Parallel Agents](./ai/parallel-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
+- [Skills](./ai/skills.md)
 - [Rules](./ai/rules.md)
 - [Model Context Protocol](./ai/mcp.md)
 - [Configuration](./ai/configuration.md)

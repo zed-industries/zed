@@ -695,26 +695,69 @@ impl PickerDelegate for CommandPaletteDelegate {
 }
 
 pub fn humanize_action_name(name: &str) -> String {
-    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
+    let chars = name.chars().collect::<Vec<_>>();
+    let capacity = name.len() + chars.iter().filter(|c| c.is_uppercase()).count();
     let mut result = String::with_capacity(capacity);
-    for char in name.chars() {
+    let mut index = 0;
+
+    while index < chars.len() {
+        let char = chars[index];
         if char == ':' {
             if result.ends_with(':') {
                 result.push(' ');
             } else {
                 result.push(':');
             }
+            index += 1;
         } else if char == '_' {
             result.push(' ');
+            index += 1;
         } else if char.is_uppercase() {
-            if !result.ends_with(' ') {
-                result.push(' ');
+            let start = index;
+            index += 1;
+            while chars
+                .get(index)
+                .is_some_and(|next_char| next_char.is_uppercase())
+            {
+                index += 1;
             }
-            result.extend(char.to_lowercase());
+
+            let uppercase_run = &chars[start..index];
+            if uppercase_run.len() > 1 {
+                let split_before_last = chars
+                    .get(index)
+                    .is_some_and(|next_char| next_char.is_lowercase());
+                let acronym_end = if split_before_last {
+                    uppercase_run.len() - 1
+                } else {
+                    uppercase_run.len()
+                };
+
+                if acronym_end > 0 {
+                    if !result.ends_with(' ') {
+                        result.push(' ');
+                    }
+                    result.extend(&uppercase_run[..acronym_end]);
+                }
+
+                if split_before_last {
+                    if !result.ends_with(' ') {
+                        result.push(' ');
+                    }
+                    result.extend(uppercase_run[acronym_end].to_lowercase());
+                }
+            } else {
+                if !result.ends_with(' ') {
+                    result.push(' ');
+                }
+                result.extend(char.to_lowercase());
+            }
         } else {
             result.push(char);
+            index += 1;
         }
     }
+
     result
 }
 
@@ -752,6 +795,19 @@ mod tests {
         assert_eq!(
             humanize_action_name("go_to_line::Deploy"),
             "go to line: deploy"
+        );
+        assert_eq!(
+            humanize_action_name("agent::OpenGlobalAGENTS.mdRules"),
+            "agent: open global AGENTS.md rules"
+        );
+        assert_eq!(
+            humanize_action_name("agent::OpenProjectAGENTS.mdRules"),
+            "agent: open project AGENTS.md rules"
+        );
+        assert_eq!(humanize_action_name("editor::OpenURL"), "editor: open URL");
+        assert_eq!(
+            humanize_action_name("editor::OpenURLParser"),
+            "editor: open URL parser"
         );
     }
 

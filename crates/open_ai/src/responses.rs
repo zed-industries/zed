@@ -1,17 +1,273 @@
 use anyhow::{Result, anyhow};
-use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{
+    AsyncBufReadExt, AsyncReadExt, FutureExt, StreamExt, future::BoxFuture, io::BufReader,
+    stream::BoxStream,
+};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::{future::Future, time::Duration};
 
-use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
+use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
+
+#[derive(Default)]
+pub struct StreamResponseOptions {
+    response_header_timeout: Option<(Duration, BoxFuture<'static, ()>)>,
+}
+
+impl StreamResponseOptions {
+    pub fn response_header_timeout(
+        timeout: Duration,
+        timer: impl Future<Output = ()> + Send + 'static,
+    ) -> Self {
+        Self {
+            response_header_timeout: Some((timeout, timer.boxed())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{FutureExt, StreamExt, future};
+    use http_client::{
+        AsyncBody, HttpClient, Request as HttpRequest, Response as HttpResponse, Url,
+    };
+    use std::{
+        io::{Cursor, Read},
+        pin::Pin,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::{Context, Poll, Waker},
+    };
+
+    struct TestHttpClient {
+        handler: Arc<
+            dyn Fn(
+                    HttpRequest<AsyncBody>,
+                ) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
+                + Send
+                + Sync,
+        >,
+    }
+
+    impl TestHttpClient {
+        fn new<F>(handler: F) -> Self
+        where
+            F: Fn(
+                    HttpRequest<AsyncBody>,
+                ) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
+                + Send
+                + Sync
+                + 'static,
+        {
+            Self {
+                handler: Arc::new(handler),
+            }
+        }
+    }
+
+    impl HttpClient for TestHttpClient {
+        fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            request: HttpRequest<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>> {
+            (self.handler)(request)
+        }
+    }
+
+    struct DelayedBody {
+        state: Arc<DelayedBodyState>,
+        bytes: Cursor<Vec<u8>>,
+    }
+
+    struct DelayedBodyState {
+        released: AtomicBool,
+        waker: Mutex<Option<Waker>>,
+    }
+
+    struct DelayedBodyHandle {
+        state: Arc<DelayedBodyState>,
+    }
+
+    impl DelayedBody {
+        fn new(bytes: Vec<u8>) -> (Self, DelayedBodyHandle) {
+            let state = Arc::new(DelayedBodyState {
+                released: AtomicBool::new(false),
+                waker: Mutex::new(None),
+            });
+
+            (
+                Self {
+                    state: state.clone(),
+                    bytes: Cursor::new(bytes),
+                },
+                DelayedBodyHandle { state },
+            )
+        }
+    }
+
+    impl DelayedBodyHandle {
+        fn release(&self) {
+            self.state.released.store(true, Ordering::SeqCst);
+            if let Some(waker) = self.state.waker.lock().expect("lock poisoned").take() {
+                waker.wake();
+            }
+        }
+    }
+
+    impl futures::AsyncRead for DelayedBody {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buffer: &mut [u8],
+        ) -> Poll<std::io::Result<usize>> {
+            if !self.state.released.load(Ordering::SeqCst) {
+                self.state
+                    .waker
+                    .lock()
+                    .expect("lock poisoned")
+                    .replace(cx.waker().clone());
+                return Poll::Pending;
+            }
+
+            Poll::Ready(self.bytes.read(buffer))
+        }
+    }
+
+    fn test_request() -> Request {
+        Request {
+            model: "gpt-test".into(),
+            instructions: None,
+            input: Vec::new(),
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: None,
+            service_tier: None,
+        }
+    }
+
+    #[test]
+    fn stream_response_times_out_before_headers() {
+        futures::executor::block_on(async {
+            let client = TestHttpClient::new(|_| {
+                future::pending::<anyhow::Result<HttpResponse<AsyncBody>>>().boxed()
+            });
+
+            let result = stream_response_with_options(
+                &client,
+                "Test Provider",
+                "https://api.test/v1",
+                "test-key",
+                test_request(),
+                Vec::new(),
+                StreamResponseOptions::response_header_timeout(
+                    Duration::from_secs(10),
+                    future::ready(()),
+                ),
+            )
+            .await;
+
+            assert!(matches!(
+                result,
+                Err(RequestError::ResponseHeaderTimeout {
+                    provider,
+                    timeout
+                }) if provider == "Test Provider" && timeout == Duration::from_secs(10)
+            ));
+        });
+    }
+
+    #[test]
+    fn stream_response_does_not_timeout_after_headers_arrive() {
+        futures::executor::block_on(async {
+            let body = r#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}"#;
+            let (delayed_body, delayed_body_handle) =
+                DelayedBody::new(format!("{body}\n\n").into_bytes());
+            let delayed_body = Mutex::new(Some(delayed_body));
+            let client = TestHttpClient::new(move |_| {
+                let delayed_body = delayed_body
+                    .lock()
+                    .expect("lock poisoned")
+                    .take()
+                    .expect("test sends only one request");
+                async {
+                    Ok(HttpResponse::builder()
+                        .status(200)
+                        .body(AsyncBody::from_reader(delayed_body))?)
+                }
+                .boxed()
+            });
+            let (timeout_tx, timeout_rx) = futures::channel::oneshot::channel::<()>();
+
+            let mut stream = stream_response_with_options(
+                &client,
+                "Test Provider",
+                "https://api.test/v1",
+                "test-key",
+                test_request(),
+                Vec::new(),
+                StreamResponseOptions::response_header_timeout(
+                    Duration::from_secs(10),
+                    async move {
+                        assert!(
+                            timeout_rx.await.is_ok(),
+                            "timer should be dropped after headers arrive"
+                        );
+                    },
+                ),
+            )
+            .await
+            .expect("headers should arrive before timeout");
+
+            assert!(
+                timeout_tx.send(()).is_err(),
+                "timeout future should be dropped after headers arrive"
+            );
+
+            assert!(
+                stream.next().now_or_never().is_none(),
+                "stream should wait for delayed body bytes"
+            );
+
+            delayed_body_handle.release();
+
+            let event = stream
+                .next()
+                .await
+                .expect("stream should produce an event")
+                .expect("event should parse");
+
+            assert!(matches!(event, StreamEvent::Completed { .. }));
+        });
+    }
+}
 
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
-    pub store: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
@@ -32,6 +288,10 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -151,6 +411,43 @@ pub struct ResponseError {
     pub message: String,
     #[serde(default)]
     pub param: Option<Value>,
+}
+
+/// Payload of the top-level `error` SSE event from the Responses API.
+///
+/// OpenAI's spec documents the error fields as being at the top level of the
+/// event, but in practice the API often nests them under an `error` object.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct GenericStreamErrorPayload {
+    #[serde(flatten)]
+    top_level: PartialResponseError,
+    #[serde(default)]
+    error: Option<PartialResponseError>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+struct PartialResponseError {
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    param: Option<Value>,
+}
+
+impl GenericStreamErrorPayload {
+    pub fn into_response_error(self) -> ResponseError {
+        let nested = self.error.unwrap_or_default();
+        ResponseError {
+            code: self.top_level.code.or(nested.code),
+            message: self
+                .top_level
+                .message
+                .or(nested.message)
+                .unwrap_or_default(),
+            param: self.top_level.param.or(nested.param),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -273,7 +570,7 @@ pub enum StreamEvent {
     #[serde(rename = "error")]
     GenericError {
         #[serde(flatten)]
-        error: ResponseError,
+        error: GenericStreamErrorPayload,
     },
     #[serde(other)]
     Unknown,
@@ -293,6 +590,8 @@ pub struct ResponseSummary {
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
     pub output: Vec<ResponseOutputItem>,
+    #[serde(default)]
+    pub service_tier: Option<crate::ServiceTier>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -395,13 +694,38 @@ pub async fn stream_response(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: Vec<(String, String)>,
+) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
+    stream_response_with_options(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        request,
+        extra_headers,
+        StreamResponseOptions::default(),
+    )
+    .await
+}
+
+pub async fn stream_response_with_options(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    extra_headers: Vec<(String, String)>,
+    options: StreamResponseOptions,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
+    for (name, value) in &extra_headers {
+        request_builder = request_builder.header(name.as_str(), value.as_str());
+    }
 
     let is_streaming = request.stream;
     let request = request_builder
@@ -410,7 +734,24 @@ pub async fn stream_response(
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    let mut response = if let Some((timeout, timer)) = options.response_header_timeout {
+        let send_request = client.send(request).fuse();
+        let timer = timer.fuse();
+        futures::pin_mut!(send_request);
+        futures::pin_mut!(timer);
+
+        futures::select! {
+            response = send_request => response?,
+            () = timer => {
+                return Err(RequestError::ResponseHeaderTimeout {
+                    provider: provider_name.to_owned(),
+                    timeout,
+                });
+            }
+        }
+    } else {
+        client.send(request).await?
+    };
     if response.status().is_success() {
         if is_streaming {
             let reader = BufReader::new(response.into_body());
