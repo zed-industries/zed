@@ -3083,6 +3083,39 @@ impl AcpThread {
         self.entries.iter().map(|e| e.to_markdown(cx)).collect()
     }
 
+    /// Concatenated text of the thread's *visible, searchable* content: user
+    /// messages, assistant message chunks (excluding collapsed thinking
+    /// blocks), and tool-call labels (excluding tool output). This deliberately
+    /// mirrors the scope of the in-thread search bar, so a cross-thread content
+    /// match (e.g. the sidebar's "Search threads") always corresponds to text
+    /// the user can actually navigate to in-thread — unlike [`Self::to_markdown`],
+    /// which also includes thinking and tool output.
+    pub fn searchable_text(&self, cx: &App) -> String {
+        let mut text = String::new();
+        for entry in &self.entries {
+            match entry {
+                AgentThreadEntry::UserMessage(message) => {
+                    text.push_str(&message.to_markdown(cx));
+                    text.push('\n');
+                }
+                AgentThreadEntry::AssistantMessage(message) => {
+                    for chunk in &message.chunks {
+                        if let AssistantMessageChunk::Message { block } = chunk {
+                            text.push_str(&block.to_markdown(cx).to_string());
+                            text.push('\n');
+                        }
+                    }
+                }
+                AgentThreadEntry::ToolCall(tool_call) => {
+                    text.push_str(tool_call.label.read(cx).source());
+                    text.push('\n');
+                }
+                AgentThreadEntry::CompletedPlan(_) => {}
+            }
+        }
+        text
+    }
+
     pub fn emit_load_error(&mut self, error: LoadError, cx: &mut Context<Self>) {
         cx.emit(AcpThreadEvent::LoadError(error));
     }

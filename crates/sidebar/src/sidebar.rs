@@ -754,6 +754,10 @@ pub struct Sidebar {
     closed_search_generation: usize,
     /// Holds the in-flight "Search more" task; dropping it cancels the pass.
     _closed_search_task: Task<()>,
+    /// Number of content matches per thread (from both the cheap content search
+    /// and the "Search more" pass). Used to rank content matches by relevance —
+    /// more hits sort higher. Cleared when the query changes.
+    match_counts: HashMap<ThreadId, usize>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
@@ -885,6 +889,7 @@ impl Sidebar {
             closed_search: ClosedSearch::Idle,
             closed_search_generation: 0,
             _closed_search_task: Task::ready(()),
+            match_counts: HashMap::new(),
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
@@ -1890,12 +1895,41 @@ impl Sidebar {
                     has_threads,
                 });
 
+                // Rank search results: title/worktree matches first, then
+                // content matches by relevance (more hits first), then recency.
+                matched_threads.sort_by(|a, b| {
+                    let a_named = !a.highlight_positions.is_empty()
+                        || a.worktrees.iter().any(|w| !w.highlight_positions.is_empty());
+                    let b_named = !b.highlight_positions.is_empty()
+                        || b.worktrees.iter().any(|w| !w.highlight_positions.is_empty());
+                    b_named
+                        .cmp(&a_named)
+                        .then_with(|| {
+                            let a_count = self
+                                .match_counts
+                                .get(&a.metadata.thread_id)
+                                .copied()
+                                .unwrap_or(0);
+                            let b_count = self
+                                .match_counts
+                                .get(&b.metadata.thread_id)
+                                .copied()
+                                .unwrap_or(0);
+                            b_count.cmp(&a_count)
+                        })
+                        .then_with(|| {
+                            Self::thread_display_time(&b.metadata)
+                                .cmp(&Self::thread_display_time(&a.metadata))
+                        })
+                });
+
                 Self::push_entries_by_display_time(
                     &mut entries,
                     matched_terminals,
                     matched_threads,
                     &mut current_session_ids,
                     &mut current_thread_ids,
+                    true,
                 );
             } else {
                 let has_terminal_notifications = terminals
@@ -1946,6 +1980,7 @@ impl Sidebar {
                     threads,
                     &mut current_session_ids,
                     &mut current_thread_ids,
+                    false,
                 );
             }
         }
@@ -3048,6 +3083,7 @@ impl Sidebar {
         self.closed_search = ClosedSearch::Idle;
         self.closed_search_matches.clear();
         self._closed_search_task = Task::ready(());
+        self.match_counts.clear();
 
         if query_text.trim().is_empty() {
             self._content_search_task = Task::ready(());
@@ -3126,6 +3162,7 @@ impl Sidebar {
             }
 
             let mut matched: HashSet<ThreadId> = HashSet::new();
+            let mut matched_counts: HashMap<ThreadId, usize> = HashMap::new();
             for (thread_id, session_id, updated_at) in candidates {
                 // Abandon a stale search as soon as a newer query arrives.
                 if this
@@ -3141,7 +3178,7 @@ impl Sidebar {
                 let text: Option<Arc<str>> = if let Some(thread) =
                     loaded_threads.get(&thread_id)
                 {
-                    this.update(cx, |_, cx| Arc::<str>::from(thread.read(cx).to_markdown(cx)))
+                    this.update(cx, |_, cx| Arc::<str>::from(thread.read(cx).searchable_text(cx)))
                         .ok()
                 } else if let Some(session_id) = session_id {
                     // Tier 2: unloaded threads are loaded from the native-agent
@@ -3168,7 +3205,7 @@ impl Sidebar {
                             };
                             let mut text = String::new();
                             for message in &db_thread.messages {
-                                text.push_str(&message.to_markdown());
+                                text.push_str(&message.searchable_markdown());
                                 text.push('\n');
                             }
                             let text: Arc<str> = Arc::from(text);
@@ -3188,8 +3225,10 @@ impl Sidebar {
                     continue;
                 };
 
-                if !query.search_str(&text).is_empty() {
+                let count = query.search_str(&text).len();
+                if count > 0 {
                     matched.insert(thread_id);
+                    matched_counts.insert(thread_id, count);
                 }
             }
 
@@ -3197,10 +3236,9 @@ impl Sidebar {
                 if this.content_search_generation != generation {
                     return;
                 }
-                if this.content_matches != matched {
-                    this.content_matches = matched;
-                    this.update_entries(cx);
-                }
+                this.content_matches = matched;
+                this.match_counts = matched_counts;
+                this.update_entries(cx);
             })
             .ok();
         });
@@ -3326,22 +3364,23 @@ impl Sidebar {
                         cx,
                     )
                 });
-                let matched = match load.await {
+                let match_count = match load.await {
                     Ok(acp_thread) => this
                         .update(cx, |_, cx| {
-                            let text = acp_thread.read(cx).to_markdown(cx);
-                            !query.search_str(&text).is_empty()
+                            let text = acp_thread.read(cx).searchable_text(cx);
+                            query.search_str(&text).len()
                         })
-                        .unwrap_or(false),
-                    Err(_) => false,
+                        .unwrap_or(0),
+                    Err(_) => 0,
                 };
 
                 this.update(cx, |this, cx| {
                     if this.closed_search_generation != generation {
                         return;
                     }
-                    if matched {
+                    if match_count > 0 {
                         this.closed_search_matches.insert(candidate.thread_id);
+                        this.match_counts.insert(candidate.thread_id, match_count);
                     }
                     if let ClosedSearch::Running { done, .. } = &mut this.closed_search {
                         *done += 1;
@@ -5744,6 +5783,10 @@ impl Sidebar {
         threads: Vec<Arc<ThreadEntry>>,
         current_session_ids: &mut HashSet<acp::SessionId>,
         current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
+        // When true, keep the caller's thread order (used for ranked search
+        // results) and append terminals after, sorted by recency. When false,
+        // interleave threads and terminals purely by recency.
+        preserve_thread_order: bool,
     ) {
         fn display_time(entry: &ListEntry) -> DateTime<Utc> {
             match entry {
@@ -5756,11 +5799,22 @@ impl Sidebar {
             }
         }
 
-        let row_entries = terminals
-            .into_iter()
-            .map(ListEntry::Terminal)
-            .chain(threads.into_iter().map(ListEntry::Thread))
-            .sorted_by_key(|right| std::cmp::Reverse(display_time(right)));
+        let row_entries: Vec<ListEntry> = if preserve_thread_order {
+            let mut terminals = terminals;
+            terminals.sort_by_key(|terminal| std::cmp::Reverse(terminal.metadata.created_at));
+            threads
+                .into_iter()
+                .map(ListEntry::Thread)
+                .chain(terminals.into_iter().map(ListEntry::Terminal))
+                .collect()
+        } else {
+            terminals
+                .into_iter()
+                .map(ListEntry::Terminal)
+                .chain(threads.into_iter().map(ListEntry::Thread))
+                .sorted_by_key(|right| std::cmp::Reverse(display_time(right)))
+                .collect()
+        };
 
         for entry in row_entries {
             if let ListEntry::Thread(thread) = &entry {

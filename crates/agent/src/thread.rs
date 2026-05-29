@@ -165,6 +165,18 @@ impl Message {
         }
     }
 
+    /// Visible, searchable text only — user text, assistant text, and tool-use
+    /// names. Excludes thinking blocks, tool-use input JSON, and tool results,
+    /// so cross-thread content search (the sidebar) matches the same scope as
+    /// the in-thread search bar rather than incidental hidden content.
+    pub fn searchable_markdown(&self) -> String {
+        match self {
+            Message::User(message) => message.to_markdown(),
+            Message::Agent(message) => message.searchable_markdown(),
+            Message::Resume => String::new(),
+        }
+    }
+
     pub fn role(&self) -> Role {
         match self {
             Message::User(_) | Message::Resume => Role::User,
@@ -484,6 +496,28 @@ fn codeblock_tag(full_path: &Path, line_range: Option<&RangeInclusive<u32>>) -> 
 }
 
 impl AgentMessage {
+    /// Visible, searchable text only: assistant text and tool-use names.
+    /// Excludes thinking, tool-use input JSON, and tool results — see
+    /// [`Message::searchable_markdown`].
+    pub fn searchable_markdown(&self) -> String {
+        let mut markdown = String::new();
+        for content in &self.content {
+            match content {
+                AgentMessageContent::Text(text) => {
+                    markdown.push_str(text);
+                    markdown.push('\n');
+                }
+                AgentMessageContent::ToolUse(tool_use) => {
+                    markdown.push_str(tool_use.name.as_ref());
+                    markdown.push('\n');
+                }
+                AgentMessageContent::Thinking { .. }
+                | AgentMessageContent::RedactedThinking(_) => {}
+            }
+        }
+        markdown
+    }
+
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
 
