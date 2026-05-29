@@ -45,8 +45,6 @@
 (call
   function: (identifier) @function.call)
 
-(decorator
-  "@" @punctuation.special)
 
 (decorator
   "@" @punctuation.special
@@ -247,7 +245,6 @@
   "&"
   "%"
   "%="
-  "@"
   "^"
   "+"
   "->"
@@ -271,6 +268,9 @@
   "^="
   "|="
 ] @operator
+
+(binary_operator
+  operator: "@" @operator)
 
 [
   "and"
