@@ -67,10 +67,7 @@ impl GoDebugAdapter {
             url: asset.browser_download_url.clone(),
         })
     }
-    pub(crate) async fn install_shim(
-        &self,
-        delegate: &Arc<dyn DapDelegate>,
-    ) -> anyhow::Result<PathBuf> {
+    async fn install_shim(&self, delegate: &Arc<dyn DapDelegate>) -> anyhow::Result<PathBuf> {
         if let Some(path) = self.shim_path.get().cloned() {
             return Ok(path);
         }

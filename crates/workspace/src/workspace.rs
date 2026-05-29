@@ -8043,7 +8043,9 @@ impl Workspace {
             return;
         }
         if let Some(existing) = self.active_modal::<BinaryDownloadsModal>(cx) {
-            existing.update(cx, |modal, cx| modal.acknowledge_and_dismiss(cx));
+            if toggle {
+                existing.update(cx, |modal, cx| modal.acknowledge_and_dismiss(cx));
+            }
             return;
         }
         let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
@@ -8059,6 +8061,9 @@ impl Workspace {
             self.toggle_modal(window, cx, |_, cx| {
                 SecurityModal::new(worktree_store, remote_host, cx)
             });
+            return;
+        }
+        if !toggle {
             return;
         }
         if let Some(scope) =

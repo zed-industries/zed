@@ -338,8 +338,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             .or(self.path_to_codelldb.get().cloned());
 
         if command.is_none() {
-            let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
             let version_path = match self.fetch_latest_adapter_version(delegate).await {
                 Ok(version) => {
                     adapters::download_adapter_from_github(
@@ -361,14 +361,16 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                         "Searching for adapters in: {}",
                         adapter_path.display()
                     ));
-                    let mut paths = match delegate.fs().read_dir(&adapter_path).await {
-                        Ok(paths) => paths,
-                        Err(_) => anyhow::bail!("No cached adapter found"),
-                    };
-                    match paths.next().await {
-                        Some(Ok(path)) => path,
-                        _ => anyhow::bail!("No cached adapter found"),
-                    }
+                    let mut paths = delegate
+                        .fs()
+                        .read_dir(&adapter_path)
+                        .await
+                        .context("No cached adapter directory")?;
+                    paths
+                        .next()
+                        .await
+                        .context("No cached adapter found")?
+                        .context("No cached adapter found")?
                 }
             };
             let adapter_dir = version_path.join("extension").join("adapter");
