@@ -60,12 +60,10 @@ impl SoloDiffView {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
 
-        let existing = {
-            workspace_entity
-                .read(cx)
-                .items_of_type::<SoloDiffView>(cx)
-                .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx))
-        };
+        let existing = workspace_entity
+            .read(cx)
+            .items_of_type::<SoloDiffView>(cx)
+            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
