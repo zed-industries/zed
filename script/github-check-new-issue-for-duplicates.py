@@ -510,7 +510,13 @@ def analyze_duplicates(anthropic_key, issue, magnets, search_results):
         return [], [], []
 
     log("Analyzing candidates with Claude")
+    log(f"  Candidate pool: {len(top_magnets)} magnets, {len(open_results)} open search results, "
+        f"{len(closed_results)} closed search results (will pass {min(len(closed_results), 5)} closed)")
     enrich_magnets(top_magnets)
+
+    closed_candidates_for_claude = closed_results[:5]
+    if closed_candidates_for_claude:
+        log(f"  Closed candidates given to proposer: {[r['number'] for r in closed_candidates_for_claude]}")
 
     candidates = [
         {"number": m["number"], "title": m["title"], "body_preview": m["body_preview"],
@@ -519,7 +525,7 @@ def analyze_duplicates(anthropic_key, issue, magnets, search_results):
     ] + [
         {"number": r["number"], "title": r["title"], "body_preview": r["body_preview"],
          "state": r["state"], "state_reason": r["state_reason"], "source": "search_result"}
-        for r in open_results[:10] + closed_results[:5]
+        for r in open_results[:10] + closed_candidates_for_claude
     ]
 
     system_prompt = """You analyze GitHub issues to (a) identify duplicates among OPEN candidates
@@ -763,7 +769,11 @@ def critique_closed_candidates(anthropic_key, issue, proposed, search_results):
     Returns the subset of `proposed` that passes critique.
     """
     if not proposed:
+        log("  Critique: proposer surfaced 0 closed candidates; skipping")
         return []
+
+    log(f"  Critique: proposer surfaced {len(proposed)} closed candidate(s): "
+        f"{[m['number'] for m in proposed]}")
 
     results_by_number = {r["number"]: r for r in search_results}
     kept = []
