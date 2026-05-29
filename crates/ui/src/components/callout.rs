@@ -224,13 +224,14 @@ impl Component for Callout {
         ComponentScope::DataDisplay
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "Used to display a callout for situations where the user needs to know some information, and likely make a decision. This might be a thread running out of tokens, or running out of prompts on a plan and needing to upgrade.",
-        )
+    fn description() -> &'static str {
+        "Used to display a callout for situations where the user \
+        needs to know some information, and likely make a decision. \
+        This might be a thread running out of tokens, \
+        or running out of prompts on a plan and needing to upgrade."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let single_action = || Button::new("got-it", "Got it").label_size(LabelSize::Small);
         let multiple_actions = || {
             h_flex()
@@ -354,12 +355,10 @@ impl Component for Callout {
             ),
         ];
 
-        Some(
-            v_flex()
-                .gap_4()
-                .child(example_group(basic_examples).vertical())
-                .child(example_group_with_title("Severity", severity_examples).vertical())
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_4()
+            .child(example_group(basic_examples).vertical())
+            .child(example_group_with_title("Severity", severity_examples).vertical())
+            .into_any_element()
     }
 }

@@ -168,85 +168,76 @@ impl Component for Divider {
         ComponentScope::Layout
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "Visual separator used to create divisions between groups of content or sections in a layout.",
-        )
+    fn description() -> &'static str {
+        "Visual separator used to create divisions between groups of content \
+        or sections in a layout."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Horizontal Dividers",
-                        vec![
-                            single_example("Default", Divider::horizontal().into_any_element()),
-                            single_example(
-                                "Border Color",
-                                Divider::horizontal()
-                                    .color(DividerColor::Border)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Inset",
-                                Divider::horizontal().inset().into_any_element(),
-                            ),
-                            single_example(
-                                "Dashed",
-                                Divider::horizontal_dashed().into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Vertical Dividers",
-                        vec![
-                            single_example(
-                                "Default",
-                                div().h_16().child(Divider::vertical()).into_any_element(),
-                            ),
-                            single_example(
-                                "Border Color",
-                                div()
-                                    .h_16()
-                                    .child(Divider::vertical().color(DividerColor::Border))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Inset",
-                                div()
-                                    .h_16()
-                                    .child(Divider::vertical().inset())
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Dashed",
-                                div()
-                                    .h_16()
-                                    .child(Divider::vertical_dashed())
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Example Usage",
-                        vec![single_example(
-                            "Between Content",
-                            v_flex()
-                                .w_full()
-                                .gap_4()
-                                .px_4()
-                                .child(Label::new("Section One"))
-                                .child(Divider::horizontal())
-                                .child(Label::new("Section Two"))
-                                .child(Divider::horizontal_dashed())
-                                .child(Label::new("Section Three"))
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Horizontal Dividers",
+                    vec![
+                        single_example("Default", Divider::horizontal().into_any_element()),
+                        single_example(
+                            "Border Color",
+                            Divider::horizontal()
+                                .color(DividerColor::Border)
                                 .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                        single_example("Inset", Divider::horizontal().inset().into_any_element()),
+                        single_example("Dashed", Divider::horizontal_dashed().into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Vertical Dividers",
+                    vec![
+                        single_example(
+                            "Default",
+                            div().h_16().child(Divider::vertical()).into_any_element(),
+                        ),
+                        single_example(
+                            "Border Color",
+                            div()
+                                .h_16()
+                                .child(Divider::vertical().color(DividerColor::Border))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Inset",
+                            div()
+                                .h_16()
+                                .child(Divider::vertical().inset())
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Dashed",
+                            div()
+                                .h_16()
+                                .child(Divider::vertical_dashed())
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Example Usage",
+                    vec![single_example(
+                        "Between Content",
+                        v_flex()
+                            .w_full()
+                            .gap_4()
+                            .px_4()
+                            .child(Label::new("Section One"))
+                            .child(Divider::horizontal())
+                            .child(Label::new("Section Two"))
+                            .child(Divider::horizontal_dashed())
+                            .child(Label::new("Section Three"))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

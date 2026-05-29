@@ -79,6 +79,7 @@ zed_env_vars.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+assets.workspace = true
 async-io.workspace = true
 agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
@@ -104,6 +105,7 @@ reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
 
 theme = { workspace = true, "features" = ["test-support"] }
+theme_settings.workspace = true
 
 unindent = { workspace = true }
 
