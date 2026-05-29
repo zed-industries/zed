@@ -6472,7 +6472,7 @@ impl EditorElement {
         }
     }
 
-    pub(crate) fn shape_line_number(
+    fn shape_line_number(
         &self,
         text: SharedString,
         color: Hsla,
@@ -7304,7 +7304,7 @@ impl LineWithInvisibles {
         );
     }
 
-    pub(crate) fn prepaint_with_custom_offset(
+    fn prepaint_with_custom_offset(
         &mut self,
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
@@ -7361,7 +7361,7 @@ impl LineWithInvisibles {
         );
     }
 
-    pub(crate) fn draw_with_custom_offset(
+    fn draw_with_custom_offset(
         &self,
         layout: &EditorLayout,
         row: DisplayRow,
@@ -9486,20 +9486,20 @@ impl IntoElement for EditorElement {
 }
 
 pub struct EditorLayout {
-    pub(super) position_map: Rc<PositionMap>,
-    pub(super) hitbox: Hitbox,
-    pub(super) gutter_hitbox: Hitbox,
-    pub(super) content_origin: gpui::Point<Pixels>,
+    position_map: Rc<PositionMap>,
+    hitbox: Hitbox,
+    gutter_hitbox: Hitbox,
+    content_origin: gpui::Point<Pixels>,
     scrollbars_layout: Option<EditorScrollbars>,
     minimap: Option<MinimapLayout>,
-    pub(super) mode: EditorMode,
+    mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
     active_rows: BTreeMap<DisplayRow, LineHighlightSpec>,
     highlighted_rows: BTreeMap<DisplayRow, LineHighlight>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    pub(super) line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
+    line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
@@ -9526,7 +9526,7 @@ pub struct EditorLayout {
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
-    pub(super) sticky_buffer_header: Option<AnyElement>,
+    sticky_buffer_header: Option<AnyElement>,
     sticky_headers: Option<header::StickyHeaders>,
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
     text_align: TextAlign,
@@ -9540,14 +9540,14 @@ impl EditorLayout {
 }
 
 #[derive(Debug)]
-pub(super) struct LineNumberSegment {
-    pub(super) shaped_line: ShapedLine,
-    pub(super) hitbox: Option<Hitbox>,
+struct LineNumberSegment {
+    shaped_line: ShapedLine,
+    hitbox: Option<Hitbox>,
 }
 
 #[derive(Debug)]
-pub(super) struct LineNumberLayout {
-    pub(super) segments: SmallVec<[LineNumberSegment; 1]>,
+struct LineNumberLayout {
+    segments: SmallVec<[LineNumberSegment; 1]>,
 }
 
 struct ColoredRange<T> {
@@ -10078,7 +10078,7 @@ impl PositionMap {
         }
     }
 
-    pub(crate) fn point_for_position_on_line(
+    fn point_for_position_on_line(
         &self,
         position: gpui::Point<Pixels>,
         row: DisplayRow,
