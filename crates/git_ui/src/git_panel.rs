@@ -2685,20 +2685,6 @@ impl GitPanel {
         }
     }
 
-    async fn load_commit_message_prompt(cx: &mut AsyncApp) -> String {
-        let load = async {
-            let store = cx.update(|cx| PromptStore::global(cx)).await.ok()?;
-            store
-                .update(cx, |s, cx| {
-                    s.load(PromptId::BuiltIn(BuiltInPrompt::CommitMessage), cx)
-                })
-                .await
-                .ok()
-        };
-        load.await
-            .unwrap_or_else(|| BuiltInPrompt::CommitMessage.default_content().to_string())
-    }
-
     fn build_commit_message_prompt(
         prompt: &str,
         user_agents_md: Option<&str>,
@@ -2803,7 +2789,7 @@ impl GitPanel {
                         .and_then(|user_agents_md| user_agents_md.content().cloned())
                 });
 
-                let prompt = Self::load_commit_message_prompt(&mut cx).await;
+                let prompt = BuiltInPrompt::CommitMessage.default_content();
 
                 let subject = this.update(cx, |this, cx| {
                     this.commit_editor
