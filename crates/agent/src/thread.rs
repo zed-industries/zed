@@ -698,6 +698,12 @@ pub enum ThreadEvent {
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
+    OAuthUpgradeRequested {
+        server_id: context_server::ContextServerId,
+        existing_scopes: Vec<String>,
+        required_scopes: Vec<String>,
+        response: futures::channel::oneshot::Sender<()>,
+    },
 }
 
 #[derive(Debug)]
@@ -3916,6 +3922,41 @@ impl ToolCallEventStream {
         self.stream.send_plan(plan);
     }
 
+    /// Prompts the display of the OAuth scope upgrade modal and waits
+    /// for the user to complete the authentication flow.
+    pub fn prompt_oauth_upgrade(
+        &self,
+        server_id: context_server::ContextServerId,
+        existing_scopes: Vec<String>,
+        required_scopes: Vec<String>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let stream = self.stream.clone();
+
+        cx.spawn(async move |_cx| {
+            let (response_tx, response_rx) = oneshot::channel();
+
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::OAuthUpgradeRequested {
+                    server_id,
+                    existing_scopes,
+                    required_scopes,
+                    response: response_tx,
+                }))
+            {
+                log::error!("Failed to send OAuth upgrade prompt: {error}");
+                return Err(anyhow!("Failed to send OAuth upgrade prompt: {error}"));
+            }
+
+            response_rx
+                .await
+                .map_err(|_| anyhow!("OAuth upgrade cancelled or channel closed"))?;
+
+            Ok(())
+        })
+    }
+
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
@@ -4820,6 +4861,57 @@ mod tests {
                 );
             }
         });
+    }
+
+    #[gpui::test]
+    async fn test_prompt_oauth_upgrade_success(cx: &mut TestAppContext) {
+        let (stream, mut receiver, _) = ToolCallEventStream::test_with_cancellation();
+        let server_id = context_server::ContextServerId("test-server".into());
+        let existing = vec!["read".to_string()];
+        let required = vec!["read".to_string(), "write".to_string()];
+
+        let task = cx.update(|cx| {
+            stream.prompt_oauth_upgrade(server_id.clone(), existing.clone(), required.clone(), cx)
+        });
+
+        let event = receiver.next().await.unwrap().unwrap();
+        if let ThreadEvent::OAuthUpgradeRequested {
+            server_id: id,
+            existing_scopes,
+            required_scopes,
+            response,
+        } = event
+        {
+            assert_eq!(id, server_id);
+            assert_eq!(existing_scopes, existing);
+            assert_eq!(required_scopes, required);
+            response.send(()).unwrap();
+        } else {
+            panic!("unexpected event");
+        }
+
+        task.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_prompt_oauth_upgrade_cancelled(cx: &mut TestAppContext) {
+        let (stream, mut receiver, _) = ToolCallEventStream::test_with_cancellation();
+
+        let task = cx.update(|cx| {
+            stream.prompt_oauth_upgrade(
+                context_server::ContextServerId("test".into()),
+                vec![],
+                vec![],
+                cx,
+            )
+        });
+
+        let event = receiver.next().await.unwrap().unwrap();
+        if let ThreadEvent::OAuthUpgradeRequested { response, .. } = event {
+            drop(response);
+        }
+
+        assert!(task.await.is_err());
     }
 
     #[gpui::test]

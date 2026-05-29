@@ -463,7 +463,10 @@ impl ConfigureContextServerModal {
             Some(ContextServerStatus::Starting)
             | Some(ContextServerStatus::Running)
             | Some(ContextServerStatus::Stopped)
-            | Some(ContextServerStatus::InsufficientScope)
+            | Some(ContextServerStatus::InsufficientScope {
+                existing_scopes: _,
+                required_scopes: _,
+            })
             | None => State::Idle,
         }
     }
@@ -767,7 +770,10 @@ impl ConfigureContextServerModal {
                     ContextServerStatus::Authenticating
                     | ContextServerStatus::Starting
                     | ContextServerStatus::Stopped
-                    | ContextServerStatus::InsufficientScope => {}
+                    | ContextServerStatus::InsufficientScope {
+                        existing_scopes: _,
+                        required_scopes: _,
+                    } => {}
                 }
             },
         ));
@@ -1320,7 +1326,10 @@ fn wait_for_context_server(
             }
             ContextServerStatus::Starting
             | ContextServerStatus::Authenticating
-            | ContextServerStatus::InsufficientScope => {}
+            | ContextServerStatus::InsufficientScope {
+                existing_scopes: _,
+                required_scopes: _,
+            } => {}
         }
     });
 

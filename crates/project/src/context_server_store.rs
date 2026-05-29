@@ -65,7 +65,10 @@ pub enum ContextServerStatus {
     /// to the authorization server and we're waiting for the callback.
     Authenticating,
     /// The server returned 403 and new scope permissions are needed.
-    InsufficientScope,
+    InsufficientScope {
+        existing_scopes: Vec<String>,
+        required_scopes: Vec<String>,
+    },
 }
 
 impl ContextServerStatus {
@@ -82,7 +85,14 @@ impl ContextServerStatus {
                 }
             }
             ContextServerState::Authenticating { .. } => ContextServerStatus::Authenticating,
-            ContextServerState::InsufficientScope { .. } => ContextServerStatus::InsufficientScope,
+            ContextServerState::InsufficientScope {
+                _existing_scopes,
+                _required_scopes,
+                ..
+            } => ContextServerStatus::InsufficientScope {
+                existing_scopes: _existing_scopes.clone(),
+                required_scopes: _required_scopes.clone(),
+            },
         }
     }
 }
@@ -133,6 +143,7 @@ enum ContextServerState {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
         _discovery: Arc<OAuthDiscovery>,
+        _existing_scopes: Vec<String>,
         _required_scopes: Vec<String>,
     },
 }
@@ -370,6 +381,15 @@ impl ContextServerStore {
         matches!(self.state, ContextServerStoreState::Remote { .. })
     }
 
+    /// Loads the currently granted scopes for a given server URL
+    pub async fn get_active_scopes(server_url: &url::Url, cx: &AsyncApp) -> Vec<String> {
+        let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+        match Self::load_session(&credentials_provider, server_url, cx).await {
+            Ok(Some(session)) => session.granted_scopes.clone(),
+            _ => vec![],
+        }
+    }
+
     /// Returns all configured context server ids, excluding the ones that are disabled
     pub fn configured_server_ids(&self) -> Vec<ContextServerId> {
         self.context_server_settings
@@ -538,6 +558,20 @@ impl ContextServerStore {
 
     pub fn status_for_server(&self, id: &ContextServerId) -> Option<ContextServerStatus> {
         self.servers.get(id).map(ContextServerStatus::from_state)
+    }
+
+    pub fn insufficient_scope_details(
+        &self,
+        id: &ContextServerId,
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        match self.servers.get(id) {
+            Some(ContextServerState::InsufficientScope {
+                _existing_scopes,
+                _required_scopes,
+                ..
+            }) => Some((_existing_scopes.clone(), _required_scopes.clone())),
+            _ => None,
+        }
     }
 
     pub fn configuration_for_server(
@@ -742,6 +776,54 @@ impl ContextServerStore {
             server_id: id.clone(),
             status: ContextServerStatus::Stopped,
         });
+        Ok(())
+    }
+
+    pub fn set_server_insufficient_scope(
+        &mut self,
+        id: &ContextServerId,
+        discovery: OAuthDiscovery,
+        existing_scopes: Vec<String>,
+        required_scopes: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let state = self.servers.get(id).context("Context server not found")?;
+
+        let server = state.server();
+        let configuration = state.configuration();
+
+        self.update_server_state(
+            id.clone(),
+            ContextServerState::InsufficientScope {
+                server,
+                configuration,
+                _discovery: Arc::new(discovery),
+                _existing_scopes: existing_scopes,
+                _required_scopes: required_scopes,
+            },
+            cx,
+        );
+
+        Ok(())
+    }
+
+    pub fn set_server_running(
+        &mut self,
+        id: &ContextServerId,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let state = self.servers.get(id).context("Context server not found")?;
+        let server = state.server();
+        let configuration = state.configuration();
+
+        self.update_server_state(
+            id.clone(),
+            ContextServerState::Running {
+                server,
+                configuration,
+            },
+            cx,
+        );
         Ok(())
     }
 
@@ -1034,14 +1116,37 @@ impl ContextServerStore {
     ) -> Result<()> {
         let state = self.servers.get(id).context("Context server not found")?;
 
-        let (discovery, server, configuration) = match state {
-            ContextServerState::AuthRequired {
-                discovery,
-                server,
-                configuration,
-            } => (discovery.clone(), server.clone(), configuration.clone()),
-            _ => anyhow::bail!("Server is not in AuthRequired state"),
-        };
+        let (discovery, server, configuration, is_insufficient_scope, existing_scopes, new_scopes) =
+            match state {
+                ContextServerState::AuthRequired {
+                    discovery,
+                    server,
+                    configuration,
+                } => (
+                    discovery.clone(),
+                    server.clone(),
+                    configuration.clone(),
+                    false,
+                    None,
+                    None,
+                ),
+                ContextServerState::InsufficientScope {
+                    server,
+                    configuration,
+                    _discovery,
+                    _existing_scopes,
+                    _required_scopes,
+                    ..
+                } => (
+                    _discovery.clone(),
+                    server.clone(),
+                    configuration.clone(),
+                    true,
+                    Some(_existing_scopes.clone()),
+                    Some(_required_scopes.clone()),
+                ),
+                _ => anyhow::bail!("Server is not in AuthRequired state"),
+            };
 
         let needs_keychain_check = match configuration.as_ref() {
             ContextServerConfiguration::Http {
@@ -1058,6 +1163,10 @@ impl ContextServerStore {
             let id = id.clone();
             let server = server.clone();
             let configuration = configuration.clone();
+            let is_insufficient_scope = is_insufficient_scope;
+            let fallback_existing = existing_scopes.unwrap_or_default();
+            let required_scopes = new_scopes.unwrap_or_default();
+
             async move |this, cx| {
                 if let Some(server_url) = needs_keychain_check {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
@@ -1091,22 +1200,38 @@ impl ContextServerStore {
                     id.clone(),
                     discovery.clone(),
                     configuration.clone(),
+                    required_scopes,
                     cx,
                 )
                 .await;
 
                 if let Err(err) = &result {
                     log::error!("{} OAuth authentication failed: {:?}", id, err);
+
                     this.update(cx, |this, cx| {
-                        this.update_server_state(
-                            id.clone(),
+                        let reverted_state = if is_insufficient_scope {
+                            let required_scopes = discovery
+                                .auth_server_metadata
+                                .scopes_supported
+                                .clone()
+                                .unwrap_or_default();
+
+                            ContextServerState::InsufficientScope {
+                                server,
+                                configuration,
+                                _discovery: discovery,
+                                _existing_scopes: fallback_existing,
+                                _required_scopes: required_scopes,
+                            }
+                        } else {
                             ContextServerState::Error {
                                 server,
                                 configuration,
                                 error: format!("{err:#}").into(),
-                            },
-                            cx,
-                        )
+                            }
+                        };
+
+                        this.update_server_state(id.clone(), reverted_state, cx)
                     })
                     .log_err();
                 }
@@ -1177,6 +1302,7 @@ impl ContextServerStore {
                     id.clone(),
                     discovery.clone(),
                     configuration.clone(),
+                    Vec::new(),
                     cx,
                 )
                 .await;
@@ -1241,11 +1367,46 @@ impl ContextServerStore {
         Ok(())
     }
 
+    /// Executes the OAuth loopback flow using pre-discovered parameters,
+    /// updating tokens and restarting the target transport seamlessly.
+    pub fn authenticate_server_inline(
+        &mut self,
+        id: ContextServerId,
+        discovery: context_server::oauth::OAuthDiscovery,
+        required_scopes: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<()>> {
+        let configuration = match self.servers.get(&id) {
+            Some(state) => state.configuration(),
+            None => {
+                return cx.spawn(async move |_, _| anyhow::bail!("Server not found"));
+            }
+        };
+
+        cx.spawn({
+            let discovery: std::sync::Arc<_> = discovery.into();
+
+            // Fix the lifetime error here by using the nightly async closure syntax
+            async move |this, cx| {
+                Self::run_oauth_flow(
+                    this.clone(), // Cloning `this` to perfectly match your original authenticate_server logic
+                    id,
+                    discovery,
+                    configuration,
+                    required_scopes,
+                    cx,
+                )
+                .await
+            }
+        })
+    }
+
     async fn run_oauth_flow(
         this: WeakEntity<Self>,
         id: ContextServerId,
         discovery: Arc<OAuthDiscovery>,
         configuration: Arc<ContextServerConfiguration>,
+        required_scopes: Vec<String>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let resource = oauth::canonical_server_uri(&discovery.resource_metadata.resource);
@@ -1293,11 +1454,18 @@ impl ContextServerStore {
                 .context("Failed to resolve OAuth client registration")?,
         };
 
+        let mut merged_scopes = discovery.scopes.clone();
+        for scope in &required_scopes {
+            if !merged_scopes.contains(scope) {
+                merged_scopes.push(scope.clone());
+            }
+        }
+
         let auth_url = oauth::build_authorization_url(
             &discovery.auth_server_metadata,
             &client_registration.client_id,
             &redirect_uri,
-            &discovery.scopes,
+            &merged_scopes,
             &resource,
             &pkce,
             &state_param,
@@ -1331,6 +1499,7 @@ impl ContextServerStore {
             resource: discovery.resource_metadata.resource.clone(),
             client_registration,
             tokens,
+            granted_scopes: merged_scopes,
         };
 
         Self::store_session(&credentials_provider, &server_url, &session, cx)
@@ -1719,12 +1888,13 @@ async fn resolve_start_failure(
         }
     };
 
+    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+
     // When the error is NOT a 401 but there is a cached OAuth session in the
     // keychain, the session is likely stale/expired and caused the failure
     // (e.g. timeout because the server rejected the token silently). Clear it
     // so the next start attempt can get a clean 401 and trigger the auth flow.
     if www_authenticate.is_none() {
-        let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
         match ContextServerStore::load_session(&credentials_provider, &server_url, cx).await {
             Ok(Some(_)) => {
                 log::info!("{id} start failed with a cached OAuth session present; clearing it");
@@ -1785,15 +1955,24 @@ async fn resolve_start_failure(
             }
 
             if is_insufficient_scope {
+                let existing_scopes =
+                    match ContextServerStore::load_session(&credentials_provider, &server_url, &cx)
+                        .await
+                    {
+                        Ok(Some(session)) => session.granted_scopes.clone(),
+                        _ => vec![],
+                    };
                 let required_scopes = www_authenticate.scope.clone().unwrap_or_default();
                 log::info!(
-                    "{id} requires token scope upgrade. Missing permissions: {:?}",
-                    required_scopes
+                    "{id} requires token scope upgrade. Missing permissions: {:?}. Existing permissions: {:?}",
+                    required_scopes,
+                    existing_scopes
                 );
                 ContextServerState::InsufficientScope {
                     server,
                     configuration,
                     _discovery: Arc::new(discovery),
+                    _existing_scopes: existing_scopes,
                     _required_scopes: required_scopes,
                 }
             } else {

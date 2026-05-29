@@ -2,6 +2,7 @@ mod add_llm_provider_modal;
 pub mod configure_context_server_modal;
 mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
+pub mod scope_upgrade_modal;
 mod tool_picker;
 
 use std::{ops::Range, rc::Rc, sync::Arc};
@@ -29,7 +30,10 @@ use language_models::AllLanguageModelSettings;
 use notifications::status_toast::StatusToast;
 use project::{
     agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
-    context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
+    context_server_store::{
+        ContextServerConfiguration, ContextServerStatus, ContextServerStore,
+        ServerStatusChangedEvent,
+    },
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
@@ -100,6 +104,15 @@ impl AgentConfiguration {
             cx.subscribe(&agent_server_store, |_, _, _, cx| cx.notify()),
             cx.observe(&agent_connection_store, |_, _, cx| cx.notify()),
             cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify()),
+            cx.subscribe_in(&context_server_store, window, {
+                let _workspace = workspace.clone();
+
+                move |_this, _, event: &ServerStatusChangedEvent, _window, cx| {
+                    if let ContextServerStatus::InsufficientScope { .. } = &event.status {
+                        cx.notify();
+                    }
+                }
+            }),
         ];
 
         let mut this = Self {
@@ -668,7 +681,22 @@ impl AgentConfiguration {
             server_status,
             ContextServerStatus::ClientSecretRequired { .. }
         );
+        let insufficient_scope = matches!(
+            server_status,
+            ContextServerStatus::InsufficientScope {
+                existing_scopes: _,
+                required_scopes: _
+            }
+        );
         let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
+        let (existing_scopes, required_scopes) = if insufficient_scope {
+            self.context_server_store
+                .read(cx)
+                .insufficient_scope_details(&context_server_id)
+                .unwrap_or_default()
+        } else {
+            (vec![], vec![])
+        };
         let context_server_store = self.context_server_store.clone();
         let workspace = self.workspace.clone();
         let language_registry = self.language_registry.clone();
@@ -695,7 +723,10 @@ impl AgentConfiguration {
                 AiSettingItemStatus::ClientSecretRequired
             }
             ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
-            ContextServerStatus::InsufficientScope => AiSettingItemStatus::InsufficientScope,
+            ContextServerStatus::InsufficientScope {
+                existing_scopes: _,
+                required_scopes: _,
+            } => AiSettingItemStatus::InsufficientScope,
         };
 
         let is_remote = server_configuration
@@ -905,6 +936,52 @@ impl AgentConfiguration {
                                     context_server_store.update(cx, |store, cx| {
                                         store.authenticate_server(&context_server_id, cx).log_err();
                                     });
+                                }
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        } else if insufficient_scope {
+            Some(
+                feedback_base_container()
+                    .child(
+                        h_flex()
+                            .pr_4()
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Server requires additional permissions")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                    .child(
+                        Button::new("upgrade-permissions    -server", "Upgrade Permissions")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let context_server_id = context_server_id.clone();
+                                let context_server_store = self.context_server_store.clone();
+                                let existing_scopes = existing_scopes.clone();
+                                let required_scopes = required_scopes.clone();
+                                let workspace = self.workspace.clone();
+                                move |_event, window, cx| {
+                                    crate::agent_configuration::scope_upgrade_modal::ScopeUpgradeModal::show_modal(
+                                        context_server_id.clone(),
+                                        context_server_store.clone(),
+                                        existing_scopes.clone(),
+                                        required_scopes.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
                                 }
                             }),
                     )

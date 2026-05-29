@@ -1856,6 +1856,32 @@ impl NativeAgentConnection {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
                                 return Ok(acp::PromptResponse::new(stop_reason));
                             }
+                            ThreadEvent::OAuthUpgradeRequested {
+                                server_id,
+                                existing_scopes,
+                                required_scopes,
+                                response,
+                            } => {
+                                let outcome_task = acp_thread.update(cx, |thread, cx| {
+                                    thread.request_oauth_upgrade(
+                                        server_id.to_string(),
+                                        existing_scopes,
+                                        required_scopes,
+                                        cx,
+                                    )
+                                })??;
+                                cx.background_spawn(async move {
+                                    if let Ok(_) = outcome_task.await {
+                                        response
+                                            .send(())
+                                            .map_err(|_| {
+                                                anyhow!("oauth upgrade receiver was dropped")
+                                            })
+                                            .log_err();
+                                    }
+                                })
+                                .detach();
+                            }
                         }
                     }
                     Err(e) => {
@@ -4813,6 +4839,43 @@ mod internal_tests {
             assert_eq!(scroll.item_ix, 5);
             assert_eq!(scroll.offset_in_item, gpui::px(12.5));
         });
+    }
+
+    #[gpui::test]
+    async fn test_handle_oauth_upgrade_requested_event(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let acp_thread =
+            cx.update(|cx| agent.update(cx, |agent, cx| agent.new_session(project, cx)));
+
+        let (event_tx, event_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
+
+        let _handler_task = cx.update(|cx| {
+            NativeAgentConnection::handle_thread_events(event_rx, acp_thread.downgrade(), cx)
+        });
+
+        let (response_tx, mut response_rx) = oneshot::channel::<()>();
+
+        event_tx
+            .unbounded_send(Ok(ThreadEvent::OAuthUpgradeRequested {
+                server_id: ContextServerId("test-server".into()),
+                existing_scopes: vec!["read:repo".into()],
+                required_scopes: vec!["read:repo".into(), "write:repo".into()],
+                response: response_tx,
+            }))
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert!(
+            response_rx.try_recv().is_ok(),
+            "The channel should not be resolved before the upgrade task completes"
+        );
     }
 
     #[gpui::test]

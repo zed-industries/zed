@@ -296,6 +296,11 @@ impl Conversation {
                     | AcpThreadEvent::ModeUpdated(_)
                     | AcpThreadEvent::ConfigOptionsUpdated(_)
                     | AcpThreadEvent::WorkingDirectoriesUpdated
+                    | AcpThreadEvent::OAuthUpgradeRequested {
+                        server_id: _,
+                        existing_scopes: _,
+                        required_scopes: _,
+                    }
                     | AcpThreadEvent::PromptUpdated => {}
                 }
             }
@@ -498,6 +503,11 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::TitleUpdated
         | AcpThreadEvent::ToolAuthorizationRequested(_)
         | AcpThreadEvent::ToolAuthorizationReceived(_)
+        | AcpThreadEvent::OAuthUpgradeRequested {
+            server_id: _,
+            existing_scopes: _,
+            required_scopes: _,
+        }
         | AcpThreadEvent::Stopped(_)
         | AcpThreadEvent::Error
         | AcpThreadEvent::LoadError(_)
@@ -1558,6 +1568,59 @@ impl ConversationView {
                         active.thread_retry_status = Some(retry.clone());
                     });
                 }
+            }
+            AcpThreadEvent::OAuthUpgradeRequested {
+                server_id,
+                existing_scopes,
+                required_scopes,
+            } => {
+                self.notify_with_sound("New scopes required", IconName::Warning, window, cx);
+
+                let Some(workspace) = self.workspace.upgrade() else {
+                    return;
+                };
+                let context_server_store = workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .context_server_store()
+                    .clone();
+
+                let context_server_id =
+                    context_server::ContextServerId(std::sync::Arc::from(server_id.clone()));
+
+                crate::agent_configuration::scope_upgrade_modal::ScopeUpgradeModal::show_modal(
+                    context_server_id.clone(),
+                    context_server_store.clone(),
+                    existing_scopes.clone(),
+                    required_scopes.clone(),
+                    self.workspace.clone(),
+                    window,
+                    cx,
+                )
+                .detach();
+                let target_server_id = server_id.clone();
+                let thread_handle = thread.clone();
+
+                let subscription = cx.subscribe(
+                    &context_server_store,
+                    move |_this,
+                          _store,
+                          event: &project::context_server_store::ServerStatusChangedEvent,
+                          _cx| {
+                        if event.server_id == context_server_id {
+                            if let project::context_server_store::ContextServerStatus::Running =
+                                event.status
+                            {
+                                thread_handle.update(_cx, |thread, _cx| {
+                                    thread.resolve_oauth_upgrade(&target_server_id.to_string());
+                                });
+                            }
+                        }
+                    },
+                );
+
+                self._subscriptions.push(subscription);
             }
             AcpThreadEvent::Stopped(stop_reason) => {
                 if let Some(active) = self.thread_view(&session_id) {
@@ -7147,6 +7210,57 @@ pub(crate) mod tests {
                 "Tool call should no longer be waiting for confirmation after AuthorizeToolCall action"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_oauth_upgrade_requested_flow(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread().unwrap().read(cx).thread.clone()
+        });
+
+        let server_id = "test-server";
+        let existing_scopes = vec!["read".to_string()];
+        let required_scopes = vec!["read".to_string(), "write".to_string()];
+
+        cx.update_entity(&thread, |_, cx| {
+            cx.emit(AcpThreadEvent::OAuthUpgradeRequested {
+                server_id: server_id.to_string(),
+                existing_scopes,
+                required_scopes,
+            });
+        });
+
+        cx.run_until_parked();
+
+        let workspace = conversation_view
+            .read_with(cx, |view, _cx| view.workspace.clone())
+            .upgrade()
+            .unwrap();
+        workspace.read_with(cx, |workspace, cx| {
+            let modal = workspace
+                .active_modal::<crate::agent_configuration::scope_upgrade_modal::ScopeUpgradeModal>(
+                    cx,
+                );
+            assert!(modal.is_some());
+        });
+
+        let context_server_store = workspace.read_with(cx, |workspace, cx| {
+            workspace.project().read(cx).context_server_store().clone()
+        });
+
+        cx.update_entity(&context_server_store, |_, cx| {
+            cx.emit(project::context_server_store::ServerStatusChangedEvent {
+                server_id: context_server::ContextServerId(server_id.into()),
+                status: project::context_server_store::ContextServerStatus::Running,
+            });
+        });
+        cx.run_until_parked();
     }
 
     #[gpui::test]

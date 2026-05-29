@@ -1126,6 +1126,7 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    pending_oauth_upgrades: HashMap<String, futures::channel::oneshot::Sender<()>>,
     had_error: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
@@ -1176,6 +1177,11 @@ pub enum AcpThreadEvent {
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequested(acp::ToolCallId),
     ToolAuthorizationReceived(acp::ToolCallId),
+    OAuthUpgradeRequested {
+        server_id: String,
+        existing_scopes: Vec<String>,
+        required_scopes: Vec<String>,
+    },
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
     Stopped(acp::StopReason),
@@ -1335,6 +1341,7 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
+            pending_oauth_upgrades: HashMap::default(),
             had_error: false,
             draft_prompt: None,
             ui_scroll_position: None,
@@ -1733,6 +1740,34 @@ impl AcpThread {
                 }),
                 cx,
             );
+        }
+    }
+
+    pub fn request_oauth_upgrade(
+        &mut self,
+        server_id: String,
+        existing_scopes: Vec<String>,
+        required_scopes: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<Result<(), anyhow::Error>>> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+
+        self.pending_oauth_upgrades.insert(server_id.clone(), tx);
+
+        cx.emit(AcpThreadEvent::OAuthUpgradeRequested {
+            server_id,
+            existing_scopes,
+            required_scopes,
+        });
+
+        Ok(cx.spawn(async move |_this, _cx| {
+            rx.await
+                .map_err(|_| anyhow::anyhow!("OAuth upgrade cancelled by UI"))
+        }))
+    }
+    pub fn resolve_oauth_upgrade(&mut self, server_id: &String) {
+        if let Some(channel) = self.pending_oauth_upgrades.remove(server_id) {
+            let _ = channel.send(());
         }
     }
 
@@ -5876,6 +5911,112 @@ mod tests {
             thread.read_with(cx, |t, _| t.status()),
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_oauth_upgrade_request_and_resolve(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let server_id = "test_server".to_string();
+        let existing_scopes = vec!["scope1".to_string()];
+        let required_scopes = vec!["scope1".to_string(), "scope2".to_string()];
+
+        let (event_tx, mut event_rx) = mpsc::unbounded();
+
+        let thread_clone = thread.clone();
+        cx.update(|cx| {
+            cx.subscribe(
+                &thread_clone,
+                move |_thread, event: &AcpThreadEvent, _cx| {
+                    if let AcpThreadEvent::OAuthUpgradeRequested {
+                        server_id,
+                        existing_scopes,
+                        required_scopes,
+                    } = event
+                    {
+                        event_tx
+                            .unbounded_send((
+                                server_id.clone(),
+                                existing_scopes.clone(),
+                                required_scopes.clone(),
+                            ))
+                            .unwrap();
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let upgrade_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_oauth_upgrade(
+                    server_id.clone(),
+                    existing_scopes.clone(),
+                    required_scopes.clone(),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let (emitted_server_id, emitted_existing_scopes, emitted_required_scopes) =
+            event_rx.next().await.unwrap();
+        assert_eq!(emitted_server_id, server_id);
+        assert_eq!(emitted_existing_scopes, existing_scopes);
+        assert_eq!(emitted_required_scopes, required_scopes);
+
+        cx.executor().run_until_parked();
+
+        thread.update(cx, |thread, _cx| {
+            thread.resolve_oauth_upgrade(&server_id);
+        });
+
+        let result = upgrade_task.await;
+        assert!(result.is_ok());
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.pending_oauth_upgrades.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_oauth_upgrade_cancellation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let server_id = "cancel_server".to_string();
+        let upgrade_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_oauth_upgrade(server_id, vec![], vec![], cx)
+            })
+            .unwrap();
+
+        drop(thread);
+
+        let result = upgrade_task.await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "OAuth upgrade cancelled by UI"
         );
     }
 }

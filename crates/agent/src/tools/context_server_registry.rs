@@ -2,6 +2,7 @@ use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
+use context_server::transport::TransportError;
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
@@ -263,7 +264,10 @@ impl ContextServerRegistry {
             | ContextServerStatus::Error(_)
             | ContextServerStatus::AuthRequired
             | ContextServerStatus::ClientSecretRequired { .. }
-            | ContextServerStatus::InsufficientScope => {
+            | ContextServerStatus::InsufficientScope {
+                existing_scopes: _,
+                required_scopes: _,
+            } => {
                 if let Some(registered_server) = self.registered_servers.remove(server_id) {
                     if !registered_server.tools.is_empty() {
                         cx.emit(ContextServerRegistryEvent::ToolsChanged);
@@ -348,7 +352,7 @@ impl AnyAgentTool for ContextServerTool {
         let authorize =
             event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |mut async_cx| {
             let input = input
                 .recv()
                 .await
@@ -358,9 +362,9 @@ impl AnyAgentTool for ContextServerTool {
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-            let Some(protocol) = server.client() else {
-                return Err(anyhow::anyhow!("Context server not initialized").into());
-            };
+            let mut protocol = server.client().ok_or_else(|| {
+                anyhow::anyhow!("Context server not initialized")
+            })?;
 
             let arguments = if let serde_json::Value::Object(map) = input {
                 Some(map.into_iter().collect())
@@ -374,18 +378,141 @@ impl AnyAgentTool for ContextServerTool {
                 arguments
             );
 
-            let request = protocol.request::<context_server::types::requests::CallTool>(
-                context_server::types::CallToolParams {
-                    name: tool_name,
-                    arguments,
-                    meta: None,
-                },
-            );
+            let mut retry = true;
 
-            let response = futures::select! {
-                response = request.fuse() => response?,
-                _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
+            let response = loop {
+                let request = protocol.request::<context_server::types::requests::CallTool>(
+                    context_server::types::CallToolParams {
+                        name: tool_name.clone(),
+                        arguments: arguments.clone(),
+                        meta: None,
+                    },
+                );
+
+                let result = futures::select! {
+                    res = request.fuse() => res,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
+                    }
+                };
+
+                match result {
+                    Ok(res) => break res,
+                    Err(err) => {
+                        if retry {
+                            if let Some(TransportError::InsufficientScope { www_authenticate }) = err.downcast_ref::<TransportError>() {
+                                log::info!("Tool execution blocked by 403 Insufficient Scope.");
+                                retry = false;
+
+                                let server_id = self.server_id.clone();
+                                let configuration = async_cx.update(|cx| {
+                                    self.store.read(cx).configuration_for_server(&server_id)
+                                }).ok_or_else(|| anyhow::anyhow!("Failed to read context server config"))?;
+
+                                let http_client = async_cx.update(|cx| cx.http_client());
+
+                                let required_scopes = www_authenticate.scope.clone().unwrap_or_default();
+
+                                let server_url = match configuration.as_ref() {
+                                    project::context_server_store::ContextServerConfiguration::Http { url, .. } => Some(url.clone()),
+                                    _ => None,
+                                };
+
+                                if let Some(server_url) = server_url {
+                                    if let Ok(discovery) = context_server::oauth::discover(&http_client, &server_url, &www_authenticate).await {
+                                        let existing_scopes = ContextServerStore::get_active_scopes(&server_url, &mut async_cx).await;
+
+                                        let state_updated = async_cx.update(|cx| {
+                                            self.store.update(cx, |store, cx| {
+                                                    store.set_server_insufficient_scope(
+                                                    &server_id,
+                                                    discovery.clone(),
+                                                    existing_scopes.clone(),
+                                                    required_scopes.clone(),
+                                                    cx,
+                                                ).is_ok()
+                                            })
+                                        });
+
+                                        if !state_updated {
+                                            log::warn!("Could not transition server state to InsufficientScope");
+                                        }
+
+                                        let prompt_task = async_cx.update(|cx| {
+                                            event_stream.prompt_oauth_upgrade(
+                                                server_id.clone(),
+                                                existing_scopes.clone(),
+                                                required_scopes.clone(),
+                                                cx
+                                            )
+                                        }).fuse();
+
+                                        let cancel_signal = event_stream.cancelled_by_user().fuse();
+
+                                        futures::pin_mut!(prompt_task, cancel_signal);
+
+                                        let prompt_result = futures::select! {
+                                            res = prompt_task => res,
+                                            _ = cancel_signal => {
+                                                log::info!("User cancelled tool execution during OAuth prompt.");
+                                                let _ = async_cx.update(|cx| {
+                                                    let _ = self.store.update(cx, |store, cx| {
+                                                        store.set_server_running(&server_id, cx)
+                                                    });
+                                                });
+                                                return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
+                                            }
+                                        };
+
+                                        if prompt_result.is_err() {
+                                            log::info!("OAuth upgrade cancelled by user.");
+                                            let _ = async_cx.update(|cx| {
+                                                let _ = self.store.update(cx, |store, cx| {
+                                                    store.set_server_running(&server_id, cx)
+                                                });
+                                            });
+                                            return Err(anyhow::anyhow!("Tool execution blocked: User cancelled OAuth upgrade.").into());
+                                        }
+
+                                        log::info!("OAuth upgrade accepted. Waiting for server to restart...");
+
+                                        let mut new_protocol = None;
+                                        for _ in 0..50 {
+                                            new_protocol = async_cx.update(|cx| {
+                                                self.store.read(cx)
+                                                    .get_running_server(&server_id)
+                                                    .and_then(|s| s.client())
+                                            });
+
+                                            if new_protocol.is_some() {
+                                                break;
+                                            }
+                                            let timer = async_cx.background_executor().timer(std::time::Duration::from_millis(100)).fuse();
+                                            let cancel_signal = event_stream.cancelled_by_user().fuse();
+
+                                            futures::pin_mut!(timer, cancel_signal);
+
+                                            futures::select! {
+                                                _ = timer => {},
+                                                _ = cancel_signal => {
+                                                    log::info!("User cancelled tool execution while waiting for server restart.");
+                                                    return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
+                                                }
+                                            }
+                                        }
+
+                                        if let Some(new_p) = new_protocol {
+                                            protocol = new_p;
+                                            continue;
+                                        } else {
+                                            return Err(anyhow::anyhow!("Server failed to restart in time after OAuth upgrade").into());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Err(anyhow::anyhow!(err.to_string()).into());
+                    }
                 }
             };
 
@@ -414,14 +541,15 @@ impl AnyAgentTool for ContextServerTool {
                                 mime_type.clone(),
                             )),
                         )));
-                        let language_model_image = cx
-                            .background_spawn({
-                                let mime_type = mime_type.clone();
-                                async move {
-                                    LanguageModelImage::from_base64_image(&data, &mime_type)
-                                }
-                            })
-                            .await;
+                        let language_model_image = async_cx
+                        .background_executor()
+                        .spawn({
+                            let mime_type = mime_type.clone();
+                            async move {
+                                LanguageModelImage::from_base64_image(&data, &mime_type)
+                            }
+                        })
+                        .await;
                         match language_model_image {
                             Ok(Some(image)) => {
                                 llm_output.push(LanguageModelToolResultContent::Image(image));
