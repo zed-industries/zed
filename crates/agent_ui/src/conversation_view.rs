@@ -8116,6 +8116,8 @@ pub(crate) mod tests {
         let (_view, thread_view, entry_ix, cx) =
             setup_pending_permission_thread("perm-no-bounds", cx).await;
 
+        // Pin the scroll top to the entry so it isn't treated as above the
+        // viewport, forcing the unmeasured-bounds path we want to exercise.
         thread_view.read_with(cx, |view, _cx| {
             view.list_state.scroll_to(ListOffset {
                 item_ix: entry_ix,
@@ -8269,6 +8271,23 @@ pub(crate) mod tests {
                 view.render_main_agent_awaiting_permission(window, cx)
                     .is_some(),
                 "Floating row should be visible when the inline prompt is above the viewport"
+            );
+        });
+
+        // Scrolling up to the entry brings it back into view.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear after scrolling brings the inline prompt into view"
             );
         });
     }
