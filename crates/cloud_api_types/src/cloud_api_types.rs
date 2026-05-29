@@ -150,16 +150,8 @@ pub struct SubmitEditPredictionSettledBody {
 pub struct SubmitEditPredictionSettledResponse {}
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitJumpExampleBody {
-    pub example: JumpExampleSpec,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitJumpExampleResponse {}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct JumpExampleSpec {
-    pub capture_id: uuid::Uuid,
+pub struct SubmitEditPredictionJumpExampleBody {
+    pub request_id: uuid::Uuid,
     pub trigger: JumpExampleTrigger,
     pub repository_url: Option<String>,
     pub revision: Option<String>,
@@ -172,7 +164,12 @@ pub struct JumpExampleSpec {
     pub diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
     pub future_edit_history: String,
     pub navigation_history: Vec<JumpExampleRecentFile>,
+    pub is_in_open_source_repo: bool,
+    pub can_collect_data: bool,
 }
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitEditPredictionJumpExampleResponse {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

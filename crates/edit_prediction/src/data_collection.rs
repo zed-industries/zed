@@ -1,4 +1,6 @@
 use crate::{EditPredictionStore, StoredEvent};
+
+use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
 use gpui::{Context, Entity, Task};
@@ -8,19 +10,22 @@ use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc};
 use text::{OffsetRangeExt, Point};
 
 pub type UncommittedDiffSnapshot = Vec<(Arc<Path>, BufferSnapshot, BufferDiffSnapshot)>;
+pub type UncommittedDiffResult = std::result::Result<UncommittedDiffSnapshot, Arc<anyhow::Error>>;
+
+pub use zeta_prompt::udiff::CURSOR_POSITION_MARKER;
 
 pub fn uncommitted_diffs_for_events(
     project: Entity<Project>,
     worktree_id: WorktreeId,
     events: Vec<StoredEvent>,
     cx: &Context<'_, EditPredictionStore>,
-) -> Task<Option<(UncommittedDiffSnapshot, Vec<StoredEvent>)>> {
+) -> Task<UncommittedDiffResult> {
     let git_store = project.read_with(cx, |project, _| project.git_store().clone());
 
     cx.spawn(async move |_store, cx| {
         let events_with_paths = events
             .into_iter()
-            .filter_map(|stored_event| {
+            .map(|stored_event| {
                 let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
                 project
                     .read_with(cx, |project, cx| {
@@ -33,8 +38,10 @@ pub fn uncommitted_diffs_for_events(
                     .map(|(project_path, relative_path)| {
                         (stored_event, project_path, relative_path)
                     })
+                    .context("failed to find project path for uncommitted diff capture")
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()
+            .map_err(Arc::new)?;
 
         let mut snapshots_by_path: HashMap<Arc<Path>, (BufferSnapshot, BufferDiffSnapshot)> =
             HashMap::default();
@@ -48,7 +55,8 @@ pub fn uncommitted_diffs_for_events(
                     project.open_buffer(project_path.clone(), cx)
                 })
                 .await
-                .ok()?;
+                .context("failed to open buffer for uncommitted diff capture")
+                .map_err(Arc::new)?;
             let file_context = stored_event.file_context.clone();
             let cached_diff = file_context.as_ref().and_then(|file_context| {
                 file_context.read_with(cx, |file_context, _| file_context.uncommitted_diff.clone())
@@ -61,7 +69,8 @@ pub fn uncommitted_diffs_for_events(
                             git_store.open_uncommitted_diff(buffer.clone(), cx)
                         })
                         .await
-                        .ok()?;
+                        .context("failed to open uncommitted diff for capture")
+                        .map_err(Arc::new)?;
                     if let Some(file_context) = file_context {
                         file_context.update(cx, |file_context, _| {
                             file_context.uncommitted_diff = Some(diff.clone());
@@ -76,15 +85,6 @@ pub fn uncommitted_diffs_for_events(
             snapshots_by_path.insert(relative_path.clone(), (buffer_snapshot, diff_snapshot));
         }
 
-        let events = events_with_paths
-            .into_iter()
-            .filter_map(|(stored_event, _, relative_path)| {
-                snapshots_by_path
-                    .contains_key(&relative_path)
-                    .then_some(stored_event)
-            })
-            .collect();
-
         let uncommitted_diff_snapshots = snapshots_by_path
             .into_iter()
             .map(|(relative_path, (snapshot, diff_snapshot))| {
@@ -92,11 +92,46 @@ pub fn uncommitted_diffs_for_events(
             })
             .collect();
 
-        Some((uncommitted_diff_snapshots, events))
+        Ok(uncommitted_diff_snapshots)
     })
 }
 
-pub fn compute_uncommitted_diff(snapshot: UncommittedDiffSnapshot) -> String {
+pub fn compute_cursor_excerpt(
+    snapshot: &language::BufferSnapshot,
+    cursor_anchor: language::Anchor,
+) -> (String, usize, Range<Point>) {
+    use text::ToOffset as _;
+    use text::ToPoint as _;
+
+    let cursor_offset = cursor_anchor.to_offset(snapshot);
+    let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+        crate::cursor_excerpt::compute_cursor_excerpt(snapshot, cursor_offset);
+    let syntax_ranges = crate::cursor_excerpt::compute_syntax_ranges(
+        snapshot,
+        cursor_offset,
+        &excerpt_offset_range,
+    );
+    let excerpt_text: String = snapshot.text_for_range(excerpt_point_range).collect();
+    let (_, context_range) = zeta_prompt::compute_editable_and_context_ranges(
+        &excerpt_text,
+        cursor_offset_in_excerpt,
+        &syntax_ranges,
+        100,
+        50,
+    );
+    let context_text = excerpt_text[context_range.clone()].to_string();
+    let cursor_in_context = cursor_offset_in_excerpt.saturating_sub(context_range.start);
+    let context_buffer_start =
+        (excerpt_offset_range.start + context_range.start).to_point(snapshot);
+    let context_buffer_end = (excerpt_offset_range.start + context_range.end).to_point(snapshot);
+    (
+        context_text,
+        cursor_in_context,
+        context_buffer_start..context_buffer_end,
+    )
+}
+
+pub(crate) fn compute_uncommitted_diff(snapshot: UncommittedDiffSnapshot) -> String {
     let mut uncommitted_diff = String::new();
     let mut snapshots_by_path = snapshot;
     snapshots_by_path.sort_by(|(left_path, _, _), (right_path, _, _)| left_path.cmp(right_path));
@@ -179,7 +214,7 @@ pub fn compute_uncommitted_diff(snapshot: UncommittedDiffSnapshot) -> String {
     uncommitted_diff
 }
 
-pub fn estimate_uncomitted_diff_byte_size(snapshot: &UncommittedDiffSnapshot) -> usize {
+pub(crate) fn estimate_uncomitted_diff_byte_size(snapshot: &UncommittedDiffSnapshot) -> usize {
     let mut size = 0;
     for (_, buffer_snapshot, diff_snapshot) in snapshot {
         for hunk in diff_snapshot.hunks(buffer_snapshot) {
@@ -204,4 +239,52 @@ fn exclusive_end_row(point: Point) -> u32 {
     } else {
         point.row + 1
     }
+}
+
+pub fn format_cursor_excerpt(
+    excerpt: &str,
+    cursor_offset: usize,
+    line_comment_prefix: &str,
+) -> String {
+    let cursor_line_start = excerpt[..cursor_offset]
+        .rfind('\n')
+        .map(|pos| pos + 1)
+        .unwrap_or(0);
+    let cursor_line_end = excerpt[cursor_line_start..]
+        .find('\n')
+        .map(|pos| cursor_line_start + pos + 1)
+        .unwrap_or(excerpt.len());
+    let cursor_line = &excerpt[cursor_line_start..cursor_line_end];
+    let cursor_line_indent = &cursor_line[..cursor_line.len() - cursor_line.trim_start().len()];
+    let cursor_column = cursor_offset - cursor_line_start;
+
+    let mut marker_line = String::new();
+    if cursor_column < line_comment_prefix.len() {
+        for _ in 0..cursor_column {
+            marker_line.push(' ');
+        }
+        marker_line.push_str(line_comment_prefix);
+        write!(marker_line, " <{}", CURSOR_POSITION_MARKER).unwrap();
+    } else {
+        if cursor_column >= cursor_line_indent.len() + line_comment_prefix.len() {
+            marker_line.push_str(cursor_line_indent);
+        }
+        marker_line.push_str(line_comment_prefix);
+        while marker_line.len() < cursor_column {
+            marker_line.push(' ');
+        }
+        write!(marker_line, "^{}", CURSOR_POSITION_MARKER).unwrap();
+    }
+
+    let mut result = String::with_capacity(excerpt.len() + marker_line.len() + 2);
+    result.push_str(&excerpt[..cursor_line_end]);
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&marker_line);
+    if cursor_line_end < excerpt.len() {
+        result.push('\n');
+        result.push_str(&excerpt[cursor_line_end..]);
+    }
+    result
 }

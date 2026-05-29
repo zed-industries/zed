@@ -1,14 +1,16 @@
 use crate::{
     StoredEvent,
-    data_collection::{UncommittedDiffSnapshot, compute_uncommitted_diff},
+    data_collection::{
+        UncommittedDiffSnapshot, compute_cursor_excerpt, compute_uncommitted_diff,
+        format_cursor_excerpt,
+    },
     example_spec::{ExampleSpec, RecentFile},
 };
 use anyhow::Result;
 use gpui::{App, Entity, Task};
 use language::Buffer;
 use project::Project;
-use std::{fmt::Write, ops::Range, path::Path, sync::Arc};
-use text::Point;
+use std::{fmt::Write, path::Path, sync::Arc};
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -88,7 +90,7 @@ pub fn capture_example(
             rejected_patch = Some(empty_patch);
         }
 
-        let mut spec = ExampleSpec {
+        let spec = ExampleSpec {
             name: generate_timestamp_name(),
             repository_url,
             revision,
@@ -99,7 +101,11 @@ pub fn capture_example(
             recently_viewed_files,
             uncommitted_diff_contains_edit_history,
             cursor_path,
-            cursor_position: String::new(),
+            cursor_position: format_cursor_excerpt(
+                &cursor_excerpt,
+                cursor_offset_in_excerpt,
+                &line_comment_prefix,
+            ),
             edit_history,
             expected_patches,
             rejected_patch,
@@ -107,11 +113,6 @@ pub fn capture_example(
             human_feedback: Vec::new(),
             rating: None,
         };
-        spec.set_cursor_excerpt(
-            &cursor_excerpt,
-            cursor_offset_in_excerpt,
-            &line_comment_prefix,
-        );
         Ok(spec)
     }))
 }
@@ -141,41 +142,6 @@ pub(crate) fn write_event_with_relative_paths(
     write_relative_path(output, path.as_ref(), root_name);
     output.push('\n');
     output.push_str(diff);
-}
-
-fn compute_cursor_excerpt(
-    snapshot: &language::BufferSnapshot,
-    cursor_anchor: language::Anchor,
-) -> (String, usize, Range<Point>) {
-    use text::ToOffset as _;
-    use text::ToPoint as _;
-
-    let cursor_offset = cursor_anchor.to_offset(snapshot);
-    let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
-        crate::cursor_excerpt::compute_cursor_excerpt(snapshot, cursor_offset);
-    let syntax_ranges = crate::cursor_excerpt::compute_syntax_ranges(
-        snapshot,
-        cursor_offset,
-        &excerpt_offset_range,
-    );
-    let excerpt_text: String = snapshot.text_for_range(excerpt_point_range).collect();
-    let (_, context_range) = zeta_prompt::compute_editable_and_context_ranges(
-        &excerpt_text,
-        cursor_offset_in_excerpt,
-        &syntax_ranges,
-        100,
-        50,
-    );
-    let context_text = excerpt_text[context_range.clone()].to_string();
-    let cursor_in_context = cursor_offset_in_excerpt.saturating_sub(context_range.start);
-    let context_buffer_start =
-        (excerpt_offset_range.start + context_range.start).to_point(snapshot);
-    let context_buffer_end = (excerpt_offset_range.start + context_range.end).to_point(snapshot);
-    (
-        context_text,
-        cursor_in_context,
-        context_buffer_start..context_buffer_end,
-    )
 }
 
 fn generate_timestamp_name() -> String {
@@ -388,7 +354,7 @@ mod tests {
         );
 
         let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
-        let (uncommitted_diffs_by_path, events) = ep_store
+        let uncommitted_diffs_by_path = ep_store
             .update(cx, |_store, cx| {
                 uncommitted_diffs_for_events(project.clone(), worktree_id, events.clone(), cx)
             })

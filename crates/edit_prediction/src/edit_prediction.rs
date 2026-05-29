@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
@@ -28,6 +28,7 @@ use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     select_biased,
 };
+use git::repository::FileHistoryChangedFileSets;
 use gpui::BackgroundExecutor;
 use gpui::TaskExt;
 use gpui::http_client::Url;
@@ -67,7 +68,7 @@ use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 
 pub mod cursor_excerpt;
-mod data_collection;
+pub mod data_collection;
 pub mod example_spec;
 pub mod fim;
 mod jump_example;
@@ -95,6 +96,7 @@ use crate::example_spec::ExampleSpec;
 use crate::example_spec::RecentFile;
 use crate::jump_example::{
     JUMP_EXAMPLE_NAVIGATION_COUNT, JumpExampleTrigger, PendingJumpExampleCapture,
+    PendingJumpExampleCaptureKey,
 };
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
@@ -123,6 +125,7 @@ const RECENT_PATH_COUNT_MAX: usize = 20;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of typical prompt budget
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
+const GIT_CHANGED_FILE_SETS_COMMIT_LIMIT: usize = 100;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
@@ -194,6 +197,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
+    stored_events: Vec<StoredEvent>,
     related_files: Vec<RelatedFile>,
     mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
@@ -251,6 +255,8 @@ pub struct StoredEvent {
 
 pub(crate) struct StoredFileContext {
     pub(crate) uncommitted_diff: Option<Entity<BufferDiff>>,
+    pub(crate) git_changed_file_sets: Option<Arc<FileHistoryChangedFileSets>>,
+    pub(crate) git_changed_file_sets_task: Option<Task<()>>,
 }
 
 impl StoredEvent {
@@ -352,6 +358,7 @@ struct ProjectState {
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
     pending_jump_example_captures: Vec<PendingJumpExampleCapture>,
+    starting_jump_example_captures: Vec<PendingJumpExampleCaptureKey>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_edit_prediction_refresh: Option<(EntityId, Instant)>,
     last_jump_prediction_refresh: Option<(EntityId, Instant)>,
@@ -433,6 +440,8 @@ impl ProjectState {
         } else {
             let context = cx.new(|_| StoredFileContext {
                 uncommitted_diff: None,
+                git_changed_file_sets: None,
+                git_changed_file_sets_task: None,
             });
             self.file_contexts.insert(path, context.downgrade());
             context
@@ -1199,6 +1208,60 @@ impl EditPredictionStore {
         Self::register_buffer_impl(project_state, buffer, project, cx);
     }
 
+    fn ensure_git_changed_file_sets_loading(
+        file_context: &Entity<StoredFileContext>,
+        project: &Entity<Project>,
+        project_path: &ProjectPath,
+        cx: &mut Context<Self>,
+    ) {
+        let should_start = file_context.update(cx, |file_context, _| {
+            file_context.git_changed_file_sets.is_none()
+                && file_context.git_changed_file_sets_task.is_none()
+        });
+        if !should_start {
+            return;
+        }
+
+        let Some((repository, repo_path)) = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(project_path, cx)
+        else {
+            file_context.update(cx, |file_context, _| {
+                file_context.git_changed_file_sets = Some(Arc::default());
+            });
+            return;
+        };
+
+        let receiver = repository.update(cx, |repository, _| {
+            repository
+                .file_history_changed_files(vec![repo_path], GIT_CHANGED_FILE_SETS_COMMIT_LIMIT)
+        });
+        let task = cx.spawn({
+            let file_context = file_context.downgrade();
+            async move |_, cx| {
+                let result = receiver.await;
+                let Some(file_context) = file_context.upgrade() else {
+                    return;
+                };
+                file_context.update(cx, |file_context, _| {
+                    file_context.git_changed_file_sets = result
+                        .context("failed to receive git changed file sets")
+                        .flatten()
+                        .map(|mut file_sets| file_sets.pop().unwrap_or_default())
+                        .context("failed to load git changed file sets")
+                        .map(Arc::new)
+                        .log_err();
+                    file_context.git_changed_file_sets_task = None;
+                });
+            }
+        });
+        file_context.update(cx, |file_context, _| {
+            file_context.git_changed_file_sets_task = Some(task);
+        });
+    }
+
     fn get_or_init_project(
         &mut self,
         project: &Entity<Project>,
@@ -1228,6 +1291,7 @@ impl EditPredictionStore {
                 cancelled_predictions: HashSet::default(),
                 pending_predictions: ArrayVec::new(),
                 pending_jump_example_captures: Vec::new(),
+                starting_jump_example_captures: Vec::new(),
                 next_pending_prediction_id: 0,
                 last_edit_prediction_refresh: None,
                 last_jump_prediction_refresh: None,
@@ -1571,7 +1635,10 @@ impl EditPredictionStore {
         );
 
         let file_context = new_file.as_ref().map(|file| {
-            project_state.file_context_for_path(ProjectPath::from_file(file.as_ref(), cx), cx)
+            let project_path = ProjectPath::from_file(file.as_ref(), cx);
+            let file_context = project_state.file_context_for_path(project_path.clone(), cx);
+            Self::ensure_git_changed_file_sets_loading(&file_context, project, &project_path, cx);
+            file_context
         });
 
         project_state.last_event = Some(LastEvent {
@@ -2639,6 +2706,7 @@ impl EditPredictionStore {
             snapshot,
             position,
             events,
+            stored_events: stored_events.clone(),
             related_files,
             mode,
             trigger,
@@ -2660,7 +2728,6 @@ impl EditPredictionStore {
                         cx,
                     )
                     .shared();
-                    // todo! what are all the ways that uncomitted_diffs_for_events can fail? Is it worth just bailing if it fails, so we don't have to pass events twice?
                     jump_example::try_start_jump_example_capture(
                         project_state,
                         uncommitted_diff_snapshot.clone(),
@@ -2675,6 +2742,8 @@ impl EditPredictionStore {
                         },
                         stored_events.clone(),
                         inputs.diagnostic_search_range.clone(),
+                        can_collect_data,
+                        is_open_source,
                         cx,
                     );
                     rand::random_ratio(1, 10).then(|| uncommitted_diff_snapshot)

@@ -1,12 +1,12 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
     ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
-    data_collection::UncommittedDiffSnapshot,
+    data_collection::UncommittedDiffResult,
     prediction::EditPredictionResult,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
@@ -41,6 +41,7 @@ pub fn request_prediction_with_zeta(
         position,
         related_files,
         events,
+        stored_events,
         debug_tx,
         mode,
         trigger,
@@ -50,7 +51,7 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
-    capture_data: Option<Shared<Task<Option<(UncommittedDiffSnapshot, Vec<StoredEvent>)>>>>,
+    capture_data: Option<Shared<Task<UncommittedDiffResult>>>,
     repo_url: Option<String>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
@@ -418,25 +419,23 @@ pub fn request_prediction_with_zeta(
                     let project = project.clone();
                     let edited_buffer = edited_buffer.clone();
                     async move |cx| {
-                        let Some(task) =
-                            uncommitted_diffs
-                                .await
-                                .and_then(|(uncommitted_diffs, events)| {
-                                    cx.update(|cx| {
-                                        crate::capture_example::capture_example(
-                                            project.clone(),
-                                            edited_buffer.clone(),
-                                            position,
-                                            events,
-                                            recently_opened_files,
-                                            recently_viewed_files,
-                                            uncommitted_diffs,
-                                            false,
-                                            cx,
-                                        )
-                                    })
-                                })
-                        else {
+                        let uncommitted_diffs = uncommitted_diffs
+                            .await
+                            .map_err(|error| anyhow::anyhow!("{error:?}"))
+                            .context("failed to capture uncommitted diff")?;
+                        let Some(task) = cx.update(|cx| {
+                            crate::capture_example::capture_example(
+                                project.clone(),
+                                edited_buffer.clone(),
+                                position,
+                                stored_events,
+                                recently_opened_files,
+                                recently_viewed_files,
+                                uncommitted_diffs,
+                                false,
+                                cx,
+                            )
+                        }) else {
                             return Err(anyhow::anyhow!("failed to capture example"));
                         };
                         task.await
