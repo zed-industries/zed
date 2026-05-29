@@ -682,7 +682,7 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     max_width_item_index: Option<usize>,
     selected_entry: Option<usize>,
-    marked_entries: Vec<usize>,
+    marked_entries: Vec<RepoPath>,
     tracked_count: usize,
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
@@ -1343,6 +1343,80 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
+    fn marked_entry_for_ix(&self, ix: usize) -> Option<RepoPath> {
+        match self.entries.get(ix)? {
+            GitListEntry::Status(entry) => Some(entry.repo_path.clone()),
+            GitListEntry::TreeStatus(entry) => Some(entry.entry.repo_path.clone()),
+            GitListEntry::Header(_) | GitListEntry::Directory(_) => None,
+        }
+    }
+
+    fn is_entry_marked(&self, ix: usize) -> bool {
+        self.marked_entry_for_ix(ix)
+            .is_some_and(|path| self.marked_entries.contains(&path))
+    }
+
+    fn effective_status_entries(&self) -> Vec<GitStatusEntry> {
+        if let Some(selected_ix) = self.selected_entry {
+            if let Some(selected_entry) =
+                self.entries.get(selected_ix).and_then(|e| e.status_entry())
+            {
+                if self.marked_entries.is_empty() {
+                    return vec![selected_entry.clone()];
+                }
+                if self.marked_entries.len() == 1
+                    && !self.marked_entries.contains(&selected_entry.repo_path)
+                {
+                    return vec![selected_entry.clone()];
+                }
+            }
+        }
+
+        self.entries
+            .iter()
+            .filter_map(|e| e.status_entry())
+            .filter(|e| self.marked_entries.contains(&e.repo_path))
+            .cloned()
+            .collect()
+    }
+
+    fn range_select(&mut self, target_ix: usize, cx: &mut Context<Self>) {
+        let anchor = self.selected_entry.unwrap_or(target_ix);
+
+        match &self.view_mode {
+            GitPanelViewMode::Flat => {
+                let start = anchor.min(target_ix);
+                let end = anchor.max(target_ix);
+                for ix in start..=end {
+                    if let Some(path) = self.marked_entry_for_ix(ix) {
+                        if !self.marked_entries.contains(&path) {
+                            self.marked_entries.push(path);
+                        }
+                    }
+                }
+            }
+            GitPanelViewMode::Tree(state) => {
+                let anchor_pos = state.logical_indices.iter().position(|&i| i == anchor);
+                let target_pos = state.logical_indices.iter().position(|&i| i == target_ix);
+
+                if let Some((anchor_pos, target_pos)) = anchor_pos.zip(target_pos) {
+                    let start = anchor_pos.min(target_pos);
+                    let end = anchor_pos.max(target_pos);
+                    for &raw_ix in &state.logical_indices[start..=end] {
+                        if let Some(path) = self.marked_entry_for_ix(raw_ix) {
+                            if !self.marked_entries.contains(&path) {
+                                self.marked_entries.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.selected_entry = Some(target_ix);
+        cx.notify();
+    }
+
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == GitPanelTab::History {
             self.open_selected_history_commit(window, cx);
@@ -1453,6 +1527,90 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.marked_entries.len() > 1 {
+            let entries = self.effective_status_entries();
+            if entries.is_empty() {
+                return;
+            }
+
+            let mut details = entries
+                .iter()
+                .filter_map(|entry| entry.repo_path.as_ref().file_name())
+                .map(|filename| filename.to_string())
+                .take(5)
+                .join("\n");
+            if entries.len() > 5 {
+                details.push_str(&format!("\nand {} more…", entries.len() - 5));
+            }
+
+            let confirm = window.prompt(
+                PromptLevel::Warning,
+                "Discard changes to these files?",
+                Some(&details),
+                &["Discard", "Cancel"],
+                cx,
+            );
+            let confirm = cx.background_spawn(confirm);
+            let workspace = self.workspace.clone();
+            let active_repo = self.active_repository.clone();
+
+            cx.spawn_in(window, async move |this, cx| {
+                if confirm.await? != 0 {
+                    return anyhow::Ok(());
+                }
+                this.update_in(cx, |this, window, cx| {
+                    let to_unstage: Vec<_> = entries
+                        .iter()
+                        .filter(|e| e.status.staging().has_staged())
+                        .cloned()
+                        .collect();
+                    if !to_unstage.is_empty() {
+                        this.change_file_stage(false, to_unstage, cx);
+                    }
+
+                    let to_checkout: Vec<_> = entries
+                        .iter()
+                        .filter(|e| !e.status.is_created())
+                        .cloned()
+                        .collect();
+                    if !to_checkout.is_empty() {
+                        this.perform_checkout(to_checkout, window, cx);
+                    }
+                })
+                .ok();
+
+                if let Some(active_repo) = active_repo {
+                    let to_trash: Vec<_> = entries
+                        .iter()
+                        .filter(|e| e.status.is_created())
+                        .cloned()
+                        .collect();
+                    if !to_trash.is_empty() {
+                        let tasks = workspace.update(cx, |workspace, cx| {
+                            to_trash
+                                .iter()
+                                .filter_map(|entry| {
+                                    let project_path = active_repo
+                                        .read(cx)
+                                        .repo_path_to_project_path(&entry.repo_path, cx)?;
+                                    workspace.project().update(cx, |project, cx| {
+                                        project.delete_file(project_path, true, cx)
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })?;
+                        for task in tasks {
+                            task.await?;
+                        }
+                    }
+                }
+
+                Ok(())
+            })
+            .detach();
+            return;
+        }
+
         let path_style = self.project.read(cx).path_style(cx);
         maybe!({
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
@@ -2131,6 +2289,16 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.marked_entries.len() > 1 {
+            let entries = self.effective_status_entries();
+            if entries.is_empty() {
+                return;
+            }
+            let should_stage = entries.iter().any(|e| e.staging != StageStatus::Staged);
+            self.change_file_stage(should_stage, entries, cx);
+            return;
+        }
+
         if let Some(selected_entry) = self.get_selected_entry().cloned() {
             self.toggle_staged_for_entry(&selected_entry, window, cx);
         }
@@ -2144,6 +2312,18 @@ impl GitPanel {
     }
 
     fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.marked_entries.len() > 1 {
+            let entries: Vec<_> = self
+                .effective_status_entries()
+                .into_iter()
+                .filter(|e| e.staging != StageStatus::Staged)
+                .collect();
+            if !entries.is_empty() {
+                self.change_file_stage(true, entries, cx);
+            }
+            return;
+        }
+
         let Some(selected_entry) = self.get_selected_entry() else {
             return;
         };
@@ -2161,6 +2341,18 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.marked_entries.len() > 1 {
+            let entries: Vec<_> = self
+                .effective_status_entries()
+                .into_iter()
+                .filter(|e| e.staging != StageStatus::Unstaged)
+                .collect();
+            if !entries.is_empty() {
+                self.change_file_stage(false, entries, cx);
+            }
+            return;
+        }
+
         let Some(selected_entry) = self.get_selected_entry() else {
             return;
         };
@@ -3937,6 +4129,9 @@ impl GitPanel {
         {
             self.bulk_staging = bulk_staging;
         }
+
+        self.marked_entries
+            .retain(|path| self.entries_indices.contains_key(path));
 
         self.select_first_entry_if_none(window, cx);
 
@@ -5961,6 +6156,15 @@ impl GitPanel {
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
+
+        let clicked_is_marked = self
+            .marked_entry_for_ix(ix)
+            .is_some_and(|path| self.marked_entries.contains(&path));
+        if !clicked_is_marked {
+            self.marked_entries.clear();
+        }
+        self.selected_entry = Some(ix);
+
         let stage_title = if entry.status.staging().is_fully_staged() {
             "Unstage File"
         } else {
@@ -5991,7 +6195,6 @@ impl GitPanel {
                         .action("View File History", Box::new(git::FileHistory))
                 })
         });
-        self.selected_entry = Some(ix);
         self.set_context_menu(context_menu, position, window, cx);
     }
 
@@ -6059,7 +6262,7 @@ impl GitPanel {
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
-        let marked = self.marked_entries.contains(&ix);
+        let marked = self.is_entry_marked(ix);
         let status_style = settings.status_style;
         let status = entry.status;
         let file_icon = if settings.file_icons {
@@ -6260,11 +6463,33 @@ impl GitPanel {
             )
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
-                    this.selected_entry = Some(ix);
-                    cx.notify();
-                    if event.click_count() > 1 || event.modifiers().secondary() {
-                        this.open_file(&Default::default(), window, cx)
+                    if event.modifiers().shift {
+                        this.range_select(ix, cx);
+                    } else if event.modifiers().secondary() {
+                        if this.marked_entries.is_empty() {
+                            if let Some(prev) = this.selected_entry {
+                                if let Some(path) = this.marked_entry_for_ix(prev) {
+                                    this.marked_entries.push(path);
+                                }
+                            }
+                        }
+                        this.selected_entry = Some(ix);
+                        if let Some(path) = this.marked_entry_for_ix(ix) {
+                            if let Some(pos) = this.marked_entries.iter().position(|p| *p == path) {
+                                this.marked_entries.remove(pos);
+                            } else {
+                                this.marked_entries.push(path);
+                            }
+                        }
+                        cx.notify();
+                    } else if event.click_count() > 1 {
+                        this.selected_entry = Some(ix);
+                        cx.notify();
+                        this.open_file(&Default::default(), window, cx);
                     } else {
+                        this.marked_entries.clear();
+                        this.selected_entry = Some(ix);
+                        cx.notify();
                         this.open_diff(&Default::default(), window, cx);
                         this.focus_handle.focus(window, cx);
                     }
@@ -6298,7 +6523,6 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // TODO: Have not yet plugin the self.marked_entries. Not sure when and why we need that
         let selected = self.selected_entry == Some(ix);
         let label_color = Color::Muted;
 
