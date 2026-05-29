@@ -1,5 +1,6 @@
 use super::tool_permissions::{
     authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
+    resolve_creatable_global_skill_descendant_path, resolve_global_skill_descendant_path,
     sensitive_settings_kind,
 };
 use crate::{
@@ -23,6 +24,7 @@ use util::markdown::MarkdownInlineCode;
 ///
 /// This tool should be used when it's desirable to create a copy of a file or directory without modifying the original.
 /// It's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.
+/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
     /// The source path of the file or directory to copy.
@@ -100,6 +102,15 @@ impl AgentTool for CopyPathTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
+            let global_source_path =
+                resolve_global_skill_descendant_path(Path::new(&input.source_path), fs.as_ref())
+                    .await;
+            let global_destination_path = resolve_creatable_global_skill_descendant_path(
+                Path::new(&input.destination_path),
+                fs.as_ref(),
+            )
+            .await;
+
             let symlink_escapes: Vec<(&str, std::path::PathBuf)> =
                 project.read_with(cx, |project, cx| {
                     collect_symlink_escapes(
@@ -158,6 +169,63 @@ impl AgentTool for CopyPathTool {
 
             if let Some(authorize) = authorize {
                 authorize.await.map_err(|e| e.to_string())?;
+            }
+
+            if global_source_path.is_some() || global_destination_path.is_some() {
+                let source_path = if let Some(global_source_path) = global_source_path {
+                    global_source_path
+                } else {
+                    project.read_with(cx, |project, cx| {
+                        let project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
+                            format!("Source path {} was not found in the project.", input.source_path)
+                        })?;
+                        project.entry_for_path(&project_path, cx).ok_or_else(|| {
+                            format!("Source path {} was not found in the project.", input.source_path)
+                        })?;
+                        project.absolute_path(&project_path, cx).ok_or_else(|| {
+                            format!("Source path {} could not be resolved.", input.source_path)
+                        })
+                    })?
+                };
+
+                let destination_path = if let Some(global_destination_path) = global_destination_path
+                {
+                    global_destination_path
+                } else {
+                    project.read_with(cx, |project, cx| {
+                        let project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
+                            format!(
+                                "Destination path {} was outside the project.",
+                                input.destination_path
+                            )
+                        })?;
+                        project.absolute_path(&project_path, cx).ok_or_else(|| {
+                            format!(
+                                "Destination path {} could not be resolved.",
+                                input.destination_path
+                            )
+                        })
+                    })?
+                };
+
+                futures::select! {
+                    result = fs::copy_recursive(
+                        fs.as_ref(),
+                        &source_path,
+                        &destination_path,
+                        fs::CopyOptions::default(),
+                    ).fuse() => {
+                        result.map_err(|e| format!("Copying {} to {}: {e}", input.source_path, input.destination_path))?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Copy cancelled by user".to_string());
+                    }
+                }
+
+                return Ok(format!(
+                    "Copied {} to {}",
+                    input.source_path, input.destination_path
+                ));
             }
 
             let copy_task = project.update(cx, |project, cx| {
@@ -220,6 +288,124 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_copy_path_global_skill_directory_to_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.insert_tree(&skill_dir, json!({ "SKILL.md": "content" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CopyPathTool::new(project));
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .to_string_lossy()
+            .into_owned();
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CopyPathToolInput {
+                    source_path: input_path,
+                    destination_path: path!("/root/project/my-skill").to_string(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task.await;
+        assert!(result.is_ok(), "should copy after approval: {result:?}");
+        assert!(fs.is_dir(&skill_dir).await);
+        assert_eq!(
+            fs.load(path!("/root/project/my-skill/SKILL.md").as_ref())
+                .await
+                .unwrap(),
+            "content"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_path_project_directory_to_global_skill_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({ "exported-skill": { "SKILL.md": "content" } }),
+        )
+        .await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CopyPathTool::new(project));
+        let destination_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("exported-skill")
+            .to_string_lossy()
+            .into_owned();
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CopyPathToolInput {
+                    source_path: path!("/root/project/exported-skill").to_string(),
+                    destination_path,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task.await;
+        assert!(result.is_ok(), "should copy after approval: {result:?}");
+        assert!(
+            fs.is_dir(path!("/root/project/exported-skill").as_ref())
+                .await
+        );
+        assert_eq!(
+            fs.load(skills_dir.join("exported-skill").join("SKILL.md").as_ref())
+                .await
+                .unwrap(),
+            "content"
+        );
     }
 
     #[gpui::test]

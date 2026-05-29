@@ -4,14 +4,15 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
+use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
-    pub store: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
@@ -32,6 +33,10 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -151,6 +156,43 @@ pub struct ResponseError {
     pub message: String,
     #[serde(default)]
     pub param: Option<Value>,
+}
+
+/// Payload of the top-level `error` SSE event from the Responses API.
+///
+/// OpenAI's spec documents the error fields as being at the top level of the
+/// event, but in practice the API often nests them under an `error` object.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct GenericStreamErrorPayload {
+    #[serde(flatten)]
+    top_level: PartialResponseError,
+    #[serde(default)]
+    error: Option<PartialResponseError>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+struct PartialResponseError {
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    param: Option<Value>,
+}
+
+impl GenericStreamErrorPayload {
+    pub fn into_response_error(self) -> ResponseError {
+        let nested = self.error.unwrap_or_default();
+        ResponseError {
+            code: self.top_level.code.or(nested.code),
+            message: self
+                .top_level
+                .message
+                .or(nested.message)
+                .unwrap_or_default(),
+            param: self.top_level.param.or(nested.param),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -273,7 +315,7 @@ pub enum StreamEvent {
     #[serde(rename = "error")]
     GenericError {
         #[serde(flatten)]
-        error: ResponseError,
+        error: GenericStreamErrorPayload,
     },
     #[serde(other)]
     Unknown,
@@ -293,6 +335,8 @@ pub struct ResponseSummary {
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
     pub output: Vec<ResponseOutputItem>,
+    #[serde(default)]
+    pub service_tier: Option<crate::ServiceTier>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -395,13 +439,17 @@ pub async fn stream_response(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: Vec<(String, String)>,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
+    for (name, value) in &extra_headers {
+        request_builder = request_builder.header(name.as_str(), value.as_str());
+    }
 
     let is_streaming = request.stream;
     let request = request_builder

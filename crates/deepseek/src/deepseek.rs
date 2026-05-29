@@ -319,10 +319,7 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
-                            }
+                            Some(serde_json::from_str(line).map_err(Into::into))
                         }
                     }
                     Err(error) => Some(Err(anyhow!(error))),

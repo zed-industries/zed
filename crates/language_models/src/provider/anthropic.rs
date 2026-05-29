@@ -9,11 +9,11 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
-    ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter, env_var,
+    ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    env_var,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
@@ -276,6 +276,17 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for Anthropic?".into(),
+            message: "Fast mode lets requests use your Anthropic Priority Tier capacity, which \
+                Anthropic prioritizes over standard requests during peak load. Requires a \
+                Priority Tier commitment with Anthropic; without one, requests behave the same \
+                as the standard tier."
+                .into(),
+        })
+    }
 }
 
 /// Pick the model from `models` whose id starts with the earliest matching
@@ -506,10 +517,6 @@ impl LanguageModel for AnthropicModel {
             Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        None
     }
 }
 
