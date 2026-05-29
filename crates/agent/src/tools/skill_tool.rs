@@ -84,7 +84,7 @@ pub struct SkillToolInput {
     pub name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SkillToolOutput {
     /// Pre-rendered `<skill_content>` envelope. The wire format must match

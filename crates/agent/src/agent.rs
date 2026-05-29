@@ -3116,7 +3116,7 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
 /// same entry the model sees in its catalog. Run at invocation time
 /// (not thread-build time) so skill changes after thread construction
 /// become visible without re-registering the tool.
-pub(crate) fn skills_resolver_for_project(
+pub fn skills_resolver_for_project(
     weak_agent: WeakEntity<NativeAgent>,
     project_id: EntityId,
 ) -> impl Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static {
@@ -3134,7 +3134,7 @@ pub(crate) fn skills_resolver_for_project(
     }
 }
 
-fn skill_body_resolver_for_project(
+pub fn skill_body_resolver_for_project(
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
 ) -> impl Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static {
