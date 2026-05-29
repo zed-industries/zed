@@ -39,12 +39,12 @@ use crate::{
 };
 
 pub(crate) struct StickyHeader {
-    pub sticky_row: DisplayRow,
-    pub start_point: Point,
-    pub offset: ScrollOffset,
+    pub(crate) sticky_row: DisplayRow,
+    pub(crate) start_point: Point,
+    pub(crate) offset: ScrollOffset,
 }
 
-pub(crate) struct StickyHeaders {
+pub(super) struct StickyHeaders {
     pub(super) lines: Vec<StickyHeaderLine>,
     gutter_background: Hsla,
     content_background: Hsla,

@@ -188,9 +188,9 @@ struct RenderBlocksOutput {
 }
 
 pub struct EditorElement {
-    pub(super) editor: Entity<Editor>,
-    pub(super) style: EditorStyle,
-    pub(super) split_side: Option<SplitSide>,
+    editor: Entity<Editor>,
+    style: EditorStyle,
+    split_side: Option<SplitSide>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9527,7 +9527,7 @@ pub struct EditorLayout {
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     pub(super) sticky_buffer_header: Option<AnyElement>,
-    pub(super) sticky_headers: Option<header::StickyHeaders>,
+    sticky_headers: Option<header::StickyHeaders>,
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
     text_align: TextAlign,
     content_width: Pixels,
