@@ -189,8 +189,16 @@ pub struct MessageEditor {
     session_capabilities: SharedSessionCapabilities,
     agent_id: AgentId,
     thread_store: Option<Entity<ThreadStore>>,
+    prompt_history: Vec<Vec<acp::ContentBlock>>,
+    prompt_history_state: PromptHistoryState,
     _subscriptions: Vec<Subscription>,
     _parse_slash_command_task: Task<()>,
+}
+
+#[derive(Default)]
+struct PromptHistoryState {
+    saved_draft: Option<Vec<acp::ContentBlock>>,
+    history_index: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -214,6 +222,8 @@ pub enum MessageEditorEvent {
         attempt: InputAttempt,
         cursor_offset: usize,
     },
+    PromptHistoryPreviousRequested,
+    PromptHistoryNextRequested,
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -608,6 +618,8 @@ impl MessageEditor {
             session_capabilities,
             agent_id,
             thread_store,
+            prompt_history: Vec::new(),
+            prompt_history_state: PromptHistoryState::default(),
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
         }
@@ -923,6 +935,7 @@ impl MessageEditor {
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reset_prompt_history_navigation();
         self.editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
             editor.remove_creases(
@@ -943,6 +956,7 @@ impl MessageEditor {
                 editor.clear_inlay_hints(cx);
             });
         }
+        self.reset_prompt_history_navigation();
         cx.emit(MessageEditorEvent::Send)
     }
 
@@ -1009,7 +1023,46 @@ impl MessageEditor {
             editor.clear_inlay_hints(cx);
         });
 
+        self.reset_prompt_history_navigation();
         cx.emit(MessageEditorEvent::SendImmediately)
+    }
+
+    fn prompt_history_previous(
+        &mut self,
+        _: &crate::PromptHistoryPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_visible_completions_menu(cx) {
+            cx.propagate();
+            return;
+        }
+
+        if !self.cursor_is_at_buffer_start(cx) {
+            cx.propagate();
+            return;
+        }
+
+        cx.emit(MessageEditorEvent::PromptHistoryPreviousRequested);
+    }
+
+    fn prompt_history_next(
+        &mut self,
+        _: &crate::PromptHistoryNext,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_visible_completions_menu(cx) {
+            cx.propagate();
+            return;
+        }
+
+        if !self.is_navigating_prompt_history() {
+            cx.propagate();
+            return;
+        }
+
+        cx.emit(MessageEditorEvent::PromptHistoryNextRequested);
     }
 
     fn chat_with_follow(
@@ -1853,6 +1906,96 @@ impl MessageEditor {
         self.editor.read(cx).text(cx)
     }
 
+    fn reset_prompt_history_navigation(&mut self) {
+        self.prompt_history_state = PromptHistoryState::default();
+    }
+
+    pub fn set_prompt_history(&mut self, prompt_history: Vec<Vec<acp::ContentBlock>>) {
+        self.prompt_history = prompt_history;
+    }
+
+    fn has_visible_completions_menu(&self, cx: &App) -> bool {
+        self.editor.read(cx).has_visible_completions_menu()
+    }
+
+    fn is_navigating_prompt_history(&self) -> bool {
+        self.prompt_history_state.history_index.is_some()
+    }
+
+    fn cursor_is_at_buffer_start(&self, cx: &App) -> bool {
+        let editor = self.editor.read(cx);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let selection = editor.selections.newest_anchor();
+        let start_offset = selection.start.to_offset(&snapshot).0;
+        let end_offset = selection.end.to_offset(&snapshot).0;
+        start_offset == 0 && end_offset == 0
+    }
+
+    fn set_message_from_history(
+        &mut self,
+        message: Vec<acp::ContentBlock>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+        });
+        self.insert_message_blocks(message, false, window, cx);
+        self.set_cursor_offset(0, window, cx);
+    }
+
+    pub fn navigate_prompt_history_previous(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.prompt_history.is_empty() {
+            return false;
+        }
+
+        let next_index = match self.prompt_history_state.history_index {
+            Some(index) if index > 0 => index - 1,
+            Some(_) => return false,
+            None => {
+                self.prompt_history_state.saved_draft =
+                    Some(self.draft_content_blocks_snapshot(cx));
+                self.prompt_history.len() - 1
+            }
+        };
+
+        self.prompt_history_state.history_index = Some(next_index);
+        let message = self.prompt_history[next_index].clone();
+        self.set_message_from_history(message, window, cx);
+        true
+    }
+
+    pub fn navigate_prompt_history_next(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(current_index) = self.prompt_history_state.history_index else {
+            return false;
+        };
+
+        if current_index + 1 < self.prompt_history.len() {
+            let next_index = current_index + 1;
+            self.prompt_history_state.history_index = Some(next_index);
+            let message = self.prompt_history[next_index].clone();
+            self.set_message_from_history(message, window, cx);
+            return true;
+        }
+
+        let draft = self
+            .prompt_history_state
+            .saved_draft
+            .take()
+            .unwrap_or_default();
+        self.prompt_history_state.history_index = None;
+        self.set_message_from_history(draft, window, cx);
+        true
+    }
+
     pub fn set_cursor_offset(
         &mut self,
         offset: usize,
@@ -1894,6 +2037,16 @@ impl MessageEditor {
         self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
         });
+    }
+
+    #[cfg(test)]
+    pub fn set_prompt_history_for_tests(
+        &mut self,
+        prompt_history: Vec<Vec<acp::ContentBlock>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.set_prompt_history(prompt_history);
     }
 
     fn serialize_selection_with_mentions(
@@ -1995,6 +2148,8 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::send_immediately))
             .on_action(cx.listener(Self::chat_with_follow))
+            .on_action(cx.listener(Self::prompt_history_previous))
+            .on_action(cx.listener(Self::prompt_history_next))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::copy))
             .capture_action(cx.listener(Self::cut))
@@ -5381,6 +5536,227 @@ mod tests {
             text, "initial\n\nappended",
             "Separator should appear between existing and appended content"
         );
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_previous_and_draft_restore(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.set_prompt_history_for_tests(
+                vec![
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        "first prompt",
+                    ))],
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        "second prompt",
+                    ))],
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        "third prompt",
+                    ))],
+                ],
+                window,
+                cx,
+            );
+            message_editor.set_text("draft prompt", window, cx);
+            message_editor.set_cursor_offset(0, window, cx);
+        });
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            assert!(message_editor.navigate_prompt_history_previous(window, cx));
+        });
+        let text = message_editor.update(cx, |message_editor, cx| message_editor.text(cx));
+        assert_eq!(text, "third prompt");
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            assert!(message_editor.navigate_prompt_history_previous(window, cx));
+        });
+        let text = message_editor.update(cx, |message_editor, cx| message_editor.text(cx));
+        assert_eq!(text, "second prompt");
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            assert!(message_editor.navigate_prompt_history_next(window, cx));
+        });
+        let text = message_editor.update(cx, |message_editor, cx| message_editor.text(cx));
+        assert_eq!(text, "third prompt");
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            assert!(message_editor.navigate_prompt_history_next(window, cx));
+        });
+        let text = message_editor.update(cx, |message_editor, cx| message_editor.text(cx));
+        assert_eq!(text, "draft prompt");
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_previous_requires_cursor_at_start(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.set_prompt_history_for_tests(
+                vec![vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "previous prompt",
+                ))]],
+                window,
+                cx,
+            );
+            message_editor.set_text("draft prompt", window, cx);
+            message_editor.set_cursor_offset(5, window, cx);
+        });
+
+        cx.dispatch_action(crate::PromptHistoryPrevious);
+
+        let text = message_editor.update(cx, |message_editor, cx| message_editor.text(cx));
+        assert_eq!(text, "draft prompt");
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_next_without_history_mode_is_noop(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.set_prompt_history_for_tests(
+                vec![vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "previous prompt",
+                ))]],
+                window,
+                cx,
+            );
+            message_editor.set_text("draft prompt", window, cx);
+            message_editor.set_cursor_offset(0, window, cx);
+        });
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            assert!(!message_editor.navigate_prompt_history_next(window, cx));
+        });
+
+        let text = message_editor.update(cx, |message_editor, cx| message_editor.text(cx));
+        assert_eq!(text, "draft prompt");
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_send_immediately_resets_navigation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.set_prompt_history_for_tests(
+                vec![vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "previous prompt",
+                ))]],
+                window,
+                cx,
+            );
+            message_editor.set_text("draft prompt", window, cx);
+            message_editor.set_cursor_offset(0, window, cx);
+        });
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            assert!(message_editor.navigate_prompt_history_previous(window, cx));
+        });
+        message_editor.update_in(cx, |message_editor, _window, cx| {
+            message_editor.send_immediately(&crate::SendImmediately, _window, cx);
+        });
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.set_text("new draft", window, cx);
+            message_editor.set_cursor_offset(0, window, cx);
+        });
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            assert!(!message_editor.navigate_prompt_history_next(window, cx));
+        });
+
+        let text = message_editor.update(cx, |message_editor, cx| message_editor.text(cx));
+        assert_eq!(text, "new draft");
+    }
+
+    #[gpui::test]
+    async fn test_prompt_history_does_not_override_completions_navigation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
+            acp::PromptCapabilities::default(),
+            vec![
+                acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
+                acp::AvailableCommand::new("say-hello", "Say hello to whoever you want"),
+            ],
+        )));
+
+        let message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    None,
+                    None,
+                    session_capabilities.clone(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            message_editor
+        });
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.set_prompt_history_for_tests(
+                vec![vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "previous prompt",
+                ))]],
+                window,
+                cx,
+            );
+        });
+
+        cx.simulate_input("/");
+        cx.dispatch_action(crate::PromptHistoryPrevious);
+
+        let (text, completions_visible) = message_editor.update(&mut cx, |message_editor, cx| {
+            (
+                message_editor.text(cx),
+                message_editor
+                    .editor()
+                    .read(cx)
+                    .has_visible_completions_menu(),
+            )
+        });
+        assert_eq!(text, "/");
+        assert!(completions_visible);
     }
 
     #[gpui::test]

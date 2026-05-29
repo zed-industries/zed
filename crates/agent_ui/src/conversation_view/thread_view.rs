@@ -977,7 +977,7 @@ impl ThreadView {
 
     pub fn handle_message_editor_event(
         &mut self,
-        _editor: &Entity<MessageEditor>,
+        editor: &Entity<MessageEditor>,
         event: &MessageEditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1004,6 +1004,20 @@ impl ThreadView {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
+            MessageEditorEvent::PromptHistoryPreviousRequested => {
+                let history = self.submitted_prompt_history(cx);
+                editor.update(cx, |editor, cx| {
+                    editor.set_prompt_history(history);
+                    editor.navigate_prompt_history_previous(window, cx);
+                });
+            }
+            MessageEditorEvent::PromptHistoryNextRequested => {
+                let history = self.submitted_prompt_history(cx);
+                editor.update(cx, |editor, cx| {
+                    editor.set_prompt_history(history);
+                    editor.navigate_prompt_history_next(window, cx);
+                });
+            }
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
@@ -1085,6 +1099,18 @@ impl ThreadView {
         !self.local_queued_messages.is_empty()
     }
 
+    fn submitted_prompt_history(&self, cx: &App) -> Vec<Vec<acp::ContentBlock>> {
+        self.thread
+            .read(cx)
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                AgentThreadEntry::UserMessage(user_message) => Some(user_message.chunks.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn is_imported_thread(&self, cx: &App) -> bool {
         let Some(thread) = self.as_native_thread(cx) else {
             return false;
@@ -1148,6 +1174,14 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
+            ViewEvent::MessageEditorEvent(
+                _editor,
+                MessageEditorEvent::PromptHistoryPreviousRequested,
+            ) => {}
+            ViewEvent::MessageEditorEvent(
+                _editor,
+                MessageEditorEvent::PromptHistoryNextRequested,
+            ) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}

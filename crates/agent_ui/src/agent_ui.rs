@@ -259,6 +259,10 @@ actions!(
         EditFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
+        /// Recalls the previous submitted prompt in the focused message editor.
+        PromptHistoryPrevious,
+        /// Moves toward newer prompt history in the focused message editor.
+        PromptHistoryNext,
         /// Opens the permission granularity dropdown for the current tool call.
         OpenPermissionDropdown,
         /// Toggles thinking mode for models that support extended thinking.
