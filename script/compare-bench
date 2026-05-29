@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Compare a criterion benchmark between two git branches.
+#
+# Usage:
+#   script/compare-bench CRATE [BASE_BRANCH] [FEATURE_BRANCH]
+#
+# CRATE is the cargo package to benchmark (e.g. `streaming_diff`); by default
+# the bench target of the same name is run.
+#
+# The bench target name can be overridden via the BENCH_NAME environment
+# variable. The `--save-baseline <name>` flag is appended automatically.
+
+if [[ $# -lt 1 ]]; then
+    echo "usage: script/compare-bench CRATE [BASE_BRANCH] [FEATURE_BRANCH]" >&2
+    exit 1
+fi
+
+CRATE="$1"
+BASE_BRANCH="${2:-main}"
+FEATURE_BRANCH="${3:-streaming-edits-f32}"
+BENCH_NAME="${BENCH_NAME:-$CRATE}"
+
+BENCH_CMD=(
+    cargo bench -p "$CRATE" --bench "$BENCH_NAME" --profile release-fast --
+    --warm-up-time 1 --measurement-time 5
+)
+
+run_bench() {
+    local baseline_name="$1"
+    "${BENCH_CMD[@]}" --save-baseline "$baseline_name"
+}
+
+# Refuse to run with uncommitted changes, since we switch branches.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "error: working tree has uncommitted changes; commit or stash first" >&2
+    exit 1
+fi
+
+# Remember where we started so we can restore it on exit.
+ORIGINAL_REF="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
+restore() {
+    git checkout --quiet "$ORIGINAL_REF"
+}
+trap restore EXIT
+
+echo "==> Benchmarking $BASE_BRANCH"
+git checkout --quiet "$BASE_BRANCH"
+run_bench "$BASE_BRANCH"
+
+echo "==> Benchmarking $FEATURE_BRANCH"
+git checkout --quiet "$FEATURE_BRANCH"
+run_bench "$FEATURE_BRANCH"
+
+echo "==> Comparison"
+if command -v critcmp >/dev/null 2>&1; then
+    critcmp "$BASE_BRANCH" "$FEATURE_BRANCH"
+else
+    echo "critcmp not found; showing criterion's own comparison instead."
+    echo "Install it with: cargo install critcmp"
+    "${BENCH_CMD[@]}" --load-baseline "$FEATURE_BRANCH" --baseline "$BASE_BRANCH"
+fi
