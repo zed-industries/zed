@@ -316,12 +316,6 @@ fn map_open_ai_error(error: open_ai::RequestError) -> LanguageModelCompletionErr
                 retry_after,
             )
         }
-        open_ai::RequestError::ResponseHeaderTimeout { timeout, .. } => {
-            LanguageModelCompletionError::HttpSend {
-                provider: PROVIDER_NAME,
-                error: anyhow::anyhow!("response headers timed out after {timeout:?}"),
-            }
-        }
         open_ai::RequestError::Other(error) => LanguageModelCompletionError::Other(error),
     }
 }
