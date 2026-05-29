@@ -28,8 +28,9 @@ use feature_flags::{
 };
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
+    Focusable, KeyContext, ListState, Modifiers, MouseDownEvent, Pixels, Point, Render,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle, anchored,
+    deferred, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use menu::{
@@ -700,6 +701,9 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
+    /// Right-click context menu shown for a thread entry. The `Point` is the
+    /// screen position to anchor the menu at (the click location).
+    thread_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
@@ -822,6 +826,7 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
+            thread_context_menu: None,
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
@@ -2930,6 +2935,52 @@ impl Sidebar {
 
     fn has_filter_query(&self, cx: &App) -> bool {
         !self.filter_editor.read(cx).text(cx).is_empty()
+    }
+
+    /// Opens a right-click context menu for the thread at `ix`, anchored at
+    /// `position` (the screen-space location of the click). The menu contains
+    /// the same actions exposed via the hover buttons (Rename, plus
+    /// Archive/Discard Draft as appropriate) so a user who reaches for a
+    /// right-click gets the same affordances without having to hover.
+    fn deploy_thread_context_menu(
+        &mut self,
+        ix: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ListEntry::Thread(thread)) = self.contents.entries.get(ix) else {
+            return;
+        };
+        let is_running = matches!(
+            thread.status,
+            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
+        );
+        let is_draft = thread.is_draft;
+
+        self.selection = Some(ix);
+
+        let focus_handle = self.focus_handle.clone();
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            menu.context(focus_handle)
+                .action("Rename", Box::new(RenameSelectedThread))
+                .when(!is_running, |menu| {
+                    let label = if is_draft {
+                        "Discard Draft"
+                    } else {
+                        "Archive"
+                    };
+                    menu.action(label, Box::new(ArchiveSelectedThread))
+                })
+        });
+
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.thread_context_menu.take();
+            cx.notify();
+        });
+        self.thread_context_menu = Some((context_menu, position, subscription));
+        cx.notify();
     }
 
     fn start_renaming_thread(
@@ -5728,6 +5779,15 @@ impl Sidebar {
                 }
                 cx.notify();
             }))
+            .on_secondary_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, window, cx| {
+                    if this.renaming_thread_id.is_some() {
+                        return;
+                    }
+                    cx.stop_propagation();
+                    this.deploy_thread_context_menu(ix, event.position, window, cx);
+                },
+            ))
             .when(is_renaming, |this| {
                 this.is_truncated(false).title_slot(
                     div()
@@ -7341,6 +7401,15 @@ impl Render for Sidebar {
                 })
             })
             .child(self.render_sidebar_bottom_bar(cx))
+            .children(self.thread_context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 

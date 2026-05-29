@@ -5026,6 +5026,77 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_right_click_deploys_thread_context_menu(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Hi there!".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    cx.run_until_parked();
+
+    let entry_ix = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| matches!(entry, ListEntry::Thread(_)))
+            .expect("sidebar should have a thread entry")
+    });
+
+    // Right-click a thread entry: the context menu should be installed and the
+    // entry should become the current selection so the menu's Rename/Archive
+    // actions know which thread to act on.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.deploy_thread_context_menu(entry_ix, gpui::Point::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            sidebar.thread_context_menu.is_some(),
+            "right-click should deploy a thread context menu"
+        );
+        assert_eq!(
+            sidebar.selection,
+            Some(entry_ix),
+            "right-click should select the clicked thread so menu actions target it"
+        );
+    });
+
+    // Dismissing the menu (Esc, click outside, etc.) emits a DismissEvent on
+    // the menu, which the sidebar subscribes to in order to drop its reference.
+    let menu = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .thread_context_menu
+            .as_ref()
+            .map(|(menu, _, _)| menu.clone())
+            .expect("menu should be present")
+    });
+    cx.update(|_, cx| {
+        menu.update(cx, |_, cx| {
+            cx.emit(gpui::DismissEvent);
+        });
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            sidebar.thread_context_menu.is_none(),
+            "dismissing the menu should clear the sidebar's reference"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =

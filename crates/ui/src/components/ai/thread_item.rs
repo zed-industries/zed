@@ -1,7 +1,8 @@
 use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
-    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString, pulsating_between,
+    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, MouseDownEvent, SharedString,
+    pulsating_between,
 };
 use itertools::Itertools as _;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -60,6 +61,8 @@ pub struct ThreadItem {
     archived: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
+    on_secondary_mouse_down:
+        Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     action_slot: Option<AnyElement>,
     base_bg: Option<Hsla>,
 }
@@ -94,6 +97,7 @@ impl ThreadItem {
             archived: false,
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
+            on_secondary_mouse_down: None,
             action_slot: None,
             base_bg: None,
         }
@@ -224,6 +228,14 @@ impl ThreadItem {
 
     pub fn on_hover(mut self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
         self.on_hover = Box::new(on_hover);
+        self
+    }
+
+    pub fn on_secondary_mouse_down(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_secondary_mouse_down = Some(Box::new(handler));
         self
     }
 
@@ -602,6 +614,14 @@ impl RenderOnce for ThreadItem {
                 }))
             })
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))
+            .when_some(
+                self.on_secondary_mouse_down,
+                |this, on_secondary_mouse_down| {
+                    this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                        (on_secondary_mouse_down)(event, window, cx)
+                    })
+                },
+            )
     }
 }
 
