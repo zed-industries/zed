@@ -2720,6 +2720,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                         agent::DbThread {
                             title: title.to_string().into(),
                             messages: Vec::new(),
+                            conversations: None,
                             updated_at,
                             detailed_summary: None,
                             initial_project_snapshot: None,

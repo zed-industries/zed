@@ -9633,6 +9633,7 @@ mod tests {
         let db_thread = agent::DbThread {
             title: source_title.clone(),
             messages: Vec::new(),
+            conversations: None,
             updated_at: Utc::now(),
             detailed_summary: None,
             initial_project_snapshot: None,
