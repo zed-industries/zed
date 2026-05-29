@@ -57,6 +57,7 @@ impl Vim {
             let mut edits = Vec::new();
             let mut new_anchors = Vec::new();
 
+            let is_helix = vim.mode.is_helix();
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             for selection in editor.selections.all_adjusted(&editor.display_snapshot(cx)) {
                 if !selection.is_empty()
@@ -77,9 +78,9 @@ impl Vim {
                     };
 
                     let find_result = if !selection.is_empty() {
-                        find_target(&snapshot, start, end, true)
+                        find_target(&snapshot, start, end, true, is_helix)
                     } else {
-                        find_target(&snapshot, start, end, false)
+                        find_target(&snapshot, start, end, false, is_helix)
                     };
 
                     if let Some((range, target, radix)) = find_result {
@@ -118,7 +119,14 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx)
+        // Returning to Normal would eject the user from Helix mode, breaking
+        // repeated increments; stay in HelixNormal when that's where we started.
+        let target_mode = if self.mode.is_helix() {
+            Mode::HelixNormal
+        } else {
+            Mode::Normal
+        };
+        self.switch_mode(target_mode, true, window, cx)
     }
 }
 
@@ -199,6 +207,7 @@ fn find_target(
     start: Point,
     end: Point,
     need_range: bool,
+    is_helix: bool,
 ) -> Option<(Range<Point>, String, u32)> {
     let start_offset = start.to_offset(snapshot);
     let end_offset = end.to_offset(snapshot);
@@ -219,11 +228,28 @@ fn find_target(
     // to `next_offset` and decrement at the start of each iteration so that `offset`
     // always lands on a valid character boundary (not in the middle of a multibyte char).
     let mut offset = next_offset;
-    for ch in snapshot.reversed_chars_at(next_offset) {
+    let mut reversed_chars = snapshot.reversed_chars_at(next_offset).peekable();
+    while let Some(ch) = reversed_chars.next() {
         offset -= ch.len_utf8();
 
         // Search boundaries
         if offset.0 == 0 || ch.is_whitespace() || (need_range && offset <= start_offset) {
+            break;
+        }
+
+        // In Helix mode, a hyphen separating two numbers (such as in the date
+        // `2024-01-15`) is treated as a boundary so that the segment under the
+        // cursor increments independently, matching Helix's behavior. A hyphen
+        // not preceded by a digit is left to the forward scan to interpret as a
+        // negative sign. `reversed_chars.peek()` is the character before the
+        // hyphen since we're iterating backward.
+        if is_helix
+            && ch == '-'
+            && reversed_chars.peek().is_some_and(|prev| prev.is_ascii_digit())
+        {
+            // Advance past the hyphen so the forward scan starts on the digit
+            // rather than treating the hyphen as a sign.
+            offset += ch.len_utf8();
             break;
         }
 
@@ -898,6 +924,36 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("# Title\n2. item\nˇ2. item\n3. item");
+    }
+
+    #[gpui::test]
+    async fn test_increment_helix_date_segments(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Incrementing the month only affects the month segment.
+        cx.set_state("2024-0ˇ1-15", Mode::HelixNormal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("2024-0ˇ2-15", Mode::HelixNormal);
+
+        // Decrementing the month only affects the month segment.
+        cx.simulate_keystrokes("ctrl-x");
+        cx.assert_state("2024-0ˇ1-15", Mode::HelixNormal);
+
+        // Incrementing the day only affects the day segment.
+        cx.set_state("2024-01-1ˇ5", Mode::HelixNormal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("2024-01-1ˇ6", Mode::HelixNormal);
+
+        // Incrementing the year only affects the year segment.
+        cx.set_state("20ˇ24-01-15", Mode::HelixNormal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("202ˇ5-01-15", Mode::HelixNormal);
+
+        // A leading hyphen not preceded by a digit is still treated as a
+        // negative sign.
+        cx.set_state("x -ˇ1 y", Mode::HelixNormal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("x ˇ0 y", Mode::HelixNormal);
     }
 
     #[gpui::test]
