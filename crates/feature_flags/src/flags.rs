@@ -27,13 +27,17 @@ impl FeatureFlag for AcpBetaFeatureFlag {
 }
 register_feature_flag!(AcpBetaFeatureFlag);
 
-pub struct AgentSharingFeatureFlag;
+pub struct HandoffFeatureFlag;
 
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
+impl FeatureFlag for HandoffFeatureFlag {
+    const NAME: &'static str = "handoff";
     type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
-register_feature_flag!(AgentSharingFeatureFlag);
+register_feature_flag!(HandoffFeatureFlag);
 
 pub struct DiffReviewFeatureFlag;
 

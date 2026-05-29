@@ -68,8 +68,6 @@ pub struct DbThread {
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
     #[serde(default)]
-    pub imported: bool,
-    #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
     #[serde(default)]
     pub speed: Option<Speed>,
@@ -161,7 +159,6 @@ impl SharedThread {
             request_token_usage: Default::default(),
             model: self.model,
             profile: None,
-            imported: true,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -346,7 +343,6 @@ impl DbThread {
             request_token_usage,
             model: thread.model,
             profile: thread.profile,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -798,7 +794,6 @@ mod tests {
             request_token_usage: HashMap::default(),
             model: None,
             profile: None,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
