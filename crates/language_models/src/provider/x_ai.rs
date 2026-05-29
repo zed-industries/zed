@@ -270,7 +270,7 @@ fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEf
 
 fn default_thinking_reasoning_effort(model: &x_ai::Model) -> Option<open_ai::ReasoningEffort> {
     if model.supports_reasoning_effort() {
-        Some(open_ai::ReasoningEffort::Medium)
+        Some(open_ai::ReasoningEffort::Low)
     } else {
         None
     }
