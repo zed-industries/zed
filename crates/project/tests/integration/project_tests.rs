@@ -16,6 +16,7 @@ mod search;
 mod search_history;
 mod signature_help;
 mod task_inventory;
+mod toolchain_store;
 mod trusted_worktrees;
 mod yarn;
 
@@ -12552,7 +12553,9 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 new_toolchain_placeholder: SharedString::new_static(
                     "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
                 ),
-                manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+                root_indicators: vec![language::ToolchainRootIndicator::Manifest(
+                    ManifestName::from(SharedString::new_static("pyproject.toml")),
+                )],
             }
         }
         fn activation_script(

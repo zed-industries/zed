@@ -1,9 +1,11 @@
 use gpui::{App, SharedString, UpdateGlobal};
+use language::language_settings::AllLanguageSettings;
 use node_runtime::NodeRuntime;
+use pet_core::python_environment::PythonEnvironmentKind;
 use project::Fs;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
-use settings::{SemanticTokenRules, SettingsStore};
+use settings::{SemanticTokenRules, Settings, SettingsStore};
 use smol::stream::StreamExt;
 use std::sync::Arc;
 use util::ResultExt;
@@ -73,6 +75,29 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new(node.clone()));
     let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::new(fs.clone()));
+
+    {
+        let python_name = LanguageName::new_static("Python");
+        let python_toolchain_provider = python_toolchain_provider.clone();
+        let update_preferred = move |cx: &mut App| {
+            let settings = AllLanguageSettings::get(None, cx);
+            let preferred = settings
+                .language(None, Some(&python_name), cx)
+                .tasks
+                .variables
+                .get(python::PREFERRED_ENVIRONMENT_VARIABLE)
+                .and_then(|s| {
+                    serde_json::from_value::<PythonEnvironmentKind>(serde_json::Value::String(
+                        s.clone(),
+                    ))
+                    .ok()
+                });
+            python_toolchain_provider.update_preferred_environment(preferred);
+        };
+        update_preferred(cx);
+        cx.observe_global::<SettingsStore>(update_preferred).detach();
+    }
+
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));

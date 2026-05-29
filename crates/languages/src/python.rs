@@ -13,7 +13,10 @@ use language::{
 };
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
-use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
+use language::{
+    Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata, ToolchainRootIndicator,
+    ToolchainRootMarker,
+};
 use lsp::{LanguageServerBinary, Uri};
 use lsp::{LanguageServerBinaryOptions, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -1152,11 +1155,21 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
 
 pub(crate) struct PythonToolchainProvider {
     fs: Arc<dyn Fs>,
+    preferred_environment: Arc<Mutex<Option<PythonEnvironmentKind>>>,
 }
+
+pub(crate) const PREFERRED_ENVIRONMENT_VARIABLE: &str = "PYTHON_PREFERRED_ENVIRONMENT";
 
 impl PythonToolchainProvider {
     pub fn new(fs: Arc<dyn Fs>) -> Self {
-        Self { fs }
+        Self {
+            fs,
+            preferred_environment: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn update_preferred_environment(&self, kind: Option<PythonEnvironmentKind>) {
+        *self.preferred_environment.lock() = kind;
     }
 }
 
@@ -1177,15 +1190,22 @@ static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     PythonEnvironmentKind::Homebrew,
 ];
 
-fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
+fn env_priority(kind: Option<PythonEnvironmentKind>, preferred: Option<PythonEnvironmentKind>) -> usize {
+    if let Some(preferred) = preferred
+        && kind == Some(preferred)
+    {
+        return 0;
+    }
+    let shift = if preferred.is_some() { 1 } else { 0 };
     if let Some(kind) = kind {
         ENV_PRIORITY_LIST
             .iter()
             .position(|blessed_env| blessed_env == &kind)
-            .unwrap_or(ENV_PRIORITY_LIST.len())
+            .map(|pos| pos + shift)
+            .unwrap_or(ENV_PRIORITY_LIST.len() + shift)
     } else {
         // Unknown toolchains are less useful than non-blessed ones.
-        ENV_PRIORITY_LIST.len() + 1
+        ENV_PRIORITY_LIST.len() + shift + 1
     }
 }
 
@@ -1315,7 +1335,9 @@ impl ToolchainLister for PythonToolchainProvider {
 
         let wr = worktree_root;
         let wr_venv = get_worktree_venv_declaration(&wr).await;
+        let preferred_environment = *self.preferred_environment.lock();
         // Sort detected environments by:
+        //     user-preferred environment kind
         //     environment name matching activation file (<workdir>/.venv)
         //     environment project dir matching worktree_root
         //     general env priority
@@ -1343,8 +1365,11 @@ impl ToolchainLister for PythonToolchainProvider {
                     )
                 };
 
-            // Compare environment priorities
-            let priority_ordering = || env_priority(lhs.kind).cmp(&env_priority(rhs.kind));
+            // Compare environment priorities, applying user preference as a boost
+            let priority_ordering = || {
+                env_priority(lhs.kind, preferred_environment)
+                    .cmp(&env_priority(rhs.kind, preferred_environment))
+            };
 
             // Compare conda prefixes
             let conda_ordering = || {
@@ -1397,7 +1422,15 @@ impl ToolchainLister for PythonToolchainProvider {
             new_toolchain_placeholder: SharedString::new_static(
                 "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
             ),
-            manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+            root_indicators: vec![
+                ToolchainRootIndicator::Manifest(ManifestName::from(SharedString::new_static(
+                    "pyproject.toml",
+                ))),
+                ToolchainRootIndicator::Marker(ToolchainRootMarker::directory_with_required_child(
+                    SharedString::new_static(".venv"),
+                    SharedString::new_static("pyvenv.cfg"),
+                )),
+            ],
         }
     }
 
@@ -3201,6 +3234,106 @@ mod tests {
                 delegate,
             });
             assert_eq!(result.as_deref(), RelPath::unix("deep/nested").ok());
+        }
+    }
+
+    mod env_priority_tests {
+        use pet_core::python_environment::PythonEnvironmentKind;
+
+        use crate::python::env_priority;
+
+        #[test]
+        fn preferred_environment_has_priority_zero() {
+            // Conda is normally very low priority (index 9 in ENV_PRIORITY_LIST),
+            // but when set as preferred it should get priority 0.
+            assert_eq!(
+                env_priority(Some(PythonEnvironmentKind::Conda), Some(PythonEnvironmentKind::Conda)),
+                0
+            );
+            // Uv is normally index 1, but with Conda as preferred it shifts to 2.
+            assert_eq!(
+                env_priority(Some(PythonEnvironmentKind::Uv), Some(PythonEnvironmentKind::Conda)),
+                2
+            );
+            // UvWorkspace is index 0 normally, shifts to 1 when something else is preferred.
+            assert_eq!(
+                env_priority(
+                    Some(PythonEnvironmentKind::UvWorkspace),
+                    Some(PythonEnvironmentKind::Conda)
+                ),
+                1
+            );
+        }
+
+        #[test]
+        fn default_order_when_no_preference() {
+            // Without a preference, UvWorkspace (index 0) beats Conda (index 9).
+            assert!(
+                env_priority(Some(PythonEnvironmentKind::UvWorkspace), None)
+                    < env_priority(Some(PythonEnvironmentKind::Conda), None)
+            );
+            // Unknown kind falls after all known kinds.
+            assert!(
+                env_priority(Some(PythonEnvironmentKind::Homebrew), None)
+                    < env_priority(None, None)
+            );
+        }
+
+        #[test]
+        fn non_preferred_kind_keeps_relative_order() {
+            // When Venv is preferred, UvWorkspace and Uv keep their relative order
+            // (UvWorkspace before Uv), just shifted by 1.
+            assert!(
+                env_priority(
+                    Some(PythonEnvironmentKind::UvWorkspace),
+                    Some(PythonEnvironmentKind::Venv)
+                ) < env_priority(
+                    Some(PythonEnvironmentKind::Uv),
+                    Some(PythonEnvironmentKind::Venv)
+                )
+            );
+        }
+    }
+
+    mod preferred_environment_provider_tests {
+        use gpui::TestAppContext;
+        use pet_core::python_environment::PythonEnvironmentKind;
+
+        use crate::python::{PREFERRED_ENVIRONMENT_VARIABLE, PythonToolchainProvider};
+
+        #[gpui::test]
+        fn update_preferred_environment_stored_and_cleared(cx: &mut TestAppContext) {
+            let fs = project::FakeFs::new(cx.executor());
+            let provider = PythonToolchainProvider::new(fs);
+
+            assert_eq!(*provider.preferred_environment.lock(), None);
+
+            provider.update_preferred_environment(Some(PythonEnvironmentKind::Conda));
+            assert_eq!(
+                *provider.preferred_environment.lock(),
+                Some(PythonEnvironmentKind::Conda)
+            );
+
+            provider.update_preferred_environment(None);
+            assert_eq!(*provider.preferred_environment.lock(), None);
+        }
+
+        #[test]
+        fn preferred_environment_variable_name_is_parseable_to_kind() {
+            // Verify that the variable name constant is correct and that the
+            // recognized kind strings (as serialized by serde) round-trip correctly.
+            assert_eq!(
+                PREFERRED_ENVIRONMENT_VARIABLE,
+                "PYTHON_PREFERRED_ENVIRONMENT"
+            );
+
+            let parsed: Option<PythonEnvironmentKind> =
+                serde_json::from_value(serde_json::Value::String("Venv".to_string())).ok();
+            assert_eq!(parsed, Some(PythonEnvironmentKind::Venv));
+
+            let parsed: Option<PythonEnvironmentKind> =
+                serde_json::from_value(serde_json::Value::String("unknown_kind".to_string())).ok();
+            assert_eq!(parsed, None);
         }
     }
 }

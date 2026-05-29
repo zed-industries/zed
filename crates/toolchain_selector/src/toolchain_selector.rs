@@ -908,7 +908,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(string_match) = self.matches.get(self.selected_index) {
-            let (toolchain, _) = self.candidates[string_match.candidate_id].clone();
+            let (toolchain, scope) = self.candidates[string_match.candidate_id].clone();
             if let Some(workspace_id) = self
                 .workspace
                 .read_with(cx, |this, _| this.database_id())
@@ -918,8 +918,11 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 let workspace = self.workspace.clone();
                 let worktree_id = self.worktree_id;
                 let worktree_abs_path_root = self.worktree_abs_path_root.clone();
-                let path = self.relative_path.clone();
-                let relative_path = self.relative_path.clone();
+                let active_path = match scope {
+                    Some(ToolchainScope::Subproject(_, relative_path)) => relative_path,
+                    _ => self.relative_path.clone(),
+                };
+                let relative_path = active_path.clone();
                 let db = workspace::WorkspaceDb::global(cx);
                 cx.spawn_in(window, async move |_, cx| {
                     db.set_toolchain(
@@ -934,7 +937,10 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                         .update(cx, |this, cx| {
                             this.project().update(cx, |this, cx| {
                                 this.activate_toolchain(
-                                    ProjectPath { worktree_id, path },
+                                    ProjectPath {
+                                        worktree_id,
+                                        path: active_path,
+                                    },
                                     toolchain,
                                     cx,
                                 )

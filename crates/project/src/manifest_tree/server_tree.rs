@@ -15,7 +15,7 @@ use collections::IndexMap;
 use gpui::{App, Entity};
 use language::{
     CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate, ManifestName, Toolchain,
-    language_settings::AllLanguageSettings,
+    ToolchainRootIndicator, language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
@@ -140,10 +140,18 @@ impl LanguageServerTree {
         path: ProjectPath,
         language_name: LanguageName,
         manifest_name: Option<&ManifestName>,
+        root_indicators: Option<&[ToolchainRootIndicator]>,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerId> + 'a {
-        let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
+        let manifest_location = self.manifest_location_for_path(
+            &path,
+            &language_name,
+            manifest_name,
+            root_indicators,
+            delegate,
+            cx,
+        );
         let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
         self.get_with_adapters(manifest_location, adapters)
     }
@@ -154,10 +162,18 @@ impl LanguageServerTree {
         path: ProjectPath,
         language_name: LanguageName,
         manifest_name: Option<&ManifestName>,
+        root_indicators: Option<&[ToolchainRootIndicator]>,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &'a mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
+        let manifest_location = self.manifest_location_for_path(
+            &path,
+            &language_name,
+            manifest_name,
+            root_indicators,
+            delegate,
+            cx,
+        );
         let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
         self.init_with_adapters(manifest_location, language_name, adapters, cx)
     }
@@ -221,12 +237,35 @@ impl LanguageServerTree {
     fn manifest_location_for_path(
         &self,
         path: &ProjectPath,
+        language_name: &LanguageName,
         manifest_name: Option<&ManifestName>,
+        root_indicators: Option<&[ToolchainRootIndicator]>,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> ProjectPath {
         // Find out what the root location of our subproject is.
         // That's where we'll look for language settings (that include a set of language servers).
+        if let Some(root_indicators) = root_indicators {
+            return self
+                .manifest_tree
+                .update(cx, |this, cx| {
+                    this.root_for_path_with_indicators(path, root_indicators, delegate, cx)
+                })
+                .or_else(|| {
+                    self.toolchains
+                        .read(cx)
+                        .active_toolchain_for_path(path.worktree_id, &path.path, language_name)
+                        .map(|(active_path, _)| ProjectPath {
+                            worktree_id: path.worktree_id,
+                            path: active_path,
+                        })
+                })
+                .unwrap_or_else(|| ProjectPath {
+                    worktree_id: path.worktree_id,
+                    path: RelPath::empty().into(),
+                });
+        }
+
         self.manifest_tree.update(cx, |this, cx| {
             this.root_for_path_or_worktree_root(path, manifest_name, delegate, cx)
         })
@@ -324,6 +363,11 @@ impl LanguageServerTree {
         }
     }
 
+    /// Invalidate all cached toolchain nodes so they get recalculated on next query.
+    pub(crate) fn invalidate_toolchains(&mut self) {
+        self.instances.clear();
+    }
+
     pub(crate) fn register_reused(
         &mut self,
         worktree_id: WorktreeId,
@@ -393,12 +437,18 @@ impl ServerTreeRebase {
         path: ProjectPath,
         language_name: LanguageName,
         manifest_name: Option<&ManifestName>,
+        root_indicators: Option<&[ToolchainRootIndicator]>,
         delegate: Arc<dyn ManifestDelegate>,
         cx: &'a mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let manifest =
-            self.new_tree
-                .manifest_location_for_path(&path, manifest_name, &delegate, cx);
+        let manifest = self.new_tree.manifest_location_for_path(
+            &path,
+            &language_name,
+            manifest_name,
+            root_indicators,
+            &delegate,
+            cx,
+        );
         let adapters = self
             .new_tree
             .adapters_for_language(&manifest, &language_name, cx);

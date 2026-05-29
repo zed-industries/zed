@@ -83,7 +83,8 @@ pub use text_diff::{
 use theme::SyntaxTheme;
 pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
-    ToolchainMetadata, ToolchainScope,
+    ToolchainMetadata, ToolchainRootIndicator, ToolchainRootMarker, ToolchainRootMarkerKind,
+    ToolchainScope,
 };
 use tree_sitter::{self, QueryCursor, WasmStore, wasmtime};
 use util::rel_path::RelPath;

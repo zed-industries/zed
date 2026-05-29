@@ -1372,12 +1372,16 @@ impl LocalLspStore {
         };
         let delegate: Arc<dyn ManifestDelegate> =
             Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+        let root_indicators = language
+            .toolchain_lister()
+            .map(|lister| lister.meta().root_indicators);
 
         self.lsp_tree
             .get(
                 project_path,
                 language.name(),
                 language.manifest(),
+                root_indicators.as_deref(),
                 &delegate,
                 cx,
             )
@@ -2596,11 +2600,18 @@ impl LocalLspStore {
             return;
         };
         let delegate: Arc<dyn ManifestDelegate> = Arc::new(ManifestQueryDelegate::new(snapshot));
+        let root_indicators = language
+            .toolchain_lister()
+            .map(|lister| lister.meta().root_indicators);
 
-        for server_id in
-            self.lsp_tree
-                .get(path, language.name(), language.manifest(), &delegate, cx)
-        {
+        for server_id in self.lsp_tree.get(
+            path,
+            language.name(),
+            language.manifest(),
+            root_indicators.as_deref(),
+            &delegate,
+            cx,
+        ) {
             let server = self
                 .language_servers
                 .get(&server_id)
@@ -2811,6 +2822,9 @@ impl LocalLspStore {
             return;
         };
         let language_name = language.name();
+        let root_indicators = language
+            .toolchain_lister()
+            .map(|lister| lister.meta().root_indicators);
         let (reused, delegate, servers) = self
             .reuse_existing_language_server(&self.lsp_tree, &worktree, &language_name, cx)
             .map(|(delegate, apply)| (true, delegate, apply(&mut self.lsp_tree)))
@@ -2825,6 +2839,7 @@ impl LocalLspStore {
                         ProjectPath { worktree_id, path },
                         language.name(),
                         language.manifest(),
+                        root_indicators.as_deref(),
                         &delegate,
                         cx,
                     )
@@ -4497,10 +4512,19 @@ impl LspStore {
         &mut self,
         _: Entity<LocalToolchainStore>,
         event: &ToolchainStoreEvent,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        if let ToolchainStoreEvent::ToolchainActivated = event {
-            self.request_workspace_config_refresh()
+        match event {
+            ToolchainStoreEvent::ToolchainActivated => {
+                self.request_workspace_config_refresh()
+            }
+            ToolchainStoreEvent::CustomToolchainsModified | ToolchainStoreEvent::ToolchainsValidated => {
+                // Recalculate language servers for changed toolchains
+                if let LspStoreMode::Local(local) = &mut self.mode {
+                    local.lsp_tree.invalidate_toolchains();
+                }
+                self.refresh_server_tree(cx);
+            }
         }
     }
 
@@ -5456,11 +5480,15 @@ impl LspStore {
                         .unwrap_or_else(|| file.path().clone());
                     let worktree_path = ProjectPath { worktree_id, path };
                     let abs_path = file.abs_path(cx);
+                    let root_indicators = language
+                        .toolchain_lister()
+                        .map(|lister| lister.meta().root_indicators);
                     let nodes = rebase
                         .walk(
                             worktree_path,
                             language.name(),
                             language.manifest(),
+                            root_indicators.as_deref(),
                             delegate.clone(),
                             cx,
                         )
