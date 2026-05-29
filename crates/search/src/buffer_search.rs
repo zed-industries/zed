@@ -1128,6 +1128,11 @@ impl BufferSearchBar {
         let search = self
             .query_suggestion(seed_query_override, window, cx)
             .map(|suggestion| {
+                let suggestion = if self.default_options.contains(SearchOptions::REGEX) {
+                    regex::escape(&suggestion)
+                } else {
+                    suggestion
+                };
                 self.search(&suggestion, Some(self.default_options), true, window, cx)
             });
 
@@ -4032,6 +4037,54 @@ mod tests {
             assert!(
                 editor.has_background_highlights(HighlightKey::SelectedTextHighlight),
                 "selection occurrence highlights must be restored after a manual selection"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_seeded_query_is_escaped_in_regex_mode(cx: &mut TestAppContext) {
+        init_globals(cx);
+        // Buffer has "z.d" on line 1 and "zed" on line 2. Without escaping, seeding "z.d"
+        // as a regex would match both lines because dot is a wildcard. With escaping it
+        // becomes "z\.d" and matches only the literal "z.d".
+        let buffer = cx.new(|cx| Buffer::local("z.d\nzed\n", cx));
+        let cx = cx.add_empty_window();
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        // Select "z.d" on the first line.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 0)..Point::new(0, 3)])
+            });
+        });
+
+        // Enable regex mode and seed the search from the selection.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
+            search_bar.search_suggested(Some(SeedQuerySetting::Selection), window, cx);
+        });
+        cx.run_until_parked();
+
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(
+                search_bar.query(cx),
+                r"z\.d",
+                "seeded regex query must be escaped"
+            );
+        });
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx).len(),
+                1,
+                "only the literal 'z.d' should match, not 'zed'"
             );
         });
     }

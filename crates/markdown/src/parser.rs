@@ -149,7 +149,10 @@ fn build_heading_slugs(
                 }
                 heading_text.push_str(&source[range.clone()]);
             }
-            MarkdownEvent::SubstitutedText(substituted) if inside_heading => {
+            MarkdownEvent::SubstitutedText(substituted)
+            | MarkdownEvent::SubstitutedCode(substituted)
+                if inside_heading =>
+            {
                 if heading_source_start.is_none() {
                     heading_source_start = Some(range.start);
                 }
@@ -609,11 +612,23 @@ pub(crate) fn parse_markdown_with_options(
                     state.push_event(range, event);
                 }
             }
-            pulldown_cmark::Event::Code(_) => {
+            pulldown_cmark::Event::Code(parsed_content) => {
                 let content_range = extract_code_content_range(&text[range.clone()]);
                 let content_range =
                     content_range.start + range.start..content_range.end + range.start;
-                state.push_event(content_range, MarkdownEvent::Code)
+                // In GFM tables, `\|` inside a code span is consumed by the table
+                // parser (so the cell isn't split) but the backslash is stripped from
+                // the rendered content. pulldown_cmark returns the processed string
+                // already; if it differs from the raw source we must store it
+                // explicitly, mirroring how SubstitutedText works for Text events.
+                if parsed_content.as_ref() == &text[content_range.clone()] {
+                    state.push_event(content_range, MarkdownEvent::Code)
+                } else {
+                    state.push_event(
+                        content_range,
+                        MarkdownEvent::SubstitutedCode(parsed_content.into_string()),
+                    )
+                }
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
             pulldown_cmark::Event::InlineHtml(_) => {
@@ -732,6 +747,10 @@ pub enum MarkdownEvent {
     SubstitutedText(String),
     /// An inline code node.
     Code,
+    /// An inline code node whose content differs from the markdown source — e.g. because a
+    /// backslash-escaped pipe `\|` inside a table cell was consumed by the table parser and
+    /// stripped from the rendered content by pulldown_cmark.
+    SubstitutedCode(String),
     /// An HTML node.
     Html,
     /// An inline HTML node.
@@ -1468,6 +1487,37 @@ mod tests {
         // Malformed input
         let input = "`````";
         assert_eq!(extract_code_block_content_range(input), 3..3);
+    }
+
+    #[test]
+    fn test_backslash_escaped_pipe_in_code_span_inside_table() {
+        // In GFM tables, `\|` inside a backtick code span is consumed by the
+        // table parser (so the cell isn't split) but the backslash must not appear
+        // in the rendered output — only the bare `|` should show.
+        let markdown = "| Pattern |\n|---|\n| `a\\|b` |";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        let mut code_content: Option<String> = None;
+        let mut in_table = false;
+        for (range, event) in &parsed.events {
+            match event {
+                Start(Table(_)) => in_table = true,
+                End(MarkdownTagEnd::Table) => in_table = false,
+                MarkdownEvent::SubstitutedCode(text) if in_table => {
+                    code_content = Some(text.clone());
+                }
+                MarkdownEvent::Code if in_table => {
+                    code_content = Some(markdown[range.clone()].to_string());
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(
+            code_content.as_deref(),
+            Some("a|b"),
+            "backslash before pipe should be stripped inside a code span in a table cell"
+        );
     }
 
     #[test]

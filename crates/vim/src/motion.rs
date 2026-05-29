@@ -2144,7 +2144,15 @@ pub(crate) fn end_of_line(
             Bias::Left,
         )
     } else {
-        map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
+        // clip_at_line_end ensures we land on the last *buffer* character rather
+        // than the buffer-EOL/newline anchor. Without it, `saturating_right` (called
+        // by the Inclusive motion expander) increments into inlay-hint territory at
+        // the end of the line and `clip_point(Bias::Right)` jumps to the next row,
+        // causing DeleteToEndOfLine / ChangeToEndOfLine to also delete the newline.
+        map.clip_at_line_end(map.clip_point(
+            map.next_line_boundary(point.to_point(map)).1,
+            Bias::Left,
+        ))
     }
 }
 
@@ -4738,6 +4746,26 @@ mod test {
         // Enter visual mode and move down twice
         cx.simulate_keystrokes("v j j");
         cx.assert_state("let a« = 1;\nlet b = 2;\n\nˇ»let c = 3;", Mode::Visual);
+    }
+
+    #[gpui::test]
+    async fn test_delete_to_end_of_line_with_inlay_hints(cx: &mut gpui::TestAppContext) {
+        // Regression test for issue #57169: Shift-D must not join lines when an
+        // inlay hint is anchored at the buffer end-of-line position.
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("hˇello\nworld", Mode::Normal);
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let end_of_line =
+                snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
+            let inlay = Inlay::edit_prediction(1, end_of_line, " :String");
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+        cx.simulate_keystrokes("shift-d");
+        // Only the characters from the cursor to the end of the buffer line should be
+        // deleted; the newline and the second line must remain intact.
+        cx.assert_state("ˇh\nworld", Mode::Normal);
     }
 
     #[gpui::test]
