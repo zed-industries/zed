@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
-use sysinfo::{Pid, Process, ProcessRefreshKind, RefreshKind, System, UpdateKind};
+use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 use crate::{Event, Terminal};
 
@@ -101,17 +101,34 @@ pub struct PtyProcessInfo {
 
 impl PtyProcessInfo {
     pub fn new(pty: &Pty) -> PtyProcessInfo {
+        // `ProcessRefreshKind::nothing()` has `tasks: true` by default; without
+        // `.without_tasks()` sysinfo enumerates `/proc/<pid>/task/<tid>/stat` on every
+        // refresh and caches an open FD per task. We don't read task information here,
+        // so disable it explicitly.
         let process_refresh_kind = ProcessRefreshKind::nothing()
+            .without_tasks()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
             .with_exe(UpdateKind::Always);
-        let refresh_kind = RefreshKind::nothing().with_processes(process_refresh_kind);
-        let system = System::new_with_specifics(refresh_kind);
+        let pid_getter = ProcessIdGetter::new(pty);
+        // Avoid `System::new_with_specifics`, which triggers a `ProcessesToUpdate::All`
+        // scan and causes sysinfo to cache an open FD for every `/proc/<pid>/stat` on
+        // the host (up to `RLIMIT_NOFILE / 2`). We only ever consult this `System` for
+        // our own PID via `refresh_processes_specifics(Some(&[pid]), ...)`, so we start
+        // empty and seed just that PID.
+        let mut system = System::new();
+        if let Some(pid) = pid_getter.pid() {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                true,
+                process_refresh_kind,
+            );
+        }
 
         PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
-            pid_getter: ProcessIdGetter::new(pty),
+            pid_getter,
             current: RwLock::new(None),
             task: Mutex::new(None),
         }
@@ -124,7 +141,7 @@ impl PtyProcessInfo {
     fn refresh(&self) -> Option<MappedRwLockReadGuard<'_, Process>> {
         let pid = self.pid_getter.pid()?;
         if self.system.write().refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            ProcessesToUpdate::Some(&[pid]),
             true,
             self.refresh_kind,
         ) == 1
