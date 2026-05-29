@@ -6,17 +6,21 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter,
 };
-use open_ai::{ReasoningEffort, responses::stream_response};
+use open_ai::{
+    ReasoningEffort,
+    responses::{StreamResponseOptions, stream_response_with_options},
+};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ui::{ConfiguredApiCard, prelude::*};
 use url::form_urlencoded;
 use util::ResultExt as _;
@@ -34,6 +38,31 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+const CODEX_RESPONSE_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn codex_extra_headers(
+    account_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut extra_headers: Vec<(String, String)> = vec![
+        ("originator".into(), "zed".into()),
+        ("OpenAI-Beta".into(), "responses=experimental".into()),
+    ];
+
+    if let Some(id) = account_id {
+        if !id.is_empty() {
+            extra_headers.push(("ChatGPT-Account-Id".into(), id.into()));
+        }
+    }
+
+    if let Some(id) = session_id {
+        if !id.is_empty() {
+            extra_headers.push(("session-id".into(), id.into()));
+        }
+    }
+
+    extra_headers
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -251,6 +280,16 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.sign_out(cx)
     }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for OpenAI?".into(),
+            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
+                targets significantly lower latency than the standard tier and is billed at a \
+                premium per-token rate."
+                .into(),
+        })
+    }
 }
 
 //
@@ -345,6 +384,13 @@ impl ChatGptModel {
     fn supports_prompt_cache_key(&self) -> bool {
         true
     }
+
+    fn supports_priority(&self) -> bool {
+        match self {
+            Self::Gpt55 | Self::Gpt54 => true,
+            Self::Gpt54Mini | Self::Gpt53Codex | Self::Gpt52 => false,
+        }
+    }
 }
 
 struct OpenAiSubscribedLanguageModel {
@@ -392,6 +438,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         true
     }
 
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_priority()
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         let default_effort = self.model.default_reasoning_effort();
         self.model
@@ -431,7 +481,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -443,9 +493,14 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        if !self.model.supports_priority() {
+            request.speed = None;
+        }
+
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.
+        let session_id = request.thread_id.clone();
         let mut responses_request = into_open_ai_response(
             request,
             self.model.id(),
@@ -484,26 +539,24 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
 
-            let mut extra_headers: Vec<(String, String)> = vec![
-                ("originator".into(), "zed".into()),
-                ("OpenAI-Beta".into(), "responses=experimental".into()),
-            ];
-            if let Some(ref id) = creds.account_id {
-                if !id.is_empty() {
-                    extra_headers.push(("ChatGPT-Account-Id".into(), id.clone()));
-                }
-            }
+            let extra_headers =
+                codex_extra_headers(creds.account_id.as_deref(), session_id.as_deref());
 
             let access_token = creds.access_token.clone();
+            let background_executor = cx.background_executor().clone();
             request_limiter
                 .stream(async move {
-                    stream_response(
+                    stream_response_with_options(
                         http_client.as_ref(),
                         PROVIDER_NAME.0.as_str(),
                         CODEX_BASE_URL,
                         &access_token,
                         responses_request,
                         extra_headers,
+                        StreamResponseOptions::response_header_timeout(
+                            CODEX_RESPONSE_HEADER_TIMEOUT,
+                            background_executor.timer(CODEX_RESPONSE_HEADER_TIMEOUT),
+                        ),
                     )
                     .await
                     .map_err(LanguageModelCompletionError::from)
@@ -1082,6 +1135,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use language_model::{LanguageModelRequestMessage, Role};
     use parking_lot::Mutex;
     use std::future::Future;
     use std::pin::Pin;
@@ -1131,6 +1185,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_codex_extra_headers_include_session_id() {
+        assert_eq!(
+            codex_extra_headers(Some("account-1"), Some("thread-1")),
+            vec![
+                ("originator".into(), "zed".into()),
+                ("OpenAI-Beta".into(), "responses=experimental".into()),
+                ("ChatGPT-Account-Id".into(), "account-1".into()),
+                ("session-id".into(), "thread-1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_codex_extra_headers_omit_empty_optional_ids() {
+        assert_eq!(
+            codex_extra_headers(Some(""), Some("")),
+            vec![
+                ("originator".into(), "zed".into()),
+                ("OpenAI-Beta".into(), "responses=experimental".into()),
+            ]
+        );
+    }
+
     fn make_expired_credentials() -> CodexCredentials {
         CodexCredentials {
             access_token: "old_access".to_string(),
@@ -1151,6 +1229,13 @@ mod tests {
         }
     }
 
+    fn make_fresh_credentials_with_account() -> CodexCredentials {
+        CodexCredentials {
+            account_id: Some("account-1".to_string()),
+            ..make_fresh_credentials()
+        }
+    }
+
     fn fake_token_response() -> String {
         serde_json::json!({
             "access_token": "fresh_access",
@@ -1158,6 +1243,127 @@ mod tests {
             "expires_in": 3600
         })
         .to_string()
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_sends_codex_session_header(cx: &mut TestAppContext) {
+        let captured_headers = Arc::new(Mutex::new(None::<http_client::http::HeaderMap>));
+        let captured_headers_clone = captured_headers.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            *captured_headers_clone.lock() = Some(request.headers().clone());
+            async move {
+                let body = r#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}"#;
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(http_client::AsyncBody::from(format!("{body}\n\n")))?)
+            }
+        });
+
+        let state = cx.new(|_cx| State {
+            credentials: Some(make_fresh_credentials_with_account()),
+            sign_in_task: None,
+            refresh_task: None,
+            load_task: None,
+            credentials_provider: Arc::new(FakeCredentialsProvider::new()),
+            auth_generation: 0,
+            last_auth_error: None,
+        });
+
+        let model = OpenAiSubscribedLanguageModel {
+            id: LanguageModelId::from(ChatGptModel::Gpt55.id().to_string()),
+            model: ChatGptModel::Gpt55,
+            state,
+            http_client,
+            request_limiter: RateLimiter::new(4),
+        };
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-1".to_string()),
+            prompt_id: Some("prompt-1".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Hello".into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let mut stream = model
+            .stream_completion(request, &cx.to_async())
+            .await
+            .expect("stream should start");
+        stream
+            .next()
+            .await
+            .expect("stream should emit event")
+            .expect("event should parse");
+
+        let captured_headers = captured_headers
+            .lock()
+            .clone()
+            .expect("request headers should be captured");
+        assert_eq!(
+            captured_headers
+                .get("session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("thread-1")
+        );
+        assert_eq!(
+            captured_headers
+                .get("ChatGPT-Account-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some("account-1")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_times_out_before_codex_headers(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(|_request| {
+            futures::future::pending::<anyhow::Result<http_client::Response<AsyncBody>>>()
+        });
+
+        let state = cx.new(|_cx| State {
+            credentials: Some(make_fresh_credentials()),
+            sign_in_task: None,
+            refresh_task: None,
+            load_task: None,
+            credentials_provider: Arc::new(FakeCredentialsProvider::new()),
+            auth_generation: 0,
+            last_auth_error: None,
+        });
+
+        let model = OpenAiSubscribedLanguageModel {
+            id: LanguageModelId::from(ChatGptModel::Gpt55.id().to_string()),
+            model: ChatGptModel::Gpt55,
+            state,
+            http_client,
+            request_limiter: RateLimiter::new(4),
+        };
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-1".to_string()),
+            prompt_id: Some("prompt-1".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Hello".into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let stream_completion = model.stream_completion(request, &cx.to_async());
+        cx.run_until_parked();
+        cx.executor().advance_clock(CODEX_RESPONSE_HEADER_TIMEOUT);
+
+        let error = match stream_completion.await {
+            Ok(_) => panic!("stream should time out before headers arrive"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::HttpSend { provider, .. }
+                if provider == PROVIDER_NAME
+        ));
     }
 
     #[gpui::test]

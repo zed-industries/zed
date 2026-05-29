@@ -181,7 +181,6 @@
 /crates/fs_benchmarks/ @zed-industries/infrastructure-team
 /crates/http_client/ @zed-industries/infrastructure-team
 /crates/http_client_tls/ @zed-industries/infrastructure-team
-/crates/nc/ @zed-industries/infrastructure-team
 /crates/net/ @zed-industries/infrastructure-team
 /crates/paths/ @zed-industries/infrastructure-team
 /crates/release_channel/ @zed-industries/infrastructure-team

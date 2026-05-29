@@ -9,9 +9,9 @@ use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
 use project::{Project, ProjectPath};
 use settings::Settings;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use util::paths::component_matches_ignore_ascii_case;
+use util::{normalize_path, paths::component_matches_ignore_ascii_case};
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -116,25 +116,24 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
         .any(|root| canonical_path.starts_with(root))
 }
 
-/// If `path` is an absolute path under the global skills directory
-/// (`~/.agents/skills`), return the canonicalized absolute path. Returns
-/// `None` for any path that resolves outside the global skills tree, for
-/// relative paths, or if the skills directory itself can't be canonicalized
-/// (fail closed — better to refuse access than to compare against a
-/// non-canonical path).
+/// If `path` names `~/.agents/skills` or one of its descendants, return the
+/// canonicalized absolute path. Returns `None` for any path that resolves
+/// outside the global skills tree, for relative paths that don't start with
+/// `~`, or if the skills directory itself can't be canonicalized (fail closed
+/// — better to refuse access than to compare against a non-canonical path).
 ///
 /// This is the gate that lets `read_file` / `list_directory` reach into the
 /// global skills directory — which lives outside any worktree — without
 /// also opening up arbitrary external paths.
 pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
-    if !path.is_absolute() {
-        return None;
-    }
+    let normalized_path = resolve_lexical_global_skill_path(path)?;
 
-    // Canonicalize both sides so symlinks and `..` segments can't sneak the
-    // path out of the skills tree (and so different but equivalent path
-    // representations match).
-    let canonical_path = fs.canonicalize(path).await.ok()?;
+    // Canonicalize both sides so symlinks can't sneak the path out of the
+    // skills tree (and so different but equivalent path representations
+    // match). The lexical check above intentionally runs first, so a
+    // symlinked `~/.agents/skills` root can't broaden the allowlist to every
+    // path under the symlink target.
+    let canonical_path = fs.canonicalize(&normalized_path).await.ok()?;
     let canonical_skills_dir = canonical_global_skills_dir(fs).await?;
 
     if canonical_path.starts_with(&canonical_skills_dir) {
@@ -142,6 +141,112 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     } else {
         None
     }
+}
+
+fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+
+    let mut components = path.components();
+    let first_component = components.next()?;
+    if !matches!(first_component, Component::Normal(component) if component == "~") {
+        return None;
+    }
+
+    let mut expanded = paths::home_dir().clone();
+    for component in components {
+        match component {
+            Component::Normal(component) => expanded.push(component),
+            Component::CurDir => {}
+            Component::ParentDir => expanded.push(".."),
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(expanded)
+}
+
+fn expand_and_normalize_absolute_path(path: &Path) -> Option<PathBuf> {
+    let expanded_path = expand_home_prefix(path)?;
+    let normalized_path = normalize_path(&expanded_path);
+    normalized_path.is_absolute().then_some(normalized_path)
+}
+
+fn resolve_lexical_global_skill_path(path: &Path) -> Option<PathBuf> {
+    let normalized_path = expand_and_normalize_absolute_path(path)?;
+    let normalized_skills_dir = normalize_path(&agent_skills::global_skills_dir());
+
+    normalized_path
+        .starts_with(&normalized_skills_dir)
+        .then_some(normalized_path)
+}
+
+/// If `path` names `~/.agents/skills` or one of its descendants, return a
+/// canonical absolute path for it. Unlike [`resolve_global_skill_path`], the
+/// target path may or may not exist on disk yet — the caller decides whether
+/// to read, write, or create it. Returns `None` for any other path, including
+/// siblings of the global skills tree or paths that would escape it with `..`
+/// or symlinks.
+pub async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let normalized_path = resolve_lexical_global_skill_path(path)?;
+    let canonical_path = canonicalize_with_ancestors(&normalized_path, fs).await?;
+    let canonical_skills_dir = canonical_global_skills_dir(fs).await?;
+
+    if canonical_path.starts_with(&canonical_skills_dir) {
+        Some(canonical_path)
+    } else {
+        None
+    }
+}
+
+fn is_strict_descendant(path: &Path, ancestor: &Path) -> bool {
+    path != ancestor && path.starts_with(ancestor)
+}
+
+/// Returns whether `path` resolves to the global agent skills directory itself.
+///
+/// This is used by destructive tools to reject operations targeting the root
+/// `~/.agents/skills` directory while still allowing operations on individual
+/// skills or resources beneath it.
+pub async fn resolves_to_global_skills_dir(path: &Path, fs: &dyn Fs) -> bool {
+    let Some(normalized_path) = resolve_lexical_global_skill_path(path) else {
+        return false;
+    };
+    let Some(canonical_path) = canonicalize_with_ancestors(&normalized_path, fs).await else {
+        return false;
+    };
+    let Some(canonical_skills_dir) = canonical_global_skills_dir(fs).await else {
+        return false;
+    };
+
+    canonical_path == canonical_skills_dir
+}
+
+/// Filters a previously-resolved global skills path so that callers which
+/// must never act on `~/.agents/skills` itself (move, delete) only see paths
+/// that point strictly below the skills root.
+async fn restrict_to_skill_descendant(
+    canonical_path: Option<PathBuf>,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let canonical_path = canonical_path?;
+    let canonical_skills_dir = canonical_global_skills_dir(fs).await?;
+    is_strict_descendant(&canonical_path, &canonical_skills_dir).then_some(canonical_path)
+}
+
+/// Like [`resolve_global_skill_path`], but only succeeds for paths strictly
+/// below `~/.agents/skills`, not the skills directory itself.
+pub async fn resolve_global_skill_descendant_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    restrict_to_skill_descendant(resolve_global_skill_path(path, fs).await, fs).await
+}
+
+/// Like [`resolve_creatable_global_skill_path`], but only succeeds for paths
+/// strictly below `~/.agents/skills`, not the skills directory itself.
+pub async fn resolve_creatable_global_skill_descendant_path(
+    path: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    restrict_to_skill_descendant(resolve_creatable_global_skill_path(path, fs).await, fs).await
 }
 
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
@@ -771,6 +876,189 @@ mod tests {
             }
         }
         roots
+    }
+
+    #[gpui::test]
+    async fn test_resolve_creatable_global_skill_path_allows_tilde_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill");
+        let expected_path = agent_skills::global_skills_dir().join("my-skill");
+
+        let resolved = resolve_creatable_global_skill_path(&input_path, fs.as_ref())
+            .await
+            .expect("global skill path should resolve");
+
+        assert_eq!(resolved, expected_path);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_global_skill_path_allows_tilde_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skill_file = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        fs.insert_tree(
+            skill_file
+                .parent()
+                .expect("skill file should have a parent"),
+            json!({ "SKILL.md": "---\nname: my-skill\ndescription: test\n---" }),
+        )
+        .await;
+
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md");
+        let resolved = resolve_global_skill_path(&input_path, fs.as_ref())
+            .await
+            .expect("global skill file should resolve");
+
+        assert_eq!(resolved, skill_file);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_creatable_global_skill_path_rejects_other_home_paths(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let sibling_path = PathBuf::from("~").join(".agents").join("not-skills");
+        let escaped_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("..")
+            .join("not-skills");
+
+        assert!(
+            resolve_creatable_global_skill_path(&sibling_path, fs.as_ref())
+                .await
+                .is_none()
+        );
+        assert!(
+            resolve_creatable_global_skill_path(&escaped_path, fs.as_ref())
+                .await
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_creatable_global_skill_path_rejects_symlink_escape(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir)
+            .await
+            .expect("global skills directory should be created");
+        fs.create_dir(path!("/external").as_ref())
+            .await
+            .expect("external directory should be created");
+        fs.create_symlink(&skills_dir.join("link"), PathBuf::from(path!("/external")))
+            .await
+            .expect("symlink should be created");
+
+        let escaped_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("link")
+            .join("new-dir");
+
+        assert!(
+            resolve_creatable_global_skill_path(&escaped_path, fs.as_ref())
+                .await
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_global_skill_path_resolvers_reject_absolute_paths_when_skills_dir_is_symlink_to_root(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(paths::home_dir(), json!({ ".agents": {} }))
+            .await;
+        fs.insert_tree(path!("/tmp"), json!({ "outside.txt": "outside" }))
+            .await;
+
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_symlink(&skills_dir, PathBuf::from(path!("/")))
+            .await
+            .expect("global skills directory should be symlinked to root");
+
+        let outside_path = PathBuf::from(path!("/tmp/outside.txt"));
+        assert!(
+            resolve_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "existing absolute paths outside the lexical global skills tree should not resolve",
+        );
+        assert!(
+            resolve_creatable_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "creatable absolute paths outside the lexical global skills tree should not resolve",
+        );
+
+        let traversed_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("..")
+            .join("outside");
+        assert!(
+            resolve_creatable_global_skill_path(&traversed_path, fs.as_ref())
+                .await
+                .is_none(),
+            "paths that normalize outside the lexical global skills tree should not resolve",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_global_skill_path_resolvers_reject_absolute_paths_when_skills_dir_is_symlink_to_home(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            paths::home_dir(),
+            json!({
+                ".agents": {},
+                "outside.txt": "outside",
+            }),
+        )
+        .await;
+
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_symlink(&skills_dir, paths::home_dir().clone())
+            .await
+            .expect("global skills directory should be symlinked to home");
+
+        let outside_path = paths::home_dir().join("outside.txt");
+        assert!(
+            resolve_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "existing absolute paths outside the lexical global skills tree should not resolve",
+        );
+        assert!(
+            resolve_creatable_global_skill_path(&outside_path, fs.as_ref())
+                .await
+                .is_none(),
+            "creatable absolute paths outside the lexical global skills tree should not resolve",
+        );
     }
 
     #[gpui::test]

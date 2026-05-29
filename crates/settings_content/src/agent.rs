@@ -151,7 +151,7 @@ pub struct AgentSettingsContent {
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
-    /// Default: true
+    /// Default: false
     pub single_file_review: Option<bool>,
     /// Additional parameters for language model requests. When making a request
     /// to a model, parameters will be taken from the last entry in this list

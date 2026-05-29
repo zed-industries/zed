@@ -22,11 +22,13 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 /// To make granular edits to an existing file, prefer the `edit_file` tool instead.
 ///
 /// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location
+///
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WriteFileToolInput {
     /// The full path of the file to create or overwrite in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -40,6 +42,10 @@ pub struct WriteFileToolInput {
     ///
     /// <example>
     /// `frontend/db.js`
+    /// </example>
+    ///
+    /// <example>
+    /// To create or overwrite a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
     /// </example>
     pub path: PathBuf,
 
@@ -237,6 +243,7 @@ impl AgentTool for WriteFileTool {
             run_session(
                 self.process_streaming_writes(&mut input, &event_stream, cx)
                     .await,
+                &event_stream,
                 cx,
             )
             .await
@@ -272,7 +279,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
     use util::path;
     use util::rel_path::{RelPath, rel_path};
 
@@ -325,6 +332,62 @@ mod tests {
         };
         assert_eq!(new_text, "new content");
         assert_eq!(*old_text, "old content");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_write_global_skill_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.insert_tree(&skill_dir, json!({})).await;
+        let (write_tool, _project, _action_log, fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md");
+        let skill_file = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: input_path,
+                    content: "# My Skill\n".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        event_rx.expect_update_fields().await;
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let EditSessionOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "# My Skill\n");
+        assert_eq!(
+            fs.load(&skill_file).await.unwrap().replace("\r\n", "\n"),
+            "# My Skill\n"
+        );
     }
 
     #[gpui::test]
@@ -998,7 +1061,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        let changed =
+            action_log.read_with(cx, |log, cx| log.changed_buffers(cx).collect::<Vec<_>>());
         assert!(
             !changed.is_empty(),
             "action_log.changed_buffers() should be non-empty after streaming write, \
@@ -1070,7 +1134,8 @@ mod tests {
         );
 
         // Reject all edits — this should delete the newly created file
-        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        let changed =
+            action_log.read_with(cx, |log, cx| log.changed_buffers(cx).collect::<Vec<_>>());
         assert!(
             !changed.is_empty(),
             "action_log should track the created file as changed"

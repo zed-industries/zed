@@ -50,7 +50,7 @@ use unindent::Unindent as _;
 use util::{path, rel_path::rel_path, uri};
 use workspace::{Pane, ParticipantLocation};
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -7142,6 +7142,7 @@ async fn test_remote_git_branches(
     let new_branch = branches[2];
 
     let branches_b = branches_b
+        .branches
         .into_iter()
         .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
