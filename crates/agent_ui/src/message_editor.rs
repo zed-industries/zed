@@ -15,7 +15,8 @@ use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
+    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, SelectionEffects,
+    ToOffset,
     actions::{Copy, Cut, Paste},
     code_context_menus::CodeContextMenu,
     display_map::{CreaseId, CreaseSnapshot},
@@ -526,7 +527,15 @@ impl MessageEditor {
             cx.emit(MessageEditorEvent::Focus)
         })
         .detach();
-        cx.on_focus_out(&editor.focus_handle(cx), window, |_, _, _, cx| {
+        cx.on_focus_out(&editor.focus_handle(cx), window, |this, _, window, cx| {
+            this.editor.update(cx, |editor, cx| {
+                if editor.has_non_empty_selection(&editor.display_snapshot(cx)) {
+                    let cursor = editor.selections.newest_anchor().head();
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.select_anchor_ranges([cursor..cursor]);
+                    });
+                }
+            });
             cx.emit(MessageEditorEvent::LostFocus)
         })
         .detach();
