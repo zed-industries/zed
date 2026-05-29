@@ -8113,9 +8113,17 @@ pub(crate) mod tests {
     async fn test_permission_row_hidden_when_inline_bounds_unavailable(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (_view, thread_view, _entry_ix, cx) =
+        let (_view, thread_view, entry_ix, cx) =
             setup_pending_permission_thread("perm-no-bounds", cx).await;
 
+        // Pin the scroll top to the entry so it isn't treated as above the
+        // viewport, forcing the unmeasured-bounds path we want to exercise.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            });
+        });
         thread_view.update_in(cx, |view, window, cx| {
             assert!(
                 view.render_main_agent_awaiting_permission(window, cx)
@@ -8176,8 +8184,8 @@ pub(crate) mod tests {
         let (_view, thread_view, entry_ix, cx) =
             setup_pending_permission_thread("perm-scroll", cx).await;
 
-        // Start off-screen below the viewport — row visible because the item
-        // has bounds that do not intersect the viewport.
+        // Start off-screen below the viewport. The row is visible because the
+        // item has bounds that do not intersect the viewport.
         draw_thread_list_at(
             &thread_view,
             ListOffset {
@@ -8212,6 +8220,69 @@ pub(crate) mod tests {
             cx,
         );
 
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear after scrolling brings the inline prompt into view"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_shown_when_inline_prompt_is_above_viewport(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-above", cx).await;
+
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            let result = thread.handle_session_update(
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "More content".into(),
+                )),
+                cx,
+            );
+            assert!(
+                result.is_ok(),
+                "following assistant message should be accepted"
+            );
+        });
+
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix + 1,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                entry_ix < view.list_state.logical_scroll_top().item_ix,
+                "The tool call entry should be above the logical scroll top"
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some(),
+                "Floating row should be visible when the inline prompt is above the viewport"
+            );
+        });
+
+        // Scrolling up to the entry brings it back into view.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
         thread_view.update_in(cx, |view, window, cx| {
             assert!(
                 view.render_main_agent_awaiting_permission(window, cx)
