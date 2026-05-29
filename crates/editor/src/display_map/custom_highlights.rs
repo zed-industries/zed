@@ -1,7 +1,7 @@
 use collections::BTreeMap;
 use gpui::HighlightStyle;
 use language::{Chunk, LanguageAwareStyling};
-use multi_buffer::{MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
+use multi_buffer::{MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot};
 use std::{
     cmp,
     iter::{self, Peekable},
@@ -81,6 +81,8 @@ fn create_highlight_endpoints(
     if let Some(text_highlights) = text_highlights {
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
+        let mut v = Vec::new();
+
         for (&tag, text_highlights) in text_highlights.iter() {
             let style = text_highlights.0;
             let ranges = &text_highlights.1;
@@ -94,25 +96,39 @@ fn create_highlight_endpoints(
                 })
                 .unwrap_or_else(|i| i);
 
-            highlight_endpoints.reserve(2 * end_ix);
+            let ranges_ = &ranges[start_ix..][..end_ix];
+            v.clear();
+            v.reserve(ranges_.len());
+            highlight_endpoints.reserve(2 * ranges_.len());
 
-            for range in &ranges[start_ix..][..end_ix] {
-                let start = range.start.to_offset(buffer);
-                let end = range.end.to_offset(buffer);
-                if start == end {
-                    continue;
-                }
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: start,
-                    tag,
-                    style: Some(style),
-                });
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: end,
-                    tag,
-                    style: None,
-                });
-            }
+            let mut iter = ranges_.iter();
+            buffer.summaries_for_anchors_cb(
+                ranges_.iter().map(|r| &r.start),
+                |start: MultiBufferOffset| {
+                    v.push((start, iter.next().unwrap().end));
+                },
+            );
+            v.sort_by(|a, b| a.1.cmp(&b.1, buffer));
+            let mut iter = v.iter();
+            buffer.summaries_for_anchors_cb(
+                v.iter().map(|(_, end)| end),
+                |end: MultiBufferOffset| {
+                    let start = iter.next().unwrap().0;
+                    if start == end {
+                        return;
+                    }
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: start,
+                        tag,
+                        style: Some(style),
+                    });
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: end,
+                        tag,
+                        style: None,
+                    });
+                },
+            );
         }
     }
     if let Some(semantic_token_highlights) = semantic_token_highlights {
@@ -133,27 +149,50 @@ fn create_highlight_endpoints(
                         .then(cmp::Ordering::Less)
                 })
                 .unwrap_or_else(|i| i);
-            for token in &semantic_token_highlights[start_ix..] {
-                if token.range.start.cmp(&end, buffer).is_ge() {
-                    break;
-                }
+            let end_ix = semantic_token_highlights[start_ix..]
+                .binary_search_by(|probe| {
+                    probe
+                        .range
+                        .start
+                        .cmp(&end, buffer)
+                        .then(cmp::Ordering::Greater)
+                })
+                .unwrap_or_else(|i| i);
 
-                let start = token.range.start.to_offset(buffer);
-                let end = token.range.end.to_offset(buffer);
-                if start == end {
-                    continue;
-                }
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: start,
-                    tag: HighlightKey::SemanticToken,
-                    style: Some(interner[token.style]),
-                });
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: end,
-                    tag: HighlightKey::SemanticToken,
-                    style: None,
-                });
-            }
+            let ranges_ = &semantic_token_highlights[start_ix..][..end_ix];
+            let mut ranges_with_offsets = Vec::with_capacity(ranges_.len());
+            highlight_endpoints.reserve(2 * ranges_.len());
+
+            let mut iter = ranges_.iter();
+            buffer.summaries_for_anchors_cb(
+                ranges_.iter().map(|token| &token.range.start),
+                |start: MultiBufferOffset| {
+                    ranges_with_offsets.push((start, iter.next().unwrap()));
+                },
+            );
+            ranges_with_offsets.sort_by(|a, b| a.1.range.end.cmp(&b.1.range.end, buffer));
+            let mut iter = ranges_with_offsets.iter();
+            buffer.summaries_for_anchors_cb(
+                ranges_with_offsets
+                    .iter()
+                    .map(|(_, token)| &token.range.end),
+                |end: MultiBufferOffset| {
+                    let (start, token) = iter.next().unwrap();
+                    if *start == end {
+                        return;
+                    }
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: *start,
+                        tag: HighlightKey::SemanticToken,
+                        style: Some(interner[token.style]),
+                    });
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: end,
+                        tag: HighlightKey::SemanticToken,
+                        style: None,
+                    });
+                },
+            );
         }
     }
     highlight_endpoints.sort();
