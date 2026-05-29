@@ -1377,9 +1377,11 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| {
                     ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    if let Some(project_diff) = workspace.active_item_as::<ProjectDiff>(cx) {
+                        project_diff.focus_handle(cx).focus(window, cx);
+                    }
                 })
                 .ok();
-            self.focus_handle.focus(window, cx);
 
             Some(())
         });
@@ -1404,7 +1406,7 @@ impl GitPanel {
             let open_task = self
                 .workspace
                 .update(cx, |workspace, cx| {
-                    workspace.open_path_preview(path, None, false, false, true, window, cx)
+                    workspace.open_path_preview(path, None, true, false, true, window, cx)
                 })
                 .ok()?;
 
@@ -6266,7 +6268,6 @@ impl GitPanel {
                         this.open_file(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
-                        this.focus_handle.focus(window, cx);
                     }
                 })
             })
@@ -8423,15 +8424,96 @@ mod tests {
         });
         cx.run_until_parked();
 
-        workspace.update_in(cx, |workspace, _window, cx| {
-            let active_path = workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            let project_diff = workspace
                 .item_of_type::<ProjectDiff>(cx)
-                .expect("ProjectDiff should exist")
+                .expect("ProjectDiff should exist");
+
+            let active_path = project_diff
                 .read(cx)
                 .active_project_path(cx)
                 .expect("active_project_path should exist");
 
             assert_eq!(active_path.path, rel_path("untracked").into_arc());
+
+            assert!(
+                project_diff.focus_handle(cx).is_focused(window),
+                "ProjectDiff should be focused after open_diff"
+            );
+        });
+
+        panel.update_in(cx, |panel, window, _cx| {
+            assert!(
+                !panel.focus_handle.is_focused(window),
+                "Git panel should not be focused after open_diff"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+                "untracked": "\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().sort_by_path = Some(true);
+                })
+            });
+        });
+
+        cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        })
+        .await;
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(1);
+            panel.open_file(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let editor = workspace
+                .active_item_as::<Editor>(cx)
+                .expect("Editor should be active after open_file");
+
+            assert!(
+                editor.focus_handle(cx).is_focused(window),
+                "Editor should be focused after open_file"
+            );
+        });
+
+        panel.update_in(cx, |panel, window, _cx| {
+            assert!(
+                !panel.focus_handle.is_focused(window),
+                "Git panel should not be focused after open_file"
+            );
         });
     }
 
