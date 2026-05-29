@@ -174,13 +174,12 @@ impl Component for AlertModal {
         ComponentStatus::WorkInProgress
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A modal dialog that presents an alert message with primary and dismiss actions.")
+    fn description() -> &'static str {
+        "A modal dialog that presents an alert message with primary and dismiss actions."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .p_4()
                 .children(vec![
@@ -246,7 +245,6 @@ Review .zed/settings.json for any extensions or commands configured by this proj
                             .into_any_element(),
                     )]),
                 ])
-                .into_any_element(),
-        )
+                .into_any_element()
     }
 }
