@@ -550,7 +550,7 @@ fn make_large_multi_edit_fixture(
         })
         .collect();
 
-    let mut new_lines = old_lines.clone();
+    let mut new_lines = old_lines;
     for (function_index, new_function) in replacements.iter().rev() {
         let start = HEADER_LINES + function_index * FUNCTION_LINES;
         let end = start + FUNCTION_BODY_LINES;
