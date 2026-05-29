@@ -1542,6 +1542,43 @@ impl AgentPanel {
         &self.connection_store
     }
 
+    /// Loads an existing agent session's content *headlessly* — without opening
+    /// it as the active view — so its messages can be searched (e.g. the
+    /// sidebar's "Search more" pass over closed external/ACP threads). Reuses
+    /// or establishes the per-agent connection, then replays the session and
+    /// returns the resulting `AcpThread` whose entries can be read via
+    /// `to_markdown`. Errors if the agent can't load sessions or the connection
+    /// fails.
+    pub fn load_session_content_for_search(
+        &mut self,
+        agent: Agent,
+        session_id: acp::SessionId,
+        work_dirs: PathList,
+        title: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        let server = agent.server(self.fs.clone(), self.thread_store.clone());
+        let entry = self
+            .connection_store
+            .update(cx, |store, cx| store.request_connection(agent, server, cx));
+        let connect = entry.read(cx).wait_for_connection();
+        let project = self.project.clone();
+        cx.spawn(async move |_this, cx| {
+            let connected = connect.await.map_err(|err| anyhow::anyhow!(err))?;
+            let connection = connected.connection;
+            anyhow::ensure!(
+                connection.supports_load_session(),
+                "agent does not support loading sessions"
+            );
+            let load = cx.update(|cx| {
+                connection
+                    .clone()
+                    .load_session(session_id, project, work_dirs, title, cx)
+            });
+            load.await
+        })
+    }
+
     pub fn selected_agent(&self, cx: &App) -> Agent {
         if self.project.read(cx).is_via_collab() {
             Agent::NativeAgent

@@ -663,6 +663,26 @@ fn connect_remote(
     remote_connection::connect_with_modal(&modal_workspace, connection_options, window, cx)
 }
 
+/// Progress of the on-demand "Search more" pass that loads closed external/ACP
+/// threads from their agents to search their content.
+#[derive(Clone, Copy, PartialEq)]
+enum ClosedSearch {
+    Idle,
+    Running { done: usize, total: usize },
+}
+
+/// A closed external/ACP thread eligible for the on-demand "Search more" pass:
+/// it isn't loaded, its project is open (so we have a panel + project to load
+/// it through), and it hasn't already matched the cheap content search.
+struct ClosedAcpCandidate {
+    thread_id: ThreadId,
+    session_id: acp::SessionId,
+    agent: Agent,
+    work_dirs: PathList,
+    title: Option<SharedString>,
+    panel: Entity<AgentPanel>,
+}
+
 /// The sidebar re-derives its entire entry list from scratch on every
 /// change via `update_entries` → `rebuild_contents`. Avoid adding
 /// incremental or inter-event coordination state — if something can
@@ -721,6 +741,19 @@ pub struct Sidebar {
     /// The in-flight content search. Holding the handle here cancels the
     /// previous search when a new query replaces it.
     _content_search_task: Task<()>,
+    /// Closed external/ACP threads whose content matched, found via the
+    /// explicit "Search more" pass (which loads each thread from its agent on
+    /// demand). Kept separate from `content_matches` since it's only populated
+    /// on user request, and ORed into the filter the same way.
+    closed_search_matches: HashSet<ThreadId>,
+    /// Progress state of the on-demand "Search more" pass over closed ACP
+    /// threads. Drives the button / progress row in the sidebar footer.
+    closed_search: ClosedSearch,
+    /// Bumped when a "Search more" pass starts or is stopped, so an in-flight
+    /// pass bails if superseded or cancelled.
+    closed_search_generation: usize,
+    /// Holds the in-flight "Search more" task; dropping it cancels the pass.
+    _closed_search_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
@@ -848,6 +881,10 @@ impl Sidebar {
             content_search_generation: 0,
             thread_text_cache: HashMap::new(),
             _content_search_task: Task::ready(()),
+            closed_search_matches: HashSet::new(),
+            closed_search: ClosedSearch::Idle,
+            closed_search_generation: 0,
+            _closed_search_task: Task::ready(()),
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
@@ -1773,8 +1810,12 @@ impl Sidebar {
                 let mut matched_threads: Vec<Arc<ThreadEntry>> = Vec::new();
                 for mut thread in threads {
                     let mut worktree_matched = false;
-                    let content_matched =
-                        self.content_matches.contains(&thread.metadata.thread_id);
+                    let content_matched = self
+                        .content_matches
+                        .contains(&thread.metadata.thread_id)
+                        || self
+                            .closed_search_matches
+                            .contains(&thread.metadata.thread_id);
                     {
                         let thread = Arc::make_mut(&mut thread);
                         let title = thread.metadata.display_title();
@@ -3001,6 +3042,13 @@ impl Sidebar {
         self.content_search_generation = self.content_search_generation.wrapping_add(1);
         let generation = self.content_search_generation;
 
+        // A changed query invalidates any prior "Search more" (closed ACP)
+        // results and cancels an in-flight pass.
+        self.closed_search_generation = self.closed_search_generation.wrapping_add(1);
+        self.closed_search = ClosedSearch::Idle;
+        self.closed_search_matches.clear();
+        self._closed_search_task = Task::ready(());
+
         if query_text.trim().is_empty() {
             self._content_search_task = Task::ready(());
             self.content_matches.clear();
@@ -3156,6 +3204,226 @@ impl Sidebar {
             })
             .ok();
         });
+    }
+
+    /// True when there is at least one closed external/ACP thread (in an open
+    /// project) that the cheap content search couldn't cover, so the "Search
+    /// more" affordance is worth showing for the current query.
+    fn has_searchable_closed_acp_threads(&self, cx: &App) -> bool {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return false;
+        };
+        let open_paths: HashSet<PathList> = multi_workspace
+            .read(cx)
+            .workspaces()
+            .filter(|ws| ws.read(cx).panel::<AgentPanel>(cx).is_some())
+            .map(|ws| workspace_path_list(ws, cx))
+            .collect();
+        if open_paths.is_empty() {
+            return false;
+        }
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .any(|metadata| {
+                metadata.agent_id.as_ref() != agent::ZED_AGENT_ID.as_ref()
+                    && !metadata.archived
+                    && metadata.session_id.is_some()
+                    && !self.content_matches.contains(&metadata.thread_id)
+                    && !self.closed_search_matches.contains(&metadata.thread_id)
+                    && open_paths.contains(metadata.folder_paths())
+            })
+    }
+
+    /// Runs the on-demand "Search more" pass: loads each closed external/ACP
+    /// thread (in an open project) from its agent, searches its content, and
+    /// surfaces matches. Progressive and cancelable — each thread is loaded one
+    /// at a time, results appear as they're found, and [`Self::stop_closed_acp_search`]
+    /// (or a new query) aborts it.
+    fn start_closed_acp_search(&mut self, cx: &mut Context<Self>) {
+        let query_text = self.filter_editor.read(cx).text(cx);
+        if query_text.trim().is_empty() {
+            return;
+        }
+        let Ok(query) = SearchQuery::text(
+            query_text,
+            false,
+            false,
+            false,
+            PathMatcher::default(),
+            PathMatcher::default(),
+            false,
+            None,
+        ) else {
+            return;
+        };
+        let query = Arc::new(query);
+
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
+        let mut panel_by_paths: HashMap<PathList, Entity<AgentPanel>> = HashMap::new();
+        for ws in &workspaces {
+            if let Some(panel) = ws.read(cx).panel::<AgentPanel>(cx) {
+                panel_by_paths.insert(workspace_path_list(ws, cx), panel);
+            }
+        }
+
+        let candidates: Vec<ClosedAcpCandidate> = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .filter(|m| m.agent_id.as_ref() != agent::ZED_AGENT_ID.as_ref())
+            .filter(|m| !m.archived)
+            .filter_map(|m| {
+                let session_id = m.session_id.clone()?;
+                let thread_id = m.thread_id;
+                if self.content_matches.contains(&thread_id)
+                    || self.closed_search_matches.contains(&thread_id)
+                {
+                    return None;
+                }
+                let panel = panel_by_paths.get(m.folder_paths())?.clone();
+                Some(ClosedAcpCandidate {
+                    thread_id,
+                    session_id,
+                    agent: Agent::Custom {
+                        id: m.agent_id.clone(),
+                    },
+                    work_dirs: m.folder_paths().clone(),
+                    title: m.title(),
+                    panel,
+                })
+            })
+            .collect();
+
+        if candidates.is_empty() {
+            return;
+        }
+
+        self.closed_search_generation = self.closed_search_generation.wrapping_add(1);
+        let generation = self.closed_search_generation;
+        let total = candidates.len();
+        self.closed_search = ClosedSearch::Running { done: 0, total };
+        cx.notify();
+
+        self._closed_search_task = cx.spawn(async move |this, cx| {
+            for candidate in candidates {
+                if this
+                    .update(cx, |this, _| this.closed_search_generation)
+                    .ok()
+                    != Some(generation)
+                {
+                    return;
+                }
+
+                let load = candidate.panel.update(cx, |panel, cx| {
+                    panel.load_session_content_for_search(
+                        candidate.agent.clone(),
+                        candidate.session_id.clone(),
+                        candidate.work_dirs.clone(),
+                        candidate.title.clone(),
+                        cx,
+                    )
+                });
+                let matched = match load.await {
+                    Ok(acp_thread) => this
+                        .update(cx, |_, cx| {
+                            let text = acp_thread.read(cx).to_markdown(cx);
+                            !query.search_str(&text).is_empty()
+                        })
+                        .unwrap_or(false),
+                    Err(_) => false,
+                };
+
+                this.update(cx, |this, cx| {
+                    if this.closed_search_generation != generation {
+                        return;
+                    }
+                    if matched {
+                        this.closed_search_matches.insert(candidate.thread_id);
+                    }
+                    if let ClosedSearch::Running { done, .. } = &mut this.closed_search {
+                        *done += 1;
+                    }
+                    this.update_entries(cx);
+                })
+                .ok();
+            }
+
+            this.update(cx, |this, cx| {
+                if this.closed_search_generation == generation {
+                    this.closed_search = ClosedSearch::Idle;
+                    this.update_entries(cx);
+                }
+            })
+            .ok();
+        });
+    }
+
+    fn stop_closed_acp_search(&mut self, cx: &mut Context<Self>) {
+        self.closed_search_generation = self.closed_search_generation.wrapping_add(1);
+        self.closed_search = ClosedSearch::Idle;
+        self._closed_search_task = Task::ready(());
+        cx.notify();
+    }
+
+    /// Footer row offering the on-demand "Search more" pass over closed
+    /// external/ACP threads, or its live progress + a stop control while
+    /// running. Only shown in the thread list while a query is active.
+    fn render_search_more_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !matches!(self.view, SidebarView::ThreadList) || !self.has_filter_query(cx) {
+            return None;
+        }
+        match self.closed_search {
+            ClosedSearch::Running { done, total } => Some(
+                h_flex()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .gap_2()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        Label::new(format!("Searching agent histories… {done}/{total}"))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Button::new("stop-closed-acp-search", "Stop")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.stop_closed_acp_search(cx);
+                            })),
+                    )
+                    .into_any_element(),
+            ),
+            ClosedSearch::Idle => {
+                if !self.has_searchable_closed_acp_threads(cx) {
+                    return None;
+                }
+                Some(
+                    h_flex()
+                        .w_full()
+                        .px_2()
+                        .py_1()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            Button::new(
+                                "search-closed-acp",
+                                "Search more (closed agent threads)",
+                            )
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.start_closed_acp_search(cx);
+                            })),
+                        )
+                        .into_any_element(),
+                )
+            }
+        }
     }
 
     fn start_renaming_thread(
@@ -7567,6 +7835,7 @@ impl Render for Sidebar {
                     this.child(self.render_cross_channel_import_onboarding(verbose, cx))
                 })
             })
+            .children(self.render_search_more_row(cx))
             .child(self.render_sidebar_bottom_bar(cx))
     }
 }
