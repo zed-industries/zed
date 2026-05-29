@@ -743,12 +743,6 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub diagnostic_badges: Option<bool>,
-    /// Whether double-clicking the project panel border auto-resizes
-    /// the panel to fit the widest visible entry (no horizontal scrollbar),
-    /// or resets to the default static width.
-    ///
-    /// Default: true
-    pub auto_resize_on_double_click: Option<bool>,
 }
 
 #[derive(

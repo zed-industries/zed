@@ -823,10 +823,6 @@
       // Whether to automatically open files dropped from external sources.
       "on_drop": true,
     },
-    // Whether double-clicking the project panel border auto-resizes
-    // the panel to fit the widest visible entry (no horizontal scrollbar),
-    // or resets to the default static width.
-    "auto_resize_on_double_click": true
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
