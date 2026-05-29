@@ -258,6 +258,10 @@ async fn test_file_history_action_uses_focused_project_panel_selection(
         editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx), cx);
         });
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_multi_workspace, window, cx| {
         project_panel.update(cx, |panel, cx| {
             panel.select_path_for_test(project_panel_path.clone(), cx);
         });
@@ -388,6 +392,10 @@ async fn test_file_history_action_does_not_fall_back_to_editor_when_focused_proj
         editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx), cx);
         });
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_multi_workspace, window, cx| {
         project_panel.update(cx, |panel, cx| {
             panel.select_path_for_test(plain_project_path.clone(), cx);
         });
