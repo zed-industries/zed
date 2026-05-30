@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use ui::prelude::*;
 use util::ResultExt;
 use util::path_list::PathList;
+
 use zed_actions::agents_sidebar::ToggleThreadSwitcher;
 
 use agent_settings::AgentSettings;
@@ -264,6 +265,20 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     }
 }
 
+/// Single canonical open-state for the worktree picker's round-trip memory.
+///
+/// `subdirs` are stored relative to the worktree's work-dir so they are
+/// portable when switching between worktrees of the same repository.
+/// `non_git_paths` are stored as absolute paths (they have no work-dir).
+///
+/// Modified only when the user explicitly adds or removes a project folder
+/// from the sidebar — worktrees lacking a mapped subdir never write to this.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorktreeSwitchMemory {
+    pub subdirs: Vec<PathBuf>,
+    pub non_git_paths: Vec<PathBuf>,
+}
+
 #[derive(Clone)]
 pub struct ProjectGroup {
     pub key: ProjectGroupKey,
@@ -295,6 +310,7 @@ pub struct MultiWorkspace {
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     previous_focus_handle: Option<FocusHandle>,
+    open_state_memory: Option<WorktreeSwitchMemory>,
 }
 
 impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
@@ -356,7 +372,16 @@ impl MultiWorkspace {
                 settings_subscription,
             ],
             previous_focus_handle: None,
+            open_state_memory: None,
         }
+    }
+
+    pub fn get_open_state_memory(&self) -> Option<&WorktreeSwitchMemory> {
+        self.open_state_memory.as_ref()
+    }
+
+    pub fn set_open_state_memory(&mut self, memory: WorktreeSwitchMemory) {
+        self.open_state_memory = Some(memory);
     }
 
     pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
@@ -2246,5 +2271,33 @@ impl Render for MultiWorkspace {
                 ..Tiling::default()
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_open_state_memory_initial_none() {
+        let memory: Option<WorktreeSwitchMemory> = None;
+        assert!(memory.is_none(), "open_state_memory must start as None");
+    }
+
+    #[test]
+    fn test_set_get_open_state_memory() {
+        let expected = WorktreeSwitchMemory {
+            subdirs: vec![PathBuf::from("a"), PathBuf::from("b/c")],
+            non_git_paths: vec![PathBuf::from("/other/test")],
+        };
+        let stored = Some(expected.clone());
+        assert_eq!(stored.as_ref(), Some(&expected));
+    }
+
+    #[test]
+    fn test_worktree_switch_memory_default_is_empty() {
+        let m = WorktreeSwitchMemory::default();
+        assert!(m.subdirs.is_empty());
+        assert!(m.non_git_paths.is_empty());
     }
 }

@@ -1,12 +1,13 @@
 use std::error::Error;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::anyhow;
 use askpass::AskPassDelegate;
 use collections::HashSet;
 use fs::Fs;
+use futures::FutureExt as _;
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
     TaskExt, WeakEntity,
@@ -15,21 +16,57 @@ use project::Project;
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
+use proto;
 use remote::RemoteConnectionOptions;
+use rpc::AnyProtoClient;
 use settings::Settings;
 use ui::prelude::*;
 use workspace::{
-    MultiWorkspace, OpenMode, PreviousWorkspaceState, ToastView, Workspace, dock::DockPosition,
+    MultiWorkspace, OpenMode, PreviousWorkspaceState, ToastView, Workspace, WorktreeSwitchMemory,
+    dock::DockPosition,
 };
 use zed_actions::NewWorktreeBranchTarget;
 
 use git::repository::{FetchOptions, Remote};
 
 use util::ResultExt as _;
+use util::paths::{PathStyle, SanitizedPath};
 
 use crate::askpass_modal::AskPassModal;
 use crate::git_panel::{open_output, show_error_toast};
 use crate::worktree_names;
+
+/// Async "is this a directory?" predicate used to filter candidate paths
+/// during worktree switch. Abstracts local (`Fs::is_dir`) and remote
+/// (`GetPathMetadata` RPC) checks behind a single callable.
+pub type IsDirProbe =
+    Arc<dyn Fn(PathBuf) -> futures::future::BoxFuture<'static, bool> + Send + Sync>;
+
+pub fn local_is_dir_probe(fs: Arc<dyn Fs>) -> IsDirProbe {
+    Arc::new(move |path: PathBuf| {
+        let fs = fs.clone();
+        async move { fs.is_dir(&path).await }.boxed()
+    })
+}
+
+/// Uses `GetPathMetadata` RPC — mirrors `Project::resolve_abs_path`'s remote branch.
+pub fn remote_is_dir_probe(client: AnyProtoClient) -> IsDirProbe {
+    Arc::new(move |path: PathBuf| {
+        let client = client.clone();
+        async move {
+            client
+                .request(proto::GetPathMetadata {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                    path: path.to_string_lossy().into_owned(),
+                })
+                .await
+                .ok()
+                .map(|r| r.exists && r.is_dir)
+                .unwrap_or(false)
+        }
+        .boxed()
+    })
+}
 
 /// Whether a worktree operation is creating a new one or switching to an
 /// existing one. Controls whether the source workspace's state (dock layout,
@@ -260,6 +297,69 @@ pub fn classify_worktrees(
     }
 
     (git_repos, non_git_paths)
+}
+
+/// Returns open project paths relative to the active repo's work dir.
+/// An empty `PathBuf` means a path opened exactly at the work-dir root.
+pub fn visible_subdirectories_under_active_repo(project: &Project, cx: &gpui::App) -> Vec<PathBuf> {
+    let Some(active_repo) = project.active_repository(cx) else {
+        log::debug!("visible_subdirectories_under_active_repo: no active repository");
+        return Vec::new();
+    };
+    let work_dir = active_repo.read(cx).work_directory_abs_path.clone();
+    let mut subdirs = Vec::new();
+    for worktree in project.visible_worktrees(cx) {
+        let abs_path = worktree.read(cx).abs_path();
+        if let Ok(relative) = abs_path.strip_prefix(work_dir.as_ref()) {
+            subdirs.push(relative.to_path_buf());
+        }
+    }
+    subdirs
+}
+
+/// Resolves destination paths for each `subdir` under `new_root`.
+///
+/// `path_style` must be the **destination** project's style, not the host's:
+/// on a Windows host `PathBuf::join` injects `\`, which remote POSIX servers reject.
+/// Drops subdirs that fail the `is_dir` probe; if all drop, falls back to `vec![new_root]`.
+/// Pass `is_dir = None` to skip the existence check (tests, intentional override).
+pub async fn map_subdirectories_to_new_root(
+    new_root: PathBuf,
+    subdirs: Vec<PathBuf>,
+    path_style: PathStyle,
+    is_dir: Option<IsDirProbe>,
+) -> Vec<PathBuf> {
+    if subdirs.is_empty() {
+        return vec![new_root];
+    }
+    let mut result: Vec<PathBuf> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::default();
+    for subdir in &subdirs {
+        let candidate = match path_style.join_path(&new_root, subdir) {
+            Ok(path) => path,
+            Err(err) => {
+                log::warn!(
+                    "map_subdirectories_to_new_root: skipping subdir {:?} under {:?}: {err}",
+                    subdir,
+                    new_root
+                );
+                continue;
+            }
+        };
+        if let Some(probe) = is_dir.as_ref() {
+            if !probe(candidate.clone()).await {
+                continue;
+            }
+        }
+        if seen.insert(candidate.clone()) {
+            result.push(candidate);
+        }
+    }
+    if result.is_empty() {
+        vec![new_root]
+    } else {
+        result
+    }
 }
 
 /// Resolves a branch target into the ref the new worktree should be based on.
@@ -738,6 +838,11 @@ pub fn handle_switch_worktree(
     let workspace_handle = workspace.weak_handle();
     let window_handle = window.window_handle().downcast::<MultiWorkspace>();
     let remote_connection_options = project.read(cx).remote_connection_options(cx);
+    let proto_client = project
+        .read(cx)
+        .remote_client()
+        .map(|rc| rc.read(cx).proto_client());
+    let path_style = project.read(cx).path_style(cx);
 
     let (git_repos, non_git_paths) = classify_worktrees(project.read(cx), cx);
 
@@ -748,6 +853,20 @@ pub fn handle_switch_worktree(
 
     let display_name: SharedString = action.display_name.clone().into();
 
+    let visible_subdirs = visible_subdirectories_under_active_repo(project.read(cx), cx);
+
+    let source_root_paths: Vec<PathBuf> = workspace
+        .root_paths(cx)
+        .into_iter()
+        .map(|path| path.to_path_buf())
+        .collect();
+
+    let source_work_dir: Option<PathBuf> = project
+        .read(cx)
+        .active_repository(cx)
+        .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
+        .or_else(|| git_repo_work_dirs.first().cloned());
+
     workspace.set_active_worktree_creation(Some(display_name), true, cx);
 
     let worktree_path = action.path.clone();
@@ -757,10 +876,15 @@ pub fn handle_switch_worktree(
             worktree_path,
             git_repo_work_dirs,
             non_git_paths,
+            visible_subdirs,
+            source_root_paths,
+            source_work_dir,
             previous_state,
             workspace_handle.clone(),
             window_handle,
             remote_connection_options,
+            proto_client,
+            path_style,
             &mut cx,
         )
         .await;
@@ -897,10 +1021,15 @@ async fn do_switch_worktree(
     worktree_path: PathBuf,
     git_repo_work_dirs: Vec<PathBuf>,
     non_git_paths: Vec<PathBuf>,
+    visible_subdirs: Vec<PathBuf>,
+    source_root_paths: Vec<PathBuf>,
+    source_work_dir: Option<PathBuf>,
     previous_state: PreviousWorkspaceState,
     workspace: WeakEntity<Workspace>,
     window_handle: Option<gpui::WindowHandle<MultiWorkspace>>,
     remote_connection_options: Option<RemoteConnectionOptions>,
+    proto_client: Option<AnyProtoClient>,
+    path_style: PathStyle,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<()> {
     let path_remapping: Vec<(PathBuf, PathBuf)> = git_repo_work_dirs
@@ -908,9 +1037,34 @@ async fn do_switch_worktree(
         .map(|work_dir| (work_dir.clone(), worktree_path.clone()))
         .collect();
 
-    let mut all_paths = vec![worktree_path];
+    let is_dir = if let Some(client) = proto_client {
+        remote_is_dir_probe(client)
+    } else {
+        let fs = cx.update(|_, cx| <dyn Fs>::global(cx))?;
+        local_is_dir_probe(fs)
+    };
+
+    update_open_state_memory(
+        window_handle.as_ref(),
+        source_work_dir.as_deref(),
+        &source_root_paths,
+        is_dir.clone(),
+        path_style,
+        cx,
+    )
+    .await;
+
+    let all_paths = compute_destination_paths(
+        window_handle.as_ref(),
+        worktree_path,
+        visible_subdirs,
+        &non_git_paths,
+        is_dir,
+        path_style,
+        cx,
+    )
+    .await;
     let has_non_git = !non_git_paths.is_empty();
-    all_paths.extend(non_git_paths.iter().cloned());
 
     open_worktree_workspace(
         all_paths,
@@ -927,7 +1081,87 @@ async fn do_switch_worktree(
     .await
 }
 
-/// Core workspace opening logic shared by both create and switch flows.
+/// Keeps open-state memory consistent with the current root_paths before switching.
+/// Absorbed any paths the user opened or closed since the last switch.
+/// No-op when there is no active git work directory (memory is keyed off that).
+async fn update_open_state_memory(
+    window_handle: Option<&gpui::WindowHandle<MultiWorkspace>>,
+    source_work_dir: Option<&Path>,
+    source_root_paths: &[PathBuf],
+    is_dir: IsDirProbe,
+    path_style: PathStyle,
+    cx: &mut AsyncWindowContext,
+) {
+    let Some(work_dir) = source_work_dir else {
+        return;
+    };
+    let Some(wh) = window_handle else {
+        return;
+    };
+
+    let saved_memory = wh
+        .update(cx, |mw, _, _| mw.get_open_state_memory().cloned())
+        .ok()
+        .flatten();
+
+    let updated_memory = match saved_memory {
+        None => derive_memory_from_root_paths(work_dir, source_root_paths),
+        Some(memory) => {
+            let expected_paths =
+                compute_expected_paths(&memory, work_dir, path_style, Some(is_dir)).await;
+            apply_diff(memory, source_root_paths, &expected_paths, work_dir)
+        }
+    };
+
+    wh.update(cx, |mw, _, _| mw.set_open_state_memory(updated_memory))
+        .ok();
+}
+
+/// Prefers saved memory for destination paths; falls back to visible subdirs
+/// on first visit. Non-git paths are appended only in the fallback branch
+/// because memory already carries them.
+async fn compute_destination_paths(
+    window_handle: Option<&gpui::WindowHandle<MultiWorkspace>>,
+    worktree_path: PathBuf,
+    visible_subdirs: Vec<PathBuf>,
+    non_git_paths: &[PathBuf],
+    is_dir: IsDirProbe,
+    path_style: PathStyle,
+    cx: &mut AsyncWindowContext,
+) -> Vec<PathBuf> {
+    let saved_memory = window_handle
+        .and_then(|wh| {
+            wh.update(cx, |mw, _, _| mw.get_open_state_memory().cloned())
+                .ok()
+        })
+        .flatten();
+
+    match saved_memory {
+        Some(memory) => {
+            let mut paths = map_subdirectories_to_new_root(
+                worktree_path,
+                memory.subdirs,
+                path_style,
+                Some(is_dir),
+            )
+            .await;
+            paths.extend(memory.non_git_paths);
+            paths
+        }
+        None => {
+            let mut paths = map_subdirectories_to_new_root(
+                worktree_path,
+                visible_subdirs,
+                path_style,
+                Some(is_dir),
+            )
+            .await;
+            paths.extend(non_git_paths.iter().cloned());
+            paths
+        }
+    }
+}
+
 async fn open_worktree_workspace(
     all_paths: Vec<PathBuf>,
     path_remapping: Vec<(PathBuf, PathBuf)>,
@@ -1150,6 +1384,77 @@ async fn open_worktree_workspace(
     })?;
 
     anyhow::Ok(())
+}
+
+/// Splits `root_paths` into git subdirs (relative to `work_dir`) and
+/// non-git absolute paths, building the initial `WorktreeSwitchMemory`.
+fn derive_memory_from_root_paths(work_dir: &Path, root_paths: &[PathBuf]) -> WorktreeSwitchMemory {
+    let wd_norm = SanitizedPath::new(work_dir).as_path().to_path_buf();
+    let mut subdirs = Vec::new();
+    let mut non_git_paths = Vec::new();
+    for path in root_paths {
+        let p_norm = SanitizedPath::new(path).as_path().to_path_buf();
+        match p_norm.strip_prefix(&wd_norm) {
+            Ok(rel) => subdirs.push(rel.to_path_buf()),
+            Err(_) => non_git_paths.push(path.clone()),
+        }
+    }
+    WorktreeSwitchMemory {
+        subdirs,
+        non_git_paths,
+    }
+}
+
+/// Projects `memory.subdirs` onto `work_dir` with `is_dir` filtering, then
+/// appends `memory.non_git_paths`. This is the "expected" state for the
+/// source workspace — mapping-loss (subdirs absent from this worktree) is
+/// absorbed here so it never reaches the diff in `apply_diff`.
+async fn compute_expected_paths(
+    memory: &WorktreeSwitchMemory,
+    work_dir: &Path,
+    path_style: PathStyle,
+    is_dir: Option<IsDirProbe>,
+) -> Vec<PathBuf> {
+    let mut result =
+        map_subdirectories_to_new_root(work_dir.to_path_buf(), memory.subdirs.clone(), path_style, is_dir)
+            .await;
+    result.extend(memory.non_git_paths.iter().cloned());
+    result
+}
+
+/// Applies the diff between `current` root_paths and `expected_paths` to
+/// `memory`. Only explicit user add/remove reaches here — mapping-loss was
+/// already absorbed when computing `expected_paths`.
+fn apply_diff(
+    mut memory: WorktreeSwitchMemory,
+    current: &[PathBuf],
+    expected_paths: &[PathBuf],
+    work_dir: &Path,
+) -> WorktreeSwitchMemory {
+    let expected_set: HashSet<&PathBuf> = expected_paths.iter().collect();
+    let current_set: HashSet<&PathBuf> = current.iter().collect();
+
+    for added in current_set.difference(&expected_set) {
+        let added: &Path = added.as_path();
+        if let Ok(rel) = added.strip_prefix(work_dir) {
+            if !memory.subdirs.contains(&rel.to_path_buf()) {
+                memory.subdirs.push(rel.to_path_buf());
+            }
+        } else if !memory.non_git_paths.contains(&added.to_path_buf()) {
+            memory.non_git_paths.push(added.to_path_buf());
+        }
+    }
+
+    for removed in expected_set.difference(&current_set) {
+        let removed: &Path = removed.as_path();
+        if let Ok(rel) = removed.strip_prefix(work_dir) {
+            memory.subdirs.retain(|s| s != rel);
+        } else {
+            memory.non_git_paths.retain(|p| p.as_path() != removed);
+        }
+    }
+
+    memory
 }
 
 #[cfg(test)]
@@ -1473,5 +1778,390 @@ mod tests {
             !has_modal,
             "security modal should not show for a linked worktree created from a trusted main worktree"
         );
+    }
+
+    /// Regression: on a Windows host opening a POSIX remote (WSL/SSH→Linux),
+    /// `PathBuf::join` would inject `\`, producing paths like
+    /// `/home/u/wt-b\sub/dir` that the remote rejects with
+    /// `DevServerProjectPathDoesNotExist`. The helper must use the destination
+    /// project's `PathStyle` instead of the host's.
+    #[gpui::test]
+    async fn test_map_subdirectories_uses_posix_separator_for_posix_destination(
+        _cx: &mut TestAppContext,
+    ) {
+        let new_root = PathBuf::from("/home/u/wt-b");
+        let subdirs = vec![PathBuf::from("path_to_subdir/first")];
+
+        let mapped =
+            map_subdirectories_to_new_root(new_root, subdirs, PathStyle::Posix, None).await;
+
+        assert_eq!(mapped.len(), 1);
+        let s = mapped[0]
+            .to_str()
+            .expect("mapped path should be valid utf-8");
+        assert!(
+            !s.contains('\\'),
+            "POSIX-styled join must not produce backslashes, got {s:?}"
+        );
+        assert_eq!(s, "/home/u/wt-b/path_to_subdir/first");
+    }
+
+    #[gpui::test]
+    async fn test_map_subdirectories_uses_windows_separator_for_windows_destination(
+        _cx: &mut TestAppContext,
+    ) {
+        let new_root = PathBuf::from("C:\\Users\\u\\wt-b");
+        let subdirs = vec![PathBuf::from("path_to_subdir/first")];
+
+        let mapped =
+            map_subdirectories_to_new_root(new_root, subdirs, PathStyle::Windows, None).await;
+
+        assert_eq!(mapped.len(), 1);
+        let s = mapped[0]
+            .to_str()
+            .expect("mapped path should be valid utf-8");
+        assert_eq!(s, "C:\\Users\\u\\wt-b\\path_to_subdir\\first");
+    }
+
+    // ── Unit tests for memory helpers ─────────────────────────────────────────
+
+    #[test]
+    fn test_derive_memory_from_root_paths_basic() {
+        let work_dir = PathBuf::from(path!("/root/repo"));
+        let root_paths = vec![
+            PathBuf::from(path!("/root/repo/a")),
+            PathBuf::from(path!("/root/repo/b/c")),
+            PathBuf::from(path!("/other/test")),
+        ];
+        let mem = derive_memory_from_root_paths(&work_dir, &root_paths);
+        assert_eq!(mem.subdirs, vec![PathBuf::from("a"), PathBuf::from("b/c")]);
+        assert_eq!(mem.non_git_paths, vec![PathBuf::from(path!("/other/test"))]);
+    }
+
+    #[test]
+    fn test_derive_memory_root_equals_work_dir() {
+        let work_dir = PathBuf::from(path!("/root/repo"));
+        let root_paths = vec![PathBuf::from(path!("/root/repo"))];
+        let mem = derive_memory_from_root_paths(&work_dir, &root_paths);
+        assert_eq!(mem.subdirs, vec![PathBuf::from("")]);
+        assert!(mem.non_git_paths.is_empty());
+    }
+
+    #[test]
+    fn test_apply_diff_noop_on_match() {
+        let work_dir = PathBuf::from(path!("/r"));
+        let memory = WorktreeSwitchMemory {
+            subdirs: vec![PathBuf::from("a"), PathBuf::from("b")],
+            non_git_paths: vec![],
+        };
+        let expected = vec![
+            PathBuf::from(path!("/r/a")),
+            PathBuf::from(path!("/r/b")),
+        ];
+        let current = expected.clone();
+        let updated = apply_diff(memory.clone(), &current, &expected, &work_dir);
+        assert_eq!(updated, memory, "no diff → memory must be unchanged");
+    }
+
+    #[test]
+    fn test_apply_diff_removal_only() {
+        let work_dir = PathBuf::from(path!("/r"));
+        let memory = WorktreeSwitchMemory {
+            subdirs: vec![PathBuf::from("a"), PathBuf::from("b")],
+            non_git_paths: vec![],
+        };
+        let expected = vec![
+            PathBuf::from(path!("/r/a")),
+            PathBuf::from(path!("/r/b")),
+        ];
+        let current = vec![PathBuf::from(path!("/r/a"))]; // user removed b
+        let updated = apply_diff(memory, &current, &expected, &work_dir);
+        assert_eq!(updated.subdirs, vec![PathBuf::from("a")]);
+    }
+
+    #[test]
+    fn test_apply_diff_addition_only() {
+        let work_dir = PathBuf::from(path!("/r"));
+        let memory = WorktreeSwitchMemory {
+            subdirs: vec![PathBuf::from("a")],
+            non_git_paths: vec![],
+        };
+        let expected = vec![PathBuf::from(path!("/r/a"))];
+        let current = vec![
+            PathBuf::from(path!("/r/a")),
+            PathBuf::from(path!("/r/c")), // user added c
+        ];
+        let updated = apply_diff(memory, &current, &expected, &work_dir);
+        assert!(updated.subdirs.contains(&PathBuf::from("a")));
+        assert!(updated.subdirs.contains(&PathBuf::from("c")));
+    }
+
+    #[test]
+    fn test_apply_diff_mapping_loss_not_removal() {
+        let work_dir = PathBuf::from(path!("/r"));
+        let memory = WorktreeSwitchMemory {
+            subdirs: vec![PathBuf::from("a"), PathBuf::from("b")],
+            non_git_paths: vec![],
+        };
+        // b was absent in this worktree → expected_paths already excludes it
+        let expected = vec![PathBuf::from(path!("/r/a"))];
+        let current = vec![PathBuf::from(path!("/r/a"))];
+        let updated = apply_diff(memory.clone(), &current, &expected, &work_dir);
+        assert_eq!(
+            updated.subdirs, memory.subdirs,
+            "mapping-loss must not remove b from memory"
+        );
+    }
+
+    #[test]
+    fn test_apply_diff_non_git_add_and_remove() {
+        let work_dir = PathBuf::from(path!("/r"));
+        let memory = WorktreeSwitchMemory {
+            subdirs: vec![PathBuf::from("a")],
+            non_git_paths: vec![PathBuf::from(path!("/x"))],
+        };
+        let expected = vec![
+            PathBuf::from(path!("/r/a")),
+            PathBuf::from(path!("/x")),
+        ];
+        let current = vec![
+            PathBuf::from(path!("/r/a")),
+            PathBuf::from(path!("/y")), // user replaced /x with /y
+        ];
+        let updated = apply_diff(memory, &current, &expected, &work_dir);
+        assert_eq!(
+            updated.non_git_paths,
+            vec![PathBuf::from(path!("/y"))],
+            "/x removed and /y added"
+        );
+    }
+
+    // ── Integration: round-trip and triangle tests ────────────────────────────
+
+    /// A→B→A round-trip: memory initialized on first switch preserves subdirs
+    /// even when B's worktree is missing some of them.
+    #[gpui::test]
+    async fn test_switch_worktree_round_trip_preserves_root(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "original": {
+                    ".git": {},
+                    "path_to_subdir": {
+                        "first":  { "example.txt": "" },
+                        "second": { "example.txt": "" },
+                    },
+                },
+                "other": {
+                    ".git": {},
+                    "path_to_subdir": {
+                        "first": { "example.txt": "" },
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let original_root = PathBuf::from(path!("/root/original"));
+        let other_root = PathBuf::from(path!("/root/other"));
+
+        let project_a = Project::test(fs.clone(), [original_root.as_path()], cx).await;
+        project_a
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(project_a.clone(), window, cx)
+        });
+
+        multi_workspace.update(cx, |mw, cx| mw.retain_active_workspace(cx));
+
+        let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        // ── original → other ──────────────────────────────────────────────────
+        workspace_a.update_in(cx, |workspace, window, cx| {
+            handle_switch_worktree(
+                workspace,
+                &zed_actions::SwitchWorktree {
+                    path: other_root.clone(),
+                    display_name: "other".to_string(),
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Memory should be initialized with subdirs=[""] (root)
+        let memory = multi_workspace.read_with(cx, |mw, _| mw.get_open_state_memory().cloned());
+        assert!(
+            memory.is_some(),
+            "memory must be initialized after first switch"
+        );
+        let memory = memory.unwrap();
+        assert_eq!(
+            memory.subdirs,
+            vec![PathBuf::from("")],
+            "root switch: subdirs must be [\"\"]"
+        );
+
+        let workspace_b = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        assert_ne!(workspace_b.entity_id(), workspace_a.entity_id());
+
+        // ── other → original ──────────────────────────────────────────────────
+        workspace_b.update_in(cx, |workspace, window, cx| {
+            handle_switch_worktree(
+                workspace,
+                &zed_actions::SwitchWorktree {
+                    path: original_root.clone(),
+                    display_name: "original".to_string(),
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let active = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        assert_eq!(
+            active.entity_id(),
+            workspace_a.entity_id(),
+            "round-trip must reactivate workspace A"
+        );
+        let root_paths = active.read_with(cx, |ws, cx| ws.root_paths(cx));
+        assert_eq!(root_paths.len(), 1, "A should have exactly one root");
+        assert_eq!(root_paths[0].as_ref(), original_root.as_path());
+    }
+
+    /// Triangle round-trip: main([first,second]) → A(no second) → C(has second)
+    /// must restore second in C because memory preserves subdirs across hops.
+    #[gpui::test]
+    async fn test_switch_worktree_triangle_preserves_second(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "original": {
+                    ".git": {},
+                    "path_to_subdir": {
+                        "first":  { "example.txt": "" },
+                        "second": { "example.txt": "" },
+                    },
+                },
+                "worktree_a": {
+                    ".git": {},
+                    "path_to_subdir": {
+                        "first": { "example.txt": "" },
+                    },
+                },
+                "worktree_c": {
+                    ".git": {},
+                    "path_to_subdir": {
+                        "first":  { "example.txt": "" },
+                        "second": { "example.txt": "" },
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let original_root = PathBuf::from(path!("/root/original"));
+        let worktree_a_root = PathBuf::from(path!("/root/worktree_a"));
+        let worktree_c_root = PathBuf::from(path!("/root/worktree_c"));
+
+        let first_path = original_root.join("path_to_subdir").join("first");
+        let second_path = original_root.join("path_to_subdir").join("second");
+
+        let project = Project::test(
+            fs.clone(),
+            [first_path.as_path(), second_path.as_path()],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        multi_workspace.update(cx, |mw, cx| mw.retain_active_workspace(cx));
+
+        let workspace_original = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        // ── original([first,second]) → worktree-A([first only]) ──────────────
+        workspace_original.update_in(cx, |workspace, window, cx| {
+            handle_switch_worktree(
+                workspace,
+                &zed_actions::SwitchWorktree {
+                    path: worktree_a_root.clone(),
+                    display_name: "worktree-A".to_string(),
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let memory = multi_workspace.read_with(cx, |mw, _| mw.get_open_state_memory().cloned());
+        assert!(memory.is_some(), "memory initialized after first switch");
+        let memory = memory.unwrap();
+        assert_eq!(
+            memory.subdirs.len(),
+            2,
+            "memory must record both path_to_subdir/first and path_to_subdir/second"
+        );
+
+        let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let a_paths = workspace_a.read_with(cx, |ws, cx| ws.root_paths(cx));
+        assert_eq!(a_paths.len(), 1, "worktree-A has only first");
+
+        // ── worktree-A([first]) → worktree-C([first,second]) ─────────────────
+        workspace_a.update_in(cx, |workspace, window, cx| {
+            handle_switch_worktree(
+                workspace,
+                &zed_actions::SwitchWorktree {
+                    path: worktree_c_root.clone(),
+                    display_name: "worktree-C".to_string(),
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let workspace_c = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let c_paths = workspace_c.read_with(cx, |ws, cx| ws.root_paths(cx));
+        assert_eq!(
+            c_paths.len(),
+            2,
+            "triangle goal: worktree-C must restore both first and second"
+        );
+    }
+
+    /// `PathStyle::join_path` refuses to join an absolute `subdir`. The helper
+    /// should skip such inputs rather than emitting a malformed candidate, and
+    /// fall back to `vec![new_root]` if every subdir is rejected.
+    #[gpui::test]
+    async fn test_map_subdirectories_skips_absolute_subdir(_cx: &mut TestAppContext) {
+        let new_root = PathBuf::from("/home/u/wt-b");
+        let subdirs = vec![PathBuf::from("/etc")];
+
+        let mapped =
+            map_subdirectories_to_new_root(new_root.clone(), subdirs, PathStyle::Posix, None)
+                .await;
+
+        assert_eq!(mapped, vec![new_root]);
     }
 }

@@ -7754,6 +7754,7 @@ dependencies = [
  "rand 0.9.4",
  "remote",
  "remote_connection",
+ "rpc",
  "schemars 1.0.4",
  "serde",
  "serde_json",
