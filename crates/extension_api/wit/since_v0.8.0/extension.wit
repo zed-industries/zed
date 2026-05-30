@@ -29,6 +29,10 @@ world extension {
         zip,
         /// An uncompressed file.
         uncompressed,
+        /// A bzip2 file (`.bz2`).
+        bzip2,
+        /// A bzip2 tar archive (`.tar.bz2`).
+        bzip2-tar,
     }
 
     /// The installation status for a language server.
