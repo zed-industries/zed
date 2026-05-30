@@ -13,8 +13,9 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, MergeOptions,
+        MergeOutcome, MergeOutput, PushOptions, RefEdit, Remote, RepoPath, ResetMode,
+        SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -352,6 +353,29 @@ impl GitRepository for FakeGitRepository {
 
     fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
         async move { None }.boxed()
+    }
+
+    fn merge(
+        &self,
+        _source: String,
+        _options: MergeOptions,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<MergeOutput>> {
+        async move {
+            Ok(MergeOutput {
+                outcome: MergeOutcome::Success,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+        .boxed()
+    }
+
+    fn merge_abort(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, |state| {
+            state.unmerged_paths.clear();
+            Ok(())
+        })
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
