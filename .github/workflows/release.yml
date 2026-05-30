@@ -745,6 +745,7 @@ jobs:
       run: |
         tag="$GITHUB_REF_NAME"
         release_published=false
+        auto_publish_skipped_reason=""
 
         if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-pre$ ]]; then
             echo "::error::expected preview release tag in the form vMAJOR.MINOR.PATCH-pre, got $tag"
@@ -769,16 +770,25 @@ jobs:
             echo "Leaving $tag as a draft because it is the first preview release for v${major}.${minor}.x"
         fi
 
+        release_body="$(gh release view "$tag" --repo=zed-industries/zed --json body --jq .body)"
+        if [[ -z "${release_body//[[:space:]]/}" ]]; then
+            should_release=false
+            auto_publish_skipped_reason="empty_notes"
+            echo "Leaving $tag as a draft because the release notes are empty"
+        fi
+
         if [[ "$should_release" == "true" ]]; then
             gh release edit "$tag" --repo=zed-industries/zed --draft=false
             release_published=true
         fi
 
         echo "release_published=$release_published" >> "$GITHUB_OUTPUT"
+        echo "auto_publish_skipped_reason=$auto_publish_skipped_reason" >> "$GITHUB_OUTPUT"
       env:
         GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
     outputs:
       release_published: ${{ steps.auto-release-preview.outputs.release_published }}
+      auto_publish_skipped_reason: ${{ steps.auto-release-preview.outputs.auto_publish_skipped_reason }}
   push_release_update_notification:
     needs:
     - create_draft_release
@@ -849,6 +859,8 @@ jobs:
                 echo "❌ Auto release failed for $TAG: $RUN_URL"
             elif [ "$AUTO_RELEASE_RESULT" == "success" ] && [ "$AUTO_RELEASE_PUBLISHED" == "true" ]; then
                 echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "success" ] && [ "$AUTO_PUBLISH_SKIPPED_REASON" == "empty_notes" ]; then
+                echo "📝 Release $TAG was left as a draft because the release notes are empty: $RELEASE_URL"
             else
                 echo "👀 Release $TAG sitting freshly baked in the oven and waiting to be published: $RELEASE_URL"
             fi
@@ -863,6 +875,7 @@ jobs:
         COMPLIANCE_RESULT: ${{ needs.release_compliance_check.result }}
         AUTO_RELEASE_RESULT: ${{ needs.auto_release_preview.result }}
         AUTO_RELEASE_PUBLISHED: ${{ needs.auto_release_preview.outputs.release_published }}
+        AUTO_PUBLISH_SKIPPED_REASON: ${{ needs.auto_release_preview.outputs.auto_publish_skipped_reason }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         TAG: ${{ github.ref_name }}
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}

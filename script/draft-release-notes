@@ -77,10 +77,7 @@ async function main() {
     }
   }
 
-  if (releaseNotes.length === 0) {
-    const compareUrl = `https://github.com/zed-industries/zed/compare/${priorTag}...${tag}#commits_bucket`;
-    console.log(`No public-facing changes in this release. [View the commits](${compareUrl}).\n`);
-  } else {
+  if (releaseNotes.length > 0) {
     console.log(releaseNotes.join("\n") + "\n");
   }
 }
