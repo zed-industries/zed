@@ -361,14 +361,17 @@ impl GitRepository for FakeGitRepository {
         _options: MergeOptions,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<MergeOutput>> {
-        async move {
+        self.with_state_async(false, |state| {
             Ok(MergeOutput {
-                outcome: MergeOutcome::Success,
+                outcome: if state.unmerged_paths.is_empty() {
+                    MergeOutcome::Success
+                } else {
+                    MergeOutcome::Conflicts
+                },
                 stdout: String::new(),
                 stderr: String::new(),
             })
-        }
-        .boxed()
+        })
     }
 
     fn merge_abort(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {

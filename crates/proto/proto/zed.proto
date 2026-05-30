@@ -488,7 +488,10 @@ message Envelope {
     GetDocumentLinks get_document_links = 453;
     GetDocumentLinksResponse get_document_links_response = 454;
     ResolveDocumentLink resolve_document_link = 455;
-    ResolveDocumentLinkResponse resolve_document_link_response = 456; // current max
+    ResolveDocumentLinkResponse resolve_document_link_response = 456;
+    GitMerge git_merge = 457;
+    GitMergeResponse git_merge_response = 458;
+    GitMergeAbort git_merge_abort = 459; // current max
   }
 
   reserved 87 to 88;
