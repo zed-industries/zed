@@ -1526,7 +1526,7 @@ impl PickerDelegate for BranchListDelegate {
                     h_flex()
                         .w_full()
                         .gap_2p5()
-                        .flex_grow()
+                        .flex_grow_1()
                         .child(
                             Icon::new(entry_icon)
                                 .color(if is_checked_branch {

@@ -1113,7 +1113,7 @@ impl Render for CommitView {
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
             .when(!self.editor.read(cx).is_empty(cx), |this| {
-                this.child(div().flex_grow().child(self.editor.clone()))
+                this.child(div().flex_grow_1().child(self.editor.clone()))
             })
     }
 }
