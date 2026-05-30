@@ -455,7 +455,8 @@ message GitMerge {
   string source = 4;
   FastForwardMode fast_forward = 5;
   bool squash = 6;
-  bool commit = 7;
+  // false means Git should create a merge commit when needed, matching MergeOptions::default().
+  bool no_commit = 7;
   optional string message = 8;
 
   enum FastForwardMode {

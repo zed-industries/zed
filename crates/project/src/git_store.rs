@@ -2372,12 +2372,7 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let payload = envelope.payload;
-        let options = MergeOptions {
-            fast_forward: merge_options_ff_from_proto(payload.fast_forward()),
-            squash: payload.squash,
-            commit: payload.commit,
-            message: payload.message,
-        };
+        let options = merge_options_from_proto(&payload);
         let source = payload.source.into();
 
         let output = repository_handle
@@ -4232,6 +4227,15 @@ fn merge_outcome_from_proto(outcome: i32) -> MergeOutcome {
         Some(proto::git_merge_response::Outcome::UpToDate) => MergeOutcome::UpToDate,
         Some(proto::git_merge_response::Outcome::Conflicts) => MergeOutcome::Conflicts,
         Some(proto::git_merge_response::Outcome::Failed) | None => MergeOutcome::Failed,
+    }
+}
+
+fn merge_options_from_proto(payload: &proto::GitMerge) -> MergeOptions {
+    MergeOptions {
+        fast_forward: merge_options_ff_from_proto(payload.fast_forward()),
+        squash: payload.squash,
+        commit: !payload.no_commit,
+        message: payload.message.clone(),
     }
 }
 
@@ -6886,7 +6890,7 @@ impl Repository {
                                 fast_forward: merge_options_ff_to_proto(options.fast_forward)
                                     as i32,
                                 squash: options.squash,
-                                commit: options.commit,
+                                no_commit: !options.commit,
                                 message: options.message.clone(),
                             })
                             .await?;
