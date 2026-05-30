@@ -35,6 +35,7 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+const CREDENTIALS_NOT_SAVED_MESSAGE: &str = "Signed in, but credentials could not be saved. Set up a system keychain to stay signed in after restart.";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -596,22 +597,16 @@ async fn get_fresh_credentials(
                             )));
                         }
 
-                        let credentials_provider = state_clone
-                            .read_with(&*cx, |s, _| s.credentials_provider.clone())
-                            .map_err(|e| Arc::new(e))?;
-
-                        let json =
-                            serde_json::to_vec(&refreshed).map_err(|e| Arc::new(e.into()))?;
-
-                        credentials_provider
-                            .write_credentials(CREDENTIALS_KEY, "Bearer", &json, &*cx)
-                            .await
-                            .map_err(|e| Arc::new(e))?;
+                        let persistence_warning =
+                            persist_credentials(&state_clone, &refreshed, "token refresh", cx)
+                                .await
+                                .map_err(|e| Arc::new(e))?;
 
                         state_clone
                             .update(cx, |s, _| {
                                 s.credentials = Some(refreshed.clone());
                                 s.refresh_task = None;
+                                s.last_auth_error = persistence_warning;
                             })
                             .map_err(|e| Arc::new(e))?;
 
@@ -941,42 +936,31 @@ fn do_sign_in(state: &Entity<State>, http_client: &Arc<dyn HttpClient>, cx: &mut
     let task = cx.spawn(async move |cx| {
         match do_oauth_flow(http_client, &*cx).await {
             Ok(creds) => {
-                let persist_result = async {
-                    let credentials_provider =
-                        weak_state.read_with(&*cx, |s, _| s.credentials_provider.clone())?;
-                    let json = serde_json::to_vec(&creds)?;
-                    credentials_provider
-                        .write_credentials(CREDENTIALS_KEY, "Bearer", &json, &*cx)
-                        .await?;
-                    anyhow::Ok(())
-                }
-                .await;
-
-                match persist_result {
-                    Ok(()) => {
-                        weak_state
-                            .update(cx, |s, cx| {
-                                s.credentials = Some(creds);
-                                s.sign_in_task = None;
-                                s.last_auth_error = None;
-                                cx.notify();
-                            })
-                            .log_err();
-                    }
+                let persistence_warning = match persist_credentials(
+                    &weak_state,
+                    &creds,
+                    "sign-in",
+                    cx,
+                )
+                .await
+                {
+                    Ok(warning) => warning,
                     Err(err) => {
                         log::error!(
                             "ChatGPT subscription sign-in failed to persist credentials: {err:?}"
                         );
-                        weak_state
-                            .update(cx, |s, cx| {
-                                s.sign_in_task = None;
-                                s.last_auth_error =
-                                    Some("Failed to save credentials. Please try again.".into());
-                                cx.notify();
-                            })
-                            .log_err();
+                        Some(SharedString::from(CREDENTIALS_NOT_SAVED_MESSAGE))
                     }
-                }
+                };
+
+                weak_state
+                    .update(cx, |s, cx| {
+                        s.credentials = Some(creds);
+                        s.sign_in_task = None;
+                        s.last_auth_error = persistence_warning;
+                        cx.notify();
+                    })
+                    .log_err();
             }
             Err(err) => {
                 log::error!("ChatGPT subscription sign-in failed: {err:?}");
@@ -997,6 +981,26 @@ fn do_sign_in(state: &Entity<State>, http_client: &Arc<dyn HttpClient>, cx: &mut
         s.sign_in_task = Some(task);
         cx.notify();
     });
+}
+
+async fn persist_credentials(
+    state: &gpui::WeakEntity<State>,
+    credentials: &CodexCredentials,
+    operation: &str,
+    cx: &mut AsyncApp,
+) -> Result<Option<SharedString>> {
+    let credentials_provider = state.read_with(&*cx, |s, _| s.credentials_provider.clone())?;
+    let json = serde_json::to_vec(credentials)?;
+    match credentials_provider
+        .write_credentials(CREDENTIALS_KEY, "Bearer", &json, &*cx)
+        .await
+    {
+        Ok(()) => Ok(None),
+        Err(err) => {
+            log::error!("ChatGPT subscription {operation} failed to persist credentials: {err:?}");
+            Ok(Some(SharedString::from(CREDENTIALS_NOT_SAVED_MESSAGE)))
+        }
+    }
 }
 
 fn do_sign_out(state: &gpui::WeakEntity<State>, cx: &mut App) -> Task<Result<()>> {
@@ -1043,6 +1047,7 @@ impl Render for ConfigurationView {
             let weak_state = self.state.downgrade();
 
             return v_flex()
+                .gap_2()
                 .child(
                     ConfiguredApiCard::new(SharedString::from(label))
                         .button_label("Sign Out")
@@ -1050,6 +1055,19 @@ impl Render for ConfigurationView {
                             do_sign_out(&weak_state, cx).detach_and_log_err(cx);
                         })),
                 )
+                .when_some(state.last_auth_error.clone(), |this, error| {
+                    this.child(
+                        h_flex()
+                            .gap_1()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::Warning)
+                                    .color(Color::Warning)
+                                    .size(IconSize::Small),
+                            )
+                            .child(Label::new(error).color(Color::Muted)),
+                    )
+                })
                 .into_any_element();
         }
 
@@ -1111,16 +1129,25 @@ mod tests {
     use parking_lot::Mutex;
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     struct FakeCredentialsProvider {
         storage: Mutex<Option<(String, Vec<u8>)>>,
+        fail_writes: AtomicBool,
     }
 
     impl FakeCredentialsProvider {
         fn new() -> Self {
             Self {
                 storage: Mutex::new(None),
+                fail_writes: AtomicBool::new(false),
+            }
+        }
+
+        fn with_write_failure() -> Self {
+            Self {
+                storage: Mutex::new(None),
+                fail_writes: AtomicBool::new(true),
             }
         }
     }
@@ -1141,6 +1168,10 @@ mod tests {
             password: &'a [u8],
             _cx: &'a AsyncApp,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            if self.fail_writes.load(Ordering::SeqCst) {
+                return Box::pin(async { Err(anyhow!("write failed")) });
+            }
+
             self.storage
                 .lock()
                 .replace((username.to_string(), password.to_vec()));
@@ -1284,6 +1315,59 @@ mod tests {
             0,
             "no refresh should happen when credentials are fresh"
         );
+    }
+
+    #[gpui::test]
+    async fn test_refresh_keeps_session_when_keychain_write_fails(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(move |_request| async move {
+            let body = fake_token_response();
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::from(body))?)
+        });
+
+        let credentials_provider = Arc::new(FakeCredentialsProvider::with_write_failure());
+        let state = cx.new(|_cx| State {
+            credentials: Some(make_expired_credentials()),
+            sign_in_task: None,
+            refresh_task: None,
+            load_task: None,
+            credentials_provider: credentials_provider.clone(),
+            auth_generation: 0,
+            last_auth_error: None,
+        });
+
+        let weak_state = cx.read(|_cx| state.downgrade());
+        let http: Arc<dyn HttpClient> = http_client;
+
+        let weak = weak_state.clone();
+        let http_clone = http.clone();
+        let result = cx
+            .spawn(async move |mut cx| get_fresh_credentials(&weak, &http_clone, &mut cx).await)
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "refresh should succeed for the live session even if persistence fails"
+        );
+        assert_eq!(result.unwrap().access_token, "fresh_access");
+        assert!(
+            credentials_provider.storage.lock().is_none(),
+            "credential store should still be empty after a failed write"
+        );
+        cx.read(|cx| {
+            let state = state.read(cx);
+            let credentials = state
+                .credentials
+                .as_ref()
+                .expect("refreshed credentials should be kept in memory");
+            assert_eq!(credentials.access_token, "fresh_access");
+            assert!(state.refresh_task.is_none());
+            assert_eq!(
+                state.last_auth_error.as_deref(),
+                Some(CREDENTIALS_NOT_SAVED_MESSAGE)
+            );
+        });
     }
 
     #[gpui::test]
