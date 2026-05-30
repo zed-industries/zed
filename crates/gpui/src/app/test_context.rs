@@ -336,6 +336,20 @@ impl TestAppContext {
         self.test_platform.simulate_new_path_selection(select_path);
     }
 
+    /// Simulates responding to a `prompt_for_paths` ("Open") dialog.
+    pub fn simulate_path_prompt_response(
+        &self,
+        select_paths: impl FnOnce(&crate::PathPromptOptions) -> Option<Vec<std::path::PathBuf>>,
+    ) {
+        self.test_platform
+            .simulate_path_prompt_response(select_paths);
+    }
+
+    /// Returns true if there's a path selection dialog pending.
+    pub fn did_prompt_for_paths(&self) -> bool {
+        self.test_platform.did_prompt_for_paths()
+    }
+
     /// Simulates clicking a button in an platform-level alert dialog.
     #[track_caller]
     pub fn simulate_prompt_answer(&self, button: &str) {
