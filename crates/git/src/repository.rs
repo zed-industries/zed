@@ -1,6 +1,6 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
-use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
+use crate::status::{DiffTreeType, FileStatus, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
@@ -1795,7 +1795,7 @@ impl GitRepository for RealGitRepository {
                 let source_already_merged = git_ref_is_ancestor(&git, &source, "HEAD").await?;
                 let can_fast_forward = git_ref_is_ancestor(&git, "HEAD", &source).await?;
 
-                let mut args = vec![OsString::from("merge")];
+                let mut args = vec![OsString::from("merge"), OsString::from("--no-verify")];
                 match options.message {
                     Some(message) => {
                         args.push(OsString::from("-m"));
@@ -1826,13 +1826,14 @@ impl GitRepository for RealGitRepository {
                     } else if can_fast_forward
                         && options.fast_forward != FastForwardMode::Never
                         && !options.squash
-                        && options.commit
                     {
                         MergeOutcome::FastForward
                     } else {
                         MergeOutcome::Success
                     }
-                } else if git_rev_exists(&git, "MERGE_HEAD").await? {
+                } else if git_rev_exists(&git, "MERGE_HEAD").await?
+                    || git_has_unmerged_entries(&git).await?
+                {
                     MergeOutcome::Conflicts
                 } else {
                     MergeOutcome::Failed
@@ -3865,9 +3866,24 @@ async fn git_rev_exists(git: &GitBinary, rev: &str) -> Result<bool> {
     Ok(output.status.success())
 }
 
+async fn git_has_unmerged_entries(git: &GitBinary) -> Result<bool> {
+    let output = git.build_command(&git_status_args(&[])).output().await?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let status = String::from_utf8_lossy(&output.stdout).parse::<GitStatus>()?;
+    Ok(status
+        .entries
+        .iter()
+        .any(|(_, status)| matches!(status, FileStatus::Unmerged(_))))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
     use gpui::TestAppContext;
@@ -4112,6 +4128,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_merge_no_commit_fast_forward_reports_fast_forward(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file.txt"), "base")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("feature.txt"), "feature")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["feature.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                MergeOptions {
+                    commit: false,
+                    ..Default::default()
+                },
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::FastForward);
+    }
+
+    #[gpui::test]
     async fn test_merge_reports_conflicts_without_error(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
@@ -4154,6 +4214,124 @@ mod tests {
                 .await
                 .is_some_and(|message| message.contains("feature"))
         );
+    }
+
+    #[gpui::test]
+    async fn test_merge_squash_reports_conflicts_without_merge_head(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "base\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(&file_path, "feature\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+        smol::fs::write(&file_path, "master\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Master commit").await;
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                MergeOptions {
+                    squash: true,
+                    ..Default::default()
+                },
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::Conflicts);
+        assert!(
+            !git_rev_exists(&repo.git_binary_in_worktree().unwrap(), "MERGE_HEAD")
+                .await
+                .unwrap()
+        );
+        assert!(
+            repo.status(&[])
+                .await
+                .unwrap()
+                .entries
+                .iter()
+                .any(|(_, status)| matches!(status, FileStatus::Unmerged(_)))
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_merge_bypasses_commit_hooks_in_trusted_repositories(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.set_trusted(true);
+
+        smol::fs::write(repo_dir.path().join("file.txt"), "base")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("feature.txt"), "feature")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["feature.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+        smol::fs::write(repo_dir.path().join("base.txt"), "base branch")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["base.txt"], "Base branch commit").await;
+
+        let hook_path = repo_dir
+            .path()
+            .join(".git")
+            .join("hooks")
+            .join("commit-msg");
+        smol::fs::write(&hook_path, "#!/bin/sh\nexit 1\n")
+            .await
+            .unwrap();
+        let mut permissions = fs::metadata(&hook_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&hook_path, permissions).unwrap();
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                MergeOptions {
+                    fast_forward: FastForwardMode::Never,
+                    ..Default::default()
+                },
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::Success);
     }
 
     #[gpui::test]
