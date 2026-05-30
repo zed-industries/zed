@@ -583,6 +583,10 @@ impl SplittableEditor {
             return;
         };
         let project = workspace.read(cx).project().clone();
+        let all_paths = self.diff_paths(cx);
+        if all_paths.is_empty() {
+            return;
+        }
 
         let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
         let lhs_multibuffer = cx.new(|cx| {
@@ -741,18 +745,6 @@ impl SplittableEditor {
             })
         });
 
-        let all_paths: Vec<_> = {
-            let rhs_multibuffer = self.rhs_multibuffer.read(cx);
-            let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
-            rhs_multibuffer_snapshot
-                .buffers_with_paths()
-                .filter_map(|(buffer, path)| {
-                    let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
-                    Some((path.clone(), diff))
-                })
-                .collect()
-        };
-
         self.lhs = Some(lhs);
 
         self.sync_lhs_for_paths(all_paths, cx);
@@ -812,6 +804,18 @@ impl SplittableEditor {
         });
 
         cx.notify();
+    }
+
+    fn diff_paths(&self, cx: &App) -> Vec<(PathKey, Entity<BufferDiff>)> {
+        let rhs_multibuffer = self.rhs_multibuffer.read(cx);
+        let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
+        rhs_multibuffer_snapshot
+            .buffers_with_paths()
+            .filter_map(|(buffer, path)| {
+                let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
+                Some((path.clone(), diff))
+            })
+            .collect()
     }
 
     fn activate_pane_left(
