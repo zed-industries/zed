@@ -302,8 +302,8 @@ fn show_hover(
     if !ignore_timeout {
         if same_info_hover(editor, &snapshot, anchor)
             || same_diagnostic_hover(editor, &snapshot, anchor)
+            || editor.hover_state.diagnostic_popover.is_some()
         {
-            // Hover triggered from same location as last time. Don't show again.
             return None;
         } else {
             hide_hover(editor, cx);
@@ -721,6 +721,8 @@ fn excerpt_multibuffer_range_containing_anchor(
     anchor: Anchor,
 ) -> Option<Range<MultiBufferOffset>> {
     let offset = anchor.to_offset(multibuffer);
+    // A left-biased anchor at an excerpt boundary belongs to the preceding excerpt,
+    // so probe one offset back to land in the correct one.
     let lookup_range = if anchor.bias() == Bias::Left && offset > MultiBufferOffset(0) {
         offset.saturating_sub_usize(1)..offset
     } else {
@@ -1316,13 +1318,16 @@ mod tests {
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
+        test::build_editor,
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
     use futures::stream::StreamExt;
     use gpui::App;
     use indoc::indoc;
+    use language::{Buffer, Capability::ReadWrite, Point};
     use markdown::parser::MarkdownEvent;
+    use multi_buffer::{MultiBuffer, PathKey};
     use project::InlayId;
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
@@ -2767,6 +2772,62 @@ mod tests {
                 editor.hover_state.triggered_from.is_none(),
                 "No hover trigger should be recorded when hover is disabled"
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_zero_width_hover_padding_clipped_to_excerpt(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        // One buffer surfaced as two excerpts so they share a `remote_id`, forcing the
+        // excerpt-clipping path rather than the buffer-mismatch early-out.
+        let buffer = cx.new(|cx| Buffer::local("aaaa\nbbbb\ncccc\ndddd\n", cx));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                [
+                    Point::new(0, 0)..Point::new(0, 4),
+                    Point::new(2, 0)..Point::new(2, 4),
+                ],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+
+        cx.add_window(|window, cx| {
+            let editor = build_editor(multibuffer, window, cx);
+            let snapshot = editor.snapshot(window, cx);
+            let multibuffer = snapshot.buffer_snapshot();
+            // First excerpt "aaaa" is offsets 0..4, second excerpt "cccc" starts at 5.
+            assert_eq!(multibuffer.text(), "aaaa\ncccc");
+
+            // Zero-width hover inside the first excerpt.
+            let hover_anchor = multibuffer.anchor_before(MultiBufferOffset(3));
+            let hover_range = hover_anchor..hover_anchor;
+
+            // Same excerpt and within the ±4 padding: treated as the same hover.
+            let same_excerpt = multibuffer.anchor_before(MultiBufferOffset(1));
+            assert!(hover_range_contains_anchor(
+                &snapshot,
+                &hover_range,
+                hover_anchor,
+                same_excerpt,
+            ));
+
+            // The next excerpt is only 2 offsets away and would fall inside the raw
+            // padding, but the clipped range must not bleed across the boundary.
+            let other_excerpt = multibuffer.anchor_before(MultiBufferOffset(5));
+            assert!(!hover_range_contains_anchor(
+                &snapshot,
+                &hover_range,
+                hover_anchor,
+                other_excerpt,
+            ));
+
+            editor
         });
     }
 }
