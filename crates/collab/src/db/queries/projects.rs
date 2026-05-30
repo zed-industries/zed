@@ -376,6 +376,7 @@ impl Database {
                 current_merge_conflicts: ActiveValue::Set(Some(
                     serde_json::to_string(&update.current_merge_conflicts).unwrap(),
                 )),
+                merge_in_progress: ActiveValue::set(update.merge_in_progress),
                 merge_message: ActiveValue::set(update.merge_message.clone()),
                 remote_upstream_url: ActiveValue::set(update.remote_upstream_url.clone()),
                 remote_origin_url: ActiveValue::set(update.remote_origin_url.clone()),
@@ -396,6 +397,7 @@ impl Database {
                     project_repository::Column::EntryIds,
                     project_repository::Column::AbsPath,
                     project_repository::Column::CurrentMergeConflicts,
+                    project_repository::Column::MergeInProgress,
                     project_repository::Column::HeadCommitDetails,
                     project_repository::Column::MergeMessage,
                     project_repository::Column::RepositoryDirAbsPath,
@@ -895,6 +897,7 @@ impl Database {
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
+                        merge_in_progress: db_repository_entry.merge_in_progress,
                         stash_entries: Vec::new(),
                         remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),

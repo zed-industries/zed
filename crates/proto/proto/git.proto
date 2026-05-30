@@ -132,6 +132,7 @@ message UpdateRepository {
   optional string repository_dir_abs_path = 19;
   optional string common_dir_abs_path = 20;
   optional string branch_list_error = 21;
+  bool merge_in_progress = 22;
 }
 
 message RemoveRepository {

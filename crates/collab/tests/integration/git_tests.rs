@@ -708,10 +708,20 @@ async fn test_remote_git_merge_round_trip(
     executor.run_until_parked();
     let conflicted_merge = conflicted_merge.await.unwrap().unwrap();
     assert_eq!(conflicted_merge.outcome, MergeOutcome::Conflicts);
+    executor.run_until_parked();
+
+    cx_b.update(|cx| {
+        assert!(repo_b.read(cx).merge.is_merge_in_progress());
+    });
 
     let abort = cx_b.update(|cx| repo_b.update(cx, |repository, cx| repository.merge_abort(cx)));
     executor.run_until_parked();
     abort.await.unwrap().unwrap();
+    executor.run_until_parked();
+
+    cx_b.update(|cx| {
+        assert!(!repo_b.read(cx).merge.is_merge_in_progress());
+    });
 
     let clean_merge = cx_b.update(|cx| {
         repo_b.update(cx, |repository, cx| {

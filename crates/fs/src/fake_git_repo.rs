@@ -357,17 +357,20 @@ impl GitRepository for FakeGitRepository {
 
     fn merge(
         &self,
-        _source: String,
+        source: String,
         _options: MergeOptions,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<MergeOutput>> {
-        self.with_state_async(false, |state| {
+        self.with_state_async(true, move |state| {
+            let outcome = if state.unmerged_paths.is_empty() {
+                state.refs.remove("MERGE_HEAD");
+                MergeOutcome::Success
+            } else {
+                state.refs.insert("MERGE_HEAD".into(), source);
+                MergeOutcome::Conflicts
+            };
             Ok(MergeOutput {
-                outcome: if state.unmerged_paths.is_empty() {
-                    MergeOutcome::Success
-                } else {
-                    MergeOutcome::Conflicts
-                },
+                outcome,
                 stdout: String::new(),
                 stderr: String::new(),
             })
@@ -377,6 +380,7 @@ impl GitRepository for FakeGitRepository {
     fn merge_abort(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, |state| {
             state.unmerged_paths.clear();
+            state.refs.remove("MERGE_HEAD");
             Ok(())
         })
     }

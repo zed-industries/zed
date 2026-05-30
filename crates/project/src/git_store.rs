@@ -290,6 +290,13 @@ pub struct RepositoryId(pub u64);
 pub struct MergeDetails {
     pub merge_heads_by_conflicted_path: TreeMap<RepoPath, Vec<Option<SharedString>>>,
     pub message: Option<SharedString>,
+    merge_in_progress: bool,
+}
+
+impl MergeDetails {
+    pub fn is_merge_in_progress(&self) -> bool {
+        self.merge_in_progress
+    }
 }
 
 #[derive(Clone)]
@@ -4315,6 +4322,7 @@ impl RepositorySnapshot {
                 .map(|(repo_path, _)| repo_path.to_proto())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
+            merge_in_progress: self.merge.merge_in_progress,
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
@@ -4402,6 +4410,7 @@ impl RepositorySnapshot {
                 .map(|(path, _)| path.to_proto())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
+            merge_in_progress: self.merge.merge_in_progress,
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
@@ -4582,7 +4591,9 @@ impl MergeDetails {
             .map(|opt| opt.map(SharedString::from))
             .collect::<Vec<_>>();
 
-        let mut conflicts_changed = false;
+        let merge_in_progress = merge_heads_include_merge_head(&heads);
+        let mut conflicts_changed = self.merge_in_progress != merge_in_progress;
+        self.merge_in_progress = merge_in_progress;
 
         // Record the merge state for newly conflicted paths
         for path in &current_conflicted_paths {
@@ -4607,6 +4618,10 @@ impl MergeDetails {
 
         conflicts_changed
     }
+}
+
+fn merge_heads_include_merge_head(heads: &[Option<SharedString>]) -> bool {
+    heads.first().is_some_and(Option::is_some)
 }
 
 impl Repository {
@@ -7900,18 +7915,20 @@ impl Repository {
             self.snapshot.branch_list_error = new_branch_list_error;
         }
 
-        // We don't store any merge head state for downstream projects; the upstream
-        // will track it and we will just get the updated conflicts
+        // Downstream projects keep conflict paths for conflict views, but use the
+        // semantic flag from upstream instead of local merge head internals.
         let new_merge_heads = TreeMap::from_ordered_entries(
             update
                 .current_merge_conflicts
                 .into_iter()
                 .filter_map(|path| Some((RepoPath::from_proto(&path).ok()?, vec![]))),
         );
-        let conflicts_changed =
-            self.snapshot.merge.merge_heads_by_conflicted_path != new_merge_heads;
+        let conflicts_changed = self.snapshot.merge.merge_heads_by_conflicted_path
+            != new_merge_heads
+            || self.snapshot.merge.merge_in_progress != update.merge_in_progress;
         self.snapshot.merge.merge_heads_by_conflicted_path = new_merge_heads;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
+        self.snapshot.merge.merge_in_progress = update.merge_in_progress;
         let new_stash_entries = GitStash {
             entries: update
                 .stash_entries
@@ -9090,6 +9107,25 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_merge_heads_include_only_merge_head() {
+        assert!(merge_heads_include_merge_head(&[
+            Some("feature".into()),
+            None,
+            None,
+            None,
+            None,
+        ]));
+        assert!(!merge_heads_include_merge_head(&[
+            None,
+            None,
+            Some("feature".into()),
+            None,
+            None,
+        ]));
+        assert!(!merge_heads_include_merge_head(&[]));
     }
 
     #[test]

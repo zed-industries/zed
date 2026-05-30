@@ -57,8 +57,7 @@ use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        CommitDataState, GitStoreEvent, MergeDetails, Repository, RepositoryEvent, RepositoryId,
-        pending_op,
+        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -4027,7 +4026,7 @@ impl GitPanel {
     fn merge_in_progress(&self, cx: &App) -> bool {
         self.active_repository
             .as_ref()
-            .is_some_and(|repo| merge_details_include_merge_head(&repo.read(cx).merge))
+            .is_some_and(|repo| repo.read(cx).merge.is_merge_in_progress())
     }
 
     fn show_error_toast(&self, action: impl Into<SharedString>, e: anyhow::Error, cx: &mut App) {
@@ -7611,13 +7610,6 @@ fn icon_status_toast(
     })
 }
 
-fn merge_details_include_merge_head(merge: &MergeDetails) -> bool {
-    merge
-        .merge_heads_by_conflicted_path
-        .values()
-        .any(|heads| heads.first().is_some_and(Option::is_some))
-}
-
 pub(crate) fn show_error_toast(
     workspace: Entity<Workspace>,
     action: impl Into<SharedString>,
@@ -7745,23 +7737,6 @@ mod tests {
             message,
             "Your local changes to the following files would be overwritten by merge"
         );
-    }
-
-    #[test]
-    fn test_merge_details_include_only_merge_head() {
-        let mut merge = MergeDetails::default();
-        merge.merge_heads_by_conflicted_path.insert(
-            repo_path("conflict.txt"),
-            vec![Some("feature".into()), None, None, None, None],
-        );
-        assert!(merge_details_include_merge_head(&merge));
-
-        let mut rebase = MergeDetails::default();
-        rebase.merge_heads_by_conflicted_path.insert(
-            repo_path("conflict.txt"),
-            vec![None, None, Some("feature".into()), None, None],
-        );
-        assert!(!merge_details_include_merge_head(&rebase));
     }
 
     #[gpui::test]
