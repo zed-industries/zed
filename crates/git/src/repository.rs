@@ -1858,12 +1858,29 @@ impl GitRepository for RealGitRepository {
                     .envs(env.iter())
                     .output()
                     .await?;
-                anyhow::ensure!(
-                    output.status.success(),
+                if output.status.success() {
+                    return Ok(());
+                }
+
+                if git_has_unmerged_entries(&git).await? {
+                    let reset_output = git
+                        .build_command(&["reset", "--merge"])
+                        .envs(env.iter())
+                        .output()
+                        .await?;
+                    anyhow::ensure!(
+                        reset_output.status.success(),
+                        "Failed to abort merge:\n{}\nFailed to reset conflicted merge state:\n{}",
+                        String::from_utf8_lossy(&output.stderr),
+                        String::from_utf8_lossy(&reset_output.stderr)
+                    );
+                    return Ok(());
+                }
+
+                anyhow::bail!(
                     "Failed to abort merge:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
-                Ok(())
             })
             .boxed()
     }
@@ -4272,6 +4289,66 @@ mod tests {
         );
         assert!(
             repo.status(&[])
+                .await
+                .unwrap()
+                .entries
+                .iter()
+                .any(|(_, status)| matches!(status, FileStatus::Unmerged(_)))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_merge_abort_clears_squash_conflict(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "base\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(&file_path, "feature\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+        smol::fs::write(&file_path, "master\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Master commit").await;
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                MergeOptions {
+                    squash: true,
+                    ..Default::default()
+                },
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.outcome, MergeOutcome::Conflicts);
+
+        repo.merge_abort(Arc::new(checkpoint_author_envs()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            smol::fs::read_to_string(&file_path).await.unwrap(),
+            "master\n"
+        );
+        assert!(
+            !repo
+                .status(&[])
                 .await
                 .unwrap()
                 .entries
