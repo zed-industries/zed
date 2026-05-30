@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, RepositoryTarget, TokenPermissions, named},
+    steps::{self, NamedJob, RepositoryTarget, TokenPermissions, ZippyGitIdentity, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -39,8 +39,7 @@ fn run_cherry_pick(
             .add_env(("BRANCH", branch.to_string()))
             .add_env(("COMMIT", commit.to_string()))
             .add_env(("CHANNEL", channel.to_string()))
-            .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-            .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
+            .with_zippy_git_identity()
             .add_env(("GITHUB_TOKEN", token))
     }
 

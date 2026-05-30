@@ -157,6 +157,17 @@ impl PtyProcessInfo {
         self.get_child().is_some_and(|process| process.kill())
     }
 
+    #[cfg(unix)]
+    pub(crate) fn terminate_child_process(&self) -> bool {
+        let pid = self.pid_getter.fallback_pid();
+        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGTERM) == 0 }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn terminate_child_process(&self) -> bool {
+        false
+    }
+
     fn load(&self) -> Option<ProcessInfo> {
         let process = self.refresh()?;
         let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());
@@ -174,6 +185,11 @@ impl PtyProcessInfo {
         Some(info)
     }
 
+    #[cfg(all(test, unix))]
+    pub(crate) fn load_for_test(&self) -> Option<ProcessInfo> {
+        self.load()
+    }
+
     /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
     pub fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {
@@ -181,8 +197,9 @@ impl PtyProcessInfo {
         }
         let this = self.clone();
         let has_changed = cx.background_executor().spawn(async move {
+            let previous = this.current.read().clone();
             let current = this.load();
-            let has_changed = match (this.current.read().as_ref(), current.as_ref()) {
+            let has_changed = match (previous.as_ref(), current.as_ref()) {
                 (None, None) => false,
                 (Some(prev), Some(now)) => prev.cwd != now.cwd || prev.name != now.name,
                 _ => true,

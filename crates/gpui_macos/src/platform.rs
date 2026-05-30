@@ -1,6 +1,7 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -51,7 +52,10 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use util::{
     ResultExt,
@@ -62,13 +66,10 @@ use util::{
 const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &str = "platform";
-const INTERNET_EVENT_CLASS: u32 = 0x4755524c; // 'GURL'
-const AE_GET_URL: u32 = 0x4755524c; // 'GURL'
-const DIRECT_OBJECT_KEY: u32 = 0x2d2d2d2d; // '----'
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
-#[ctor]
+#[ctor(unsafe)]
 unsafe fn build_classes() {
     unsafe {
         APP_CLASS = {
@@ -78,7 +79,7 @@ unsafe fn build_classes() {
         }
     };
     unsafe {
-        APP_DELEGATE_CLASS = unsafe {
+        APP_DELEGATE_CLASS = {
             let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
             decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
             decl.add_method(
@@ -139,8 +140,8 @@ unsafe fn build_classes() {
                 handle_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
             );
             decl.add_method(
-                sel!(handleGetURLEvent:withReplyEvent:),
-                handle_get_url_event as extern "C" fn(&mut Object, Sel, id, id),
+                sel!(application:openURLs:),
+                open_urls as extern "C" fn(&mut Object, Sel, id, id),
             );
 
             decl.add_method(
@@ -181,6 +182,8 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
+    /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
+    cursor_visible: Arc<AtomicBool>,
 }
 
 impl MacPlatform {
@@ -217,6 +220,7 @@ impl MacPlatform {
             on_thermal_state_change: None,
             menus: None,
             keyboard_mapper,
+            cursor_visible: Arc::new(AtomicBool::new(true)),
         }))
     }
 
@@ -516,17 +520,19 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
-        let app_path = self
-            .app_path()
-            .ok()
-            // When the app is not bundled, `app_path` returns the
-            // directory containing the executable. Disregard this
-            // and get the path to the executable itself.
-            .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+        let app_path = binary_path
+            .or_else(|| {
+                self.app_path()
+                    .ok()
+                    // When the app is not bundled, `app_path` returns the
+                    // directory containing the executable. Disregard this
+                    // and get the path to the executable itself.
+                    .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+            })
             .unwrap_or_else(|| std::env::current_exe().unwrap());
 
         // Wait until this process has exited and then re-open this path.
@@ -621,12 +627,22 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let renderer_context = self.0.lock().renderer_context.clone();
+        let (cursor_visible, foreground_executor, background_executor, renderer_context) = {
+            let guard = self.0.lock();
+            (
+                guard.cursor_visible.clone(),
+                guard.foreground_executor.clone(),
+                guard.background_executor.clone(),
+                guard.renderer_context.clone(),
+            )
+        };
+
         Ok(Box::new(MacWindow::open(
             handle,
             options,
-            self.foreground_executor(),
-            self.background_executor(),
+            cursor_visible,
+            foreground_executor,
+            background_executor,
             renderer_context,
         )))
     }
@@ -858,6 +874,7 @@ impl Platform for MacPlatform {
             .background_executor
             .spawn(async move {
                 if let Some(mut child) = new_command("open")
+                    .arg("--")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -981,53 +998,22 @@ impl Platform for MacPlatform {
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
-            if style == CursorStyle::None {
-                let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves:YES];
-                return;
-            }
-
-            let new_cursor: id = match style {
-                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-                CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
-                CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
-                CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
-                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
-                CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-                CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
-                CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-
-                // Undocumented, private class methods:
-                // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
-                CursorStyle::ResizeUpLeftDownRight => {
-                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
-                }
-                CursorStyle::ResizeUpRightDownLeft => {
-                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
-                }
-
-                CursorStyle::IBeamCursorForVerticalLayout => {
-                    msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
-                }
-                CursorStyle::OperationNotAllowed => {
-                    msg_send![class!(NSCursor), operationNotAllowedCursor]
-                }
-                CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
-                CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
-                CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-                CursorStyle::None => unreachable!(),
-            };
-
-            let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
-            if new_cursor != old_cursor {
-                let _: () = msg_send![new_cursor, set];
-            }
+            set_active_window_cursor_style(style);
         }
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        let cursor_visible = self.0.lock().cursor_visible.clone();
+        if !cursor_visible.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        unsafe {
+            let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: YES];
+        }
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.0.lock().cursor_visible.load(Ordering::Relaxed)
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -1181,7 +1167,7 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     }
 }
 
-extern "C" fn will_finish_launching(this: &mut Object, _: Sel, _: id) {
+extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
     unsafe {
         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
 
@@ -1195,17 +1181,6 @@ extern "C" fn will_finish_launching(this: &mut Object, _: Sel, _: id) {
             let false_value: id = msg_send![class!(NSNumber), numberWithBool:false];
             let _: () = msg_send![user_defaults, setObject: false_value forKey: name];
         }
-
-        // Register kAEGetURL Apple Event handler so that URL open requests are
-        // delivered synchronously before applicationDidFinishLaunching:, replacing
-        // application:openURLs: which has non-deterministic timing.
-        let event_manager: id = msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
-        let _: () = msg_send![event_manager,
-            setEventHandler: this as id
-            andSelector: sel!(handleGetURLEvent:withReplyEvent:)
-            forEventClass: INTERNET_EVENT_CLASS
-            andEventID: AE_GET_URL
-        ];
     }
 }
 
@@ -1302,36 +1277,27 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn handle_get_url_event(this: &mut Object, _: Sel, event: id, _reply: id) {
-    unsafe {
-        let descriptor: id = msg_send![event, paramDescriptorForKeyword: DIRECT_OBJECT_KEY];
-        if descriptor == nil {
-            return;
-        }
-        let url_string: id = msg_send![descriptor, stringValue];
-        if url_string == nil {
-            return;
-        }
-        let utf8_ptr = url_string.UTF8String() as *mut c_char;
-        if utf8_ptr.is_null() {
-            return;
-        }
-        let url_str = CStr::from_ptr(utf8_ptr);
-        match url_str.to_str() {
-            Ok(string) => {
-                let urls = vec![string.to_string()];
-                let platform = get_mac_platform(this);
-                let mut lock = platform.0.lock();
-                if let Some(mut callback) = lock.open_urls.take() {
-                    drop(lock);
-                    callback(urls);
-                    platform.0.lock().open_urls.get_or_insert(callback);
+extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
+    let urls = unsafe {
+        (0..urls.count())
+            .filter_map(|i| {
+                let url = urls.objectAtIndex(i);
+                match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {
+                    Ok(string) => Some(string.to_string()),
+                    Err(err) => {
+                        log::error!("error converting path to string: {}", err);
+                        None
+                    }
                 }
-            }
-            Err(err) => {
-                log::error!("error converting URL to string: {}", err);
-            }
-        }
+            })
+            .collect::<Vec<_>>()
+    };
+    let platform = unsafe { get_mac_platform(this) };
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.open_urls.take() {
+        drop(lock);
+        callback(urls);
+        platform.0.lock().open_urls.get_or_insert(callback);
     }
 }
 

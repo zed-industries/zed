@@ -1,5 +1,6 @@
 pub mod agent_registry_store;
 pub mod agent_server_store;
+pub mod bookmark_store;
 pub mod buffer_store;
 pub mod color_extractor;
 pub mod connection_manager;
@@ -36,6 +37,7 @@ use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use itertools::{Either, Itertools};
 
 use crate::{
+    bookmark_store::BookmarkStore,
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
@@ -47,10 +49,11 @@ pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, Ext
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
-    linked_worktree_short_name, worktrees_directory_for_repo,
+    linked_worktree_short_name, repo_identity_path, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
+pub use worktree_store::WorktreePaths;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -83,12 +86,12 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
-    Task, WeakEntity, Window,
+    Task, TaskExt, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
-    ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
+    Buffer, BufferEditSource, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain,
+    ToolchainMetadata, ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
 };
 use lsp::{
@@ -105,7 +108,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 #[cfg(target_os = "windows")]
 use remote::wsl_path_to_windows_path;
-use remote::{RemoteClient, RemoteConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions, same_remote_connection_identity};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -131,7 +134,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
+use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
@@ -154,8 +157,8 @@ pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use task_inventory::{
-    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory, TaskContexts,
-    TaskSourceKind,
+    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, GIT_COMMAND_TASK_TAG,
+    Inventory, TaskContexts, TaskSourceKind,
 };
 
 pub use buffer_store::ProjectTransaction;
@@ -214,6 +217,7 @@ pub struct Project {
     dap_store: Entity<DapStore>,
     agent_server_store: Entity<AgentServerStore>,
 
+    bookmark_store: Entity<BookmarkStore>,
     breakpoint_store: Entity<BreakpointStore>,
     collab_client: Arc<client::Client>,
     join_project_response_message_id: u32,
@@ -246,6 +250,7 @@ pub struct Project {
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
+    last_worktree_paths: WorktreePaths,
 }
 
 struct DownloadingFile {
@@ -361,6 +366,9 @@ pub enum Event {
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
+    WorktreePathsChanged {
+        old_worktree_paths: WorktreePaths,
+    },
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -402,7 +410,9 @@ pub enum Event {
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
-    BufferEdited,
+    BufferEdited {
+        source: BufferEditSource,
+    },
 }
 
 pub struct AgentLocationChanged;
@@ -521,6 +531,17 @@ impl CompletionIntent {
     }
 }
 
+/// Describes a visual group for a completion item in the menu.
+/// When the group changes between consecutive completions, the menu inserts a divider.
+/// If a label is provided, a non-selectable header row is also rendered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionGroup {
+    /// Identity of this group, used to detect transitions between consecutive items.
+    pub key: SharedString,
+    /// When set, a non-selectable header with this text is rendered below the divider.
+    pub label: Option<SharedString>,
+}
+
 /// Similar to `CoreCompletion`, but with extra metadata attached.
 #[derive(Clone)]
 pub struct Completion {
@@ -549,6 +570,10 @@ pub struct Completion {
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
+    /// An optional group for this completion. When the group changes between consecutive
+    /// items, the completion menu inserts a divider. If the group also carries a label,
+    /// a non-selectable header row is rendered below the divider.
+    pub group: Option<CompletionGroup>,
 }
 
 #[derive(Debug, Clone)]
@@ -753,7 +778,7 @@ impl LspAction {
         }
     }
 
-    fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
+    pub fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
         match self {
             Self::Action(action) => action.edit.as_ref(),
             Self::Command(_) => None,
@@ -761,7 +786,7 @@ impl LspAction {
         }
     }
 
-    fn command(&self) -> Option<&lsp::Command> {
+    pub fn command(&self) -> Option<&lsp::Command> {
         match self {
             Self::Action(action) => action.command.as_ref(),
             Self::Command(command) => Some(command),
@@ -1200,6 +1225,9 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
+            let bookmark_store =
+                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+
             let breakpoint_store =
                 cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
 
@@ -1318,6 +1346,7 @@ impl Project {
                 settings_observer,
                 fs,
                 remote_client: None,
+                bookmark_store,
                 breakpoint_store,
                 dap_store,
                 agent_server_store,
@@ -1339,6 +1368,7 @@ impl Project {
 
                 agent_location: None,
                 downloading_files: Default::default(),
+                last_worktree_paths: WorktreePaths::default(),
             }
         })
     }
@@ -1450,6 +1480,9 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let bookmark_store =
+                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+
             let breakpoint_store = cx.new(|_| {
                 BreakpointStore::remote(
                     REMOTE_SERVER_PROJECT_ID,
@@ -1525,6 +1558,7 @@ impl Project {
                 image_store,
                 lsp_store,
                 context_server_store,
+                bookmark_store,
                 breakpoint_store,
                 dap_store,
                 join_project_response_message_id: 0,
@@ -1576,6 +1610,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
                 downloading_files: Default::default(),
+                last_worktree_paths: WorktreePaths::default(),
             };
 
             // remote server -> local machine handlers
@@ -1706,6 +1741,10 @@ impl Project {
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
+
+        let bookmark_store =
+            cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+
         let breakpoint_store = cx.new(|_| {
             BreakpointStore::remote(
                 remote_id,
@@ -1839,6 +1878,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
+                bookmark_store: bookmark_store.clone(),
                 breakpoint_store: breakpoint_store.clone(),
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
@@ -1857,6 +1897,7 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
+                last_worktree_paths: WorktreePaths::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2067,9 +2108,60 @@ impl Project {
         project
     }
 
+    /// Transitions a local test project into the `Collab` client state so that
+    /// `is_via_collab()` returns `true`. Use only in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_as_collab_for_testing(&mut self) {
+        self.client_state = ProjectClientState::Collab {
+            sharing_has_stopped: false,
+            capability: Capability::ReadWrite,
+            remote_id: 0,
+            replica_id: clock::ReplicaId::new(1),
+        };
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn add_test_remote_worktree(
+        &mut self,
+        abs_path: &str,
+        cx: &mut Context<Self>,
+    ) -> Entity<Worktree> {
+        use rpc::NoopProtoClient;
+        use util::paths::PathStyle;
+
+        let root_name = std::path::Path::new(abs_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let client = AnyProtoClient::new(NoopProtoClient::new());
+        let worktree = Worktree::remote(
+            0,
+            ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 100 + self.visible_worktrees(cx).count() as u64,
+                root_name,
+                visible: true,
+                abs_path: abs_path.to_string(),
+                root_repo_common_dir: None,
+            },
+            client,
+            PathStyle::Posix,
+            cx,
+        );
+        self.worktree_store
+            .update(cx, |store, cx| store.add(&worktree, cx));
+        worktree
+    }
+
     #[inline]
     pub fn dap_store(&self) -> Entity<DapStore> {
         self.dap_store.clone()
+    }
+
+    #[inline]
+    pub fn bookmark_store(&self) -> Entity<BookmarkStore> {
+        self.bookmark_store.clone()
     }
 
     #[inline]
@@ -2189,14 +2281,7 @@ impl Project {
 
     #[inline]
     pub fn supports_terminal(&self, _cx: &App) -> bool {
-        if self.is_local() {
-            return true;
-        }
-        if self.is_via_remote_server() {
-            return true;
-        }
-
-        false
+        self.is_local() || self.is_via_remote_server()
     }
 
     #[inline]
@@ -2286,13 +2371,6 @@ impl Project {
         self.collaborators.values().find(|c| c.is_host)
     }
 
-    #[inline]
-    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool, cx: &mut App) {
-        self.worktree_store.update(cx, |store, _| {
-            store.set_worktrees_reordered(worktrees_reordered);
-        });
-    }
-
     /// Collect all worktrees, including ones that don't appear in the project panel
     #[inline]
     pub fn worktrees<'a>(
@@ -2351,20 +2429,13 @@ impl Project {
             .find(|tree| tree.read(cx).root_name() == root_name)
     }
 
-    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
-        let roots = self
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let snapshot = worktree.read(cx).snapshot();
-                snapshot
-                    .root_repo_common_dir()
-                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
-                    .unwrap_or(snapshot.abs_path().to_path_buf())
-            })
-            .collect::<Vec<_>>();
-        let host = self.remote_connection_options(cx);
-        let path_list = PathList::new(&roots);
-        ProjectGroupKey::new(host, path_list)
+    fn emit_group_key_changed_if_needed(&mut self, cx: &mut Context<Self>) {
+        let new_worktree_paths = self.worktree_paths(cx);
+        if new_worktree_paths != self.last_worktree_paths {
+            let old_worktree_paths =
+                std::mem::replace(&mut self.last_worktree_paths, new_worktree_paths);
+            cx.emit(Event::WorktreePathsChanged { old_worktree_paths });
+        }
     }
 
     #[inline]
@@ -2566,7 +2637,7 @@ impl Project {
         path: ProjectPath,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let entry = self.entry_for_path(&path, cx)?;
         self.delete_entry(entry.id, trash, cx)
     }
@@ -2577,11 +2648,32 @@ impl Project {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
         worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
+        })
+    }
+
+    #[inline]
+    pub fn restore_entry(
+        &self,
+        worktree_id: WorktreeId,
+        trash_entry: TrashedEntry,
+        cx: &mut Context<'_, Self>,
+    ) -> Task<Result<ProjectPath>> {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("No worktree for id {worktree_id:?}")));
+        };
+
+        cx.spawn(async move |_, cx| {
+            Worktree::restore_entry(trash_entry, worktree, cx)
+                .await
+                .map(|rel_path_buf| ProjectPath {
+                    worktree_id: worktree_id,
+                    path: Arc::from(rel_path_buf.as_rel_path()),
+                })
         })
     }
 
@@ -3662,9 +3754,11 @@ impl Project {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
                 self.on_worktree_added(worktree, cx);
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
+                self.emit_group_key_changed_if_needed(cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
                 cx.emit(Event::WorktreeRemoved(*id));
+                self.emit_group_key_changed_if_needed(cx);
             }
             WorktreeStoreEvent::WorktreeReleased(_, id) => {
                 self.on_worktree_released(*id, cx);
@@ -3684,6 +3778,7 @@ impl Project {
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
             WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(worktree_id) => {
                 cx.emit(Event::WorktreeUpdatedRootRepoCommonDir(*worktree_id));
+                self.emit_group_key_changed_if_needed(cx);
             }
         }
     }
@@ -3717,8 +3812,8 @@ impl Project {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
-        if matches!(event, BufferEvent::Edited { .. }) {
-            cx.emit(Event::BufferEdited);
+        if let BufferEvent::Edited { source } = event {
+            cx.emit(Event::BufferEdited { source: *source });
         }
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -4063,6 +4158,12 @@ impl Project {
         })
     }
 
+    pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+        self.lsp_store
+            .read(cx)
+            .supports_range_formatting(buffer, cx)
+    }
+
     pub fn definitions<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -4073,6 +4174,24 @@ impl Project {
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.definitions(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn workspace_definitions<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.workspace_definitions(buffer, position, cx)
         });
         cx.background_spawn(async move {
             let result = task.await;
@@ -4109,6 +4228,24 @@ impl Project {
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn workspace_type_definitions<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.workspace_type_definitions(buffer, position, cx)
         });
         cx.background_spawn(async move {
             let result = task.await;
@@ -4284,45 +4421,6 @@ impl Project {
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.code_actions(buffer_handle, range, kinds, cx)
-        })
-    }
-
-    pub fn code_lens_actions<T: Clone + ToOffset>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        range: Range<T>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<CodeAction>>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let range = range.to_point(&snapshot);
-        let range_start = snapshot.anchor_before(range.start);
-        let range_end = if range.start == range.end {
-            range_start
-        } else {
-            snapshot.anchor_after(range.end)
-        };
-        let range = range_start..range_end;
-        let code_lens_actions = self
-            .lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
-
-        cx.background_spawn(async move {
-            let mut code_lens_actions = code_lens_actions
-                .await
-                .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
-            if let Some(code_lens_actions) = &mut code_lens_actions {
-                code_lens_actions.retain(|code_lens_action| {
-                    range
-                        .start
-                        .cmp(&code_lens_action.range.start, &snapshot)
-                        .is_ge()
-                        && range
-                            .end
-                            .cmp(&code_lens_action.range.end, &snapshot)
-                            .is_le()
-                });
-            }
-            Ok(code_lens_actions)
         })
     }
 
@@ -4932,18 +5030,33 @@ impl Project {
                 }
             }
         } else {
+            // First pass: for each worktree, try two interpretations of the path and
+            // return whichever finds an existing entry first:
+            //   (a) Strip the worktree root name as a prefix.
+            //   (b) Treat the path as a literal worktree-relative path.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(rel_path) = RelPath::new(path, path_style) {
-                    if let Some(entry) = worktree.entry_for_path(&rel_path) {
-                        return Some(ProjectPath {
-                            worktree_id: worktree.id(),
-                            path: entry.path.clone(),
-                        });
-                    }
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name().as_std_path())
+                    && let Ok(rel_path) = RelPath::new(relative_path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&rel_path)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
+                }
+                if let Ok(rel_path) = RelPath::new(path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&rel_path)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
                 }
             }
 
+            // Second pass: strip the worktree root name prefix without requiring the
+            // entry to exist, to allow resolving paths that don't exist yet.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
                 if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
@@ -5172,7 +5285,7 @@ impl Project {
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
-        let (tx, rx) = smol::channel::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let actions: Vec<_> = envelope
             .payload
             .actions
@@ -5984,6 +6097,10 @@ impl Project {
             .git_init(path, fallback_branch_name, cx)
     }
 
+    pub fn git_config(&self, path: Arc<Path>, args: Vec<String>, cx: &App) -> Task<Result<String>> {
+        self.git_store.read(cx).git_config(path, args, cx)
+    }
+
     pub fn buffer_store(&self) -> &Entity<BufferStore> {
         &self.buffer_store
     }
@@ -6088,6 +6205,14 @@ impl Project {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
     }
+
+    pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_store.read(cx).paths(cx)
+    }
+
+    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
+        ProjectGroupKey::from_project(self, cx)
+    }
 }
 
 /// Identifies a project group by a set of paths the workspaces in this group
@@ -6095,7 +6220,7 @@ impl Project {
 ///
 /// Paths are mapped to their main worktree path first so we can group
 /// workspaces by main repos.
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Default)]
 pub struct ProjectGroupKey {
     /// The paths of the main worktrees for this project group.
     paths: PathList,
@@ -6110,18 +6235,22 @@ impl ProjectGroupKey {
         Self { paths, host }
     }
 
-    pub fn display_name(&self) -> SharedString {
-        let mut names = Vec::with_capacity(self.paths.paths().len());
-        for abs_path in self.paths.paths() {
-            if let Some(name) = abs_path.file_name() {
-                names.push(name.to_string_lossy().to_string());
-            }
+    pub fn from_project(project: &Project, cx: &App) -> Self {
+        let paths = project.worktree_paths(cx);
+        let host = project.remote_connection_options(cx);
+        Self {
+            paths: paths.main_worktree_path_list().clone(),
+            host,
         }
-        if names.is_empty() {
-            // TODO: Can we do something better in this case?
-            "Empty Workspace".into()
-        } else {
-            names.join(", ").into()
+    }
+
+    pub fn from_worktree_paths(
+        paths: &WorktreePaths,
+        host: Option<RemoteConnectionOptions>,
+    ) -> Self {
+        Self {
+            paths: paths.main_worktree_path_list().clone(),
+            host,
         }
     }
 
@@ -6129,9 +6258,54 @@ impl ProjectGroupKey {
         &self.paths
     }
 
+    pub fn display_name(
+        &self,
+        path_detail_map: &std::collections::HashMap<PathBuf, usize>,
+    ) -> SharedString {
+        let mut names = Vec::with_capacity(self.paths.paths().len());
+        for abs_path in self.paths.ordered_paths() {
+            let detail = path_detail_map.get(abs_path).copied().unwrap_or(0);
+            // Strip a `.git` extension for display (bare clones like `foo.git`
+            // should display as `foo`, matching the titlebar).
+            let display_path = if abs_path.extension() == Some(std::ffi::OsStr::new("git")) {
+                std::borrow::Cow::Owned(abs_path.with_extension(""))
+            } else {
+                std::borrow::Cow::Borrowed(abs_path.as_path())
+            };
+            let suffix = path_suffix(&display_path, detail);
+            if !suffix.is_empty() {
+                names.push(suffix);
+            }
+        }
+        if names.is_empty() {
+            "Empty Workspace".into()
+        } else {
+            names.join(", ").into()
+        }
+    }
+
     pub fn host(&self) -> Option<RemoteConnectionOptions> {
         self.host.clone()
     }
+
+    pub fn matches(&self, other: &ProjectGroupKey) -> bool {
+        self.paths == other.paths
+            && same_remote_connection_identity(self.host.as_ref(), other.host.as_ref())
+    }
+}
+
+pub fn path_suffix(path: &Path, detail: usize) -> String {
+    let mut components: Vec<_> = path
+        .components()
+        .rev()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
+        .take(detail + 1)
+        .collect();
+    components.reverse();
+    components.join("/")
 }
 
 pub struct PathMatchCandidateSet {
@@ -6296,6 +6470,7 @@ impl<'a> Iterator for PathMatchCandidateSetNucleoIter<'a> {
             .map(|entry| fuzzy_nucleo::PathMatchCandidate {
                 is_dir: entry.kind.is_dir(),
                 path: &entry.path,
+                char_bag: entry.char_bag,
             })
     }
 }

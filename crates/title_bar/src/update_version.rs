@@ -66,9 +66,9 @@ impl UpdateVersion {
     }
 
     fn version_tooltip_message(version: &VersionCheckType) -> String {
-        format!("Version: {}", {
+        format!("Update to Version: {}", {
             match version {
-                VersionCheckType::Sha(sha) => format!("{}…", sha.short()),
+                VersionCheckType::Sha(sha) => sha.full(),
                 VersionCheckType::Semantic(semantic_version) => semantic_version.to_string(),
             }
         })
@@ -84,17 +84,17 @@ impl Render for UpdateVersion {
             AutoUpdateStatus::Checking if self.update_check_type.is_manual() => {
                 UpdateButton::checking().into_any_element()
             }
-            AutoUpdateStatus::Downloading { version } if self.update_check_type.is_manual() => {
-                let tooltip = Self::version_tooltip_message(&version);
-                UpdateButton::downloading(tooltip).into_any_element()
+            AutoUpdateStatus::Downloading { version } => {
+                let version = Self::version_tooltip_message(&version);
+                UpdateButton::downloading(version).into_any_element()
             }
-            AutoUpdateStatus::Installing { version } if self.update_check_type.is_manual() => {
-                let tooltip = Self::version_tooltip_message(&version);
-                UpdateButton::installing(tooltip).into_any_element()
+            AutoUpdateStatus::Installing { version } => {
+                let version = Self::version_tooltip_message(&version);
+                UpdateButton::installing(version).into_any_element()
             }
             AutoUpdateStatus::Updated { version } => {
-                let tooltip = Self::version_tooltip_message(&version);
-                UpdateButton::updated(tooltip)
+                let version = Self::version_tooltip_message(&version);
+                UpdateButton::updated(version)
                     .on_click(|_, _, cx| {
                         workspace::reload(cx);
                     })
@@ -116,10 +116,7 @@ impl Render for UpdateVersion {
                     }))
                     .into_any_element()
             }
-            AutoUpdateStatus::Idle
-            | AutoUpdateStatus::Checking { .. }
-            | AutoUpdateStatus::Downloading { .. }
-            | AutoUpdateStatus::Installing { .. } => Empty.into_any_element(),
+            AutoUpdateStatus::Idle | AutoUpdateStatus::Checking { .. } => Empty.into_any_element(),
         }
     }
 }
@@ -137,12 +134,15 @@ mod tests {
             Version::new(1, 0, 0),
         ));
 
-        assert_eq!(message, "Version: 1.0.0");
+        assert_eq!(message, "Update to Version: 1.0.0");
 
         let message = UpdateVersion::version_tooltip_message(&VersionCheckType::Sha(
             AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
         ));
 
-        assert_eq!(message, "Version: 14d9a41…");
+        assert_eq!(
+            message,
+            "Update to Version: 14d9a4189f058d8736339b06ff2340101eaea5af"
+        );
     }
 }

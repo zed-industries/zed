@@ -51,9 +51,12 @@ screen-capture = [
 
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+accesskit.workspace = true
+accesskit_unix.workspace = true
 anyhow.workspace = true
 bytemuck = "1"
 collections.workspace = true
+image.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }

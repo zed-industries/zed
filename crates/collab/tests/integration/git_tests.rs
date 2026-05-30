@@ -1,15 +1,27 @@
-use std::path::{self, Path, PathBuf};
+use std::{
+    path::{self, Path, PathBuf},
+    sync::Arc,
+};
 
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
 use collections::HashMap;
 use git::{
-    repository::{RepoPath, Worktree as GitWorktree},
+    Oid,
+    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree as GitWorktree},
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
+use git_graph::GitGraph;
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
-use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::ProjectPath;
+use gpui::{
+    AppContext as _, BackgroundExecutor, Entity, IntoElement as _, SharedString, TestAppContext,
+    VisualContext as _, VisualTestContext, point, px, size,
+};
+use project::{
+    ProjectPath,
+    git_store::{CommitDataState, Repository},
+};
+use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
 
 use util::{path, rel_path::rel_path};
@@ -89,6 +101,159 @@ fn collect_diff_stats<C: gpui::AppContext>(
         }
         stats
     })
+}
+
+async fn load_commit_data_batch(
+    repository: &gpui::Entity<Repository>,
+    shas: &[Oid],
+    executor: &BackgroundExecutor,
+    cx: &mut TestAppContext,
+) -> HashMap<Oid, CommitData> {
+    let states = cx.update(|cx| {
+        shas.iter()
+            .map(|sha| {
+                (
+                    *sha,
+                    repository.update(cx, |repository, cx| {
+                        repository.fetch_commit_data(*sha, true, cx).clone()
+                    }),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+
+    executor.run_until_parked();
+
+    let mut commit_data = HashMap::default();
+    for (sha, state) in states {
+        let data = match state {
+            CommitDataState::Loaded(data) => data.as_ref().clone(),
+            CommitDataState::Loading(Some(shared)) => shared.await.unwrap().as_ref().clone(),
+            CommitDataState::Loading(None) => {
+                panic!("fetch_commit_data(..., true) should return an await-result state")
+            }
+        };
+        commit_data.insert(sha, data);
+    }
+
+    commit_data
+}
+
+fn branch_list_snapshot(
+    project: &gpui::Entity<project::Project>,
+    cx: &mut TestAppContext,
+) -> (Option<String>, Vec<String>) {
+    project.read_with(cx, |project, cx| {
+        let repos = project.repositories(cx);
+        assert_eq!(repos.len(), 1, "project should have exactly 1 repository");
+        let repo = repos.values().next().unwrap();
+        let snapshot = repo.read(cx).snapshot();
+        (
+            snapshot
+                .branch
+                .as_ref()
+                .map(|branch| branch.name().to_string()),
+            snapshot
+                .branch_list
+                .iter()
+                .map(|branch| branch.ref_name.to_string())
+                .collect(),
+        )
+    })
+}
+
+fn build_git_graph(
+    project: &Entity<project::Project>,
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Entity<GitGraph> {
+    let (repository_id, git_store) = project.read_with(cx, |project, cx| {
+        let repository = project
+            .active_repository(cx)
+            .expect("project should have an active repository");
+        (repository.read(cx).id, project.git_store().clone())
+    });
+    let workspace = workspace.downgrade();
+
+    cx.new_window_entity(|window, cx| {
+        GitGraph::new(repository_id, git_store, workspace, None, window, cx)
+    })
+}
+
+fn render_git_graph(graph: &Entity<GitGraph>, cx: &mut VisualTestContext) {
+    cx.draw(point(px(0.), px(0.)), size(px(1200.), px(800.)), |_, _| {
+        graph.clone().into_any_element()
+    });
+    cx.run_until_parked();
+}
+
+fn assert_initial_graph_commits_eq(
+    actual: &[Arc<InitialGraphCommitData>],
+    expected: &[Arc<InitialGraphCommitData>],
+) {
+    assert_eq!(actual.len(), expected.len(), "commit count should match");
+    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert_eq!(
+            actual.sha, expected.sha,
+            "sha should match at index {index}"
+        );
+        assert_eq!(
+            actual.parents, expected.parents,
+            "parents should match at index {index}"
+        );
+        assert_eq!(
+            actual.ref_names, expected.ref_names,
+            "ref names should match at index {index}"
+        );
+    }
+}
+
+fn assert_remote_cache_matches_local_cache(
+    local_repository: &gpui::Entity<Repository>,
+    remote_repository: &gpui::Entity<Repository>,
+    cx_local: &mut TestAppContext,
+    cx_remote: &mut TestAppContext,
+) {
+    let local_cache = cx_local.update(|cx| {
+        local_repository.update(cx, |repository, _| repository.loaded_commit_data_for_test())
+    });
+    let remote_cache = cx_remote.update(|cx| {
+        remote_repository.update(cx, |repository, _| repository.loaded_commit_data_for_test())
+    });
+
+    for (sha, remote_commit_data) in &remote_cache {
+        let local_commit_data = local_cache
+            .get(sha)
+            .unwrap_or_else(|| panic!("local cache missing commit data for {sha}"));
+        assert_eq!(
+            local_commit_data.sha, remote_commit_data.sha,
+            "local and remote cache should agree on sha for {sha}"
+        );
+        assert_eq!(
+            local_commit_data.parents, remote_commit_data.parents,
+            "local and remote cache should agree on parents for {sha}"
+        );
+        assert_eq!(
+            local_commit_data.author_name, remote_commit_data.author_name,
+            "local and remote cache should agree on author_name for {sha}"
+        );
+        assert_eq!(
+            local_commit_data.author_email, remote_commit_data.author_email,
+            "local and remote cache should agree on author_email for {sha}"
+        );
+        assert_eq!(
+            local_commit_data.commit_timestamp, remote_commit_data.commit_timestamp,
+            "local and remote cache should agree on commit_timestamp for {sha}"
+        );
+        assert_eq!(
+            local_commit_data.subject, remote_commit_data.subject,
+            "local and remote cache should agree on subject for {sha}"
+        );
+        assert_eq!(
+            local_commit_data.message, remote_commit_data.message,
+            "local and remote cache should agree on message for {sha}"
+        );
+    }
 }
 
 #[gpui::test]
@@ -481,6 +646,297 @@ async fn test_remote_git_head_sha(
 }
 
 #[gpui::test]
+async fn test_remote_git_commit_data_batches(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+    let commit_shas = [
+        "0123456789abcdef0123456789abcdef01234567"
+            .parse::<Oid>()
+            .unwrap(),
+        "1111111111111111111111111111111111111111"
+            .parse::<Oid>()
+            .unwrap(),
+        "2222222222222222222222222222222222222222"
+            .parse::<Oid>()
+            .unwrap(),
+        "3333333333333333333333333333333333333333"
+            .parse::<Oid>()
+            .unwrap(),
+    ];
+
+    client_a.fs().set_commit_data(
+        Path::new(path!("/project/.git")),
+        commit_shas.iter().enumerate().map(|(index, sha)| {
+            (
+                CommitData {
+                    sha: *sha,
+                    parents: Default::default(),
+                    author_name: SharedString::from(format!("Author {index}")),
+                    author_email: SharedString::from(format!("author{index}@example.com")),
+                    commit_timestamp: 1_700_000_000 + index as i64,
+                    subject: SharedString::from(format!("Subject {index}")),
+                    message: SharedString::from(format!("Subject {index}\n\nBody {index}")),
+                },
+                false,
+            )
+        }),
+    );
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    executor.run_until_parked();
+
+    let repo_a = cx_a.update(|cx| project_a.read(cx).active_repository(cx).unwrap());
+
+    let primed_before = load_commit_data_batch(&repo_a, &commit_shas[..2], &executor, cx_a).await;
+    assert_eq!(
+        primed_before.len(),
+        2,
+        "host should prime two commits before sharing"
+    );
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    executor.run_until_parked();
+
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
+
+    let remote_batch_one =
+        load_commit_data_batch(&repo_b, &commit_shas[..3], &executor, cx_b).await;
+    assert_eq!(remote_batch_one.len(), 3);
+    for (index, sha) in commit_shas[..3].iter().enumerate() {
+        let commit_data = remote_batch_one.get(sha).unwrap();
+        assert_eq!(commit_data.sha, *sha);
+        assert_eq!(commit_data.subject.as_ref(), format!("Subject {index}"));
+        assert_eq!(
+            commit_data.message.as_ref(),
+            format!("Subject {index}\n\nBody {index}")
+        );
+    }
+
+    let primed_after = load_commit_data_batch(&repo_a, &commit_shas[2..], &executor, cx_a).await;
+    assert_eq!(
+        primed_after.len(),
+        2,
+        "host should prime remaining commits after remote fetches"
+    );
+
+    let remote_batch_two =
+        load_commit_data_batch(&repo_b, &commit_shas[1..], &executor, cx_b).await;
+    assert_eq!(remote_batch_two.len(), 3);
+
+    assert_remote_cache_matches_local_cache(&repo_a, &repo_b, cx_a, cx_b);
+}
+
+#[gpui::test]
+async fn test_remote_git_graph_data_and_search(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    cx_a.update(|cx| {
+        git_ui::init(cx);
+        git_graph::init(cx);
+    });
+    cx_b.update(|cx| {
+        git_ui::init(cx);
+        git_graph::init(cx);
+    });
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+    let search_query = "graph search match";
+    let mut rng = StdRng::seed_from_u64(7);
+    let commits = git_graph::generate_random_commit_dag(&mut rng, 12, true);
+
+    let dot_git = Path::new(path!("/project/.git"));
+    client_a.fs().set_graph_commits(dot_git, commits.clone());
+    client_a.fs().set_commit_data(
+        dot_git,
+        commits.iter().enumerate().map(|(index, commit)| {
+            (
+                CommitData {
+                    sha: commit.sha,
+                    parents: commit.parents.clone(),
+                    author_name: SharedString::from(format!("Author {index}")),
+                    author_email: SharedString::from(format!("author{index}@example.com")),
+                    commit_timestamp: 1_700_000_000 + index as i64,
+                    subject: SharedString::from(format!("Subject {index}")),
+                    message: SharedString::from(if index % 2 == 0 {
+                        format!("Subject {index}\n\n{search_query} {index}")
+                    } else {
+                        format!("Subject {index}\n\nPlain message {index}")
+                    }),
+                },
+                false,
+            )
+        }),
+    );
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    executor.run_until_parked();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let remote_graph = build_git_graph(&project_b, &workspace_b, cx_b);
+    render_git_graph(&remote_graph, cx_b);
+    let remote_initial_graph_data =
+        remote_graph.read_with(cx_b, |graph, _| graph.initial_commit_data_for_test());
+    remote_graph.update(cx_b, |graph, cx| {
+        graph.search_for_test(SharedString::from(search_query), cx);
+    });
+    cx_b.run_until_parked();
+    let remote_search_results =
+        remote_graph.read_with(cx_b, |graph, _| graph.search_matches_for_test());
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let local_graph = build_git_graph(&project_a, &workspace_a, cx_a);
+    render_git_graph(&local_graph, cx_a);
+    let local_initial_graph_data =
+        local_graph.read_with(cx_a, |graph, _| graph.initial_commit_data_for_test());
+    local_graph.update(cx_a, |graph, cx| {
+        graph.search_for_test(SharedString::from(search_query), cx);
+    });
+    cx_a.run_until_parked();
+    let local_search_results =
+        local_graph.read_with(cx_a, |graph, _| graph.search_matches_for_test());
+
+    assert_initial_graph_commits_eq(&local_initial_graph_data, &commits);
+    assert_initial_graph_commits_eq(&remote_initial_graph_data, &local_initial_graph_data);
+    assert!(!local_search_results.is_empty());
+    assert_eq!(remote_search_results, local_search_results);
+}
+
+#[gpui::test]
+async fn test_branch_list_sync(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    client_a.fs().insert_branches(
+        Path::new(path!("/project/.git")),
+        &["main", "feature-1", "feature-2"],
+    );
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    executor.run_until_parked();
+
+    let host_snapshot = branch_list_snapshot(&project_a, cx_a);
+    assert_eq!(host_snapshot.0.as_deref(), Some("main"));
+    assert_eq!(
+        host_snapshot.1,
+        vec![
+            "refs/heads/feature-1".to_string(),
+            "refs/heads/feature-2".to_string(),
+            "refs/heads/main".to_string(),
+        ]
+    );
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    executor.run_until_parked();
+
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, _cx| {
+            repository.create_branch("totally-new-branch".to_string(), None)
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch("totally-new-branch".to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_snapshot_after_update = branch_list_snapshot(&project_a, cx_a);
+    assert_eq!(
+        host_snapshot_after_update.0.as_deref(),
+        Some("totally-new-branch")
+    );
+    assert_eq!(
+        host_snapshot_after_update.1,
+        vec![
+            "refs/heads/feature-1".to_string(),
+            "refs/heads/feature-2".to_string(),
+            "refs/heads/main".to_string(),
+            "refs/heads/totally-new-branch".to_string(),
+        ]
+    );
+
+    let guest_snapshot_after_update = branch_list_snapshot(&project_b, cx_b);
+    assert_eq!(guest_snapshot_after_update, host_snapshot_after_update);
+}
+
+#[gpui::test]
 async fn test_linked_worktrees_sync(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -514,6 +970,7 @@ async fn test_linked_worktrees_sync(
             ref_name: Some("refs/heads/feature-branch".into()),
             sha: "bbb222".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -525,6 +982,7 @@ async fn test_linked_worktrees_sync(
             ref_name: Some("refs/heads/bugfix-branch".into()),
             sha: "ccc333".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -597,6 +1055,7 @@ async fn test_linked_worktrees_sync(
                 ref_name: Some("refs/heads/hotfix-branch".into()),
                 sha: "ddd444".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;
@@ -644,11 +1103,19 @@ async fn test_linked_worktrees_sync(
     executor.run_until_parked();
 
     // Verify host now sees 2 linked worktrees (feature-branch and hotfix-branch).
-    let host_linked_after_removal = project_a.read_with(cx_a, |project, cx| {
-        let repos = project.repositories(cx);
-        let repo = repos.values().next().unwrap();
-        repo.read(cx).linked_worktrees().to_vec()
-    });
+    let (host_linked_after_removal, host_git_paths_after_removal) =
+        project_a.read_with(cx_a, |project, cx| {
+            let repos = project.repositories(cx);
+            let repo = repos.values().next().unwrap();
+            let repo = repo.read(cx);
+            (
+                repo.linked_worktrees().to_vec(),
+                (
+                    repo.repository_dir_abs_path.to_path_buf(),
+                    repo.common_dir_abs_path.to_path_buf(),
+                ),
+            )
+        });
     assert_eq!(
         host_linked_after_removal.len(),
         2,
@@ -691,6 +1158,19 @@ async fn test_linked_worktrees_sync(
         late_joiner_linked, host_linked_after_removal,
         "late-joining client's linked_worktrees should match host's (DB roundtrip)"
     );
+    let late_joiner_git_paths = project_c.read_with(cx_c, |project, cx| {
+        let repos = project.repositories(cx);
+        let repo = repos.values().next().unwrap();
+        let repo = repo.read(cx);
+        (
+            repo.repository_dir_abs_path.to_path_buf(),
+            repo.common_dir_abs_path.to_path_buf(),
+        )
+    });
+    assert_eq!(
+        late_joiner_git_paths, host_git_paths_after_removal,
+        "late-joining client's git directory paths should match host's (DB roundtrip)"
+    );
 
     // Test reconnection: disconnect client B (guest) and reconnect.
     // After rejoining, client B should get linked_worktrees back from the DB.
@@ -703,19 +1183,31 @@ async fn test_linked_worktrees_sync(
     executor.run_until_parked();
 
     // Verify client B still has the correct linked worktrees after reconnection.
-    let guest_linked_after_reconnect = project_b.read_with(cx_b, |project, cx| {
-        let repos = project.repositories(cx);
-        assert_eq!(
-            repos.len(),
-            1,
-            "guest should still have exactly 1 repository after reconnect"
-        );
-        let repo = repos.values().next().unwrap();
-        repo.read(cx).linked_worktrees().to_vec()
-    });
+    let (guest_linked_after_reconnect, guest_git_paths_after_reconnect) =
+        project_b.read_with(cx_b, |project, cx| {
+            let repos = project.repositories(cx);
+            assert_eq!(
+                repos.len(),
+                1,
+                "guest should still have exactly 1 repository after reconnect"
+            );
+            let repo = repos.values().next().unwrap();
+            let repo = repo.read(cx);
+            (
+                repo.linked_worktrees().to_vec(),
+                (
+                    repo.repository_dir_abs_path.to_path_buf(),
+                    repo.common_dir_abs_path.to_path_buf(),
+                ),
+            )
+        });
     assert_eq!(
         guest_linked_after_reconnect, host_linked_after_removal,
         "guest's linked_worktrees should survive guest disconnect/reconnect"
+    );
+    assert_eq!(
+        guest_git_paths_after_reconnect, host_git_paths_after_removal,
+        "guest's git directory paths should survive guest disconnect/reconnect"
     );
 }
 
