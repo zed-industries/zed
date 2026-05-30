@@ -39,12 +39,15 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
+use collections::HashMap;
+use editor::{Editor, EditorElement, EditorEvent, EditorStyle, HighlightKey};
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext,
-    SharedString, Subscription, TextStyle, WeakEntity, Window, actions, relative, rems,
+    Action, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Hsla,
+    KeyContext, SharedString, Subscription, TextStyle, WeakEntity, Window, actions, relative,
+    rems,
 };
 use markdown::Markdown;
+use multi_buffer::{Anchor, MultiBufferOffset};
 use project::search::SearchQuery;
 use search::{SearchOption, SearchOptions, SearchSource};
 use settings::Settings as _;
@@ -54,6 +57,8 @@ use ui::{
     LabelSize, Tooltip, div, h_flex, prelude::*, v_flex,
 };
 use util::paths::PathMatcher;
+
+use crate::entry_view_state::EntryViewState;
 
 actions!(
     agent,
@@ -67,13 +72,34 @@ actions!(
     ]
 );
 
-/// A single match: the entry index in the thread, the `Markdown` entity
-/// that owns it, the index of the match within that markdown's highlight
-/// list, and the source-offset range inside the markdown's source string.
+/// Where a given match lives on screen. Past user messages are rendered
+/// through an `Editor` (the `MessageEditor`'s inner editor), whereas
+/// assistant messages and tool-call labels are rendered through `Markdown`
+/// entities. The two have different highlight APIs, so we tag each match
+/// with the entity it should be painted on.
+#[derive(Clone)]
+enum MatchTarget {
+    Markdown {
+        markdown: WeakEntity<Markdown>,
+        /// Index of this match within `Markdown`'s highlight list.
+        markdown_match_ix: usize,
+    },
+    Editor {
+        editor: WeakEntity<Editor>,
+        /// Anchor range in the editor's `MultiBuffer`, used both for
+        /// `Editor::highlight_background` ranges and for autoscroll.
+        anchor_range: Range<Anchor>,
+        /// Index of this match within this editor's range list (passed to
+        /// `highlight_background`'s color closure).
+        editor_match_ix: usize,
+    },
+}
+
+/// A single match: which entry it belongs to, where it lives, and the
+/// byte offset inside the source string (used to autoscroll markdowns).
 struct ThreadMatch {
     entry_ix: usize,
-    markdown: WeakEntity<Markdown>,
-    markdown_match_ix: usize,
+    target: MatchTarget,
     source_range: Range<usize>,
 }
 
@@ -94,8 +120,14 @@ pub struct ThreadSearchBar {
     /// The most-recently-used set of markdown entities. We hold weak refs
     /// so we can clear their highlights when the query changes or the bar
     /// is dismissed without leaking them.
-    highlighted: Vec<WeakEntity<Markdown>>,
+    highlighted_markdowns: Vec<WeakEntity<Markdown>>,
+    /// Same purpose as `highlighted_markdowns`, but for editor-backed
+    /// matches (past user messages). Highlights here go through
+    /// `Editor::highlight_background(HighlightKey::BufferSearchHighlights, …)`,
+    /// which is what `Editor`'s own `SearchableItem` impl uses.
+    highlighted_editors: Vec<WeakEntity<Editor>>,
     thread: Entity<AcpThread>,
+    entry_view_state: Entity<EntryViewState>,
     on_activate_match: Arc<dyn Fn(usize, usize, &mut Window, &mut App)>,
     _subscriptions: Vec<Subscription>,
 }
@@ -123,13 +155,14 @@ impl ThreadSearchBar {
     /// internally before invoking the callback.
     pub fn new(
         thread: Entity<AcpThread>,
+        entry_view_state: Entity<EntryViewState>,
         on_activate_match: Arc<dyn Fn(usize, usize, &mut Window, &mut App)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search thread…", window, cx);
+            editor.set_placeholder_text("Search this thread…", window, cx);
             editor
         });
         let editor_subscription = cx.subscribe_in(
@@ -148,8 +181,10 @@ impl ThreadSearchBar {
             active_match: None,
             query_error: false,
             query_error_message: None,
-            highlighted: Vec::new(),
+            highlighted_markdowns: Vec::new(),
+            highlighted_editors: Vec::new(),
             thread,
+            entry_view_state,
             on_activate_match,
             _subscriptions: vec![editor_subscription],
         }
@@ -241,9 +276,19 @@ impl ThreadSearchBar {
         self.query_error = !self.current_query(cx).is_empty() && query.is_none();
         self.query_error_message = err_msg;
         // Always clear stale highlights from the previous query.
-        for weak in self.highlighted.drain(..) {
+        for weak in self.highlighted_markdowns.drain(..) {
             if let Some(md) = weak.upgrade() {
                 md.update(cx, |md, cx| md.clear_search_highlights(cx));
+            }
+        }
+        for weak in self.highlighted_editors.drain(..) {
+            if let Some(editor) = weak.upgrade() {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights(
+                        HighlightKey::BufferSearchHighlights,
+                        cx,
+                    );
+                });
             }
         }
         self.matches.clear();
@@ -254,39 +299,103 @@ impl ThreadSearchBar {
             return;
         };
 
-        // For each entry, walk its markdown entities, run the query, and
-        // record matches. Push the matched ranges to the markdown via
-        // `set_search_highlights` so they're painted inline (yellow bg,
-        // active match is emphasized when we call `set_active`).
-        let entry_markdowns: Vec<(usize, Vec<Entity<Markdown>>)> = self
-            .thread
-            .read(cx)
-            .entries()
-            .iter()
-            .enumerate()
-            .map(|(ix, entry)| (ix, collect_markdowns(entry)))
-            .collect();
+        // For each entry, dispatch on type:
+        //
+        // * `UserMessage` is rendered through a `MessageEditor` (an `Editor`),
+        //   not the markdown attached to the entry. Searching the markdown
+        //   would count hits but paint nothing visible. Look up the editor
+        //   from `EntryViewState`, search its buffer text, and paint via
+        //   `Editor::highlight_background` — same path `Editor`'s own
+        //   `SearchableItem` impl uses.
+        // * Everything else (`AssistantMessage`, `ToolCall` label,
+        //   `CompletedPlan`) keeps the markdown highlight path.
+        let entry_count = self.thread.read(cx).entries().len();
+        for entry_ix in 0..entry_count {
+            let is_user_message = self
+                .thread
+                .read(cx)
+                .entries()
+                .get(entry_ix)
+                .map(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                .unwrap_or(false);
 
-        for (entry_ix, markdowns) in entry_markdowns {
-            for markdown in markdowns {
-                let source = markdown.read(cx).source().to_string();
-                let ranges = query.search_str(&source);
+            if is_user_message {
+                let editor_entity = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.message_editor())
+                    .map(|message_editor| message_editor.read(cx).editor().clone());
+                let Some(editor_entity) = editor_entity else {
+                    continue;
+                };
+
+                let snapshot = editor_entity.read(cx).buffer().read(cx).snapshot(cx);
+                let text = snapshot.text();
+                let ranges = query.search_str(&text);
                 if ranges.is_empty() {
                     continue;
                 }
-                let weak = markdown.downgrade();
+                let anchor_ranges: Vec<Range<Anchor>> = ranges
+                    .iter()
+                    .map(|range| {
+                        snapshot.anchor_before(MultiBufferOffset(range.start))
+                            ..snapshot.anchor_after(MultiBufferOffset(range.end))
+                    })
+                    .collect();
+
+                let weak_editor = editor_entity.downgrade();
                 for (ix, range) in ranges.iter().enumerate() {
                     self.matches.push(ThreadMatch {
                         entry_ix,
-                        markdown: weak.clone(),
-                        markdown_match_ix: ix,
+                        target: MatchTarget::Editor {
+                            editor: weak_editor.clone(),
+                            anchor_range: anchor_ranges[ix].clone(),
+                            editor_match_ix: ix,
+                        },
                         source_range: range.clone(),
                     });
                 }
-                self.highlighted.push(weak);
-                markdown.update(cx, |md, cx| {
-                    md.set_search_highlights(ranges, None, cx);
+                self.highlighted_editors.push(weak_editor);
+
+                editor_entity.update(cx, |editor, cx| {
+                    editor.highlight_background(
+                        HighlightKey::BufferSearchHighlights,
+                        &anchor_ranges,
+                        |_index, theme| theme.colors().search_match_background,
+                        cx,
+                    );
                 });
+            } else {
+                let markdowns = self
+                    .thread
+                    .read(cx)
+                    .entries()
+                    .get(entry_ix)
+                    .map(collect_markdowns)
+                    .unwrap_or_default();
+                for markdown in markdowns {
+                    let source = markdown.read(cx).source().to_string();
+                    let ranges = query.search_str(&source);
+                    if ranges.is_empty() {
+                        continue;
+                    }
+                    let weak = markdown.downgrade();
+                    for (ix, range) in ranges.iter().enumerate() {
+                        self.matches.push(ThreadMatch {
+                            entry_ix,
+                            target: MatchTarget::Markdown {
+                                markdown: weak.clone(),
+                                markdown_match_ix: ix,
+                            },
+                            source_range: range.clone(),
+                        });
+                    }
+                    self.highlighted_markdowns.push(weak);
+                    markdown.update(cx, |md, cx| {
+                        md.set_search_highlights(ranges, None, cx);
+                    });
+                }
             }
         }
 
@@ -303,8 +412,7 @@ impl ThreadSearchBar {
         };
         let entry_ix = m.entry_ix;
         let source_index = m.source_range.start;
-        let target_markdown = m.markdown.clone();
-        let target_markdown_match_ix = m.markdown_match_ix;
+        let target = m.target.clone();
 
         // Walk all highlighted markdowns and update which one (if any) has
         // an active highlight set. We can't store the markdown_id inside
@@ -312,12 +420,19 @@ impl ThreadSearchBar {
         // don't know their "place" in our match list; instead we set
         // active only on the markdown that owns the current match, and
         // clear it on everything else.
-        for weak in &self.highlighted {
+        let (target_markdown_id, target_markdown_match_ix) = match &target {
+            MatchTarget::Markdown {
+                markdown,
+                markdown_match_ix,
+            } => (Some(markdown.entity_id()), Some(*markdown_match_ix)),
+            MatchTarget::Editor { .. } => (None, None),
+        };
+        for weak in &self.highlighted_markdowns {
             if let Some(md) = weak.upgrade() {
-                let is_target = weak.entity_id() == target_markdown.entity_id();
+                let is_target = Some(weak.entity_id()) == target_markdown_id;
                 md.update(cx, |md, cx| {
                     if is_target {
-                        md.set_active_search_highlight(Some(target_markdown_match_ix), cx);
+                        md.set_active_search_highlight(target_markdown_match_ix, cx);
                         md.request_autoscroll_to_source_index(source_index, cx);
                     } else {
                         md.set_active_search_highlight(None, cx);
@@ -325,6 +440,62 @@ impl ThreadSearchBar {
                 });
             }
         }
+
+        // For editor-backed matches we have to re-apply `highlight_background`
+        // because the active-vs-inactive distinction lives inside the color
+        // closure (per `Editor::SearchableItem::update_matches`). Compute,
+        // per editor, the ordered range list and which of its matches (if
+        // any) is the active one, then re-paint.
+        let target_editor_id = match &target {
+            MatchTarget::Editor { editor, .. } => Some(editor.entity_id()),
+            MatchTarget::Markdown { .. } => None,
+        };
+        let target_editor_match_ix = match &target {
+            MatchTarget::Editor {
+                editor_match_ix, ..
+            } => Some(*editor_match_ix),
+            MatchTarget::Markdown { .. } => None,
+        };
+        let mut per_editor: HashMap<EntityId, (WeakEntity<Editor>, Vec<Range<Anchor>>)> =
+            HashMap::default();
+        for m in &self.matches {
+            if let MatchTarget::Editor {
+                editor,
+                anchor_range,
+                ..
+            } = &m.target
+            {
+                let entry = per_editor
+                    .entry(editor.entity_id())
+                    .or_insert_with(|| (editor.clone(), Vec::new()));
+                entry.1.push(anchor_range.clone());
+            }
+        }
+        for (editor_id, (weak_editor, ranges)) in per_editor {
+            let Some(editor) = weak_editor.upgrade() else {
+                continue;
+            };
+            let active_ix = if Some(editor_id) == target_editor_id {
+                target_editor_match_ix
+            } else {
+                None
+            };
+            editor.update(cx, |editor, cx| {
+                editor.highlight_background(
+                    HighlightKey::BufferSearchHighlights,
+                    &ranges,
+                    move |index, theme| {
+                        if active_ix == Some(*index) {
+                            theme.colors().search_active_match_background
+                        } else {
+                            theme.colors().search_match_background
+                        }
+                    },
+                    cx,
+                );
+            });
+        }
+
         self.active_match = Some(ix);
         (self.on_activate_match)(entry_ix, source_index, window, cx);
         cx.notify();
@@ -377,9 +548,19 @@ impl ThreadSearchBar {
     /// markdown entity we touched so we don't leave stale yellow highlights
     /// when the user toggles search off.
     pub fn clear_highlights(&mut self, cx: &mut Context<Self>) {
-        for weak in self.highlighted.drain(..) {
+        for weak in self.highlighted_markdowns.drain(..) {
             if let Some(md) = weak.upgrade() {
                 md.update(cx, |md, cx| md.clear_search_highlights(cx));
+            }
+        }
+        for weak in self.highlighted_editors.drain(..) {
+            if let Some(editor) = weak.upgrade() {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights(
+                        HighlightKey::BufferSearchHighlights,
+                        cx,
+                    );
+                });
             }
         }
         self.matches.clear();
@@ -387,7 +568,7 @@ impl ThreadSearchBar {
         cx.notify();
     }
 
-    fn toggle_case_sensitive(
+    pub(super) fn toggle_case_sensitive(
         &mut self,
         _: &search::ToggleCaseSensitive,
         window: &mut Window,
@@ -397,7 +578,7 @@ impl ThreadSearchBar {
         self.update_matches(window, cx);
     }
 
-    fn toggle_whole_word(
+    pub(super) fn toggle_whole_word(
         &mut self,
         _: &search::ToggleWholeWord,
         window: &mut Window,
@@ -407,7 +588,7 @@ impl ThreadSearchBar {
         self.update_matches(window, cx);
     }
 
-    fn toggle_regex(
+    pub(super) fn toggle_regex(
         &mut self,
         _: &search::ToggleRegex,
         window: &mut Window,
@@ -420,7 +601,7 @@ impl ThreadSearchBar {
     /// Handler for `search::FocusSearch` (bound to Cmd/Ctrl+F inside the bar's
     /// context). Mirrors `BufferSearchBar`'s behavior: focus the query input
     /// and select all its text so the next keystroke replaces the query.
-    fn focus_search(
+    pub(super) fn focus_search(
         &mut self,
         _: &search::FocusSearch,
         window: &mut Window,
@@ -451,12 +632,14 @@ impl Render for ThreadSearchBar {
         key_context.add("AcpThreadSearchBar");
 
         let counter_text = self.active_match_text(cx).unwrap_or_default();
+        // Counter stays muted on "no matches" rather than red, mirroring
+        // `BufferSearchBar` / Markdown Preview Search. The red signal comes from
+        // the query text turning red (via `in_error_state`); doubling it on the
+        // counter was too noisy.
         let counter_color = if has_matches {
             Color::Default
-        } else if query_empty {
-            Color::Muted
         } else {
-            Color::Error
+            Color::Muted
         };
 
         let bar_row = h_flex()
@@ -646,10 +829,13 @@ fn nav_button(
 fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
     let mut out = Vec::new();
     match entry {
-        AgentThreadEntry::UserMessage(message) => {
-            if let Some(md) = message.content.markdown() {
-                out.push(md.clone());
-            }
+        AgentThreadEntry::UserMessage(_) => {
+            // User messages render through `MessageEditor`'s inner `Editor`,
+            // not through `Markdown`. `ThreadSearchBar::update_matches` handles
+            // them via `EntryViewState`-driven editor lookup + a separate
+            // `Editor::highlight_background` paint path; we deliberately skip
+            // them here so we don't double-count or paint invisible markdown
+            // highlights.
         }
         AgentThreadEntry::AssistantMessage(message) => {
             // Only search the visible-by-default `Message` chunks. `Thought`
