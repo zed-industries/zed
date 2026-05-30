@@ -1080,14 +1080,14 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    use remote::protocol::{read_message_raw, write_size_prefixed_buffer};
+    use remote::protocol::{read_frame_raw, write_frame_raw};
 
     let mut buffer = Vec::new();
     loop {
-        read_message_raw(&mut reader, &mut buffer)
+        read_frame_raw(&mut reader, &mut buffer)
             .await
             .with_context(|| format!("failed to read message from {}", socket_name))?;
-        write_size_prefixed_buffer(&mut writer, &mut buffer)
+        write_frame_raw(&mut writer, &buffer)
             .await
             .with_context(|| format!("failed to write message to {}", socket_name))?;
         writer.flush().await?;
