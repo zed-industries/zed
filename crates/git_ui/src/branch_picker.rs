@@ -2678,13 +2678,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_branch_creation_with_query(test_cx: &mut TestAppContext) {
+    async fn test_new_branch_creation_with_query(cx: &mut TestAppContext) {
         const MAIN_BRANCH: &str = "main";
         const FEATURE_BRANCH: &str = "feature";
         const NEW_BRANCH: &str = "new-feature-branch";
 
-        init_test(test_cx);
-        let (_project, repository) = init_fake_repository(test_cx).await;
+        init_test(cx);
+        let (_project, repository) = init_fake_repository(cx).await;
 
         let branches = vec![
             create_test_branch(MAIN_BRANCH, true, None, Some(1000)),
@@ -2692,7 +2692,7 @@ mod tests {
         ];
 
         let (branch_list, mut ctx) =
-            init_branch_list_test(repository.into(), branches, test_cx).await;
+            init_branch_list_test(repository.into(), branches, cx).await;
         let cx = &mut ctx;
 
         branch_list
@@ -2747,17 +2747,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_branch_creation_trims_surrounding_whitespace(test_cx: &mut TestAppContext) {
+    async fn test_new_branch_creation_trims_surrounding_whitespace(cx: &mut TestAppContext) {
         const QUERY: &str = " fix-leak ";
         const EXPECTED_BRANCH: &str = "fix-leak";
 
-        init_test(test_cx);
-        let (_project, repository) = init_fake_repository(test_cx).await;
+        init_test(cx);
+        let (_project, repository) = init_fake_repository(cx).await;
 
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
         let (branch_list, mut ctx) =
-            init_branch_list_test(repository.into(), branches, test_cx).await;
+            init_branch_list_test(repository.into(), branches, cx).await;
         let cx = &mut ctx;
 
         branch_list
