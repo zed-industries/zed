@@ -24,9 +24,9 @@ use futures::channel::oneshot::Canceled;
 use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
-    Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FastForwardMode,
-    FetchOptions, GitCommitTemplate, GitCommitter, LogOrder, LogSource, MergeOptions, MergeOutcome,
-    MergeOutput, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
+    GitCommitTemplate, GitCommitter, LogOrder, LogSource, MergeOptions, MergeOutcome, MergeOutput,
+    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
     UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
@@ -3092,12 +3092,7 @@ impl GitPanel {
         };
 
         telemetry::event!("Git Merged");
-        let options = MergeOptions {
-            fast_forward: FastForwardMode::Default,
-            squash: false,
-            commit: true,
-            message: None,
-        };
+        let options = MergeOptions::default();
 
         cx.spawn(async move |this, cx| {
             let merge = repo.update(cx, |repo, cx| repo.merge(source.clone(), options, cx));
@@ -4226,41 +4221,23 @@ impl GitPanel {
             let workspace_weak = cx.weak_entity();
             let output_for_log = output.clone();
             let toast = match output.outcome {
-                MergeOutcome::Success => StatusToast::new(
+                MergeOutcome::Success => icon_status_toast(
                     format!("Merged {source} into {current_branch}"),
+                    IconName::GitBranch,
+                    Color::Muted,
                     cx,
-                    |this, _cx| {
-                        this.icon(
-                            Icon::new(IconName::GitBranch)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .dismiss_button(true)
-                    },
                 ),
-                MergeOutcome::FastForward => StatusToast::new(
+                MergeOutcome::FastForward => icon_status_toast(
                     format!("Fast-forwarded {current_branch} to {source}"),
+                    IconName::GitBranch,
+                    Color::Muted,
                     cx,
-                    |this, _cx| {
-                        this.icon(
-                            Icon::new(IconName::GitBranch)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .dismiss_button(true)
-                    },
                 ),
-                MergeOutcome::UpToDate => StatusToast::new(
+                MergeOutcome::UpToDate => icon_status_toast(
                     format!("Already up to date with {source}"),
+                    IconName::Check,
+                    Color::Muted,
                     cx,
-                    |this, _cx| {
-                        this.icon(
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .dismiss_button(true)
-                    },
                 ),
                 MergeOutcome::Conflicts => StatusToast::new(
                     "Merge has conflicts. Resolve them in the Project Diff.",
@@ -4308,14 +4285,8 @@ impl GitPanel {
         };
 
         workspace.update(cx, |workspace, cx| {
-            let status_toast = StatusToast::new("Merge aborted", cx, |this, _cx| {
-                this.icon(
-                    Icon::new(IconName::GitBranch)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .dismiss_button(true)
-            });
+            let status_toast =
+                icon_status_toast("Merge aborted", IconName::GitBranch, Color::Muted, cx);
             workspace.toggle_status_toast(status_toast, cx)
         });
     }
@@ -7626,6 +7597,18 @@ impl ansi::Handler for GitOutputHandler {
         self.output
             .extend(std::iter::repeat_n('\t', count as usize));
     }
+}
+
+fn icon_status_toast(
+    message: impl Into<SharedString>,
+    icon: IconName,
+    color: Color,
+    cx: &mut App,
+) -> Entity<StatusToast> {
+    StatusToast::new(message.into(), cx, move |this, _cx| {
+        this.icon(Icon::new(icon).size(IconSize::Small).color(color))
+            .dismiss_button(true)
+    })
 }
 
 fn merge_details_include_merge_head(merge: &MergeDetails) -> bool {

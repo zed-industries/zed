@@ -5218,16 +5218,12 @@ mod tests {
             .unwrap()
             .branches
             .into_iter()
-            .find_map(|branch| {
+            .find(|branch| branch.is_head)
+            .and_then(|branch| {
                 branch
-                    .is_head
-                    .then(|| {
-                        branch
-                            .ref_name
-                            .strip_prefix("refs/heads/")
-                            .map(str::to_string)
-                    })
-                    .flatten()
+                    .ref_name
+                    .strip_prefix("refs/heads/")
+                    .map(str::to_string)
             })
             .unwrap()
     }
