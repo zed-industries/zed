@@ -3148,11 +3148,11 @@ pub fn skill_body_resolver_for_project(
                     .context("no such worktree")?;
                 expand_project_skills_directories(&worktree, cx).await?;
                 let relative_path = worktree.update(cx, |worktree, _cx| {
-                    project_skill_files_from_worktree(worktree)
-                        .into_iter()
-                        .find(|skill_file| skill_file.display_path == skill.skill_file_path)
-                        .map(|skill_file| skill_file.relative_path)
-                        .context("skill file is no longer in the worktree snapshot")
+                    let relative_path = skill
+                        .skill_file_path
+                        .strip_prefix(worktree.abs_path())
+                        .context("skill file is not inside its worktree")?;
+                    anyhow::Ok(RelPath::new(relative_path, worktree.path_style())?.into_arc())
                 })?;
 
                 let buffer = project
