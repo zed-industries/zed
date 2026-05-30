@@ -859,7 +859,7 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let new_branch_name = new_branch_name.to_string().replace(' ', "-");
+        let new_branch_name = new_branch_name.trim().replace(' ', "-");
         let base_branch = from_branch.map(|b| b.to_string());
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
@@ -1212,7 +1212,7 @@ impl PickerDelegate for BranchListDelegate {
             picker
                 .update(cx, |picker, _| {
                     if let PickerState::CreateRemote(url) = &picker.delegate.state {
-                        let query = query.replace(' ', "-");
+                        let query = query.trim().replace(' ', "-");
                         if !query.is_empty() {
                             picker.delegate.matches = vec![Entry::NewRemoteName {
                                 name: query.clone(),
@@ -1231,7 +1231,7 @@ impl PickerDelegate for BranchListDelegate {
                         && !query.is_empty()
                         && !matches.first().is_some_and(|entry| entry.name() == query)
                     {
-                        let query = query.replace(' ', "-");
+                        let query = query.trim().replace(' ', "-");
                         let is_url = query.trim_start_matches("git@").parse::<Url>().is_ok();
                         let entry = if is_url {
                             Entry::NewUrl { url: query }
@@ -2744,6 +2744,72 @@ mod tests {
             &format!("refs/heads/{NEW_BRANCH}"),
             "branch ref_name should not have duplicate refs/heads/ prefix"
         );
+    }
+
+    #[gpui::test]
+    async fn test_new_branch_creation_trims_surrounding_whitespace(test_cx: &mut TestAppContext) {
+        const QUERY: &str = " fix-leak ";
+        const EXPECTED_BRANCH: &str = "fix-leak";
+
+        init_test(test_cx);
+        let (_project, repository) = init_fake_repository(test_cx).await;
+
+        let branches = vec![create_test_branch("main", true, None, Some(1000))];
+
+        let (branch_list, mut ctx) =
+            init_branch_list_test(repository.into(), branches, test_cx).await;
+        let cx = &mut ctx;
+
+        branch_list
+            .update_in(cx, |branch_list, window, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .update_matches(QUERY.to_string(), window, cx)
+                })
+            })
+            .await;
+
+        cx.run_until_parked();
+
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                let last_match = picker
+                    .delegate
+                    .matches
+                    .last()
+                    .expect("a new-branch entry should be offered for the query");
+                assert!(last_match.is_new_branch());
+                assert_eq!(last_match.name(), EXPECTED_BRANCH);
+                picker.delegate.confirm(false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        let branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap()
+            .branches;
+
+        assert!(
+            !branches.iter().any(|branch| branch.name().starts_with('-')),
+            "no created branch should have a name starting with '-'"
+        );
+        branches
+            .iter()
+            .find(|branch| branch.name() == EXPECTED_BRANCH)
+            .expect("a branch named \"fix-leak\" should have been created");
     }
 
     #[gpui::test]
