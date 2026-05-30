@@ -6466,6 +6466,8 @@ dependencies = [
  "extension_host",
  "fs",
  "fuzzy",
+ "git",
+ "git_ui",
  "gpui",
  "language",
  "log",
