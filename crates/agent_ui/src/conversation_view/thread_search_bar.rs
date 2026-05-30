@@ -652,6 +652,50 @@ impl Render for ThreadSearchBar {
             // the bar is open.
             .track_focus(&focus_handle)
             .key_context(key_context)
+            // Capture `editor::Newline*` actions before the editor's
+            // bubble-phase handler inserts a newline into the single-line
+            // query buffer. Base keymaps like `keymaps/linux/jetbrains.json`
+            // bind `shift-enter` → `editor::NewlineBelow` at the bare
+            // `Editor` context. In gpui's keymap resolution this beats the
+            // bar's `shift-enter` → `agent::SelectPreviousThreadMatch`
+            // binding under the `AcpThreadSearchBar` context: both
+            // predicates match at the same depth, and the binding-index
+            // tiebreak favors the later-loaded base keymap. An
+            // `AcpThreadSearchBar > Editor` keymap block is NOT enough to
+            // win that tiebreak — see the regression test for the
+            // empirical confirmation. Capturing the action in this phase
+            // is the precedent used by `BufferSearchBar`, `MessageEditor`,
+            // and the inline-assist prompt editor for the same reason.
+            //
+            // The single-line query buffer has no legitimate use for any
+            // newline-class action, so we consume all three variants and
+            // route to `select_prev_match`. JetBrains specifically maps
+            // `shift-enter` to `NewlineBelow`; the other two are covered
+            // defensively in case a future or user keymap routes
+            // `shift-enter` to `Newline` or `NewlineAbove`.
+            //
+            // `cx.stop_propagation()` is required: the capture phase
+            // defaults to PROPAGATE (only the bubble phase auto-consumes).
+            // Without an explicit stop, the editor's bubble-phase handler
+            // still fires and inserts a newline into the buffer.
+            .capture_action(cx.listener(
+                |this, _: &editor::actions::NewlineBelow, window, cx| {
+                    this.select_prev_match(&SelectPreviousThreadMatch, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &editor::actions::Newline, window, cx| {
+                    this.select_prev_match(&SelectPreviousThreadMatch, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &editor::actions::NewlineAbove, window, cx| {
+                    this.select_prev_match(&SelectPreviousThreadMatch, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))

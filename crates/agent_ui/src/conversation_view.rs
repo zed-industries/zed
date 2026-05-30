@@ -30,9 +30,9 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
-    TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext, ListOffset,
+    ListState, ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription,
+    Task, TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
     linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
@@ -6466,6 +6466,169 @@ pub(crate) mod tests {
         assert!(
             !visible_after,
             "editor::Cancel should have dismissed the bar before reaching the workspace",
+        );
+    }
+
+    /// Regression test for the Shift+Enter bug: pressing Shift+Enter in the
+    /// bar's query editor inserts a literal newline (rendered as a visible
+    /// `\n` glyph in the single-line input) instead of navigating to the
+    /// previous match.
+    ///
+    /// Mechanism: `ThreadSearchBar` binds `shift-enter` under the
+    /// `AcpThreadSearchBar` context, which sits ABOVE the query editor in
+    /// the focus chain. By default that is fine — `default-linux.json` has
+    /// no `Editor`-context `shift-enter` binding to shadow it, so the bar's
+    /// binding wins.
+    ///
+    /// The JetBrains base keymap (`assets/keymaps/linux/jetbrains.json`)
+    /// binds `shift-enter` → `editor::NewlineBelow` at the BARE `Editor`
+    /// context (no mode qualifier). Both predicates match the focus chain
+    /// at the same depth, and gpui's binding-index tiebreak favors the
+    /// later-loaded base keymap, so `editor::NewlineBelow` wins. The query
+    /// editor inserts a newline.
+    ///
+    /// Note: an `AcpThreadSearchBar > Editor` keymap block does NOT win
+    /// either — it also matches at the same depth and still loses the
+    /// tiebreak to a later-loaded base keymap. The fix is a runtime
+    /// `capture_action` on the bar's `bar_row`, which intercepts
+    /// `editor::Newline*` actions in the capture phase (before the
+    /// editor's bubble-phase handler runs) and routes them to
+    /// `select_prev_match`. This is the same pattern `BufferSearchBar`,
+    /// `MessageEditor`, and the inline-assist prompt editor use.
+    #[gpui::test]
+    async fn test_thread_search_shift_enter_navigates_with_jetbrains_keymap(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            // `init_test` does not load any keymap. To reproduce the
+            // shadowing bug we need BOTH:
+            //   * `default-linux.json` so the bar's
+            //     `AcpThreadSearchBar` shift-enter binding exists, and
+            //   * `linux/jetbrains.json` so the conflicting
+            //     `Editor`-context shift-enter binding exists.
+            // `search::init` registers the `search::*` actions referenced
+            // by `default-linux.json` (without it, those bindings would be
+            // silently dropped by `load_asset_allow_partial_failure`; the
+            // shift-enter binding under test would still work, but the
+            // load-time partial failure is noisy in test output).
+            search::init(cx);
+
+            let mut default_bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure(
+                    "keymaps/default-linux.json",
+                    cx,
+                )
+                .unwrap();
+            for binding in &mut default_bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(default_bindings);
+
+            let mut jetbrains_bindings =
+                settings::KeymapFile::load_asset_allow_partial_failure(
+                    "keymaps/linux/jetbrains.json",
+                    cx,
+                )
+                .unwrap();
+            for binding in &mut jetbrains_bindings {
+                binding.set_meta(settings::KeybindSource::Base.meta());
+            }
+            cx.bind_keys(jetbrains_bindings);
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Banana banana banana, multiple banana mentions in this reply.".into(),
+            ),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Need banana help", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+
+        // Populate the query via the API rather than simulating typing —
+        // we are only testing the shift-enter dispatch path, not text input.
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let initial_count = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            initial_count >= 2,
+            "test precondition: need ≥2 matches across the thread, got {}",
+            initial_count,
+        );
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(0),
+            "first match should be active after the bar populates its match list",
+        );
+
+        // Focus the query editor so the keystroke is dispatched from there.
+        let query_focus = bar.read_with(cx, |bar, cx| bar.query_editor.focus_handle(cx));
+        cx.update(|window, cx| {
+            window.focus(&query_focus, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(
+                query_focus.contains_focused(window, cx),
+                "query editor must be focused before simulating shift-enter",
+            );
+        });
+
+        cx.simulate_keystrokes("shift-enter");
+        cx.run_until_parked();
+
+        // Assert the editor buffer was not touched. With the bug, JetBrains'
+        // `Editor` shift-enter → `editor::NewlineBelow` binding fires and
+        // inserts a newline (single-line editors render embedded newlines as
+        // the visible escape sequence `\n`).
+        let query_text_after =
+            bar.read_with(cx, |bar, cx| bar.query_editor.read(cx).text(cx));
+        assert!(
+            !query_text_after.contains('\n'),
+            "shift-enter must not insert a newline into the query buffer; \
+             got {:?} — the JetBrains `Editor` shift-enter binding shadowed \
+             `AcpThreadSearchBar`'s. Fix by adding a `capture_action` for \
+             `editor::actions::NewlineBelow` (and the other Newline variants) \
+             on the bar's `bar_row` element, routing to `select_prev_match`.",
+            query_text_after,
+        );
+
+        // And assert navigation actually happened: from match 0, shift-enter
+        // should wrap backward to the last match.
+        let active_after = bar.read_with(cx, |bar, _| bar.active_match_index());
+        assert_eq!(
+            active_after,
+            Some(initial_count - 1),
+            "shift-enter should have wrapped active match from 0 to {} (got {:?})",
+            initial_count - 1,
+            active_after,
         );
     }
 
