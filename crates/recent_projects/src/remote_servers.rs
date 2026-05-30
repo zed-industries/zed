@@ -653,7 +653,7 @@ impl RemoteEntry {
         matches!(self, Self::Project { .. })
     }
 
-    fn host_name(&self) -> &str {
+    fn display_host(&self) -> &str {
         match self {
             Self::Project { connection, .. } => match connection {
                 Connection::Ssh(c) => c.nickname.as_deref().unwrap_or(&c.host),
@@ -661,6 +661,20 @@ impl RemoteEntry {
                 Connection::DevContainer(c) => &c.name,
             },
             Self::SshConfig { host, .. } => host,
+        }
+    }
+
+    /// Extra text to match against that isn't shown in the primary label.
+    /// When an SSH connection has a nickname, [`display_host`] surfaces the
+    /// nickname and the real host is only shown as a muted aux label, so we
+    /// index the host here to keep it searchable.
+    fn host_alias(&self) -> Option<&str> {
+        match self {
+            Self::Project {
+                connection: Connection::Ssh(c),
+                ..
+            } if c.nickname.is_some() => Some(&c.host),
+            _ => None,
         }
     }
 
@@ -791,7 +805,9 @@ impl DefaultState {
     /// Resolves [`filtered_servers`] (or the unfiltered source list) into a
     /// flat list of borrowed `RemoteEntry`s paired with their highlight
     /// positions. Rendering iterates this list rather than touching either
-    /// source directly, so the per-keystroke path stays clone-free.
+    /// source directly; the borrowed entries avoid cloning the underlying
+    /// `RemoteEntry`/`RemoteProject` data on the per-keystroke path (only the
+    /// lightweight borrow vectors are allocated).
     fn visible_servers(&self) -> Vec<VisibleEntry<'_>> {
         match &self.filtered_servers {
             None => self
