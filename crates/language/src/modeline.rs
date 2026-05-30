@@ -209,9 +209,9 @@ static VIM_MODELINE_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     [
         // Second form: [text{white}]{vi:vim:Vim:}[white]se[t] {options}:[text]
         // Allow escaped colons in options: match non-colon chars or backslash followed by any char
-        r"(?:^|\s)(vi|vim|Vim):(?:\s*)se(?:t)?\s+((?:[^\\:]|\\.)*):",
+        r"(?:^|\s)(vi|vim|Vim|ex):(?:\s*)se(?:t)?\s+((?:[^\\:]|\\.)*):",
         // First form: [text{white}]{vi:vim:}[white]{options}
-        r"(?:^|\s+)(vi|vim):(?:\s*(.+))",
+        r"(?:^|\s+)(vi|vim|ex):(?:\s*(.+))",
     ]
     .iter()
     .map(|pattern| Regex::new(pattern).expect("valid regex"))
@@ -462,6 +462,17 @@ mod tests {
                 mode: Some("python".to_string()),
                 tab_size: Some(NonZeroU32::new(8).unwrap()),
                 hard_tabs: Some(true),
+                ..Default::default()
+            }
+        );
+
+        // Test ex:
+        let content = "ex: filetype=shell";
+        let settings = parse_modeline(&[content], &[]).unwrap();
+        assert_eq!(
+            settings,
+            ModelineSettings {
+                mode: Some("shell".to_string()),
                 ..Default::default()
             }
         );
