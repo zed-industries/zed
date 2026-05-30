@@ -3855,6 +3855,10 @@ async fn git_ref_is_ancestor(git: &GitBinary, ancestor: &str, descendant: &str) 
         .build_command(&["merge-base", "--is-ancestor", ancestor, descendant])
         .output()
         .await?;
+    // Best-effort ancestry check used for merge prediction.
+    // `--is-ancestor` returns exit code 1 when `ancestor` is not actually an
+    // ancestor of `descendant`; other non-zero codes indicate invalid refs or
+    // execution failures. The merge operation itself is the final authority.
     Ok(output.status.success())
 }
 
@@ -3869,6 +3873,10 @@ async fn git_rev_exists(git: &GitBinary, rev: &str) -> Result<bool> {
 async fn git_has_unmerged_entries(git: &GitBinary) -> Result<bool> {
     let output = git.build_command(&git_status_args(&[])).output().await?;
     if !output.status.success() {
+        log::warn!(
+            "failed to inspect unmerged entries after git merge failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return Ok(false);
     }
 
