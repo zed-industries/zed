@@ -185,6 +185,11 @@ impl PtyProcessInfo {
         Some(info)
     }
 
+    #[cfg(all(test, unix))]
+    pub(crate) fn load_for_test(&self) -> Option<ProcessInfo> {
+        self.load()
+    }
+
     /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
     pub fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {

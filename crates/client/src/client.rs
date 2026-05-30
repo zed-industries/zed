@@ -333,6 +333,9 @@ impl Status {
 struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
+    /// Bumped each time the cloud websocket finishes its handshake. Starts at `0` so
+    /// subscribers can distinguish "no connection yet" from a real reconnect.
+    cloud_connection_id: (watch::Sender<u64>, watch::Receiver<u64>),
     _reconnect_task: Option<Task<()>>,
     _cloud_connection_task: Option<Task<()>>,
 }
@@ -435,6 +438,7 @@ impl Default for ClientState {
         Self {
             credentials: None,
             status: watch::channel_with(Status::SignedOut),
+            cloud_connection_id: watch::channel_with(0),
             _reconnect_task: None,
             _cloud_connection_task: None,
         }
@@ -666,6 +670,14 @@ impl Client {
 
     pub fn status(&self) -> watch::Receiver<Status> {
         self.state.read().status.1.clone()
+    }
+
+    /// Watches successful cloud websocket reconnections.
+    ///
+    /// The value is bumped each time the websocket handshake completes. The
+    /// initial `0` means no reconnection yet.
+    pub fn cloud_connection_id(&self) -> watch::Receiver<u64> {
+        self.state.read().cloud_connection_id.1.clone()
     }
 
     fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncApp) {
@@ -1005,6 +1017,12 @@ impl Client {
         let connection = connect_task.await?;
 
         let (mut messages, _cloud_io_task) = cx.update(|cx| connection.spawn(cx));
+
+        {
+            let mut state = self.state.write();
+            let mut cloud_connection_id = state.cloud_connection_id.0.borrow_mut();
+            *cloud_connection_id = cloud_connection_id.saturating_add(1);
+        }
 
         while let Some(message) = messages.next().await {
             if let Some(message) = message.log_err() {

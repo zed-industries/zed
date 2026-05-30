@@ -12,6 +12,7 @@
 pub mod clangd_ext;
 pub mod code_lens;
 mod document_colors;
+mod document_links;
 mod document_symbols;
 mod folding_ranges;
 mod inlay_hints;
@@ -24,6 +25,7 @@ pub mod vue_language_server_ext;
 
 use self::code_lens::CodeLensData;
 use self::document_colors::DocumentColorData;
+use self::document_links::DocumentLinksData;
 use self::document_symbols::DocumentSymbolsData;
 use self::inlay_hints::BufferInlayHints;
 use crate::{
@@ -146,6 +148,10 @@ use util::{
 };
 
 pub use document_colors::DocumentColors;
+pub use document_links::{
+    BufferDocumentLinks, DocumentLinkId, DocumentLinkResolveTask, LspDocumentLink,
+    ResolvedDocumentLink,
+};
 pub use folding_ranges::LspFoldingRange;
 pub use fs::*;
 pub use language::Location;
@@ -729,6 +735,48 @@ impl LocalLspStore {
                 })
             });
         }
+
+        #[cfg(any(test, feature = "test-support"))]
+        if !adapter.adapter.is_extension() && self.languages.has_fake_lsp_server(&adapter.name) {
+            let language_server_name = adapter.name.clone();
+            let languages = self.languages.clone();
+            return cx.spawn(async move |_| {
+                if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
+                    let already_trusted = *wait_until_worktree_trust.borrow();
+                    if !already_trusted {
+                        log::info!(
+                            "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {language_server_name}",
+                        );
+                        while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
+                            if worktree_trusted {
+                                break;
+                            }
+                        }
+                        log::info!(
+                            "Worktree {worktree_abs_path:?} is trusted, starting language server {language_server_name}",
+                        );
+                    }
+                    languages.update_lsp_binary_status(
+                        language_server_name.clone(),
+                        BinaryStatus::Starting,
+                    );
+                }
+
+                Ok(LanguageServerBinary {
+                    path: PathBuf::from(format!("/fake/lsp/{language_server_name}")),
+                    arguments: Vec::new(),
+                    env: None,
+                })
+            });
+        }
+
+        if cfg!(any(test, feature = "test-support")) && !adapter.adapter.is_extension() {
+            return Task::ready(Err(anyhow!(
+                "language server binary lookup for {:?} is disabled in tests; register a fake language server or configure an explicit binary",
+                adapter.name
+            )));
+        }
+
         let lsp_binary_options = LanguageServerBinaryOptions {
             allow_path_lookup: !settings
                 .binary
@@ -745,10 +793,11 @@ impl LocalLspStore {
 
         cx.spawn(async move |cx| {
             if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
-                let already_trusted =  *wait_until_worktree_trust.borrow();
+                let already_trusted = *wait_until_worktree_trust.borrow();
                 if !already_trusted {
                     log::info!(
-                        "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
+                        "Waiting for worktree {worktree_abs_path:?} to be trusted, \
+                        before starting language server {}",
                         adapter.name(),
                     );
                     while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
@@ -758,7 +807,7 @@ impl LocalLspStore {
                     }
                     log::info!(
                         "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
-                            adapter.name(),
+                        adapter.name(),
                     );
                 }
             }
@@ -4006,6 +4055,7 @@ pub struct BufferLspData {
     code_lens: Option<CodeLensData>,
     semantic_tokens: Option<SemanticTokensData>,
     folding_ranges: Option<FoldingRangeData>,
+    document_links: Option<DocumentLinksData>,
     document_symbols: Option<DocumentSymbolsData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
@@ -4026,6 +4076,7 @@ impl BufferLspData {
             code_lens: None,
             semantic_tokens: None,
             folding_ranges: None,
+            document_links: None,
             document_symbols: None,
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
@@ -4050,6 +4101,10 @@ impl BufferLspData {
 
         if let Some(folding_ranges) = &mut self.folding_ranges {
             folding_ranges.ranges.remove(&for_server);
+        }
+
+        if let Some(document_links) = &mut self.document_links {
+            document_links.remove_server_data(for_server);
         }
 
         if let Some(document_symbols) = &mut self.document_symbols {
@@ -4174,6 +4229,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_apply_code_action);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
+        client.add_entity_request_handler(Self::handle_resolve_document_link);
         client.add_entity_request_handler(Self::handle_get_color_presentation);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
@@ -5603,7 +5659,7 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!(
+                    log::debug!(
                         "Skipping executeCommand for {}, not listed in language server capabilities",
                         command.command
                     );
@@ -8381,26 +8437,21 @@ impl LspStore {
     }
 
     fn maintain_workspace_config(
-        external_refresh_requests: watch::Receiver<()>,
+        mut external_refresh_requests: watch::Receiver<()>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
-        let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
-
-        let settings_observation = cx.observe_global::<SettingsStore>(move |_, _| {
-            *settings_changed_tx.borrow_mut() = ();
-        });
-
-        let mut joint_future =
-            futures::stream::select(settings_changed_rx, external_refresh_requests);
         // Multiple things can happen when a workspace environment (selected toolchain + settings) change:
         // - We might shut down a language server if it's no longer enabled for a given language (and there are no buffers using it otherwise).
         // - We might also shut it down when the workspace configuration of all of the users of a given language server converges onto that of the other.
         // - In the same vein, we might also decide to start a new language server if the workspace configuration *diverges* from the other.
         // - In the easiest case (where we're not wrangling the lifetime of a language server anyhow), if none of the roots of a single language server diverge in their configuration,
         // but it is still different to what we had before, we're gonna send out a workspace configuration update.
+        //
+        // Settings-store changes reach this loop via `on_settings_changed` -> `request_workspace_config_refresh`,
+        // which writes to `external_refresh_requests`. Observing `SettingsStore` here as well would cause every
+        // settings change to drive the loop twice and emit duplicate `workspace/didChangeConfiguration` notifications.
         cx.spawn(async move |this, cx| {
-            while let Some(()) = joint_future.next().await {
+            while let Some(()) = external_refresh_requests.next().await {
                 this.update(cx, |this, cx| {
                     this.refresh_server_tree(cx);
                 })
@@ -8409,7 +8460,6 @@ impl LspStore {
                 Self::refresh_workspace_configurations(&this, cx).await;
             }
 
-            drop(settings_observation);
             anyhow::Ok(())
         })
     }
@@ -9260,6 +9310,36 @@ impl LspStore {
                 )
                 .await?;
             }
+            Request::GetDocumentLinks(get_document_links) => {
+                let (buffer_version, buffer) = Self::wait_for_buffer_version::<GetDocumentLinks>(
+                    &lsp_store,
+                    &get_document_links,
+                    &mut cx,
+                )
+                .await?;
+                lsp_store.update(&mut cx, |lsp_store, cx| {
+                    let document_links_task = lsp_store.fetch_document_links(&buffer, cx);
+                    let fetch_task = cx.background_spawn(async move {
+                        document_links_task
+                            .await
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(server_id, links)| {
+                                (server_id, links.into_values().collect::<Vec<_>>())
+                            })
+                            .collect()
+                    });
+                    lsp_store.serve_lsp_query::<GetDocumentLinks>(
+                        server_id,
+                        sender_id,
+                        lsp_request_id,
+                        &buffer,
+                        buffer_version,
+                        fetch_task,
+                        cx,
+                    );
+                });
+            }
             Request::GetHover(get_hover) => {
                 let position = get_hover.position.clone().and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetHover>(
@@ -9457,66 +9537,19 @@ impl LspStore {
                 .await?;
                 let for_server = semantic_tokens.for_server.map(LanguageServerId::from_proto);
                 lsp_store.update(&mut cx, |lsp_store, cx| {
-                    if let Some((client, project_id)) = lsp_store.downstream_client.clone() {
-                        let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-                        let key = LspKey {
-                            request_type: TypeId::of::<SemanticTokensFull>(),
-                            server_queried: server_id,
-                        };
-                        if <SemanticTokensFull as LspCommand>::ProtoRequest::stop_previous_requests() {
-                            if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
-                                lsp_requests.clear();
-                            };
-                        }
-
-                        lsp_data.lsp_requests.entry(key).or_default().insert(
-                            lsp_request_id,
-                            cx.spawn(async move |lsp_store, cx| {
-                                let tokens_fetch = lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store
-                                            .fetch_semantic_tokens_for_buffer(&buffer, for_server, cx)
-                                    })
-                                    .ok();
-                                if let Some(tokens_fetch) = tokens_fetch {
-                                    let new_tokens = tokens_fetch.await;
-                                    if let Some(new_tokens) = new_tokens {
-                                        lsp_store
-                                            .update(cx, |lsp_store, cx| {
-                                                let response = new_tokens
-                                                    .into_iter()
-                                                    .map(|(server_id, response)| {
-                                                        (
-                                                            server_id.to_proto(),
-                                                            SemanticTokensFull::response_to_proto(
-                                                                response,
-                                                                lsp_store,
-                                                                sender_id,
-                                                                &buffer_version,
-                                                                cx,
-                                                            ),
-                                                        )
-                                                    })
-                                                    .collect::<HashMap<_, _>>();
-                                                match client.send_lsp_response::<<SemanticTokensFull as LspCommand>::ProtoRequest>(
-                                                    project_id,
-                                                    lsp_request_id,
-                                                    response,
-                                                ) {
-                                                    Ok(()) => {}
-                                                    Err(e) => {
-                                                        log::error!(
-                                                            "Failed to send semantic tokens LSP response: {e:#}",
-                                                        )
-                                                    }
-                                                }
-                                            })
-                                            .ok();
-                                    }
-                                }
-                            }),
-                        );
-                    }
+                    let semantic_tokens_task =
+                        lsp_store.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx);
+                    lsp_store.serve_lsp_query::<SemanticTokensFull>(
+                        server_id,
+                        sender_id,
+                        lsp_request_id,
+                        &buffer,
+                        buffer_version,
+                        cx.background_spawn(async move {
+                            semantic_tokens_task.await.unwrap_or_default()
+                        }),
+                        cx,
+                    );
                 });
             }
         }
@@ -13037,6 +13070,18 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
+                "textDocument/documentLink" => {
+                    if let Some(caps) = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.document_link_provider = Some(caps);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
+                }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
             }
         }
@@ -13237,6 +13282,12 @@ impl LspStore {
                 "textDocument/foldingRange" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.folding_range_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/documentLink" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_link_provider = None;
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
@@ -13477,6 +13528,72 @@ impl LspStore {
             );
         });
         Ok(())
+    }
+
+    fn serve_lsp_query<T>(
+        &mut self,
+        server_id: Option<LanguageServerId>,
+        sender_id: proto::PeerId,
+        lsp_request_id: LspRequestId,
+        buffer: &Entity<Buffer>,
+        buffer_version: Global,
+        fetch_task: Task<HashMap<LanguageServerId, T::Response>>,
+        cx: &mut Context<Self>,
+    ) where
+        T: LspCommand + 'static,
+        T::ProtoRequest: proto::LspRequestMessage,
+        <T::ProtoRequest as proto::RequestMessage>::Response:
+            Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
+    {
+        let Some((client, project_id)) = self.downstream_client.clone() else {
+            return;
+        };
+        let lsp_data = self.latest_lsp_data(buffer, cx);
+        let key = LspKey {
+            request_type: TypeId::of::<T>(),
+            server_queried: server_id,
+        };
+        if T::ProtoRequest::stop_previous_requests() {
+            if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
+                lsp_requests.clear();
+            }
+        }
+        lsp_data.lsp_requests.entry(key).or_default().insert(
+            lsp_request_id,
+            cx.spawn(async move |lsp_store, cx| {
+                let by_server = fetch_task.await;
+                lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        let response = by_server
+                            .into_iter()
+                            .map(|(server_id, response)| {
+                                (
+                                    server_id.to_proto(),
+                                    T::response_to_proto(
+                                        response,
+                                        lsp_store,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    )
+                                    .into(),
+                                )
+                            })
+                            .collect::<HashMap<_, _>>();
+                        if let Err(e) = client.send_lsp_response::<T::ProtoRequest>(
+                            project_id,
+                            lsp_request_id,
+                            response,
+                        ) {
+                            log::error!(
+                                "Failed to send {} LSP response: {e:#}",
+                                std::any::type_name::<T>()
+                            );
+                        }
+                    })
+                    .ok();
+            }),
+        );
     }
 
     async fn wait_for_buffer_version<T>(
@@ -14439,7 +14556,7 @@ impl LspInstaller for SshLspAdapter {
     type BinaryVersion = ();
     async fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -14456,7 +14573,7 @@ impl LspInstaller for SshLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<()> {

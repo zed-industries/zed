@@ -16,7 +16,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
-use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
+use language::{
+    Anchor, Buffer, BufferEditSource, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff,
+};
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
@@ -773,6 +775,7 @@ impl ContentBlock {
                     None,
                     MarkdownOptions {
                         render_mermaid_diagrams: true,
+                        render_metadata_blocks: true,
                         ..Default::default()
                     },
                     cx,
@@ -2912,7 +2915,9 @@ impl AcpThread {
                 });
 
                 let format_on_save = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction();
                     buffer.edit(edits, None, cx);
+                    buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
 
                     let settings =
                         language::language_settings::LanguageSettings::for_buffer(buffer, cx);
@@ -2955,6 +2960,7 @@ impl AcpThread {
         extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        sandbox_wrap: Option<SandboxWrap>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
@@ -2995,6 +3001,8 @@ impl AcpThread {
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
+                let (task_command, task_args, sandbox_config) =
+                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -3018,6 +3026,7 @@ impl AcpThread {
                         output_byte_limit.map(|l| l as usize),
                         terminal,
                         language_registry,
+                        sandbox_config,
                         cx,
                     )
                 }))
@@ -3097,6 +3106,9 @@ impl AcpThread {
                 output_byte_limit.map(|l| l as usize),
                 terminal,
                 language_registry,
+                // External terminal providers manage their own sandboxing
+                // (if any). We don't wrap their commands.
+                None,
                 cx,
             )
         });
