@@ -6322,9 +6322,17 @@ impl ThreadView {
             self.thread_search_bar = Some(bar);
         }
 
-        if self.thread_search_visible {
-            // Toggling while visible: close and clear any highlights so the
-            // user gets a clean view back.
+        // Smart toggle: pressing Cmd/Ctrl+F when the bar is hidden opens
+        // and focuses it; when it's already open but focus is elsewhere
+        // (e.g. the message editor), re-focus the bar instead of closing
+        // it; only close when the bar is open *and* already focused. The
+        // explicit dismiss path is Esc / the close button.
+        let bar_focused = self
+            .thread_search_bar
+            .as_ref()
+            .is_some_and(|bar| bar.focus_handle(cx).contains_focused(window, cx));
+
+        if self.thread_search_visible && bar_focused {
             if let Some(bar) = &self.thread_search_bar {
                 bar.update(cx, |bar, cx| bar.clear_highlights(cx));
             }
@@ -10600,12 +10608,48 @@ impl Render for ThreadView {
                 }
             });
 
+        // Build the key context dynamically so `AcpThreadSearchBar` is in
+        // the dispatch chain whenever the bar is visible — not only when
+        // focus is in the bar's query editor. Without this, Esc / Cmd+F /
+        // etc. typed from the message editor would fall through to ancestor
+        // handlers (cancel generation, dismiss the workspace's
+        // `BufferSearchBar`). This mirrors `BufferSearchBar`'s
+        // `contribute_context` pattern, which is only available to
+        // toolbar items.
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("AcpThread");
+        if self.thread_search_visible {
+            key_context.add("AcpThreadSearchBar");
+        }
+
         v_flex()
-            .key_context("AcpThread")
+            .key_context(key_context)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 if this.parent_session_id.is_none() {
                     this.cancel_generation(cx);
+                }
+            }))
+            // Forward search-bar actions from this outer element so they
+            // fire even when focus is in the message editor. The bar itself
+            // also registers these handlers, so both paths reach the same
+            // code regardless of where focus is.
+            .on_action(cx.listener(|this, _: &super::thread_search_bar::DismissThreadSearch, window, cx| {
+                if let Some(bar) = this.thread_search_bar.clone() {
+                    bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+                }
+                this.thread_search_visible = false;
+                this.message_editor.focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, action: &super::thread_search_bar::SelectNextThreadMatch, window, cx| {
+                if let Some(bar) = this.thread_search_bar.clone() {
+                    bar.update(cx, |bar, cx| bar.select_next_match(action, window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, action: &super::thread_search_bar::SelectPreviousThreadMatch, window, cx| {
+                if let Some(bar) = this.thread_search_bar.clone() {
+                    bar.update(cx, |bar, cx| bar.select_prev_match(action, window, cx));
                 }
             }))
             .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {

@@ -42,7 +42,7 @@ use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext,
-    Subscription, TextStyle, WeakEntity, Window, actions, relative, rems,
+    SharedString, Subscription, TextStyle, WeakEntity, Window, actions, relative, rems,
 };
 use markdown::Markdown;
 use project::search::SearchQuery;
@@ -51,9 +51,9 @@ use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, ButtonStyle, Color, IconButton, IconButtonShape, IconName, IntoElement, Label,
-    LabelSize, Tooltip, div, h_flex, prelude::*,
+    LabelSize, Tooltip, div, h_flex, prelude::*, v_flex,
 };
-use util::{ResultExt as _, paths::PathMatcher};
+use util::paths::PathMatcher;
 
 actions!(
     agent,
@@ -88,6 +88,9 @@ pub struct ThreadSearchBar {
     /// Set to true if the query is non-empty but failed to parse (e.g. bad
     /// regex). Used to color the input red, mirroring `BufferSearchBar`.
     query_error: bool,
+    /// Human-readable error from the last failed query (e.g. regex parse
+    /// error). `None` when the query is valid or empty.
+    query_error_message: Option<SharedString>,
     /// The most-recently-used set of markdown entities. We hold weak refs
     /// so we can clear their highlights when the query changes or the bar
     /// is dismissed without leaking them.
@@ -144,6 +147,7 @@ impl ThreadSearchBar {
             matches: Vec::new(),
             active_match: None,
             query_error: false,
+            query_error_message: None,
             highlighted: Vec::new(),
             thread,
             on_activate_match,
@@ -192,10 +196,13 @@ impl ThreadSearchBar {
         self.query_editor.read(cx).text(cx)
     }
 
-    fn build_query(&self, cx: &App) -> Option<Arc<SearchQuery>> {
+    /// Returns the `(query, error_message)` pair. On parse failure the
+    /// query is `None` and the error message describes what went wrong
+    /// (useful for surfacing regex parse errors to the user).
+    fn build_query(&self, cx: &App) -> (Option<Arc<SearchQuery>>, Option<SharedString>) {
         let text = self.current_query(cx);
         if text.is_empty() {
-            return None;
+            return (None, None);
         }
         let whole_word = self.options.contains(SearchOptions::WHOLE_WORD);
         let case_sensitive = self.options.contains(SearchOptions::CASE_SENSITIVE);
@@ -223,12 +230,16 @@ impl ThreadSearchBar {
                 None,
             )
         };
-        result.log_err().map(Arc::new)
+        match result {
+            Ok(q) => (Some(Arc::new(q)), None),
+            Err(err) => (None, Some(SharedString::from(err.to_string()))),
+        }
     }
 
     pub(super) fn update_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let query = self.build_query(cx);
+        let (query, err_msg) = self.build_query(cx);
         self.query_error = !self.current_query(cx).is_empty() && query.is_none();
+        self.query_error_message = err_msg;
         // Always clear stale highlights from the previous query.
         for weak in self.highlighted.drain(..) {
             if let Some(md) = weak.upgrade() {
@@ -427,11 +438,14 @@ impl Render for ThreadSearchBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.query_editor.focus_handle(cx);
         let theme = cx.theme().colors();
-        let border_color = if self.query_error {
-            ui::Color::Error.color(cx)
-        } else {
-            theme.border
-        };
+        let has_matches = !self.matches.is_empty();
+        let query_empty = self.query_editor.read(cx).text(cx).is_empty();
+        // The query text turns red when the query is non-empty but produces
+        // no matches (or fails to parse as regex). Border stays at the
+        // default color: feedback comes from text + counter, not from a
+        // surrounding box — matches the convention the user prefers.
+        let in_error_state = self.query_error || (!query_empty && !has_matches);
+        let border_color = theme.border;
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AcpThreadSearchBar");
@@ -445,15 +459,14 @@ impl Render for ThreadSearchBar {
             Color::Error
         };
 
-        h_flex()
+        let bar_row = h_flex()
             // Tie this element to the query editor's focus handle so the
             // `AcpThreadSearchBar` key context lands in the editor's
-            // dispatch chain. Without this, Esc / Enter / etc. typed into
-            // the query input fall through to ancestor handlers (the
-            // workspace's `BufferSearchBar` dismiss, or `menu::Cancel`
-            // which would cancel agent generation). `BufferSearchBar`
-            // gets the same effect via its `ToolbarItemView::contribute_context`,
-            // which is not available outside the workspace toolbar.
+            // dispatch chain when typing in the query. The handlers below
+            // are belt-and-suspenders — `ThreadView` also forwards these
+            // actions from its own (outer) element so they fire reliably
+            // when focus is somewhere else (e.g. the message editor) while
+            // the bar is open.
             .track_focus(&focus_handle)
             .key_context(key_context)
             .on_action(cx.listener(Self::dismiss))
@@ -479,7 +492,7 @@ impl Render for ThreadSearchBar {
                             .flex_1()
                             .min_w_0()
                             .py_1()
-                            .child(render_query_input(&self.query_editor, self.query_error, cx)),
+                            .child(render_query_input(&self.query_editor, in_error_state, cx)),
                     )
                     .child(
                         h_flex()
@@ -536,7 +549,23 @@ impl Render for ThreadSearchBar {
                         &DismissThreadSearch,
                         focus_handle,
                     )),
-            )
+            );
+
+        // Stack the bar above an error message row so a bad regex etc.
+        // gets a textual explanation, matching the `MarkdownPreview`
+        // search behavior the user pointed at as the reference UX.
+        let error_row = self.query_error_message.clone().map(|msg| {
+            div()
+                .w_full()
+                .px_2()
+                .py_0p5()
+                .border_b_1()
+                .border_color(theme.border)
+                .bg(theme.toolbar_background)
+                .child(Label::new(msg).size(LabelSize::Small).color(Color::Error))
+        });
+
+        v_flex().w_full().child(bar_row).children(error_row)
     }
 }
 
@@ -623,12 +652,16 @@ fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
             }
         }
         AgentThreadEntry::AssistantMessage(message) => {
+            // Only search the visible-by-default `Message` chunks. `Thought`
+            // chunks are collapsed behind a "Thinking" disclosure by
+            // default, and surfacing matches inside them produces invisible
+            // navigation jumps (the user is scrolled to an entry that
+            // appears to contain no match) — same failure mode as searching
+            // collapsed tool-call content.
             for chunk in &message.chunks {
-                let block = match chunk {
-                    AssistantMessageChunk::Message { block } => block,
-                    AssistantMessageChunk::Thought { block } => block,
-                };
-                if let Some(md) = block.markdown() {
+                if let AssistantMessageChunk::Message { block } = chunk
+                    && let Some(md) = block.markdown()
+                {
                     out.push(md.clone());
                 }
             }
