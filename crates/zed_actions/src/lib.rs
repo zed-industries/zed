@@ -71,6 +71,8 @@ actions!(
         OpenStatusPage,
         /// Opens the telemetry log.
         OpenTelemetryLog,
+        /// Opens the Zed API monitor tab.
+        OpenZedApi,
         /// Opens the performance profiler.
         OpenPerformanceProfiler,
         /// Opens the onboarding view.

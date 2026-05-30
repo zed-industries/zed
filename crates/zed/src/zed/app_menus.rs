@@ -86,6 +86,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         zed_actions::icon_theme_selector::Toggle::default(),
                     ),
                 ])),
+                MenuItem::action("Zed API", zed_actions::OpenZedApi),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),

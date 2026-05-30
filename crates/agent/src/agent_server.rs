@@ -1,7 +1,9 @@
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 
 use agent_client_protocol::schema as acp;
@@ -10,6 +12,7 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::{App, AsyncApp, Entity};
 use language_model::{LanguageModelRegistry, SelectedModel};
+use parking_lot::Mutex;
 use project::Project;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Response, Server};
@@ -25,6 +28,52 @@ pub struct AgentHttpServerConfig {
 impl Default for AgentHttpServerConfig {
     fn default() -> Self {
         Self { port: 8765 }
+    }
+}
+
+const DEFAULT_AGENT_HTTP_PORT: u16 = 8765;
+const MAX_RECENT_HTTP_REQUESTS: usize = 200;
+
+static AGENT_HTTP_PORT: AtomicU16 = AtomicU16::new(DEFAULT_AGENT_HTTP_PORT);
+static AGENT_HTTP_REQUESTS: LazyLock<Mutex<std::collections::VecDeque<AgentHttpRequestLogEntry>>> =
+    LazyLock::new(|| Mutex::new(std::collections::VecDeque::with_capacity(MAX_RECENT_HTTP_REQUESTS)));
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentHttpRequestLogEntry {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub method: String,
+    pub path: String,
+    pub status_code: u16,
+}
+
+pub fn configured_agent_http_port() -> u16 {
+    AGENT_HTTP_PORT.load(Ordering::Relaxed)
+}
+
+pub fn set_configured_agent_http_port(port: u16) {
+    AGENT_HTTP_PORT.store(port, Ordering::Relaxed);
+}
+
+pub fn recent_agent_http_requests(limit: usize) -> Vec<AgentHttpRequestLogEntry> {
+    let requests = AGENT_HTTP_REQUESTS.lock();
+    requests
+        .iter()
+        .rev()
+        .take(limit.min(requests.len()))
+        .cloned()
+        .collect::<Vec<_>>()
+}
+
+fn log_agent_http_request(method: &str, path: &str, status_code: u16) {
+    let mut requests = AGENT_HTTP_REQUESTS.lock();
+    requests.push_back(AgentHttpRequestLogEntry {
+        timestamp: chrono::Utc::now(),
+        method: method.to_string(),
+        path: path.to_string(),
+        status_code,
+    });
+    while requests.len() > MAX_RECENT_HTTP_REQUESTS {
+        requests.pop_front();
     }
 }
 
@@ -105,18 +154,25 @@ pub fn start_agent_http_server(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> Option<AgentHttpServerHandle> {
+    let requested_port = if config.port == DEFAULT_AGENT_HTTP_PORT {
+        configured_agent_http_port()
+    } else {
+        config.port
+    };
+
     let (commands_tx, commands_rx) = async_channel::unbounded::<AgentServerCommand>();
     let (shutdown_tx, shutdown_rx) = async_channel::bounded::<()>(1);
     let (ns_tx, ns_rx) = async_channel::unbounded::<(acp::SessionId, PathBuf, Option<String>)>();
     let (su_tx, su_rx) = async_channel::unbounded::<acp::SessionId>();
 
-    let listener = match TcpListener::bind(format!("0.0.0.0:{}", config.port)) {
+    let listener = match TcpListener::bind(format!("0.0.0.0:{}", requested_port)) {
         Ok(l) => l,
         Err(e) => {
-            log::warn!("Failed to bind :{}: {e}", config.port);
+            log::warn!("Failed to bind :{}: {e}", requested_port);
             return None;
         }
     };
+    set_configured_agent_http_port(requested_port);
     let commands_tx_for_thread = commands_tx.clone();
     let addr = listener.local_addr().ok();
 
@@ -173,9 +229,16 @@ fn route_request(
     let url = request.url().to_string();
     let method = request.method().as_str().to_string();
     let route = parse_route(&url);
+    let path = url.split('?').next().unwrap_or(&url).to_string();
     match (method.as_str(), route) {
-        ("OPTIONS", _) => handle_preflight(request),
-        ("GET", Route::Healthz) => respond_text(request, 200, "ok"),
+        ("OPTIONS", _) => {
+            handle_preflight(request);
+            log_agent_http_request(&method, &path, 204);
+        }
+        ("GET", Route::Healthz) => {
+            respond_text(request, 200, "ok");
+            log_agent_http_request(&method, &path, 200);
+        }
         ("POST", Route::Agents) => {
             let body = read_body(&mut request);
             let (reply, rx) = async_channel::bounded(1);
@@ -186,30 +249,42 @@ fn route_request(
                         reply,
                     });
                     match rx.recv_blocking() {
-                        Ok(Ok(r)) => respond_json(request, 200, &r),
-                        Ok(Err(e)) => respond_json(
-                            request,
-                            500,
-                            &ErrorBody {
-                                error: format!("{e:#}"),
-                            },
-                        ),
-                        Err(_) => respond_json(
-                            request,
-                            500,
-                            &ErrorBody {
-                                error: "no response".into(),
-                            },
-                        ),
+                        Ok(Ok(r)) => {
+                            respond_json(request, 200, &r);
+                            log_agent_http_request(&method, &path, 200);
+                        }
+                        Ok(Err(e)) => {
+                            respond_json(
+                                request,
+                                500,
+                                &ErrorBody {
+                                    error: format!("{e:#}"),
+                                },
+                            );
+                            log_agent_http_request(&method, &path, 500);
+                        }
+                        Err(_) => {
+                            respond_json(
+                                request,
+                                500,
+                                &ErrorBody {
+                                    error: "no response".into(),
+                                },
+                            );
+                            log_agent_http_request(&method, &path, 500);
+                        }
                     }
                 }
-                Err(e) => respond_json(
-                    request,
-                    400,
-                    &ErrorBody {
-                        error: format!("Invalid: {e}"),
-                    },
-                ),
+                Err(e) => {
+                    respond_json(
+                        request,
+                        400,
+                        &ErrorBody {
+                            error: format!("Invalid: {e}"),
+                        },
+                    );
+                    log_agent_http_request(&method, &path, 400);
+                }
             }
         }
         ("POST", Route::AgentPrompt(sid)) => {
@@ -223,30 +298,42 @@ fn route_request(
                         reply,
                     });
                     match rx.recv_blocking() {
-                        Ok(Ok(r)) => respond_json(request, 200, &r),
-                        Ok(Err(e)) => respond_json(
-                            request,
-                            500,
-                            &ErrorBody {
-                                error: format!("{e:#}"),
-                            },
-                        ),
-                        Err(_) => respond_json(
-                            request,
-                            500,
-                            &ErrorBody {
-                                error: "no response".into(),
-                            },
-                        ),
+                        Ok(Ok(r)) => {
+                            respond_json(request, 200, &r);
+                            log_agent_http_request(&method, &path, 200);
+                        }
+                        Ok(Err(e)) => {
+                            respond_json(
+                                request,
+                                500,
+                                &ErrorBody {
+                                    error: format!("{e:#}"),
+                                },
+                            );
+                            log_agent_http_request(&method, &path, 500);
+                        }
+                        Err(_) => {
+                            respond_json(
+                                request,
+                                500,
+                                &ErrorBody {
+                                    error: "no response".into(),
+                                },
+                            );
+                            log_agent_http_request(&method, &path, 500);
+                        }
                     }
                 }
-                Err(e) => respond_json(
-                    request,
-                    400,
-                    &ErrorBody {
-                        error: format!("Invalid: {e}"),
-                    },
-                ),
+                Err(e) => {
+                    respond_json(
+                        request,
+                        400,
+                        &ErrorBody {
+                            error: format!("Invalid: {e}"),
+                        },
+                    );
+                    log_agent_http_request(&method, &path, 400);
+                }
             }
         }
         ("GET", Route::Agent(sid)) => {
@@ -256,21 +343,30 @@ fn route_request(
                 reply,
             });
             match rx.recv_blocking() {
-                Ok(Ok(r)) => respond_json(request, 200, &r),
-                Ok(Err(e)) => respond_json(
-                    request,
-                    500,
-                    &ErrorBody {
-                        error: format!("{e:#}"),
-                    },
-                ),
-                Err(_) => respond_json(
-                    request,
-                    500,
-                    &ErrorBody {
-                        error: "no response".into(),
-                    },
-                ),
+                Ok(Ok(r)) => {
+                    respond_json(request, 200, &r);
+                    log_agent_http_request(&method, &path, 200);
+                }
+                Ok(Err(e)) => {
+                    respond_json(
+                        request,
+                        500,
+                        &ErrorBody {
+                            error: format!("{e:#}"),
+                        },
+                    );
+                    log_agent_http_request(&method, &path, 500);
+                }
+                Err(_) => {
+                    respond_json(
+                        request,
+                        500,
+                        &ErrorBody {
+                            error: "no response".into(),
+                        },
+                    );
+                    log_agent_http_request(&method, &path, 500);
+                }
             }
         }
         ("DELETE", Route::Agent(sid)) => {
@@ -280,30 +376,42 @@ fn route_request(
                 reply,
             });
             match rx.recv_blocking() {
-                Ok(Ok(())) => respond_json(request, 200, &serde_json::json!({"status": "closed"})),
-                Ok(Err(e)) => respond_json(
-                    request,
-                    500,
-                    &ErrorBody {
-                        error: format!("{e:#}"),
-                    },
-                ),
-                Err(_) => respond_json(
-                    request,
-                    500,
-                    &ErrorBody {
-                        error: "no response".into(),
-                    },
-                ),
+                Ok(Ok(())) => {
+                    respond_json(request, 200, &serde_json::json!({"status": "closed"}));
+                    log_agent_http_request(&method, &path, 200);
+                }
+                Ok(Err(e)) => {
+                    respond_json(
+                        request,
+                        500,
+                        &ErrorBody {
+                            error: format!("{e:#}"),
+                        },
+                    );
+                    log_agent_http_request(&method, &path, 500);
+                }
+                Err(_) => {
+                    respond_json(
+                        request,
+                        500,
+                        &ErrorBody {
+                            error: "no response".into(),
+                        },
+                    );
+                    log_agent_http_request(&method, &path, 500);
+                }
             }
         }
-        _ => respond_json(
-            request,
-            404,
-            &ErrorBody {
-                error: "Not found".into(),
-            },
-        ),
+        _ => {
+            respond_json(
+                request,
+                404,
+                &ErrorBody {
+                    error: "Not found".into(),
+                },
+            );
+            log_agent_http_request(&method, &path, 404);
+        }
     }
 }
 
