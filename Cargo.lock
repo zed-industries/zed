@@ -6467,7 +6467,6 @@ dependencies = [
  "fs",
  "fuzzy",
  "git",
- "git_ui",
  "gpui",
  "language",
  "log",

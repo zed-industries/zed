@@ -13,7 +13,6 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use git::{GitHostingProviderRegistry, parse_git_remote_url};
-use git_ui::get_provider_icon;
 use gpui::{
     Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
     InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TaskExt, TextStyle,
@@ -176,7 +175,6 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 }
-
 fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     match provides {
         ExtensionProvides::Themes => "Themes",
@@ -391,7 +389,15 @@ impl ExtensionsPage {
 
     fn get_repository_icon(&self, repository_url: &str) -> IconName {
         parse_git_remote_url(Arc::clone(&self.provider_registry), repository_url)
-            .map(|(provider, _)| get_provider_icon(provider.name().as_str()))
+            .map(|(provider, _)| match provider.name().as_str() {
+                "Bitbucket" => IconName::Bitbucket,
+                "Codeberg" => IconName::Codeberg,
+                "Forgejo Self-Hosted" => IconName::Forgejo,
+                "GitHub" => IconName::Github,
+                "GitLab" => IconName::Gitlab,
+                "Gitea" => IconName::Gitea,
+                _ => IconName::Link,
+            })
             .unwrap_or(IconName::Link)
     }
 
