@@ -517,9 +517,10 @@ impl NativeAgent {
         }
     }
 
-    fn new_session(
+    pub(crate) fn new_session_with_work_dirs(
         &mut self,
         project: Entity<Project>,
+        work_dirs: Option<PathList>,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
         let project_id = self.get_or_create_project_state(&project, cx);
@@ -544,13 +545,14 @@ impl NativeAgent {
             )
         });
 
-        self.register_session(thread, project_id, 1, cx)
+        self.register_session(thread, project_id, work_dirs, 1, cx)
     }
 
     fn register_session(
         &mut self,
         thread_handle: Entity<Thread>,
         project_id: EntityId,
+        work_dirs: Option<PathList>,
         ref_count: usize,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
@@ -570,7 +572,7 @@ impl NativeAgent {
             let mut acp_thread = acp_thread::AcpThread::new(
                 parent_session_id,
                 title,
-                None,
+                work_dirs,
                 connection,
                 project.clone(),
                 action_log.clone(),
@@ -1363,7 +1365,7 @@ impl NativeAgent {
                                 .pending_sessions
                                 .remove(&id)
                                 .map_or(1, |pending| pending.ref_count);
-                            this.register_session(thread.clone(), project_id, ref_count, cx)
+                            this.register_session(thread.clone(), project_id, None, ref_count, cx)
                         })
                         .map_err(Arc::new)?;
                     let events = thread.update(cx, |thread, cx| thread.replay(cx));
@@ -1506,14 +1508,21 @@ impl NativeAgent {
             return;
         };
 
-        let folder_paths = PathList::new(
-            &state
-                .project
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect::<Vec<_>>(),
-        );
+        let folder_paths = session
+            .acp_thread
+            .read(cx)
+            .work_dirs()
+            .cloned()
+            .unwrap_or_else(|| {
+                PathList::new(
+                    &state
+                        .project
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                        .collect::<Vec<_>>(),
+                )
+            });
 
         let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
         let database_future = ThreadsDatabase::connect(cx);
@@ -2156,7 +2165,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::debug!("Creating new thread for project at: {work_dirs:?}");
         Task::ready(Ok(self
             .0
-            .update(cx, |agent, cx| agent.new_session(project, cx))))
+            .update(cx, |agent, cx| {
+                agent.new_session_with_work_dirs(project, Some(work_dirs), cx)
+            })))
     }
 
     fn supports_load_session(&self) -> bool {
@@ -2603,7 +2614,7 @@ impl NativeThreadEnvironment {
                     .get(&parent_session_id)
                     .map(|s| s.project_id)
                     .context("parent session not found")?;
-                Ok(agent.register_session(subagent_thread.clone(), project_id, 1, cx))
+                Ok(agent.register_session(subagent_thread.clone(), project_id, None, 1, cx))
             })??;
 
         let depth = current_depth + 1;
@@ -3974,7 +3985,7 @@ mod internal_tests {
         // Run the subagent through the production registration path.
         // This is what installs the `SkillTool` on the thread.
         let _subagent_acp = agent.update(cx, |agent, cx| {
-            agent.register_session(subagent_thread.clone(), parent_project_id, 1, cx)
+            agent.register_session(subagent_thread.clone(), parent_project_id, None, 1, cx)
         });
 
         // Verify the subagent thread has the `SkillTool` installed —

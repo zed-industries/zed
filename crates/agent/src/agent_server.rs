@@ -13,6 +13,7 @@ use language_model::{LanguageModelRegistry, SelectedModel};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Response, Server};
+use util::path_list::PathList;
 
 use crate::global_native_agent;
 
@@ -417,7 +418,13 @@ async fn run_command_loop(
                             .map(|w| w.read(cx).abs_path().to_path_buf())?,
                     };
                     let agent = global_native_agent(fs.clone(), cx);
-                    let acp = agent.update(cx, |a, cx| a.new_session(project.clone(), cx));
+                    let acp = agent.update(cx, |a, cx| {
+                        a.new_session_with_work_dirs(
+                            project.clone(),
+                            Some(PathList::new(&[wd.as_path()])),
+                            cx,
+                        )
+                    });
                     let sid = acp.read_with(cx, |t, _| t.session_id().to_string());
                     let session_id = acp::SessionId::new(sid.clone());
 
@@ -499,7 +506,10 @@ async fn run_command_loop(
                 }
 
                 let (acp, fut) = match cx.update(|cx| {
-                    sessions.get(&session_id).context("Not found")?;
+                    let session_meta = sessions.get(&session_id).context("Not found")?;
+                    acp.update(cx, |thread, cx| {
+                        thread.set_work_dirs(PathList::new(&[session_meta.workdir.as_path()]), cx);
+                    });
                     let msg = vec![acp::ContentBlock::Text(acp::TextContent::new(
                         prompt.clone(),
                     ))];
