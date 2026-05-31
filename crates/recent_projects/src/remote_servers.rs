@@ -13,8 +13,8 @@ use dev_container::{
 };
 use editor::{Editor, EditorEvent};
 use extension_host::ExtensionStore;
-use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
 use filter::{FilterData, FilteredServer};
+use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
