@@ -348,15 +348,12 @@ With the following changes:
 - implement `jump::JumpToUrl` based on this code to jump to `http...` URLs
 - note that it does not work in multi buffers, but it works to jump across panes of regular text editors
 
-### `vim::HelixJumpToWord` as a new action (this is for multi buffers)
+### `vim::HelixJumpToWord` UI adaptation (I only use this in multi buffers, although it works everywhere)
 
-From https://github.com/zed-industries/zed/pull/43733
+- adapted the Helix jump-to-word UI to match `jump::Toggle`
+- changed the Helix jump label alphabet to the same custom Dvorak Programmer hint key order as `jump::Toggle`
 
-- improved UI to look like the `jump::Toggle` action
-- removed the `helix > "jump_label_accent"` setting since the UI is now the same as `jump::Toggle`
-- modified key jump hints to my custom Dvorak Programmer keyboard layout
-- I am only using this is inside multi buffers, whereas `jump::Toggle` does not. And this also does not work to jump across editor panes
-- note that escape does not work to break out of this mode, apparently. I have no idea how to adjust the code for it
+I am only using this inside multi buffers, because `jump::Toggle` does not work there. Also, note that this also does not work to jump across editor panes
 
 ## DeepL integration
 

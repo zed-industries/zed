@@ -23,8 +23,7 @@ use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::display_map::ToDisplayPoint;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, MultiBufferOffset, NavigationOverlayKey,
-    NavigationTargetOverlay, SelectionEffects,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, MultiBufferOffset, SelectionEffects,
     actions::Paste,
     movement::{self, FindRange},
 };
@@ -61,11 +60,6 @@ use crate::{
     normal::{GoToPreviousTab, GoToTab},
     state::ReplayableAction,
 };
-
-enum HelixJumpNavigationOverlay {}
-
-pub(crate) const HELIX_JUMP_OVERLAY_KEY: NavigationOverlayKey =
-    NavigationOverlayKey::unique::<HelixJumpNavigationOverlay>();
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
@@ -1810,23 +1804,10 @@ impl Vim {
     pub(crate) fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.helix_jump_ui.take();
         self.update_editor(cx, move |_, editor, cx| {
-            editor.clear_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, cx);
             editor.set_jump_labels(Vec::new(), cx);
         });
     }
 
-    pub(crate) fn apply_helix_jump_ui(
-        &mut self,
-        overlays: Vec<NavigationTargetOverlay>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.helix_jump_ui = Some(HelixJumpUi);
-        self.update_editor(cx, move |_, editor, cx| {
-            editor.set_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, overlays, cx);
-        });
-        true
-    }
 
     pub(crate) fn handle_helix_jump_input(
         &mut self,
