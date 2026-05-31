@@ -670,6 +670,8 @@ pub enum PlatformInput {
     Pinch(PinchEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
+    /// An OS-level drag session that originated in this app has ended.
+    DragSessionEnded,
 }
 
 impl PlatformInput {
@@ -686,6 +688,7 @@ impl PlatformInput {
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
+            PlatformInput::DragSessionEnded => None,
         }
     }
 
@@ -702,6 +705,7 @@ impl PlatformInput {
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::Pinch(_) => None,
             PlatformInput::FileDrop(_) => None,
+            PlatformInput::DragSessionEnded => None,
         }
     }
 }
@@ -710,9 +714,11 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
+        self as gpui, AnyDrag, AppContext as _, Context, Empty, FocusHandle, InteractiveElement,
+        IntoElement, KeyBinding, Keystroke, ParentElement, PlatformInput, Render, TestAppContext,
+        Window, div, point, px,
     };
+    use std::sync::Arc;
 
     struct TestView {
         saw_key_down: bool,
@@ -775,6 +781,37 @@ mod test {
                 assert!(test_view.saw_key_down || test_view.saw_action);
                 assert!(test_view.saw_key_down);
                 assert!(test_view.saw_action);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn drag_session_ended_is_not_mouse_or_keyboard_input() {
+        let event = PlatformInput::DragSessionEnded;
+        assert!(event.mouse_event().is_none());
+        assert!(event.keyboard_event().is_none());
+    }
+
+    #[gpui::test]
+    fn drag_session_ended_clears_active_drag(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| cx.new(|_| Empty))
+                .unwrap()
+        });
+
+        window
+            .update(cx, |_, window, cx| {
+                cx.active_drag = Some(AnyDrag {
+                    view: cx.new(|_| Empty).into(),
+                    value: Arc::new(()),
+                    cursor_offset: point(px(0.), px(0.)),
+                    cursor_style: None,
+                    external_paths: None,
+                });
+
+                window.dispatch_event(PlatformInput::DragSessionEnded, cx);
+
+                assert!(cx.active_drag.is_none());
             })
             .unwrap();
     }
