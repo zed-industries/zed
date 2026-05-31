@@ -16,7 +16,6 @@ use project::Project;
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
-use proto;
 use remote::RemoteConnectionOptions;
 use rpc::AnyProtoClient;
 use settings::Settings;
