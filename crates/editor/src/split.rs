@@ -2149,7 +2149,8 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let fs: Arc<dyn fs::Fs> = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
