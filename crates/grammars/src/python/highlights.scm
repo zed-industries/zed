@@ -4,6 +4,18 @@
 (attribute
   attribute: (identifier) @property)
 
+; Type
+[(type [
+    (identifier) @type
+    (_ [(identifier) (none)]? @type
+      (_ [(identifier) (none)]? @type
+        (_ [(identifier) (none)]? @type
+          (_ [(identifier) (none)]? @type))))
+  ])
+  (generic_type
+    (identifier) @type)
+]
+
 ; CamelCase for classes
 ((identifier) @type.class
   (#match? @type.class "^_*[A-Z][A-Za-z0-9_]*$"))
@@ -11,12 +23,6 @@
 ; ALL_CAPS for constants:
 ((identifier) @constant
   (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
-
-(type
-  (identifier) @type)
-
-(generic_type
-  (identifier) @type)
 
 (comment) @comment
 
@@ -329,18 +335,7 @@
   (#any-of? @attribute.builtin "classmethod" "staticmethod" "property"))
 
 ; Builtin types as identifiers
-[
-  (call
-    function: (identifier) @type.builtin)
-  (type
-    (identifier) @type.builtin)
-  (generic_type
-    (identifier) @type.builtin)
-  ; also check if type binary operator left identifier for union types
-  (type
-    (binary_operator
-      left: (identifier) @type.builtin))
+((identifier) @type.builtin
   (#any-of? @type.builtin
     "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "int" "list" "memoryview"
-    "object" "range" "set" "slice" "str" "tuple")
-]
+    "object" "range" "set" "slice" "str" "tuple"))
