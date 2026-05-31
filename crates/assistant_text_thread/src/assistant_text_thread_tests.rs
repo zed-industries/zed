@@ -1,6 +1,6 @@
 use crate::{
     CacheStatus, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus, TextThread,
-    TextThreadEvent, TextThreadId, TextThreadOperation, TextThreadSummary,
+    TextThreadEvent, TextThreadId, TextThreadSummary,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -20,24 +20,20 @@ use language_model::{
     ConfiguredModel, LanguageModelCacheConfiguration, LanguageModelRegistry, Role,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
-use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use prompt_store::PromptBuilder;
-use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
     cell::RefCell,
-    env,
     ops::Range,
     path::Path,
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
 };
-use text::{ReplicaId, ToOffset, network::Network};
+use text::ToOffset;
 use ui::{IconName, Window};
 use unindent::Unindent;
-use util::RandomCharIter;
 use workspace::Workspace;
 
 #[gpui::test]
@@ -730,291 +726,6 @@ async fn test_serialization(cx: &mut TestAppContext) {
             (message_2.id, Role::System, 6..6),
         ]
     );
-}
-
-#[gpui::test(iterations = 25)]
-async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: StdRng) {
-    cx.update(init_test);
-
-    let min_peers = env::var("MIN_PEERS")
-        .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
-        .unwrap_or(2);
-    let max_peers = env::var("MAX_PEERS")
-        .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
-        .unwrap_or(5);
-    let operations = env::var("OPERATIONS")
-        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-        .unwrap_or(50);
-
-    let slash_commands = cx.update(SlashCommandRegistry::default_global);
-    slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
-    slash_commands.register_command(FakeSlashCommand("cmd-2".into()), false);
-    slash_commands.register_command(FakeSlashCommand("cmd-3".into()), false);
-
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
-    let network = Arc::new(Mutex::new(Network::new(rng.clone())));
-    let mut text_threads = Vec::new();
-
-    let num_peers = rng.random_range(min_peers..=max_peers);
-    let context_id = TextThreadId::new();
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    for i in 0..num_peers {
-        let context = cx.new(|cx| {
-            TextThread::new(
-                context_id.clone(),
-                ReplicaId::new(i as u16),
-                language::Capability::ReadWrite,
-                registry.clone(),
-                prompt_builder.clone(),
-                Arc::new(SlashCommandWorkingSet::default()),
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            cx.subscribe(&context, {
-                let network = network.clone();
-                move |_, event, _| {
-                    if let TextThreadEvent::Operation(op) = event {
-                        network
-                            .lock()
-                            .broadcast(ReplicaId::new(i as u16), vec![op.to_proto()]);
-                    }
-                }
-            })
-            .detach();
-        });
-
-        text_threads.push(context);
-        network.lock().add_peer(ReplicaId::new(i as u16));
-    }
-
-    let mut mutation_count = operations;
-
-    while mutation_count > 0
-        || !network.lock().is_idle()
-        || network.lock().contains_disconnected_peers()
-    {
-        let context_index = rng.random_range(0..text_threads.len());
-        let text_thread = &text_threads[context_index];
-
-        match rng.random_range(0..100) {
-            0..=29 if mutation_count > 0 => {
-                log::info!("Context {}: edit buffer", context_index);
-                text_thread.update(cx, |text_thread, cx| {
-                    text_thread
-                        .buffer()
-                        .update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
-                });
-                mutation_count -= 1;
-            }
-            30..=44 if mutation_count > 0 => {
-                text_thread.update(cx, |text_thread, cx| {
-                    let range = text_thread.buffer().read(cx).random_byte_range(0, &mut rng);
-                    log::info!("Context {}: split message at {:?}", context_index, range);
-                    text_thread.split_message(range, cx);
-                });
-                mutation_count -= 1;
-            }
-            45..=59 if mutation_count > 0 => {
-                text_thread.update(cx, |text_thread, cx| {
-                    if let Some(message) = text_thread.messages(cx).choose(&mut rng) {
-                        let role = *[Role::User, Role::Assistant, Role::System]
-                            .choose(&mut rng)
-                            .unwrap();
-                        log::info!(
-                            "Context {}: insert message after {:?} with {:?}",
-                            context_index,
-                            message.id,
-                            role
-                        );
-                        text_thread.insert_message_after(message.id, role, MessageStatus::Done, cx);
-                    }
-                });
-                mutation_count -= 1;
-            }
-            60..=74 if mutation_count > 0 => {
-                text_thread.update(cx, |text_thread, cx| {
-                    let command_text = "/".to_string()
-                        + slash_commands
-                            .command_names()
-                            .choose(&mut rng)
-                            .unwrap()
-                            .clone()
-                            .as_ref();
-
-                    let command_range = text_thread.buffer().update(cx, |buffer, cx| {
-                        let offset = buffer.random_byte_range(0, &mut rng).start;
-                        buffer.edit(
-                            [(offset..offset, format!("\n{}\n", command_text))],
-                            None,
-                            cx,
-                        );
-                        offset + 1..offset + 1 + command_text.len()
-                    });
-
-                    let output_text = RandomCharIter::new(&mut rng)
-                        .filter(|c| *c != '\r')
-                        .take(10)
-                        .collect::<String>();
-
-                    let mut events = vec![Ok(SlashCommandEvent::StartMessage {
-                        role: Role::User,
-                        merge_same_roles: true,
-                    })];
-
-                    let num_sections = rng.random_range(0..=3);
-                    let mut section_start = 0;
-                    for _ in 0..num_sections {
-                        let section_end = output_text.floor_char_boundary(
-                            rng.random_range(section_start..=output_text.len()),
-                        );
-                        events.push(Ok(SlashCommandEvent::StartSection {
-                            icon: IconName::Ai,
-                            label: "section".into(),
-                            metadata: None,
-                        }));
-                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
-                            text: output_text[section_start..section_end].to_string(),
-                            run_commands_in_text: false,
-                        })));
-                        events.push(Ok(SlashCommandEvent::EndSection));
-                        section_start = section_end;
-                    }
-
-                    if section_start < output_text.len() {
-                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
-                            text: output_text[section_start..].to_string(),
-                            run_commands_in_text: false,
-                        })));
-                    }
-
-                    log::info!(
-                        "Context {}: insert slash command output at {:?} with {:?} events",
-                        context_index,
-                        command_range,
-                        events.len()
-                    );
-
-                    let command_range = text_thread
-                        .buffer()
-                        .read(cx)
-                        .anchor_after(command_range.start)
-                        ..text_thread
-                            .buffer()
-                            .read(cx)
-                            .anchor_after(command_range.end);
-                    text_thread.insert_command_output(
-                        command_range,
-                        "/command",
-                        Task::ready(Ok(stream::iter(events).boxed())),
-                        true,
-                        cx,
-                    );
-                });
-                cx.run_until_parked();
-                mutation_count -= 1;
-            }
-            75..=84 if mutation_count > 0 => {
-                text_thread.update(cx, |text_thread, cx| {
-                    if let Some(message) = text_thread.messages(cx).choose(&mut rng) {
-                        let new_status = match rng.random_range(0..3) {
-                            0 => MessageStatus::Done,
-                            1 => MessageStatus::Pending,
-                            _ => MessageStatus::Error(SharedString::from("Random error")),
-                        };
-                        log::info!(
-                            "Context {}: update message {:?} status to {:?}",
-                            context_index,
-                            message.id,
-                            new_status
-                        );
-                        text_thread.update_metadata(message.id, cx, |metadata| {
-                            metadata.status = new_status;
-                        });
-                    }
-                });
-                mutation_count -= 1;
-            }
-            _ => {
-                let replica_id = ReplicaId::new(context_index as u16);
-                if network.lock().is_disconnected(replica_id) {
-                    network.lock().reconnect_peer(replica_id, ReplicaId::new(0));
-
-                    let (ops_to_send, ops_to_receive) = cx.read(|cx| {
-                        let host_context = &text_threads[0].read(cx);
-                        let guest_context = text_thread.read(cx);
-                        (
-                            guest_context.serialize_ops(&host_context.version(cx), cx),
-                            host_context.serialize_ops(&guest_context.version(cx), cx),
-                        )
-                    });
-                    let ops_to_send = ops_to_send.await;
-                    let ops_to_receive = ops_to_receive
-                        .await
-                        .into_iter()
-                        .map(TextThreadOperation::from_proto)
-                        .collect::<Result<Vec<_>>>()
-                        .unwrap();
-                    log::info!(
-                        "Context {}: reconnecting. Sent {} operations, received {} operations",
-                        context_index,
-                        ops_to_send.len(),
-                        ops_to_receive.len()
-                    );
-
-                    network.lock().broadcast(replica_id, ops_to_send);
-                    text_thread.update(cx, |text_thread, cx| {
-                        text_thread.apply_ops(ops_to_receive, cx)
-                    });
-                } else if rng.random_bool(0.1) && replica_id != ReplicaId::new(0) {
-                    log::info!("Context {}: disconnecting", context_index);
-                    network.lock().disconnect_peer(replica_id);
-                } else if network.lock().has_unreceived(replica_id) {
-                    log::info!("Context {}: applying operations", context_index);
-                    let ops = network.lock().receive(replica_id);
-                    let ops = ops
-                        .into_iter()
-                        .map(TextThreadOperation::from_proto)
-                        .collect::<Result<Vec<_>>>()
-                        .unwrap();
-                    text_thread.update(cx, |text_thread, cx| text_thread.apply_ops(ops, cx));
-                }
-            }
-        }
-    }
-
-    cx.read(|cx| {
-        let first_context = text_threads[0].read(cx);
-        for text_thread in &text_threads[1..] {
-            let text_thread = text_thread.read(cx);
-            assert!(text_thread.pending_ops.is_empty(), "pending ops: {:?}", text_thread.pending_ops);
-            assert_eq!(
-                text_thread.buffer().read(cx).text(),
-                first_context.buffer().read(cx).text(),
-                "Context {:?} text != Context 0 text",
-                text_thread.buffer().read(cx).replica_id()
-            );
-            assert_eq!(
-                text_thread.message_anchors,
-                first_context.message_anchors,
-                "Context {:?} messages != Context 0 messages",
-                text_thread.buffer().read(cx).replica_id()
-            );
-            assert_eq!(
-                text_thread.messages_metadata,
-                first_context.messages_metadata,
-                "Context {:?} message metadata != Context 0 message metadata",
-                text_thread.buffer().read(cx).replica_id()
-            );
-            assert_eq!(
-                text_thread.slash_command_output_sections,
-                first_context.slash_command_output_sections,
-                "Context {:?} slash command output sections != Context 0 slash command output sections",
-                text_thread.buffer().read(cx).replica_id()
-            );
-        }
-    });
 }
 
 #[gpui::test]

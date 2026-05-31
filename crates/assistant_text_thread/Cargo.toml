@@ -11,8 +11,6 @@ workspace = true
 [lib]
 path = "src/assistant_text_thread.rs"
 
-[features]
-test-support = []
 
 [dependencies]
 agent_settings.workspace = true

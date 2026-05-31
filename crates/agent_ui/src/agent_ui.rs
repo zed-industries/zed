@@ -45,7 +45,7 @@ use std::sync::Arc;
 use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use assistant_slash_command::{SlashCommandRegistry, SlashCommandWorkingSet};
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
@@ -580,30 +580,6 @@ impl text_thread_editor::AgentPanelDelegate for StandaloneTextThreadDelegate {
         Self::active_text_thread_editor(workspace, cx)
     }
 
-    fn open_local_text_thread(
-        &self,
-        _workspace: &mut Workspace,
-        _path: Arc<Path>,
-        _window: &mut Window,
-        _cx: &mut Context<Workspace>,
-    ) -> gpui::Task<Result<()>> {
-        gpui::Task::ready(Err(anyhow!(
-            "opening saved text threads is not implemented for standalone tabs"
-        )))
-    }
-
-    fn open_remote_text_thread(
-        &self,
-        _workspace: &mut Workspace,
-        _text_thread_id: assistant_text_thread::TextThreadId,
-        _window: &mut Window,
-        _cx: &mut Context<Workspace>,
-    ) -> gpui::Task<Result<Entity<TextThreadEditor>>> {
-        gpui::Task::ready(Err(anyhow!(
-            "opening remote text threads is not implemented for standalone tabs"
-        )))
-    }
-
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
@@ -624,22 +600,6 @@ impl text_thread_editor::AgentPanelDelegate for StandaloneTextThreadDelegate {
 
         text_thread_editor.update(cx, |text_thread_editor, cx| {
             text_thread_editor.quote_ranges(selection_ranges, snapshot, window, cx);
-        });
-    }
-
-    fn quote_terminal_text(
-        &self,
-        workspace: &mut Workspace,
-        text: String,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(text_thread_editor) = Self::active_text_thread_editor(workspace, cx) else {
-            return;
-        };
-
-        text_thread_editor.update(cx, |text_thread_editor, cx| {
-            text_thread_editor.quote_terminal_text(text, window, cx);
         });
     }
 }

@@ -77,48 +77,7 @@ pub enum MessageStatus {
     Canceled,
 }
 
-impl MessageStatus {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_proto(status: proto::ContextMessageStatus) -> MessageStatus {
-        match status.variant {
-            Some(proto::context_message_status::Variant::Pending(_)) => MessageStatus::Pending,
-            Some(proto::context_message_status::Variant::Done(_)) => MessageStatus::Done,
-            Some(proto::context_message_status::Variant::Error(error)) => {
-                MessageStatus::Error(error.message.into())
-            }
-            Some(proto::context_message_status::Variant::Canceled(_)) => MessageStatus::Canceled,
-            None => MessageStatus::Pending,
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn to_proto(&self) -> proto::ContextMessageStatus {
-        match self {
-            MessageStatus::Pending => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Pending(
-                    proto::context_message_status::Pending {},
-                )),
-            },
-            MessageStatus::Done => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Done(
-                    proto::context_message_status::Done {},
-                )),
-            },
-            MessageStatus::Error(message) => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Error(
-                    proto::context_message_status::Error {
-                        message: message.to_string(),
-                    },
-                )),
-            },
-            MessageStatus::Canceled => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Canceled(
-                    proto::context_message_status::Canceled {},
-                )),
-            },
-        }
-    }
-}
+impl MessageStatus {}
 
 #[derive(Clone, Debug)]
 pub enum TextThreadOperation {
@@ -162,257 +121,6 @@ pub enum TextThreadOperation {
 }
 
 impl TextThreadOperation {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_proto(op: proto::ContextOperation) -> Result<Self> {
-        match op.variant.context("invalid variant")? {
-            proto::context_operation::Variant::InsertMessage(insert) => {
-                let message = insert.message.context("invalid message")?;
-                let id = MessageId(language::proto::deserialize_timestamp(
-                    message.id.context("invalid id")?,
-                ));
-                Ok(Self::InsertMessage {
-                    anchor: MessageAnchor {
-                        id,
-                        start: language::proto::deserialize_anchor(
-                            message.start.context("invalid anchor")?,
-                        )
-                        .context("invalid anchor")?,
-                    },
-                    metadata: MessageMetadata {
-                        role: Role::from_proto(message.role),
-                        status: MessageStatus::from_proto(
-                            message.status.context("invalid status")?,
-                        ),
-                        timestamp: id.0,
-                        cache: None,
-                    },
-                    version: language::proto::deserialize_version(&insert.version),
-                })
-            }
-            proto::context_operation::Variant::UpdateMessage(update) => Ok(Self::UpdateMessage {
-                message_id: MessageId(language::proto::deserialize_timestamp(
-                    update.message_id.context("invalid message id")?,
-                )),
-                metadata: MessageMetadata {
-                    role: Role::from_proto(update.role),
-                    status: MessageStatus::from_proto(update.status.context("invalid status")?),
-                    timestamp: language::proto::deserialize_timestamp(
-                        update.timestamp.context("invalid timestamp")?,
-                    ),
-                    cache: None,
-                },
-                version: language::proto::deserialize_version(&update.version),
-            }),
-            proto::context_operation::Variant::UpdateSummary(update) => Ok(Self::UpdateSummary {
-                summary: TextThreadSummaryContent {
-                    text: update.summary,
-                    done: update.done,
-                    timestamp: language::proto::deserialize_timestamp(
-                        update.timestamp.context("invalid timestamp")?,
-                    ),
-                },
-                version: language::proto::deserialize_version(&update.version),
-            }),
-            proto::context_operation::Variant::SlashCommandStarted(message) => {
-                Ok(Self::SlashCommandStarted {
-                    id: InvokedSlashCommandId(language::proto::deserialize_timestamp(
-                        message.id.context("invalid id")?,
-                    )),
-                    output_range: language::proto::deserialize_anchor_range(
-                        message.output_range.context("invalid range")?,
-                    )?,
-                    name: message.name,
-                    version: language::proto::deserialize_version(&message.version),
-                })
-            }
-            proto::context_operation::Variant::SlashCommandOutputSectionAdded(message) => {
-                let section = message.section.context("missing section")?;
-                Ok(Self::SlashCommandOutputSectionAdded {
-                    timestamp: language::proto::deserialize_timestamp(
-                        message.timestamp.context("missing timestamp")?,
-                    ),
-                    section: SlashCommandOutputSection {
-                        range: language::proto::deserialize_anchor_range(
-                            section.range.context("invalid range")?,
-                        )?,
-                        icon: section.icon_name.parse()?,
-                        label: section.label.into(),
-                        metadata: section
-                            .metadata
-                            .and_then(|metadata| serde_json::from_str(&metadata).log_err()),
-                    },
-                    version: language::proto::deserialize_version(&message.version),
-                })
-            }
-            proto::context_operation::Variant::SlashCommandCompleted(message) => {
-                Ok(Self::SlashCommandFinished {
-                    id: InvokedSlashCommandId(language::proto::deserialize_timestamp(
-                        message.id.context("invalid id")?,
-                    )),
-                    timestamp: language::proto::deserialize_timestamp(
-                        message.timestamp.context("missing timestamp")?,
-                    ),
-                    error_message: message.error_message,
-                    version: language::proto::deserialize_version(&message.version),
-                })
-            }
-            proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(message) => {
-                let section = message.section.context("missing section")?;
-                Ok(Self::ThoughtProcessOutputSectionAdded {
-                    timestamp: language::proto::deserialize_timestamp(
-                        message.timestamp.context("missing timestamp")?,
-                    ),
-                    section: ThoughtProcessOutputSection {
-                        range: language::proto::deserialize_anchor_range(
-                            section.range.context("invalid range")?,
-                        )?,
-                    },
-                    version: language::proto::deserialize_version(&message.version),
-                })
-            }
-            proto::context_operation::Variant::BufferOperation(op) => Ok(Self::BufferOperation(
-                language::proto::deserialize_operation(
-                    op.operation.context("invalid buffer operation")?,
-                )?,
-            )),
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn to_proto(&self) -> proto::ContextOperation {
-        match self {
-            Self::InsertMessage {
-                anchor,
-                metadata,
-                version,
-            } => proto::ContextOperation {
-                variant: Some(proto::context_operation::Variant::InsertMessage(
-                    proto::context_operation::InsertMessage {
-                        message: Some(proto::ContextMessage {
-                            id: Some(language::proto::serialize_timestamp(anchor.id.0)),
-                            start: Some(language::proto::serialize_anchor(&anchor.start)),
-                            role: metadata.role.to_proto() as i32,
-                            status: Some(metadata.status.to_proto()),
-                        }),
-                        version: language::proto::serialize_version(version),
-                    },
-                )),
-            },
-            Self::UpdateMessage {
-                message_id,
-                metadata,
-                version,
-            } => proto::ContextOperation {
-                variant: Some(proto::context_operation::Variant::UpdateMessage(
-                    proto::context_operation::UpdateMessage {
-                        message_id: Some(language::proto::serialize_timestamp(message_id.0)),
-                        role: metadata.role.to_proto() as i32,
-                        status: Some(metadata.status.to_proto()),
-                        timestamp: Some(language::proto::serialize_timestamp(metadata.timestamp)),
-                        version: language::proto::serialize_version(version),
-                    },
-                )),
-            },
-            Self::UpdateSummary { summary, version } => proto::ContextOperation {
-                variant: Some(proto::context_operation::Variant::UpdateSummary(
-                    proto::context_operation::UpdateSummary {
-                        summary: summary.text.clone(),
-                        done: summary.done,
-                        timestamp: Some(language::proto::serialize_timestamp(summary.timestamp)),
-                        version: language::proto::serialize_version(version),
-                    },
-                )),
-            },
-            Self::SlashCommandStarted {
-                id,
-                output_range,
-                name,
-                version,
-            } => proto::ContextOperation {
-                variant: Some(proto::context_operation::Variant::SlashCommandStarted(
-                    proto::context_operation::SlashCommandStarted {
-                        id: Some(language::proto::serialize_timestamp(id.0)),
-                        output_range: Some(language::proto::serialize_anchor_range(
-                            output_range.clone(),
-                        )),
-                        name: name.clone(),
-                        version: language::proto::serialize_version(version),
-                    },
-                )),
-            },
-            Self::SlashCommandOutputSectionAdded {
-                timestamp,
-                section,
-                version,
-            } => proto::ContextOperation {
-                variant: Some(
-                    proto::context_operation::Variant::SlashCommandOutputSectionAdded(
-                        proto::context_operation::SlashCommandOutputSectionAdded {
-                            timestamp: Some(language::proto::serialize_timestamp(*timestamp)),
-                            section: Some({
-                                let icon_name: &'static str = section.icon.into();
-                                proto::SlashCommandOutputSection {
-                                    range: Some(language::proto::serialize_anchor_range(
-                                        section.range.clone(),
-                                    )),
-                                    icon_name: icon_name.to_string(),
-                                    label: section.label.to_string(),
-                                    metadata: section.metadata.as_ref().and_then(|metadata| {
-                                        serde_json::to_string(metadata).log_err()
-                                    }),
-                                }
-                            }),
-                            version: language::proto::serialize_version(version),
-                        },
-                    ),
-                ),
-            },
-            Self::SlashCommandFinished {
-                id,
-                timestamp,
-                error_message,
-                version,
-            } => proto::ContextOperation {
-                variant: Some(proto::context_operation::Variant::SlashCommandCompleted(
-                    proto::context_operation::SlashCommandCompleted {
-                        id: Some(language::proto::serialize_timestamp(id.0)),
-                        timestamp: Some(language::proto::serialize_timestamp(*timestamp)),
-                        error_message: error_message.clone(),
-                        version: language::proto::serialize_version(version),
-                    },
-                )),
-            },
-            Self::ThoughtProcessOutputSectionAdded {
-                timestamp,
-                section,
-                version,
-            } => proto::ContextOperation {
-                variant: Some(
-                    proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(
-                        proto::context_operation::ThoughtProcessOutputSectionAdded {
-                            timestamp: Some(language::proto::serialize_timestamp(*timestamp)),
-                            section: Some({
-                                proto::ThoughtProcessOutputSection {
-                                    range: Some(language::proto::serialize_anchor_range(
-                                        section.range.clone(),
-                                    )),
-                                }
-                            }),
-                            version: language::proto::serialize_version(version),
-                        },
-                    ),
-                ),
-            },
-            Self::BufferOperation(operation) => proto::ContextOperation {
-                variant: Some(proto::context_operation::Variant::BufferOperation(
-                    proto::context_operation::BufferOperation {
-                        operation: Some(language::proto::serialize_operation(operation)),
-                    },
-                )),
-            },
-        }
-    }
-
     fn timestamp(&self) -> clock::Lamport {
         match self {
             Self::InsertMessage { anchor, .. } => anchor.id.0,
@@ -428,7 +136,6 @@ impl TextThreadOperation {
         }
     }
 
-    /// Returns the current version of the context operation.
     pub fn version(&self) -> &clock::Global {
         match self {
             Self::InsertMessage { version, .. }
@@ -517,12 +224,12 @@ impl TextThreadSummary {
             TextThreadSummary::Content(content) => content,
             TextThreadSummary::Pending | TextThreadSummary::Error => {
                 let content = TextThreadSummaryContent {
-                    text: "".to_string(),
+                    text: String::new(),
                     done: false,
                     timestamp: clock::Lamport::MIN,
                 };
                 *self = TextThreadSummary::Content(content);
-                self.content_as_mut().unwrap()
+                self.content_as_mut().expect("summary content")
             }
         }
     }
@@ -531,11 +238,8 @@ impl TextThreadSummary {
         matches!(self, TextThreadSummary::Pending)
     }
 
-    fn timestamp(&self) -> Option<clock::Lamport> {
-        match self {
-            TextThreadSummary::Content(content) => Some(content.timestamp),
-            TextThreadSummary::Pending | TextThreadSummary::Error => None,
-        }
+    pub fn timestamp(&self) -> Option<clock::Lamport> {
+        self.content().map(|content| content.timestamp)
     }
 }
 
@@ -684,7 +388,6 @@ pub struct TextThread {
     pub(crate) token_count: Option<u64>,
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
-    pending_cache_warming_task: Task<Option<()>>,
     path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
     language_registry: Arc<LanguageRegistry>,
@@ -762,7 +465,6 @@ impl TextThread {
             pending_completions: Default::default(),
             token_count: None,
             pending_token_count: Task::ready(None),
-            pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -883,13 +585,6 @@ impl TextThread {
         self.timestamp.replica_id
     }
 
-    pub fn version(&self, cx: &App) -> TextThreadVersion {
-        TextThreadVersion {
-            text_thread: self.version.clone(),
-            buffer: self.buffer.read(cx).version(),
-        }
-    }
-
     pub fn slash_commands(&self) -> &Arc<SlashCommandWorkingSet> {
         &self.slash_commands
     }
@@ -903,42 +598,6 @@ impl TextThread {
         let timestamp = self.timestamp.tick();
         self.version.observe(timestamp);
         timestamp
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn serialize_ops(
-        &self,
-        since: &TextThreadVersion,
-        cx: &App,
-    ) -> Task<Vec<proto::ContextOperation>> {
-        let buffer_ops = self
-            .buffer
-            .read(cx)
-            .serialize_ops(Some(since.buffer.clone()), cx);
-
-        let mut context_ops = self
-            .operations
-            .iter()
-            .filter(|op| !since.text_thread.observed(op.timestamp()))
-            .cloned()
-            .collect::<Vec<_>>();
-        context_ops.extend(self.pending_ops.iter().cloned());
-
-        cx.background_spawn(async move {
-            let buffer_ops = buffer_ops.await;
-            context_ops.sort_unstable_by_key(|op| op.timestamp());
-            buffer_ops
-                .into_iter()
-                .map(|op| proto::ContextOperation {
-                    variant: Some(proto::context_operation::Variant::BufferOperation(
-                        proto::context_operation::BufferOperation {
-                            operation: Some(op),
-                        },
-                    )),
-                })
-                .chain(context_ops.into_iter().map(|op| op.to_proto()))
-                .collect()
-        })
     }
 
     pub fn apply_ops(
@@ -1327,8 +986,6 @@ impl TextThread {
         }
         new_anchor_needs_caching
     }
-
-    fn start_cache_warming(&mut self, _model: &Arc<dyn LanguageModel>, _cx: &mut Context<Self>) {}
 
     pub fn update_cache_status_for_completion(&mut self, cx: &mut Context<Self>) {
         let cached_message_ids: Vec<MessageId> = self
@@ -2840,31 +2497,6 @@ impl TextThread {
 
 fn text_threads_dir() -> std::path::PathBuf {
     paths::state_dir().join("text_threads")
-}
-
-#[derive(Debug, Default)]
-pub struct TextThreadVersion {
-    text_thread: clock::Global,
-    buffer: clock::Global,
-}
-
-impl TextThreadVersion {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_proto(proto: &proto::ContextVersion) -> Self {
-        Self {
-            text_thread: language::proto::deserialize_version(&proto.context_version),
-            buffer: language::proto::deserialize_version(&proto.buffer_version),
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn to_proto(&self, context_id: TextThreadId) -> proto::ContextVersion {
-        proto::ContextVersion {
-            context_id: context_id.to_proto(),
-            context_version: language::proto::serialize_version(&self.text_thread),
-            buffer_version: language::proto::serialize_version(&self.buffer),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

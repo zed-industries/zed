@@ -15,7 +15,6 @@ doctest = false
 [features]
 test-support = [
     "acp_thread/test-support",
-    "assistant_text_thread/test-support",
     "eval_utils",
     "gpui/test-support",
     "language/test-support",
@@ -124,7 +123,7 @@ reqwest_client = { workspace = true, optional = true }
 acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
 agent_servers = { workspace = true, features = ["test-support"] }
-assistant_text_thread = { workspace = true, features = ["test-support"] }
+assistant_text_thread.workspace = true
 buffer_diff = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }

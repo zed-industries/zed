@@ -49,7 +49,7 @@ use std::{
     any::{Any, TypeId},
     cmp,
     ops::Range,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -80,7 +80,7 @@ use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker}
 use assistant_text_thread::{
     CacheStatus, Content, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, PendingSlashCommandStatus, TextThread, TextThreadEvent,
-    TextThreadId, ThoughtProcessOutputSection,
+    ThoughtProcessOutputSection,
 };
 
 actions!(
@@ -138,35 +138,11 @@ pub trait AgentPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<TextThreadEditor>>;
 
-    fn open_local_text_thread(
-        &self,
-        workspace: &mut Workspace,
-        path: Arc<Path>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<Result<()>>;
-
-    fn open_remote_text_thread(
-        &self,
-        workspace: &mut Workspace,
-        text_thread_id: TextThreadId,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<Result<Entity<TextThreadEditor>>>;
-
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
         selection_ranges: Vec<Range<Anchor>>,
         buffer: Entity<MultiBuffer>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    );
-
-    fn quote_terminal_text(
-        &self,
-        workspace: &mut Workspace,
-        text: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
