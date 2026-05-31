@@ -69,8 +69,8 @@ jobs:
       env:
         BASE: ${{ inputs.base }}
         HEAD: ${{ inputs.head }}
-    - name: '@actions/upload-artifact results.md'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: results.md
         path: results.md

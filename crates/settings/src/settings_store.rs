@@ -286,13 +286,8 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        Self::new_with_semantic_tokens(cx, default_settings)
-    }
-
-    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings: SettingsContent =
-            SettingsContent::parse_json_with_comments(default_settings).unwrap();
+        let default_settings = Self::parse_default_settings(default_settings).unwrap();
         if !cx.has_global::<DefaultSemanticTokenRules>() {
             cx.set_global::<DefaultSemanticTokenRules>(
                 crate::parse_json_with_comments::<SemanticTokenRules>(
@@ -897,10 +892,23 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        self.default_settings =
-            SettingsContent::parse_json_with_comments(default_settings_content)?.into();
+        self.default_settings = Self::parse_default_settings(default_settings_content)?.into();
         self.recompute_values(None, cx);
         Ok(())
+    }
+
+    /// Parses the default settings JSON and folds any `dev`/`nightly`/`preview`/`stable`
+    /// release-channel overrides and `macos`/`linux`/`windows` platform overrides into
+    /// the returned [`SettingsContent`].
+    ///
+    /// Unlike user settings, default settings are used directly as the base for all
+    /// merges, so overrides must be resolved up front.
+    fn parse_default_settings(default_settings: &str) -> Result<SettingsContent> {
+        let parsed = UserSettingsContent::parse_json_with_comments(default_settings)?;
+        let mut merged = (*parsed.content).clone();
+        merged.merge_from_option(parsed.for_release_channel());
+        merged.merge_from_option(parsed.for_os());
+        Ok(merged)
     }
 
     /// Sets the user settings via a JSON string.
@@ -1777,6 +1785,32 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_default_settings_release_channel_overrides(cx: &mut App) {
+        // The test deals with overrides and should ignore the other set-ups (Preview and Stable runs)
+        if *release_channel::RELEASE_CHANNEL != release_channel::ReleaseChannel::Dev {
+            return;
+        }
+
+        let mut defaults: serde_json::Value =
+            crate::parse_json_with_comments(&default_settings()).unwrap();
+        let root = defaults
+            .as_object_mut()
+            .expect("default settings must be a JSON object");
+        root.insert("dev".into(), serde_json::json!({ "auto_update": false }));
+        root.insert("stable".into(), serde_json::json!({ "auto_update": true }));
+        let defaults_with_overrides = serde_json::to_string(&defaults).unwrap();
+
+        let mut store = SettingsStore::new(cx, &defaults_with_overrides);
+        store.register_setting::<AutoUpdateSetting>();
+
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: false },
+            "dev override from default settings should apply",
+        );
+    }
+
+    #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<AutoUpdateSetting>();
@@ -2143,6 +2177,9 @@ mod tests {
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "tab_size": 37
             }
             "#
@@ -2161,6 +2198,9 @@ mod tests {
             r#"{ "editor.tabSize": 42 }"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "tab_size": 42,
                 "preferred_line_length": 99,
             }
@@ -2181,6 +2221,9 @@ mod tests {
             r#"{}"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "preferred_line_length": 99,
                 "tab_size": 42
             }
@@ -2207,6 +2250,9 @@ mod tests {
               "base_keymap": "VSCode",
               "tabs": {
                 "git_status": true
+              },
+              "minimap": {
+                "show": "always"
               }
             }
             "#
@@ -2231,7 +2277,10 @@ mod tests {
                 "sort_mode": "mixed",
                 "sort_order": "lower"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2248,6 +2297,9 @@ mod tests {
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "buffer_font_fallbacks": [
                 "Consolas",
                 "Courier New"
@@ -2271,7 +2323,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2290,7 +2345,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2309,7 +2367,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2328,7 +2389,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2351,7 +2415,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2372,6 +2439,9 @@ mod tests {
             .to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "hover_popover_hiding_delay": 500,
               "hover_popover_sticky": false
             }

@@ -142,7 +142,10 @@ impl Editor {
             );
         }
 
-        let Some((sema, project)) = self.semantics_provider.clone().zip(self.project.clone())
+        let Some((sema, project)) = self
+            .semantics_provider
+            .clone()
+            .zip(self.project.as_ref().map(|p| p.downgrade()))
         else {
             return;
         };
@@ -283,6 +286,9 @@ impl Editor {
                             .buffer(buffer_id)
                             .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
 
+                        let Some(project) = project.upgrade() else {
+                            return;
+                        };
                         editor.display_map.update(cx, |display_map, cx| {
                             project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
                                 let mut token_highlights = Vec::new();

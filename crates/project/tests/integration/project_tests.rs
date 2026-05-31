@@ -1,11 +1,10 @@
 #![allow(clippy::format_collect)]
 
+mod agent_registry_store;
 mod bookmark_store;
 mod color_extractor;
 mod context_server_store;
 mod debugger;
-mod ext_agent_tests;
-mod extension_agent_tests;
 mod git_store;
 mod image_store;
 mod lsp_command;
@@ -3356,6 +3355,68 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         .await;
 }
 
+#[gpui::test]
+async fn test_updating_lsp_settings_sends_one_did_change_configuration(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-lsp",
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+
+    let _rs_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_rust_server = fake_rust_servers.next().await.unwrap();
+
+    let did_change_count = Arc::new(atomic::AtomicUsize::new(0));
+    fake_rust_server.handle_notification::<lsp::notification::DidChangeConfiguration, _>({
+        let did_change_count = did_change_count.clone();
+        move |_, _| {
+            did_change_count.fetch_add(1, atomic::Ordering::SeqCst);
+        }
+    });
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::SeqCst);
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.lsp.0.insert(
+                    "rust-lsp".into(),
+                    settings::LspSettings {
+                        settings: Some(json!({ "foo": true })),
+                        ..Default::default()
+                    },
+                );
+            });
+        })
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        did_change_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected exactly one workspace/didChangeConfiguration after a settings change"
+    );
+}
+
 #[gpui::test(iterations = 3)]
 async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -4572,8 +4633,8 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             list_worktrees(&project, cx),
             [
+                (path!("/dir/b.rs").as_ref(), true),
                 (path!("/dir/a.rs").as_ref(), false),
-                (path!("/dir/b.rs").as_ref(), true)
             ],
         );
 
@@ -6074,7 +6135,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
                 language::BufferEvent::DirtyChanged
             ]
         );
@@ -6103,9 +6166,13 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
                 language::BufferEvent::DirtyChanged,
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
             ],
         );
         events.lock().clear();
@@ -6120,7 +6187,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6160,7 +6229,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.lock()),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6175,7 +6246,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6275,6 +6348,39 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
             "buffer should reload from disk after undo makes it clean"
         );
         assert!(!buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
+async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    fs.write(
+        path!("/dir/file.txt").as_ref(),
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01",
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    // Test that existing buffer is left untouched
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "");
     });
 }
 
@@ -10487,7 +10593,7 @@ fn merge_pending_ops_snapshots(
                     t_ops.ops.push(s_op);
                 }
             }
-            t_ops.ops.sort_by(|l, r| l.id.cmp(&r.id));
+            t_ops.ops.sort_by_key(|op| op.id);
         } else {
             target.push(s_ops);
         }
@@ -11197,6 +11303,10 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
     )
     .unwrap();
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _| {
         assert_eq!(
@@ -12035,8 +12145,8 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             Path::new(path!("/project/some-worktree")).into(),
         );
         pretty_assertions::assert_eq!(
-            repo.read(cx).original_repo_abs_path,
-            Path::new(path!("/project")).into(),
+            repo.read(cx).main_worktree_abs_path(),
+            Some(Path::new(path!("/project"))),
         );
         assert!(
             repo.read(cx).linked_worktree_path().is_some(),
@@ -12088,8 +12198,8 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             Path::new(path!("/project/subdir/some-submodule")).into(),
         );
         pretty_assertions::assert_eq!(
-            repo.read(cx).original_repo_abs_path,
-            Path::new(path!("/project/subdir/some-submodule")).into(),
+            repo.read(cx).main_worktree_abs_path(),
+            Some(Path::new(path!("/project/subdir/some-submodule"))),
         );
         assert!(
             repo.read(cx).linked_worktree_path().is_none(),
@@ -12280,7 +12390,8 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached => {}
+            SearchResult::LimitReached | SearchResult::WaitingForScan | SearchResult::Searching => {
+            }
         }
     }
     Ok(results
@@ -12701,7 +12812,7 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
     let new_head = commit
         .parents()
         .inspect(|parnet| {
-            parnet.message();
+            let _ = parnet.message();
         })
         .nth(offset)
         .expect("Not enough history");

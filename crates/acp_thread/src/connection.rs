@@ -7,14 +7,14 @@ use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
-use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
+use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc};
 use task::{HideStrategy, SpawnInTerminal, TaskId};
 use ui::{App, IconName};
 use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct UserMessageId(Arc<str>);
+pub struct UserMessageId(SharedString);
 
 impl UserMessageId {
     pub fn new() -> Self {
@@ -48,6 +48,10 @@ pub trait AgentConnection {
     fn agent_id(&self) -> AgentId;
 
     fn telemetry_id(&self) -> SharedString;
+
+    fn agent_version(&self) -> Option<SharedString> {
+        None
+    }
 
     fn new_session(
         self: Rc<Self>,
@@ -111,6 +115,11 @@ pub trait AgentConnection {
         self.supports_load_session() || self.supports_resume_session()
     }
 
+    /// Whether this agent supports additional session directories.
+    fn supports_session_additional_directories(&self) -> bool {
+        false
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn terminal_auth_task(
@@ -122,6 +131,14 @@ pub trait AgentConnection {
     }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
+
+    fn supports_logout(&self) -> bool {
+        false
+    }
+
+    fn logout(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Logout is not supported")))
+    }
 
     fn prompt(
         &self,
@@ -306,7 +323,7 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
-    fn supports_delete(&self) -> bool {
+    fn supports_delete(&self, _cx: &App) -> bool {
         false
     }
 
@@ -318,7 +335,7 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+    fn watch(&self, _cx: &mut App) -> Option<async_channel::Receiver<SessionListUpdate>> {
         None
     }
 
@@ -637,6 +654,8 @@ mod test_support {
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
 
+    use crate::AuthorizationKind;
+
     use super::*;
 
     /// Creates a PNG image encoded as base64 for testing.
@@ -688,6 +707,7 @@ mod test_support {
         permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
         supports_load_session: bool,
+        supports_session_additional_directories: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
     }
@@ -710,6 +730,7 @@ mod test_support {
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_load_session: false,
+                supports_session_additional_directories: false,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
             }
@@ -729,6 +750,14 @@ mod test_support {
 
         pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
             self.supports_load_session = supports_load_session;
+            self
+        }
+
+        pub fn with_supports_session_additional_directories(
+            mut self,
+            supports_session_additional_directories: bool,
+        ) -> Self {
+            self.supports_session_additional_directories = supports_session_additional_directories;
             self
         }
 
@@ -849,6 +878,10 @@ mod test_support {
             self.supports_load_session
         }
 
+        fn supports_session_additional_directories(&self) -> bool {
+            self.supports_session_additional_directories
+        }
+
         fn load_session(
             self: Rc<Self>,
             session_id: acp::SessionId,
@@ -911,6 +944,7 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
+                                        AuthorizationKind::PermissionGrant,
                                         cx,
                                     )
                                 })??

@@ -673,6 +673,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     source: CompletionSource::Custom,
                     insert_text_mode: None,
                     confirm: None,
+                    group: None,
                 })
                 .collect(),
             display_options: CompletionDisplayOptions::default(),
