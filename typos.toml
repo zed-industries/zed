@@ -98,6 +98,10 @@ extend-ignore-re = [
     # Yarn Plug'n'Play
     "PnP",
     # `image` crate method: Delay::from_numer_denom_ms
-    "numer"
+    "numer",
+    # Abbreviation for foreignObject in mermaid SVG processing
+    "fo",
+    # Mermaid CSS class name for state diagram composites
+    "composit"
 ]
 check-filename = true

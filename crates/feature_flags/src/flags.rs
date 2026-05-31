@@ -35,6 +35,18 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
+pub struct HandoffFeatureFlag;
+
+impl FeatureFlag for HandoffFeatureFlag {
+    const NAME: &'static str = "handoff";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(HandoffFeatureFlag);
+
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -58,6 +70,18 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
     }
 }
 register_feature_flag!(UpdatePlanToolFeatureFlag);
+
+pub struct UpdateTitleToolFeatureFlag;
+
+impl FeatureFlag for UpdateTitleToolFeatureFlag {
+    const NAME: &'static str = "update-title-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(UpdateTitleToolFeatureFlag);
 
 pub struct LspToolFeatureFlag;
 
@@ -124,14 +148,17 @@ impl FeatureFlag for AutoWatchFeatureFlag {
 }
 register_feature_flag!(AutoWatchFeatureFlag);
 
-pub struct SkillsFeatureFlag;
+/// Wraps agent-run terminal commands in an OS-level sandbox where supported
+/// (currently macOS Seatbelt only). When off, terminal commands run with the
+/// agent's full ambient permissions, as they always have.
+pub struct SandboxingFeatureFlag;
 
-impl FeatureFlag for SkillsFeatureFlag {
-    const NAME: &'static str = "skills";
+impl FeatureFlag for SandboxingFeatureFlag {
+    const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
 
     fn enabled_for_staff() -> bool {
-        true
+        false
     }
 }
-register_feature_flag!(SkillsFeatureFlag);
+register_feature_flag!(SandboxingFeatureFlag);

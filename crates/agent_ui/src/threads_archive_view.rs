@@ -821,7 +821,11 @@ impl ThreadsArchiveView {
             let state = task.await?;
             let task = cx.update(|cx| {
                 if let Some(session_id) = &session_id {
-                    if let Some(list) = state.connection.session_list(cx) {
+                    if let Some(list) = state
+                        .connection
+                        .session_list(cx)
+                        .filter(|list| list.supports_delete(cx))
+                    {
                         list.delete_session(session_id, cx)
                     } else {
                         Task::ready(Ok(()))
