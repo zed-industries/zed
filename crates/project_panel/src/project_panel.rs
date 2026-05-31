@@ -146,6 +146,7 @@ pub struct ProjectPanel {
     folded_directory_drag_target: Option<FoldedDirectoryDragTarget>,
     drag_target_entry: Option<DragTarget>,
     marked_entries: Vec<SelectedEntry>,
+    compare_selection: Option<SelectedEntry>,
     selection: Option<SelectedEntry>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     filename_editor: Entity<Editor>,
@@ -401,6 +402,9 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Compare files without marking, for better discoverability.
+        SelectForCompare,
+        CompareWithSelected,
         /// Undoes the last file operation.
         Undo,
         /// Redoes the last undone file operation.
@@ -809,6 +813,7 @@ impl ProjectPanel {
                 folded_directory_drag_target: None,
                 drag_target_entry: None,
                 marked_entries: Default::default(),
+                compare_selection: Option<SelectedEntry>,
                 selection: None,
                 context_menu: None,
                 filename_editor,
@@ -1106,6 +1111,12 @@ impl ProjectPanel {
                             .when(should_show_compare, |menu| {
                                 menu.separator()
                                     .action("Compare Marked Files", Box::new(CompareMarkedFiles))
+                            })
+                            .when(!compare_selection, |menu| {
+                                menu.action("Compare: Select for Compare", Box::new(SelectForCompare))
+                            })
+                            .when(compare_selection, |menu| {
+                                menu.action("Compare: Compare With Selected", Box::new(CompareWithSelected))
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
@@ -3475,12 +3486,18 @@ impl ProjectPanel {
         }
     }
 
-    fn file_abs_paths_to_diff(&self, cx: &Context<Self>) -> Option<(PathBuf, PathBuf)> {
-        let mut selections_abs_path = self
-            .marked_entries
-            .iter()
+    fn entry_paths_to_diff<I>(
+        &self,
+        entries: I,
+        cx: &Context<Self>,
+    ) -> Option<(PathBuf, PathBuf)>
+    where
+        I: IntoIterator<Item = SelectedEntry>,
+    {
+        let project = self.project.read(cx);
+        let mut selections_abs_path = entries
+            .into_iter()
             .filter_map(|entry| {
-                let project = self.project.read(cx);
                 let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
                 let entry = worktree.read(cx).entry_for_id(entry.entry_id)?;
                 if !entry.is_file() {
@@ -3492,7 +3509,15 @@ impl ProjectPanel {
 
         let last_path = selections_abs_path.next()?;
         let previous_to_last = selections_abs_path.next()?;
+
         Some((previous_to_last, last_path))
+    }
+
+    fn file_abs_paths_to_diff(
+        &self,
+        cx: &Context<Self>,
+    ) -> Option<(PathBuf, PathBuf)> {
+        self.entry_paths_to_diff(self.marked_entries.iter().copied(), cx)
     }
 
     fn compare_marked_files(
@@ -3501,14 +3526,29 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selected_files = self.file_abs_paths_to_diff(cx);
-        if let Some((file_path1, file_path2)) = selected_files {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    FileDiffView::open(file_path1, file_path2, workspace.weak_handle(), window, cx)
-                        .detach_and_log_err(cx);
-                })
-                .ok();
+        if let Some((file1, file2)) = self.file_abs_paths_to_diff(cx) {
+            self.open_diff(file1, file2, window, cx);
+        }
+    }
+
+    fn compare_with_selected(
+        &mut self,
+        _: &CompareWithSelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(first) = self.compare_selection else {
+            return;
+        };
+
+        let Some(second) = self.selection else {
+            return;
+        };
+
+        if let Some((file1, file2)) =
+            self.entry_paths_to_diff([first, second], cx)
+        {
+            self.open_diff(file1, file2, window, cx);
         }
     }
 
