@@ -266,13 +266,6 @@ impl EditorElement {
         register_action(editor, window, Editor::convert_to_upper_camel_case);
         register_action(editor, window, Editor::convert_to_lower_camel_case);
         register_action(editor, window, Editor::convert_to_opposite_case);
-        register_action(
-            editor,
-            window,
-            |editor, _: &crate::actions::CreateNavHistoryEntry, _window, cx| {
-                editor.create_nav_history_entry(cx)
-            },
-        );
         register_action(editor, window, Editor::convert_to_sentence_case);
         register_action(editor, window, Editor::toggle_case);
         register_action(editor, window, Editor::convert_to_rot13);

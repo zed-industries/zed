@@ -320,7 +320,6 @@ It displays no footer and abbreviates paths to tildes.
 - `workspace::CopyFilePaths` which opens a picker to copy the file path to clipboard
 - `workspace::MakeSinglePane` which closes all other panes except the active one
 - `snippets::ReloadSnippets` because auto-reloading snippets is not working for me
-- `editor::CreateNavHistoryEntry`
 - `editor::CopyAll` to copy entire buffer content to clipboard
 - `editor::CountTokens` which counts the tokens in the current buffer using `o200k_base` via the `tiktoken` crate
 - `editor::StopAllLanguageServers` which stops all language servers. It works like the bottom button in `Language Servers > Stop All Servers`

@@ -426,8 +426,6 @@ actions!(
         ConfirmRename,
         /// Confirms completion by inserting at cursor.
         ConfirmCompletionInsert,
-        /// Creates a navigation history entry at the current cursor position.
-        CreateNavHistoryEntry,
         /// Confirms completion by replacing existing text.
         ConfirmCompletionReplace,
         /// Navigates to the first item in the context menu.
