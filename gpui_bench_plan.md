@@ -8,7 +8,7 @@ triggers. We currently reach for `criterion` + `TestAppContext`, then fall back 
 `xctrace` + `dsymutil` for any real attribution. That workflow is slow, manual, and
 its numbers are misleading.
 
-This came out of the agent `edit_file` performance work. The pathological case was
+This came out of the agent `edit_file_tool` performance work. The pathological case was
 applying each `CharOperation` as its own `buffer.edit` transaction, so one edit
 fanned out into hundreds of `BufferEvent::Edited` events, each triggering a
 tree-sitter reparse, an LSP `didChange`, the action-log diff, and the editor's
@@ -57,91 +57,195 @@ breakdown overstates editor rendering and conflates threads.
 
 ## Proposed solution
 
-A `#[gpui::bench]` macro that provides a `BenchAppContext`, layered on top of
-`criterion`. The macro owns app/window/scheduler setup (excluded from timing),
-exposes richer measurement than wall-clock, and can drop a trace next to the
-criterion results.
+A `#[gpui::bench]` macro that provides a `BenchAppContext` and a
+`BenchBencher`, layered on top of `criterion`. `BenchAppContext` owns app,
+window, scheduler, recorder, and teardown state. `BenchBencher` stays close to
+Criterion's `Bencher` API while adding GPUI-specific helpers for rendering
+frames, measuring foreground time, and running mounted views.
 
 The core design is **one backend-agnostic span + counter recorder**, with the
-measurement frontends (criterion) and the trace exporters (Tracy/Perfetto) both
-reading from it. Capture once, surface many ways.
+measurement frontends (Criterion) and the trace exporters (Tracy/Perfetto) both
+reading from it. Capture once, surface many ways. Criterion still owns sampling,
+statistics, baselines, and reporting for a single scalar measurement at a time;
+GPUI sidecar reports and traces carry the richer multi-metric data.
 
 ## Capabilities
 
-1. **Real thread pool.** Run background work on real threads via a `BenchScheduler`
-   (the `Scheduler` trait already abstracts this; `PlatformScheduler` is the
-   production impl). This lets us measure only foreground occupancy, fixing the
-   single-thread conflation.
-2. **Per-update closure timing.** Reuse the miniprof hook
-   (`TaskTiming`/`GLOBAL_THREAD_TIMINGS`, recorded in the dispatcher trampoline) and
-   extend it to the `cx.update` / `Context::update` / `flush_effects` entry points,
-   attributed by `#[track_caller]` call site.
-3. **Update/effect cascade counts.** Per `flush_effects` cycle: events emitted,
-   observer/subscription callbacks fired, entities notified, windows invalidated,
-   re-renders triggered, buffer transactions, tree-sitter reparses. These are
-   **deterministic** and make the best regression gates.
-4. **Foreground-blocking / inter-frame time / frame drops.** With a real scheduler
-   and a modeled frame cadence, bucket foreground occupancy into frames against a
-   budget (16.67 ms / 8.33 ms) and report longest contiguous span + frames dropped.
-5. **Allocation counting.** Allocations/bytes per update via a counting allocator,
-   to catch alloc storms.
-6. **Realistic frame loop + window sizing.** Model a normal pane size and coalesce
-   draws to a vsync cadence, removing the maximized-window / per-edit-repaint
-   artifacts.
-7. **Trace export.** Emit Tracy (via the existing importer) and Chrome/Perfetto JSON
-   for timeline drill-down.
-8. **Regression gates.** Count-based `assert!`s that fail the build on fan-out
-   regressions.
+### Criterion-backed measurements
+
+- **Wall time first.** The initial version should use Criterion's normal wall-clock
+  measurement so the macro feels familiar and the PoC remains small.
+- **Foreground time and missed frames next.** Phase 2 should add foreground busy time
+  and frame-drop / missed-frame measurements, probably via `iter_custom` before a
+  custom `Measurement` implementation.
+- **Multiple requested measurements become multiple Criterion benchmarks.** Criterion
+  models one scalar per benchmark result, so a single GPUI workload requesting
+  multiple measurements should expand to distinct benchmark IDs such as
+  `render_button/wall_time`, `render_button/foreground_time`, and
+  `render_button/missed_frames`.
+- **Rich reports stay out of Criterion's scalar model.** A `BenchReport` can contain
+  wall time, foreground time, missed frames, spans, counters, allocation stats, and
+  render details, but Criterion should analyze one chosen scalar per run.
+- **Later measurement backends.** Allocation bytes, longest foreground span,
+  renderer-blocking time, CPU cycles, instructions, cache misses, and branch misses
+  can be added later where platform support exists.
+
+### GPUI recorder
+
+- **Backend-agnostic spans and counters.** Record once, then feed Criterion,
+  Perfetto, miniprof/Tracy, and sidecar JSON/Markdown reports.
+- **Per-update timing.** Reuse the miniprof hook (`TaskTiming` /
+  `GLOBAL_THREAD_TIMINGS`, recorded in dispatcher trampolines) and extend it to
+  `App::update`, entity updates, window updates, and `flush_effects`, attributed by
+  `#[track_caller]` call site.
+- **Update/effect cascade counts.** Per outer update / `flush_effects` cycle: update
+  calls, entity updates, nested update depth, effects queued/flushed, events emitted,
+  observer/subscription callbacks fired, entities notified, global notifications,
+  windows invalidated, re-renders triggered, deferred callbacks, and action dispatches.
+- **Notify attribution.** Track explicit `Context::notify()` separately from total
+  `App::notify(...)` calls. Some paths, such as `GpuiBorrow` drop, notify implicitly
+  without going through `Context::notify`; the report should make that distinction
+  visible.
+- **Extensible crate-specific counters.** GPUI owns generic app/render/frame metrics.
+  Editor, terminal, language, project, and agent crates should add domain-specific
+  counters through a generic span/counter API instead of baking Zed-specific metrics
+  into GPUI.
+- **Low overhead when disabled.** Hooks sit on hot paths, so instrumentation must be
+  feature-gated and effectively zero-cost outside benchmark/instrumentation builds.
+
+### Frame and render instrumentation
+
+- **Foreground-blocking / inter-frame time / frame drops.** With a real scheduler and
+  a modeled frame cadence, bucket foreground occupancy into frames against a budget
+  (16.67 ms / 8.33 ms) and report longest contiguous span, renderer-blocking time,
+  missed frames, and worst frame delay.
+- **Realistic frame loop + window sizing.** Model normal pane/window sizes and
+  coalesce draws to a vsync cadence, removing maximized-window and per-edit-repaint
+  artifacts.
+- **Render pipeline spans.** Measure layout, prepaint, paint, scene construction, and
+  later backend-specific renderer work. Attribute these spans to windows, entities,
+  and call sites where possible.
+- **Render cache/reuse metrics.** Track view cache reuse, dirty subtree size, layout
+  cache hits/misses, text/glyph/image/SVG/path cache hits/misses, shaped text runs,
+  paths built/tessellated, scene command count, and unchanged subtree skips as the
+  render pipeline instrumentation matures.
+- **First frame vs steady state.** Make cold first-frame render, warmed steady-state
+  render, and incremental-update render distinct benchmark modes.
+
+### First-class render benchmark API
+
+- **Mounted views.** Provide an ergonomic `cx.mount_view(...)` / `cx.render_entity(...)`
+  API that mounts an `Entity<T>` where `T: Render` in a benchmark window and returns a
+  `MountedView<T>`.
+- **Renderer iteration helpers.** `BenchBencher` should provide helpers such as
+  `bench_renderer(&mut MountedView<T>, ...)` that run user code between frames, flush
+  effects, render one or more frames, and record layout/prepaint/paint/frame metrics.
+- **Actions and updates between frames.** Mounted views should support dispatching
+  actions, updating the mounted entity, resizing the window, warming caches, rendering
+  a single frame, and rendering every frame in a modeled frame loop.
+
+### Trace export and artifacts
+
+- **Trace export.** Emit miniprof JSON for Tracy import and Chrome/Perfetto JSON for
+  timeline drill-down.
+- **Artifact layout.** Store GPUI artifacts next to Criterion output so local runs and
+  CI uploads are easy to find: trace files, sidecar `BenchReport` JSON, and a concise
+  Markdown summary.
+- **Regression gates.** Provide count-based and frame-count assertion helpers for
+  deterministic CI gates; use Criterion baselines for tracked latency trends, not hard
+  pass/fail wall-clock gates.
+
+### Optional platform counters
+
+- **Hardware counters.** On platforms that support it, add optional measurements for
+  cycles, instructions, cache misses, and branch misses. Linux can use perf counters;
+  macOS should initially rely on Instruments / `xctrace` rather than first-class
+  portable hardware-counter support.
 
 ## Criterion integration
 
 `criterion` only models **one scalar per iteration**, but it gives us a lot we should
 not reimplement: warmup, adaptive sampling, outlier detection, summary statistics,
-baseline save/compare with change detection (p-values), and CLI/HTML reporting.
+baseline save/compare with change detection (p-values), CLI/HTML reporting, and
+profile-mode execution.
 
-### The seam: `iter_custom`
+The GPUI API should stay close to Criterion so existing Criterion users can onboard
+quickly:
 
-`iter`/`iter_batched` time wall-clock of the whole closure, which is what conflates
-threads. `iter_custom` instead lets the harness return the `Duration`, so the
-`BenchAppContext` runs the workload on a real pool and hands criterion only the
-**foreground-blocking time**:
+```rust
+#[gpui::bench(sample_size = 20, measurement = wall_time)]
+fn render_button(bencher: &mut BenchBencher<'_>, cx: &mut BenchAppContext) {
+    let mut view = cx.mount_view(|window, cx| ButtonView::new(window, cx));
+
+    bencher.bench_renderer(&mut view, |view, window, cx| {
+        window.dispatch_action(...);
+        view.update(cx, |button, cx| button.click(cx));
+    });
+}
+```
+
+### Initial version: normal Criterion wall time
+
+The first implementation should inject `BenchAppContext` and `BenchBencher`, then let
+`BenchBencher::iter` delegate to Criterion's normal `Bencher::iter`. This keeps the
+PoC simple and produces ordinary Criterion output.
+
+### Phase 2 seam: `iter_custom`
+
+`iter` / `iter_batched` time wall-clock of the whole closure, which conflates
+foreground work, background work, and harness work. `iter_custom` lets the harness
+return the scalar Criterion should analyze. Phase 2 can use it for foreground time
+and missed-frame measurements before committing to custom `Measurement` plumbing:
 
 ```rust
 b.iter_custom(|iters| {
-    let mut foreground = Duration::ZERO;
-    for _ in 0..iters {
-        let mut cx = BenchAppContext::new();      // setup excluded
-        cx.run_workload(|cx| run_streamed_edit(cx));
-        foreground += cx.foreground_busy_time();  // harness-measured, not wall-clock
-    }
-    foreground
+    cx.iter_foreground_time(iters, |cx| {
+        run_workload(cx);
+    })
 });
 ```
 
-Criterion then runs its statistics on the right number. This is a small step from the
-`iter_batched` we already use.
+Criterion then runs its statistics on the right number.
 
-### The clean version: a custom `Measurement`
+### Later: custom `Measurement`
 
 `criterion` is generic over a `Measurement` trait (default `WallTime`; third-party
-impls exist for CPU cycles / perf counters). Implementing it for "foreground busy
-time" makes criterion report and graph **"foreground ms"** natively. One
-`Measurement` per group, so it's one metric per run (run separate groups for
-wall-time vs foreground-time vs alloc-count).
+impls exist for CPU cycles / perf counters). Implementing measurements such as
+`ForegroundTime`, `MissedFrames`, or `AllocatedBytes` makes Criterion report those
+units natively. A Criterion group has one `Measurement`, so multiple requested GPUI
+measurements should generate multiple Criterion benchmark IDs or groups.
 
-### What stays out of criterion
+A rich `BenchReport` may contain every metric from a run, but Criterion still reduces
+one selected measurement to `f64` for statistical analysis. Use sidecar reports and
+traces for the full multi-metric data.
 
-- **Counts** (events, transactions, reparses, allocations) → plain `#[test]`
-  assertions. Deterministic, and far less flaky as CI gates than wall-clock.
-- **Frame-drop lists / per-update breakdowns / traces** → diagnostics or a
-  side-channel artifact, not criterion measurements.
+### Later: Criterion `Profiler` / `--profile-time`
+
+Criterion supports `--profile-time N`, which runs each benchmark workload for about
+`N` seconds without normal sampling/statistical analysis so an external or in-process
+profiler can collect data. Its `Profiler` trait has `start_profiling` and
+`stop_profiling` hooks with the benchmark ID and output directory. A later GPUI
+integration should use this to enable the recorder for profile-mode runs and write
+Perfetto/miniprof/Tracy artifacts next to Criterion's output.
+
+This is a later-phase integration because `Profiler` hooks do not receive
+`BenchAppContext`; we need a clean bridge between Criterion's profile lifecycle and
+GPUI's active recorder. Early versions can use a simpler non-timed trace pass.
+
+### What stays out of Criterion
+
+- **Counts** (events, transactions, reparses, notifies, observer callbacks) →
+  deterministic assertion helpers / tests. These are less flaky as CI gates than
+  time-based measurements.
+- **Frame-drop lists / per-update breakdowns / traces** → `BenchReport` sidecars and
+  trace artifacts, not Criterion's primary scalar result.
 
 ### Caveats
 
-- A real thread pool widens criterion's CIs and triggers more outlier warnings.
+- A real thread pool widens Criterion's CIs and triggers more outlier warnings.
   Manage with more samples; fine for tracked trends.
-- **CI gating on criterion wall-clock is flaky** on shared runners. Gate CI on the
-  **counts**; use criterion's baseline/change-detection for tracked latency trends,
+- **CI gating on Criterion wall-clock is flaky** on shared runners. Gate CI on the
+  **counts**; use Criterion's baseline/change-detection for tracked latency trends,
   not hard pass/fail.
 
 ## Trace export (Tracy / Perfetto / Instruments)
@@ -157,10 +261,16 @@ Use one in-memory model with pluggable exporters.
 - **Chrome Trace / Perfetto — best portable default.** A plain JSON array of
   `{name, ph, ts, dur, pid, tid, args}` opens directly in `ui.perfetto.dev` with no
   importer and no macOS dependency. It maps cleanly onto what we care about:
-  - nested duration events → the update / `flush_effects` / render hierarchy,
+  - nested duration events → the update / `flush_effects` / layout / prepaint /
+    paint hierarchy,
   - **flow events (`ph: "s"/"f"`) → the cascade chain** (edit → arrows to each
-    triggered effect), the unique thing criterion can't express,
+    triggered effect), the unique thing Criterion can't express,
   - **counter events (`ph: "C"`) → the count metrics** as area-graph tracks.
+- **Criterion profile-mode artifacts — later.** A polished implementation should use
+  Criterion's `Profiler` hooks during `--profile-time` runs to write GPUI artifacts
+  into the benchmark output directory. This is not required for the initial wall-time
+  PoC because bridging Criterion's profile lifecycle to the active `BenchAppContext`
+  recorder needs additional design.
 - **Instruments — qualified.** You can't synthesize a `.trace` bundle from data.
   Realistic options: record the bench binary under `xcrun xctrace record` (works
   today; what we did), or emit `os_signpost` intervals that show in Instruments
@@ -172,7 +282,7 @@ Real concurrency trades away deterministic ordering, which is what makes wall-cl
 perf gates flaky. Split the two:
 
 - **Times** (foreground-blocking, frame timings) → advisory + tracked trends via
-  criterion; do not hard-gate CI on them.
+  Criterion; do not hard-gate CI on them.
 - **Counts** (events, observers, transactions, reparses, allocations) → deterministic
   even with a real pool; these are the actual CI gates.
 
@@ -181,59 +291,92 @@ assertable.**
 
 ## Phased plan
 
-### Phase 1 — Foundation: criterion + Tracy plumbing (do this first)
+### Phase 1 — Foundation: Criterion wall-time PoC
 
 Establish the harness scaffolding so every later metric is an incremental add, not a
-rewrite. No new scheduler or metrics yet.
+rewrite. Keep this phase small and Criterion-like.
 
-- `BenchAppContext` wrapping `AppContext` or `App`, owning setup outside the timed region
-  and the leak-detector/window teardown.
-- A backend-agnostic span recorder seeded from the existing miniprof timing data.
-- `criterion` wired through `iter_custom` (start with wall-clock of the measured
-  region; the number gets more accurate in Phase 2).
-- A `#[gpui::bench]` macro that expands to a `criterion_group!` + `bench_function`,
-  injects the `BenchAppContext`, and on a separate non-timed pass dumps a trace.
-- Trace exporters: **miniprof JSON** (reuse `tracy-import-miniprofiler`) and
-  **Chrome/Perfetto JSON**.
-- First consumer: port the existing `crates/agent/benches/edit_file_tool.rs` to the
-  macro and confirm we can open its trace in Tracy/Perfetto.
+- `BenchAppContext` as a benchmark-specific app context, distinct from
+  `TestAppContext`, owning app/window/scheduler setup and teardown outside the timed
+  region.
+- `BenchBencher` as a Criterion-like wrapper around `criterion::Bencher`, initially
+  delegating to normal wall-time `iter` / `iter_batched` APIs.
+- A `#[gpui::bench]` macro that expands to Criterion `bench_function` plumbing,
+  injects `BenchAppContext` and `BenchBencher`, and supports basic Criterion-like
+  options such as `sample_size` over time.
+- Initial measurement: **wall time only**.
+- First consumer: port a small existing benchmark to prove one command builds, runs,
+  and prints normal Criterion stats.
 
-Outcome: one command runs the bench, gets criterion stats, and drops a trace you can
-open in Tracy or Perfetto. Everything below plugs into this.
+Outcome: GPUI benchmarks look familiar to Criterion users and can run with a real
+`BenchAppContext`, but no deep GPUI metrics are required yet.
 
-### Phase 2 — Truthful foreground time
+### Phase 2 — Mounted render benchmarks + foreground/frame measurements
 
-- `BenchScheduler` running a real background thread pool.
-- `foreground_busy_time()` measurement; optionally a custom criterion `Measurement`
-  so criterion reports "foreground ms" natively.
+Make rendering a specific entity first-class and add the first GPUI-specific scalar
+measurements.
 
-Outcome: numbers separate main-thread blocking from offloaded work (fixes the
-single-thread conflation).
+- `MountedView<T>` for an `Entity<T>` where `T: Render`, mounted in a benchmark
+  window with controlled size/theme/font setup.
+- `cx.mount_view(...)` / `cx.render_entity(...)` helpers for quickly creating render
+  benchmarks without manually wiring windows.
+- `BenchBencher::bench_renderer(&mut MountedView<T>, ...)`, rendering one frame per
+  iteration after running user-provided code between frames.
+- Helpers for dispatching actions, updating the mounted entity, resizing the window,
+  rendering a single frame, warming caches, and rendering a modeled frame loop.
+- `BenchScheduler` or equivalent foreground/background separation sufficient to
+  compute foreground busy time.
+- `foreground_time` and `missed_frames` measurements, initially via `iter_custom`.
+- Basic frame model: frame cadence, longest foreground span, missed frames, and worst
+  frame delay.
+
+Outcome: agent panel, terminal, editor, and simple GPUI component render benchmarks
+can be written ergonomically, and numbers begin to reflect main-thread blocking and
+frame impact rather than only wall-clock time.
 
 ### Phase 3 — Cascade instrumentation + regression gates (highest value)
 
-- Per-`flush_effects` counters: events emitted, observer callbacks, notifies, window
-  invalidations, re-renders, buffer transactions, reparses.
+Add deterministic fan-out visibility and assertion helpers.
+
+- Per-outer-update / `flush_effects` counters: update calls, entity updates, nested
+  depth, effects queued/flushed, events emitted, observer/subscription callbacks,
+  explicit `Context::notify()` calls, total `App::notify(...)` calls, implicit notify
+  paths such as `GpuiBorrow` drop, window invalidations, and re-renders.
+- Generic span/counter API for domain-specific metrics from editor, terminal,
+  language, project, and agent crates.
 - Allocation counting.
 - Count-based `assert!` helpers and the first regression tests (e.g. "an N-op edit
   emits one `Edited` per chunk, not per op").
 - Surface counters as Perfetto counter tracks / Tracy plots.
 
-Outcome: the footgun class is caught deterministically in CI.
+Outcome: the fan-out footgun class is caught deterministically in CI.
 
-### Phase 4 — Frame realism
+### Phase 4 — Render pipeline instrumentation
 
-- Realistic window sizing (normal pane, not maximized).
-- Modeled frame loop with coalesced draws.
-- Frame-drop metric (longest foreground span per frame, frames over budget).
+Add the detail needed to improve GPUI's renderer itself.
 
-Outcome: editor-render cost reflects what users feel, not a maximized-window per-edit
-repaint.
+- Layout, prepaint, paint, scene construction, and render-backend spans.
+- Entity/window/callsite attribution for render pipeline spans.
+- View cache reuse, dirty subtree size, layout cache hits/misses, text/glyph/image /
+  SVG/path cache hits/misses, shaped text runs, paths built/tessellated, scene command
+  count, and unchanged subtree skips.
+- Distinct cold first-frame, warmed steady-state, and incremental-update render modes.
 
-### Phase 5 — Polish
+Outcome: GPUI render pipeline changes can be benchmarked directly and attributed to
+specific phases and cache behavior.
 
-- Macro ergonomics, parameters (window size, frame budget, pool size, seed).
-- CI integration: count gates as required checks; criterion baselines tracked for
+### Phase 5 — Trace/export polish and advanced measurements
+
+- Trace exporters: **miniprof JSON** (reuse `tracy-import-miniprofiler`) and
+  **Chrome/Perfetto JSON** with spans, flows, and counters.
+- Criterion `Profiler` integration for seamless `--profile-time` trace artifacts.
+- Macro ergonomics and Criterion-like parameters: `sample_size`, `warm_up_time`,
+  `measurement_time`, `app = fresh_per_sample`, `drain = after_iteration`, window
+  size, frame budget, pool size, and seed.
+- Optional custom Criterion `Measurement` implementations for foreground time,
+  missed frames, allocation bytes, renderer-blocking time, and platform hardware
+  counters.
+- CI integration: count gates as required checks; Criterion baselines tracked for
   trends.
 - Richer Tracy export (zones/frames/plots) if the importer extension is worth it.
 
@@ -246,6 +389,8 @@ repaint.
 - CI noise budget for any time-based signal; lean on counts for gating.
 - Whether to extend `tracy-import-miniprofiler` for zones/plots or just rely on
   Perfetto for the rich view.
+- How to bridge Criterion `Profiler` lifecycle hooks to the active `BenchAppContext`
+  recorder without global state that makes parallel or multi-app benchmarks fragile.
 
 ## Reference points in the existing codebase
 
@@ -259,5 +404,7 @@ repaint.
   `pending_effects` / the `Effect` enum.
 - Existing miniprof + Tracy import path: `crates/miniprofiler_ui/` and
   `docs/src/performance.md`.
-- Current bench to port first: `crates/agent/benches/edit_file_tool.rs`
-  (already `harness = false`, `criterion`, `--profile-time` compatible).
+- Current PoC bench: `crates/editor/benches/editor_render.rs`.
+- Near-term consumers: agent panel render benchmarks, terminal render benchmarks,
+  and `crates/agent/benches/edit_file_tool.rs` (already `harness = false`,
+  `criterion`, `--profile-time` compatible).
