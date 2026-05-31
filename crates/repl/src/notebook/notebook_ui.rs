@@ -43,9 +43,9 @@ use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
-    AddCodeBlock, AddMarkdownBlock, ClearOutputs, EnterCommandMode, EnterEditMode, InterruptKernel,
-    MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook, RestartKernel, Run,
-    RunAll, RunAndAdvance,
+    AddCodeBlock, AddMarkdownBlock, ClearOutputs, DeleteCell, EnterCommandMode, EnterEditMode,
+    InterruptKernel, MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook,
+    RestartKernel, Run, RunAll, RunAndAdvance,
 };
 
 /// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
@@ -760,6 +760,18 @@ impl NotebookEditor {
         }
     }
 
+    fn delete_cell(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let index = self.selected_cell_index;
+        let Some(cell_id) = self.cell_order.get(index).cloned() else {
+            return;
+        };
+        self.cell_order.remove(index);
+        self.cell_map.remove(&cell_id);
+        self.cell_list.splice(index..index + 1, 0);
+        self.selected_cell_index = index.min(self.cell_order.len().saturating_sub(1));
+        cx.notify();
+    }
+
     fn insert_cell_at_current_position(&mut self, cell_id: CellId, cell: Cell) {
         let insert_index = if self.cell_order.is_empty() {
             0
@@ -1086,6 +1098,22 @@ impl NotebookEditor {
                             ),
                     )
                     .child(
+                        Self::button_group(window, cx).child(
+                            Self::render_notebook_control(
+                                "delete-cell",
+                                IconName::Trash,
+                                window,
+                                cx,
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action("Delete cell", &DeleteCell, cx)
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(DeleteCell), cx);
+                            }),
+                        ),
+                    )
+                    .child(
                         Self::button_group(window, cx)
                             .child(
                                 Self::render_notebook_control(
@@ -1355,6 +1383,9 @@ impl Render for NotebookEditor {
             )
             .on_action(
                 cx.listener(|this, _: &MoveCellDown, window, cx| this.move_cell_down(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &DeleteCell, window, cx| this.delete_cell(window, cx)),
             )
             .on_action(cx.listener(|this, _: &AddMarkdownBlock, window, cx| {
                 this.add_markdown_block(window, cx)
