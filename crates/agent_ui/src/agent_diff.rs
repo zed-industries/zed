@@ -1238,12 +1238,13 @@ struct WorkspaceThread {
     _workspace_subscription: Option<Subscription>,
 }
 
-struct AgentDiffGlobal(Entity<AgentDiff>);
+/// Global handle for [`AgentDiff`], used to observe agent edit state across the application.
+pub struct AgentDiffGlobal(pub(crate) Entity<AgentDiff>);
 
 impl Global for AgentDiffGlobal {}
 
 impl AgentDiff {
-    fn global(cx: &mut App) -> Entity<Self> {
+    pub fn global(cx: &mut App) -> Entity<Self> {
         cx.try_global::<AgentDiffGlobal>()
             .map(|global| global.0.clone())
             .unwrap_or_else(|| {
@@ -1252,6 +1253,41 @@ impl AgentDiff {
                 cx.set_global(global);
                 entity
             })
+    }
+
+    /// Project panel uses this to display agent-edit indicators on changed files and their parent directories.
+    pub fn agent_changed_project_paths(
+        workspace: &WeakEntity<Workspace>,
+        cx: &App,
+    ) -> HashSet<ProjectPath> {
+        let Some(agent_diff) = cx.try_global::<AgentDiffGlobal>() else {
+            return HashSet::default();
+        };
+        let agent_diff = agent_diff.0.read(cx);
+        let Some(workspace_thread) = agent_diff.workspace_threads.get(workspace) else {
+            return HashSet::default();
+        };
+        let Some(thread) = workspace_thread.thread.upgrade() else {
+            return HashSet::default();
+        };
+        let action_log = thread.read(cx).action_log();
+        let mut paths = HashSet::default();
+        for (buffer, _) in action_log.read(cx).changed_buffers(cx) {
+            let buffer = buffer.read(cx);
+            let Some(project_path) = buffer.project_path(cx) else {
+                continue;
+            };
+            // Include the file itself and all ancestor directories so folders
+            // containing agent-edited files also show the indicator.
+            for ancestor in project_path.path.ancestors() {
+                paths.insert(ProjectPath {
+                    worktree_id: project_path.worktree_id,
+                    path: ancestor.into(),
+                });
+            }
+            paths.insert(project_path);
+        }
+        paths
     }
 
     pub fn set_active_thread(
@@ -2302,5 +2338,106 @@ mod tests {
             })
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_agent_changed_project_paths(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            prompt_store::init(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            workspace::register_project_item::<Editor>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"subdir": {"file1": "original content"}}),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let buffer_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/subdir/file1", cx)
+            })
+            .unwrap();
+        let parent_dir_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/subdir", cx)
+            })
+            .unwrap();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let weak_workspace = workspace.downgrade();
+
+        let connection = Rc::new(acp_thread::StubAgentConnection::new());
+        let thread = cx
+            .update(|_, cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        cx.update(|window, cx| {
+            AgentDiff::set_active_thread(&weak_workspace, thread.clone(), window, cx)
+        });
+        cx.run_until_parked();
+
+        // No edits yet — should be empty
+        assert!(
+            cx.update(|_, cx| AgentDiff::agent_changed_project_paths(&weak_workspace, cx))
+                .is_empty()
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        // buffer_read, edit, buffer_edited in one cx.update block so the
+        // Agent-authored diff update is queued before the User-authored BufferEvent dispatch.
+        cx.update(|_, cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(0, 0)..Point::new(0, 0), "new ")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        let changed =
+            cx.update(|_, cx| AgentDiff::agent_changed_project_paths(&weak_workspace, cx));
+        assert!(
+            changed.contains(&buffer_path),
+            "should contain the edited file path: {changed:?}"
+        );
+        assert!(
+            changed.contains(&parent_dir_path),
+            "should contain the parent directory path: {changed:?}"
+        );
+
+        cx.update(|_, cx| {
+            action_log.update(cx, |log, cx| log.keep_all_edits(None, cx));
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.update(|_, cx| AgentDiff::agent_changed_project_paths(&weak_workspace, cx))
+                .is_empty()
+        );
     }
 }

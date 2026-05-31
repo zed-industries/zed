@@ -2,9 +2,10 @@ pub mod project_panel_settings;
 mod undo;
 mod utils;
 
+use agent_ui::agent_diff::AgentDiff;
 use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
-use collections::{BTreeSet, HashMap, hash_map};
+use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{
     Editor, EditorEvent, MultiBufferOffset,
@@ -51,7 +52,6 @@ use std::{
     any::TypeId,
     cell::OnceCell,
     cmp,
-    collections::HashSet,
     ops::Neg,
     ops::Range,
     path::{Path, PathBuf},
@@ -164,6 +164,8 @@ pub struct ProjectPanel {
     last_reported_update: Instant,
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
+    agent_changed_paths: HashSet<ProjectPath>,
+    _agent_diff_subscription: Option<Subscription>,
     state: State,
 }
 
@@ -285,6 +287,7 @@ struct EntryDetails {
     diagnostic_count: Option<DiagnosticCount>,
     git_status: GitSummary,
     is_private: bool,
+    agent_changed: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
 }
@@ -836,7 +839,20 @@ impl ProjectPanel {
                 },
                 update_visible_entries_task: Default::default(),
                 undo_manager: UndoManager::new(workspace.weak_handle(), weak_project_panel, &cx),
+                agent_changed_paths: HashSet::default(),
+                _agent_diff_subscription: None,
             };
+
+            // Subscribe to agent diff changes so we can update the agent-change indicators.
+            let agent_diff = AgentDiff::global(cx);
+            this._agent_diff_subscription =
+                Some(cx.observe(&agent_diff, |this, _agent_diff, cx| {
+                    let workspace = this.workspace.clone();
+                    this.agent_changed_paths =
+                        AgentDiff::agent_changed_project_paths(&workspace, cx);
+                    cx.notify();
+                }));
+
             this.update_visible_entries(None, false, false, window, cx);
 
             this
@@ -5304,6 +5320,7 @@ impl ProjectPanel {
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
         let diagnostic_count = details.diagnostic_count;
+        let agent_changed = details.agent_changed;
         let item_colors = get_item_color(is_sticky, cx);
 
         let canonical_path = details
@@ -5749,7 +5766,8 @@ impl ProjectPanel {
                     .when(
                         canonical_path.is_some()
                             || diagnostic_count.is_some()
-                            || git_indicator.is_some(),
+                            || git_indicator.is_some()
+                            || agent_changed,
                         |this| {
                             let symlink_element = canonical_path.map(|path| {
                                 div()
@@ -5768,6 +5786,20 @@ impl ProjectPanel {
                                             .color(filename_text_color),
                                     )
                             });
+                            let agent_indicator = if agent_changed {
+                                Some(
+                                    div()
+                                        .id("agent_edit_icon")
+                                        .tooltip(Tooltip::text("Edited by an Agent"))
+                                        .child(
+                                            Icon::new(IconName::AiEdit)
+                                                .size(IconSize::Indicator)
+                                                .color(Color::Modified),
+                                        ),
+                                )
+                            } else {
+                                None
+                            };
                             this.end_slot::<AnyElement>(
                                 h_flex()
                                     .gap_1()
@@ -5807,6 +5839,7 @@ impl ProjectPanel {
                                         this.child(git_indicator)
                                     })
                                     .when_some(symlink_element, |this, el| this.child(el))
+                                    .when_some(agent_indicator, |this, el| this.child(el))
                                     .into_any_element(),
                             )
                         },
@@ -6233,6 +6266,11 @@ impl ProjectPanel {
             .as_ref()
             .is_some_and(|e| e.is_cut() && e.items().contains(&selection));
 
+        let agent_changed = self.agent_changed_paths.contains(&ProjectPath {
+            worktree_id,
+            path: entry.path.clone(),
+        });
+
         EntryDetails {
             filename,
             icon,
@@ -6252,6 +6290,7 @@ impl ProjectPanel {
             diagnostic_count,
             git_status,
             is_private: entry.is_private,
+            agent_changed,
             worktree_id,
             canonical_path: entry.canonical_path.clone(),
         }
