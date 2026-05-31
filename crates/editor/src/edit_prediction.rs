@@ -1109,7 +1109,6 @@ impl Editor {
                 let target_display_point = range.end.to_display_point(editor_snapshot);
 
                 self.render_edit_prediction_end_of_line_popover(
-                    "Accept",
                     editor_snapshot,
                     visible_row_range,
                     target_display_point,
@@ -1704,13 +1703,13 @@ impl Editor {
             .items_end()
             .when(flag_on_right, |el| el.items_start())
             .child(if flag_on_right {
-                self.render_edit_prediction_line_popover("Jump", None, window, cx)
+                self.render_edit_prediction_line_popover(None, window, cx)
                     .rounded_bl(px(0.))
                     .rounded_tl(px(0.))
                     .border_l_2()
                     .border_color(border_color)
             } else {
-                self.render_edit_prediction_line_popover("Jump", None, window, cx)
+                self.render_edit_prediction_line_popover(None, window, cx)
                     .rounded_br(px(0.))
                     .rounded_tr(px(0.))
                     .border_r_2()
@@ -1750,7 +1749,7 @@ impl Editor {
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
         let mut element = self
-            .render_edit_prediction_line_popover("Scroll", Some(scroll_icon), window, cx)
+            .render_edit_prediction_line_popover(Some(scroll_icon), window, cx)
             .into_any();
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -1785,12 +1784,7 @@ impl Editor {
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
         if target_display_point.row().as_f64() < scroll_top {
             let mut element = self
-                .render_edit_prediction_line_popover(
-                    "Jump to Edit",
-                    Some(IconName::ArrowUp),
-                    window,
-                    cx,
-                )
+                .render_edit_prediction_line_popover(Some(IconName::ArrowUp), window, cx)
                 .into_any();
 
             let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -1804,12 +1798,7 @@ impl Editor {
             Some((element, origin))
         } else if (target_display_point.row().as_f64() + 1.) > scroll_bottom {
             let mut element = self
-                .render_edit_prediction_line_popover(
-                    "Jump to Edit",
-                    Some(IconName::ArrowDown),
-                    window,
-                    cx,
-                )
+                .render_edit_prediction_line_popover(Some(IconName::ArrowDown), window, cx)
                 .into_any();
 
             let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -1823,7 +1812,6 @@ impl Editor {
             Some((element, origin))
         } else {
             self.render_edit_prediction_end_of_line_popover(
-                "Jump to Edit",
                 editor_snapshot,
                 visible_row_range,
                 target_display_point,
@@ -1839,7 +1827,6 @@ impl Editor {
 
     fn render_edit_prediction_end_of_line_popover(
         self: &mut Editor,
-        label: &'static str,
         editor_snapshot: &EditorSnapshot,
         visible_row_range: Range<DisplayRow>,
         target_display_point: DisplayPoint,
@@ -1856,7 +1843,7 @@ impl Editor {
         );
 
         let mut element = self
-            .render_edit_prediction_line_popover(label, None, window, cx)
+            .render_edit_prediction_line_popover(None, window, cx)
             .into_any();
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -1884,7 +1871,7 @@ impl Editor {
             };
 
             element = self
-                .render_edit_prediction_line_popover(label, Some(icon), window, cx)
+                .render_edit_prediction_line_popover(Some(icon), window, cx)
                 .into_any();
 
             let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -2183,7 +2170,6 @@ impl Editor {
 
     fn render_edit_prediction_line_popover(
         &self,
-        label: impl Into<SharedString>,
         icon: Option<IconName>,
         window: &mut Window,
         cx: &mut App,
@@ -2205,6 +2191,7 @@ impl Editor {
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
             .shadow_xs()
+            .opacity(0.5)
             .when(!has_keybind, |el| {
                 let status_colors = cx.theme().status();
 
@@ -2218,22 +2205,6 @@ impl Editor {
                     })
             })
             .children(keybind)
-            .child(
-                Label::new(label)
-                    .size(LabelSize::Small)
-                    .when(!has_keybind, |el| {
-                        el.color(cx.theme().status().error.into()).strikethrough()
-                    }),
-            )
-            .when(!has_keybind, |el| {
-                el.child(
-                    h_flex().ml_1().child(
-                        Icon::new(IconName::Info)
-                            .size(IconSize::Small)
-                            .color(cx.theme().status().error.into()),
-                    ),
-                )
-            })
             .when_some(icon, |element, icon| {
                 element.child(
                     div()
