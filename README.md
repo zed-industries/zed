@@ -285,7 +285,7 @@ See  `crates/agent_ui/src/ui/agent_notification.rs`.
 
 ### Command palette
 
-- the command palette sorting now sorts the same for `close work` and `work close`, and it does not search individual character matches anymore, like when you enter `bsp`, it would show `editor: backspace` before. I do not like that behavior, so I removed that
+- does not search individual character matches anymore, like when you enter `bsp`, it would show `editor: backspace` before. I do not like that behavior, so I removed that
 - change `command palette: toggle` to sort by recency instead of hit count
 - remove `GlobalCommandPaletteInterceptor` usage which contains Vim things like `:delete, :edit, :help, :join, :quit, :sort, :write, :xit, :yank` because I do not use them. Apparently, this removes the ability to jump to a line via `:144`. I still removed this behavior because it is hard to sort those dynamic actions by recency in combination with the other real editor action commands.
 
