@@ -2992,9 +2992,9 @@ impl AcpThread {
                 let env = env.await;
                 let shell = project
                     .update(cx, |project, cx| {
-                            project
-                                .remote_client()
-                                .and_then(|r| r.read(cx).shell())
+                        project
+                            .remote_client()
+                            .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
                 let (task_command, task_args) =
