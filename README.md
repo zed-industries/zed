@@ -314,7 +314,6 @@ It displays no footer and abbreviates paths to tildes.
 - `editor::CountTokens` which counts the tokens in the current buffer using `o200k_base` via the `tiktoken` crate
 - `editor::StopAllLanguageServers` which stops all language servers. It works like the bottom button in `Language Servers > Stop All Servers`
 - `project_lsp_treesitter_symbol_search::Toggle` based on `search_everywhere::Toggle` from https://github.com/zed-industries/zed/pull/45720. I ripped out everything else except the symbol search. The reason this is better than the built-in `project_symbols::Toggle` is that it uses both Tree-sitter and LSP with indexing which is faster and more reliable.
-- `editor::MoveToStartOfLargerSyntaxNode` from https://github.com/zed-industries/zed/pull/45331
 - `buffer_search_modal::ToggleBufferSearch` which shows a modal to search the current buffer content (code is in `crates/search/src/buffer_search_modal.rs`) based on https://github.com/zed-industries/zed/pull/44530 (Add quick search modal). This is a basic implementation of Swiper from Emacs or `Snacks.picker.lines()` from Neovim. I tried matching every line with `nucleo`, but it was kinda slow, so it just split on spaces and then every line which has all words from the query is matched.
   - `ctrl-c` and `ctrl-t` can be used to insert history items into the search field
   - `ctrl-r` is to toggle between line (case-insensitive) and exact match (case-sensitive) mode
