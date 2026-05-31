@@ -337,6 +337,9 @@ impl Editor {
             return;
         }
         let item = self.cut_common(true, window, cx);
+        if let Some(text) = item.text() {
+            clipboard_history::track_clipboard(&text, cx);
+        }
         cx.write_to_clipboard(item);
     }
 
@@ -524,6 +527,7 @@ impl Editor {
             ));
         }
 
+        clipboard_history::track_clipboard(&text, cx);
         cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
             text,
             clipboard_selections,

@@ -110,7 +110,7 @@ It behaves like the JetBrains IDEs actions: `Last Edit Location` and `Next Edit 
 
 ## Clipboard History Modal
 
-- implement a filterable clipboard history model (opened via `clipboard_history_modal::ToggleClipboardHistory`) which keeps tracks of copy text actions like `editor::Copy`. On confirming it pastes in the selected entry
+- implement a filterable clipboard history model (opened via `clipboard_history_modal::ToggleClipboardHistory`) which keeps track of text clipboard actions like `editor::Copy`, `editor::Cut`, and `editor::CopyAll`. On confirming it pastes in the selected entry
   - inspired from `Choose Content to Paste` from JetBrains IDEs
   - in `crates/workspace/src/persistence.rs` there is own SQL table `clipboard_history`, so the recent entries is remembered across restarts
 
