@@ -3344,11 +3344,7 @@ async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     build_gitignore_with_root(abs_path, parent, fs).await
 }
 
-async fn build_gitignore_with_root(
-    abs_path: &Path,
-    root: &Path,
-    fs: &dyn Fs,
-) -> Result<Gitignore> {
+async fn build_gitignore_with_root(abs_path: &Path, root: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let contents = fs
         .load(abs_path)
         .await
@@ -5337,12 +5333,9 @@ impl BackgroundScanner {
         // Load gitignores asynchronously (outside the lock)
         let mut loaded_excludes: Vec<(Arc<Path>, Arc<Gitignore>)> = Vec::new();
         for (work_dir_abs_path, exclude_abs_path) in excludes_to_load {
-            if let Ok(current_exclude) = build_gitignore_with_root(
-                &exclude_abs_path,
-                &work_dir_abs_path,
-                self.fs.as_ref(),
-            )
-            .await
+            if let Ok(current_exclude) =
+                build_gitignore_with_root(&exclude_abs_path, &work_dir_abs_path, self.fs.as_ref())
+                    .await
             {
                 loaded_excludes.push((work_dir_abs_path, Arc::new(current_exclude)));
             }

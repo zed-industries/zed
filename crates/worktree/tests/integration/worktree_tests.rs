@@ -3018,10 +3018,7 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
 }
 
 #[gpui::test]
-async fn test_repo_exclude_anchored_pattern(
-    executor: BackgroundExecutor,
-    cx: &mut TestAppContext,
-) {
+async fn test_repo_exclude_anchored_pattern(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(executor);
