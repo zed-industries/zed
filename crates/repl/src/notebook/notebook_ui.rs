@@ -146,6 +146,9 @@ impl NotebookEditor {
                             CellEvent::FocusedIn(_) => {
                                 this.select_cell_by_id(&cell_id_for_focus, cx)
                             }
+                            CellEvent::Clicked(_) => {
+                                this.select_cell_in_command_mode(&cell_id_for_focus, cx)
+                            }
                         }
                     })
                     .detach();
@@ -160,9 +163,10 @@ impl NotebookEditor {
                     .detach();
                 }
                 Cell::Markdown(markdown_cell) => {
+                    let cell_id_for_click = cell_id.clone();
                     cx.subscribe(
                         markdown_cell,
-                        move |_this, cell, event: &MarkdownCellEvent, cx| {
+                        move |this, cell, event: &MarkdownCellEvent, cx| {
                             match event {
                                 MarkdownCellEvent::FinishedEditing => {
                                     cell.update(cx, |cell, cx| {
@@ -175,6 +179,9 @@ impl NotebookEditor {
                                     cell.update(cx, |cell, cx| {
                                         cell.reparse_markdown(cx);
                                     });
+                                }
+                                MarkdownCellEvent::Clicked(_) => {
+                                    this.select_cell_in_command_mode(&cell_id_for_click, cx);
                                 }
                             }
                         },
@@ -802,13 +809,17 @@ impl NotebookEditor {
             )
         });
 
+        let cell_id_for_click = new_cell_id.clone();
         cx.subscribe(
             &markdown_cell,
-            move |_this, cell, event: &MarkdownCellEvent, cx| match event {
+            move |this, cell, event: &MarkdownCellEvent, cx| match event {
                 MarkdownCellEvent::FinishedEditing | MarkdownCellEvent::Run(_) => {
                     cell.update(cx, |cell, cx| {
                         cell.reparse_markdown(cx);
                     });
+                }
+                MarkdownCellEvent::Clicked(_) => {
+                    this.select_cell_in_command_mode(&cell_id_for_click, cx);
                 }
             },
         )
@@ -859,6 +870,7 @@ impl NotebookEditor {
             move |this, _cell, event, window, cx| match event {
                 CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), window, cx),
                 CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_run, cx),
+                CellEvent::Clicked(_) => this.select_cell_in_command_mode(&cell_id_for_run, cx),
             },
         )
         .detach();
@@ -891,6 +903,15 @@ impl NotebookEditor {
         if let Some(index) = self.cell_order.iter().position(|id| id == cell_id) {
             self.selected_cell_index = index;
             self.notebook_mode = NotebookMode::Edit;
+            cx.notify();
+        }
+    }
+
+    fn select_cell_in_command_mode(&mut self, cell_id: &CellId, cx: &mut Context<Self>) {
+        if let Some(index) = self.cell_order.iter().position(|id| id == cell_id) {
+            self.selected_cell_index = index;
+            self.notebook_mode = NotebookMode::Command;
+            self.cell_list.scroll_to_reveal_item(index);
             cx.notify();
         }
     }
@@ -1339,11 +1360,19 @@ impl NotebookEditor {
                 cell.clone().into_any_element()
             }
             Cell::Raw(cell) => {
+                let cell_id = cell.read(cx).id().clone();
                 cell.update(cx, |cell, _cx| {
                     cell.set_selected(is_selected)
                         .set_cell_position(cell_position);
                 });
-                cell.clone().into_any_element()
+                let wrapper_id = ElementId::from(format!("{}-raw-wrapper", cell_id));
+                div()
+                    .id(wrapper_id)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_cell_in_command_mode(&cell_id, cx);
+                    }))
+                    .child(cell.clone())
+                    .into_any_element()
             }
         }
     }

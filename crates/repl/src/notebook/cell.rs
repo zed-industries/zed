@@ -42,11 +42,13 @@ pub enum CellControlType {
 pub enum CellEvent {
     Run(CellId),
     FocusedIn(CellId),
+    Clicked(CellId),
 }
 
 pub enum MarkdownCellEvent {
     FinishedEditing,
     Run(CellId),
+    Clicked(CellId),
 }
 
 impl CellControlType {
@@ -571,6 +573,36 @@ impl RenderableCell for MarkdownCell {
         self.cell_position = Some(cell_position);
         self
     }
+
+    fn gutter(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_selected = self.selected();
+        let gutter_id = ElementId::from(format!("{}-gutter", self.id));
+
+        div()
+            .relative()
+            .h_full()
+            .w(px(GUTTER_WIDTH))
+            .id(gutter_id)
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.emit(MarkdownCellEvent::Clicked(this.id.clone()));
+            }))
+            .child(
+                div()
+                    .w(px(GUTTER_WIDTH))
+                    .flex()
+                    .flex_none()
+                    .justify_center()
+                    .h_full()
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(1.))
+                            .h_full()
+                            .when(is_selected, |this| this.bg(cx.theme().colors().icon_accent))
+                            .when(!is_selected, |this| this.bg(cx.theme().colors().border)),
+                    ),
+            )
+    }
 }
 
 impl Render for MarkdownCell {
@@ -633,10 +665,18 @@ impl Render for MarkdownCell {
                             .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.editing = true;
-                                window.focus(&this.editor.focus_handle(cx), cx);
-                                cx.notify();
+                            .on_click(cx.listener(|this, event, window, cx| {
+                                let is_double_click = matches!(
+                                    event,
+                                    gpui::ClickEvent::Mouse(e) if e.down.click_count >= 2
+                                );
+                                if is_double_click {
+                                    this.editing = true;
+                                    window.focus(&this.editor.focus_handle(cx), cx);
+                                    cx.notify();
+                                } else {
+                                    cx.emit(MarkdownCellEvent::Clicked(this.id.clone()));
+                                }
                             }))
                             .child(MarkdownElement::new(self.markdown.clone(), style)),
                     ),
@@ -1002,11 +1042,16 @@ impl RenderableCell for CodeCell {
     fn gutter(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_selected = self.selected();
         let execution_count = self.execution_count;
+        let gutter_id = ElementId::from(format!("{}-gutter", self.id));
 
         div()
             .relative()
             .h_full()
             .w(px(GUTTER_WIDTH))
+            .id(gutter_id)
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.emit(CellEvent::Clicked(this.id().clone()));
+            }))
             .child(
                 div()
                     .w(px(GUTTER_WIDTH))
@@ -1146,6 +1191,10 @@ impl Render for CodeCell {
                             .items_start()
                             .gap(DynamicSpacing::Base08.rems(cx))
                             .bg(self.selected_bg_color(window, cx))
+                            .id(ElementId::from(format!("{}-output", self.id)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                cx.emit(CellEvent::Clicked(this.id().clone()));
+                            }))
                             .child(self.gutter_output(window, cx))
                             .child(
                                 div().py_1p5().w_full().child(
