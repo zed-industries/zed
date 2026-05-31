@@ -4,6 +4,10 @@
 (attribute
   attribute: (identifier) @property)
 
+; Dunder variables
+((identifier) @variable.special
+  (#match? @variable.special "^__[a-zA-Z0-9_]+__$"))
+
 ; CamelCase for classes
 ((identifier) @type.class
   (#match? @type.class "^_*[A-Z][A-Za-z0-9_]*$"))
