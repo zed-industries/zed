@@ -10,7 +10,7 @@ rm -f "$HOME/.cargo/bin/zed" && \
 ln -s "/Applications/Zed Dev.app/Contents/MacOS/cli" "$HOME/.cargo/bin/zed"
 ```
 
-In `crates/crashes/src/crashes.rs`, I changed it so crashes in Dev builds (like above) will produce a `.dmp` + `.json` file in `~/Library/Logs/Zed/`.
+In `crates/zed/src/main.rs` and `crates/remote_server/src/server.rs`, I changed it so crashes in Dev builds (like above) will produce a `.dmp` + `.json` file in `~/Library/Logs/Zed/` unless `ZED_GENERATE_MINIDUMPS` is set to `false` or `0`.
 
 ## Development note
 

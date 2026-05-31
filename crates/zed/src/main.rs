@@ -378,11 +378,10 @@ fn main() {
         return;
     }
 
-    let should_install_crash_handler = matches!(
+    let should_install_crash_handler = !matches!(
         env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *release_channel::RELEASE_CHANNEL
-        != ReleaseChannel::Dev;
+        Ok("false" | "0")
+    );
 
     let crash_handler = if should_install_crash_handler {
         Some(

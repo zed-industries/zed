@@ -543,10 +543,10 @@ pub fn execute_run(
     let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    let should_install_crash_handler = matches!(
+    let should_install_crash_handler = !matches!(
         env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+        Ok("false" | "0")
+    );
 
     let crash_handler = if should_install_crash_handler {
         Some(app.background_executor().spawn(crashes::init(
@@ -822,10 +822,10 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    let should_install_crash_handler = matches!(
+    let should_install_crash_handler = !matches!(
         env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+        Ok("false" | "0")
+    );
 
     if should_install_crash_handler {
         smol::spawn(crashes::init(
@@ -845,6 +845,8 @@ pub(crate) fn execute_proxy(
             |duration| FutureExt::map(Timer::after(duration), |_| ()),
         ))
         .detach();
+    } else {
+        crashes::force_backtrace();
     };
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
