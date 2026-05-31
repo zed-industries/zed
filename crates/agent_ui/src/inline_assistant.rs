@@ -43,7 +43,7 @@ use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry}
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{DisableAiSettings, Project};
-use prompt_store::{PromptBuilder, PromptStore};
+use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
 
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
@@ -228,7 +228,6 @@ impl InlineAssistant {
         };
         let agent_panel = agent_panel.read(cx);
 
-        let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
 
         let handle_assist =
@@ -240,7 +239,6 @@ impl InlineAssistant {
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
                             thread_store,
-                            prompt_store,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -254,7 +252,6 @@ impl InlineAssistant {
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
                             thread_store,
-                            prompt_store,
                             action.prompt.clone(),
                             window,
                             cx,
@@ -437,7 +434,6 @@ impl InlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -483,7 +479,6 @@ impl InlineAssistant {
                     session_id,
                     self.fs.clone(),
                     thread_store.clone(),
-                    prompt_store.clone(),
                     project.clone(),
                     workspace.clone(),
                     window,
@@ -574,7 +569,6 @@ impl InlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -592,7 +586,6 @@ impl InlineAssistant {
             workspace,
             project,
             thread_store,
-            prompt_store,
             initial_prompt,
             window,
             &codegen_ranges,
@@ -1915,7 +1908,6 @@ pub mod evals {
                         workspace.downgrade(),
                         project.downgrade(),
                         thread_store,
-                        None,
                         Some(prompt),
                         window,
                         cx,

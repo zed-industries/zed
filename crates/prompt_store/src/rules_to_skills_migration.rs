@@ -34,14 +34,18 @@
 //! still see and edit their Rules via the existing UI, and a user who
 //! downgrades to a Zed build without skills support won't lose anything.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use agent_skills::{SKILL_FILE_NAME, global_skills_dir, slugify_skill_name};
+use agent_skills::{
+    SKILL_FILE_NAME, global_skills_dir, parse_skill_file_content, slugify_skill_name,
+};
 use anyhow::{Context as _, Result};
 use db::kvp::GlobalKeyValueStore;
 use fs::Fs;
+use futures::StreamExt as _;
 use gpui::{App, AsyncApp, Entity, TaskExt as _};
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
@@ -241,6 +245,7 @@ async fn migrate_non_default_rules_to_skills(
         return Vec::new();
     }
     let skills_dir = global_skills_dir();
+    let mut existing_skill_contents = existing_skill_contents(fs, &skills_dir).await;
     let mut migrated = Vec::with_capacity(rules.len());
     for (id, title) in rules {
         let body = match load_rule_body(prompt_store, cx, id, &title).await {
@@ -254,7 +259,9 @@ async fn migrate_non_default_rules_to_skills(
             );
             continue;
         };
-        match write_migrated_skill(fs, &skills_dir, &slug, &body).await {
+        match write_migrated_skill(fs, &skills_dir, &slug, &body, &mut existing_skill_contents)
+            .await
+        {
             Ok(()) => migrated.push(title),
             Err(err) => {
                 log::warn!("Failed to write skill for rule {title:?}: {err:#}");
@@ -412,11 +419,9 @@ async fn write_migration_result(result: &MigrationResult) {
 ///
 /// Three cases:
 ///
-/// 1. `<skills_dir>/<slug>/SKILL.md` already exists with byte-identical
-///    content to what we'd write — likely because the migration ran
-///    successfully on a previous launch and is now being asked to
-///    re-migrate the same source rule. Skip silently; don't create a
-///    `<slug>-2` duplicate of the same content.
+/// 1. Any existing skill file already matches the content we'd write, or
+///    already has the same instruction body as this rule. Skip silently;
+///    don't create a duplicate skill.
 /// 2. `<skills_dir>/<slug>/` doesn't exist — happy path. Create it and
 ///    write the SKILL.md there.
 /// 3. `<skills_dir>/<slug>/` exists with *different* content (a real
@@ -428,37 +433,57 @@ async fn write_migrated_skill(
     skills_dir: &Path,
     slug: &str,
     body: &str,
+    existing_skill_contents: &mut ExistingSkillContents,
 ) -> Result<()> {
-    let primary_dir = skills_dir.join(slug);
-    let primary_file = primary_dir.join(SKILL_FILE_NAME);
-    let primary_content = format_skill_file(slug, body);
-
-    // Case 1: primary exists with identical content — nothing to do.
-    // Compare trimmed so a stray leading/trailing newline difference
-    // (which is meaningless inside a SKILL.md) doesn't trick us into
-    // generating a `<slug>-N` duplicate.
-    if fs.is_file(&primary_file).await
-        && fs
-            .load(&primary_file)
-            .await
-            .ok()
-            .is_some_and(|existing| existing.trim() == primary_content.trim())
-    {
+    let trimmed_body = body.trim();
+    if existing_skill_contents.bodies.contains(trimmed_body) {
         return Ok(());
     }
 
     // Cases 2 and 3: find a free directory (the primary if free,
     // otherwise a `-N` suffix) and write the SKILL.md there.
     let (name, dir) = pick_available_skill_dir(fs, skills_dir, slug).await?;
+    let content = format_skill_file(&name, body);
+    let trimmed_content = content.trim();
+    if existing_skill_contents.files.contains(trimmed_content) {
+        return Ok(());
+    }
+
     fs.create_dir(&dir).await?;
-    let content = if name == slug {
-        primary_content
-    } else {
-        format_skill_file(&name, body)
-    };
     let skill_file_path = dir.join(SKILL_FILE_NAME);
     fs.write(&skill_file_path, content.as_bytes()).await?;
+    existing_skill_contents
+        .files
+        .insert(trimmed_content.to_string());
+    existing_skill_contents
+        .bodies
+        .insert(trimmed_body.to_string());
     Ok(())
+}
+
+#[derive(Default)]
+struct ExistingSkillContents {
+    files: HashSet<String>,
+    bodies: HashSet<String>,
+}
+
+async fn existing_skill_contents(fs: &dyn Fs, skills_dir: &Path) -> ExistingSkillContents {
+    let mut contents = ExistingSkillContents::default();
+    let Ok(mut entries) = fs.read_dir(skills_dir).await else {
+        return contents;
+    };
+    while let Some(entry) = entries.next().await {
+        let Ok(skill_dir) = entry else { continue };
+        let Ok(file_content) = fs.load(&skill_dir.join(SKILL_FILE_NAME)).await else {
+            continue;
+        };
+        contents.files.insert(file_content.trim().to_string());
+        let Ok((_metadata, body)) = parse_skill_file_content(&file_content) else {
+            continue;
+        };
+        contents.bodies.insert(body.trim().to_string());
+    }
+    contents
 }
 
 /// Build the SKILL.md file contents for a migrated rule.
@@ -511,6 +536,16 @@ mod tests {
     use agent_skills::{SkillSource, parse_skill_frontmatter};
     use fs::FakeFs;
     use gpui::TestAppContext;
+
+    async fn write_migrated_skill_for_test(
+        fs: &dyn Fs,
+        skills_dir: &Path,
+        slug: &str,
+        body: &str,
+    ) -> Result<()> {
+        let mut existing_skill_contents = existing_skill_contents(fs, skills_dir).await;
+        write_migrated_skill(fs, skills_dir, slug, body, &mut existing_skill_contents).await
+    }
 
     #[test]
     fn format_skill_file_includes_disable_model_invocation() {
@@ -576,7 +611,7 @@ mod tests {
         let skills_dir = PathBuf::from("/skills");
         fs.create_dir(&skills_dir).await.unwrap();
 
-        write_migrated_skill(fs.as_ref(), &skills_dir, "my-rule", "Body.")
+        write_migrated_skill_for_test(fs.as_ref(), &skills_dir, "my-rule", "Body.")
             .await
             .unwrap();
 
@@ -608,7 +643,7 @@ mod tests {
         )
         .await;
 
-        write_migrated_skill(fs.as_ref(), &skills_dir, "my-rule", "Body.")
+        write_migrated_skill_for_test(fs.as_ref(), &skills_dir, "my-rule", "Body.")
             .await
             .unwrap();
 
@@ -640,7 +675,7 @@ mod tests {
         )
         .await;
 
-        write_migrated_skill(fs.as_ref(), &skills_dir, "my-rule", "Body.")
+        write_migrated_skill_for_test(fs.as_ref(), &skills_dir, "my-rule", "Body.")
             .await
             .unwrap();
 
@@ -666,7 +701,7 @@ mod tests {
         )
         .await;
 
-        write_migrated_skill(fs.as_ref(), &skills_dir, "my-rule", "Migrated body.")
+        write_migrated_skill_for_test(fs.as_ref(), &skills_dir, "my-rule", "Migrated body.")
             .await
             .unwrap();
 
@@ -682,6 +717,34 @@ mod tests {
             .expect("migrated SKILL.md should have landed at the suffixed path");
         assert!(migrated.contains("Migrated body."));
         assert!(migrated.contains("disable-model-invocation: true"));
+    }
+
+    #[gpui::test]
+    async fn write_migrated_skill_skips_when_any_existing_skill_has_same_body(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = PathBuf::from("/skills");
+        fs.create_dir(&skills_dir.join("unrelated-skill"))
+            .await
+            .unwrap();
+        let existing = format_skill_file("unrelated-skill", "Migrated body.");
+        fs.insert_file(
+            &skills_dir.join("unrelated-skill").join(SKILL_FILE_NAME),
+            existing.as_bytes().to_vec(),
+        )
+        .await;
+
+        write_migrated_skill_for_test(fs.as_ref(), &skills_dir, "my-rule", "Migrated body.")
+            .await
+            .unwrap();
+
+        assert!(!fs.is_dir(&skills_dir.join("my-rule")).await);
+        let unrelated = fs
+            .load(&skills_dir.join("unrelated-skill").join(SKILL_FILE_NAME))
+            .await
+            .unwrap();
+        assert_eq!(unrelated, existing);
     }
 
     #[test]

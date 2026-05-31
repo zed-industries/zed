@@ -58,7 +58,7 @@ use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
-use prompt_store::{PromptBuilder, rules_to_skills_migration};
+use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -550,7 +550,7 @@ pub fn init(
     cx: &mut App,
 ) {
     agent::ThreadStore::init_global(cx);
-    rules_library::init(cx);
+    prompt_store::init(cx);
     skill_creator::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
@@ -688,7 +688,6 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<AcceptNextWordEditPrediction>(),
             TypeId::of::<AcceptNextLineEditPrediction>(),
-            TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<ShowEditPrediction>(),
             TypeId::of::<NextEditPrediction>(),
             TypeId::of::<PreviousEditPrediction>(),
@@ -910,6 +909,14 @@ mod tests {
                 !filter.is_hidden(&zed_actions::assistant::CreateSkillFromUrl),
                 "CreateSkillFromUrl should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),
+                "OpenGlobalAgentsMdRules should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
+                "OpenProjectAgentsMdRules should be visible by default"
+            );
         });
 
         // Disable agent
@@ -932,6 +939,14 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewTerminalThread),
                 "NewTerminalThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),
+                "OpenGlobalAgentsMdRules should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
+                "OpenProjectAgentsMdRules should be hidden when agent is disabled"
             );
         });
 

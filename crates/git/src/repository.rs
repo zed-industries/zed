@@ -1672,7 +1672,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let repo = repo.lock();
                 let remote = repo.find_remote(&name).ok()?;
-                remote.url().map(|url| url.to_string())
+                remote.url().ok().map(|url| url.to_string())
             })
             .boxed()
     }

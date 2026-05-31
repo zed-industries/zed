@@ -199,6 +199,56 @@ pub async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Op
     }
 }
 
+fn is_strict_descendant(path: &Path, ancestor: &Path) -> bool {
+    path != ancestor && path.starts_with(ancestor)
+}
+
+/// Returns whether `path` resolves to the global agent skills directory itself.
+///
+/// This is used by destructive tools to reject operations targeting the root
+/// `~/.agents/skills` directory while still allowing operations on individual
+/// skills or resources beneath it.
+pub async fn resolves_to_global_skills_dir(path: &Path, fs: &dyn Fs) -> bool {
+    let Some(normalized_path) = resolve_lexical_global_skill_path(path) else {
+        return false;
+    };
+    let Some(canonical_path) = canonicalize_with_ancestors(&normalized_path, fs).await else {
+        return false;
+    };
+    let Some(canonical_skills_dir) = canonical_global_skills_dir(fs).await else {
+        return false;
+    };
+
+    canonical_path == canonical_skills_dir
+}
+
+/// Filters a previously-resolved global skills path so that callers which
+/// must never act on `~/.agents/skills` itself (move, delete) only see paths
+/// that point strictly below the skills root.
+async fn restrict_to_skill_descendant(
+    canonical_path: Option<PathBuf>,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let canonical_path = canonical_path?;
+    let canonical_skills_dir = canonical_global_skills_dir(fs).await?;
+    is_strict_descendant(&canonical_path, &canonical_skills_dir).then_some(canonical_path)
+}
+
+/// Like [`resolve_global_skill_path`], but only succeeds for paths strictly
+/// below `~/.agents/skills`, not the skills directory itself.
+pub async fn resolve_global_skill_descendant_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    restrict_to_skill_descendant(resolve_global_skill_path(path, fs).await, fs).await
+}
+
+/// Like [`resolve_creatable_global_skill_path`], but only succeeds for paths
+/// strictly below `~/.agents/skills`, not the skills directory itself.
+pub async fn resolve_creatable_global_skill_descendant_path(
+    path: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    restrict_to_skill_descendant(resolve_creatable_global_skill_path(path, fs).await, fs).await
+}
+
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
 /// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
 /// the global config dir.
