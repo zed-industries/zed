@@ -249,46 +249,34 @@ Note that the keyboard context in the text threads is called `ContextEditor` for
 
 AI edit predictions also work in those buffers.
 
-### Agent UI changes
+Commit `f2dc71f6171c` is the large merge commit which was done based on a 
 
-**Warning**: The code around this is extremely brittle, I very often have large merge conflicts, so I revert affected files to the `main` version. Afterwards, I let AI patch in this functionality from previous working code, but it might miss things.
+### Agent UI changes (probably missing on latest `dima` branch)
 
-#### Concurrent Agent Tabs
+**Warning**: The code around this is extremely brittle, I very often have large merge conflicts, so I revert affected files to the `main` version.
 
-Add concurrent agent tabs from 
-<https://github.com/wzulfikar/zed/pull/8> (which was based on <https://github.com/zed-industries/zed/pull/42387>)
+The last big `main` UI upgrade introduced the `Threads Sidebar` which allows multiple AI threads in parallel and made many of my improvements obsolete.
 
 #### New Actions
 
+- `agent::TogglePlan` to toggle the plan of the current thread (untested since last `main` merge)
+
+#### Other (probably missing on latest `dima` branch, I had those implemented at same point)
+
 - `agent::DismissOsNotifications` to dismiss the top right OS notification from Zed Agent. With multiple tabs, I feel that the notifications get stuck sometimes
-- `agent::CloseActiveThreadTabOrDock`
-- `agent::ActivateNextTab` / `agent::ActivatePreviousTab`
-- `agent::TogglePlan` to toggle the plan of the current thread
-- `agent::LaunchAcpAgent` which takes an external agent name and can be bound like this:
-  - `"cmd-t": ["agent::LaunchAcpAgent", { "agent_name": "junie" }]`
-
-These are missing in latest `dima` branch (I had them implemented at same point):
-
 - `agent::DismissErrorNotification` / `agent::CopyErrorNotification`
-
-#### Other (probably missing on latest `dima` branch)
-
 - remove the opacity animation for the tabs when waiting for a response and instead display an accent color circle to indicate it's waiting for a response
 - Zed Agent, External Agents and text thread title summaries are now generated on every AI message received
 - change `agent::OpenActiveThreadAsMarkdown` to always open to end of buffer instead of start, and when there are more than 90k lines, open as `Plain Text` because Markdown lags hard for me, see `crates/agent_ui/src/acp/thread_view.rs`
-- always allow all edits, otherwise it kepts asking for "Allow All Edits" every single time a new ACP thread is started which is just annoying. Note that it still asks for tool permissions
+- always allow all edits, otherwise it kept asking for "Allow All Edits" every single time a new ACP thread is started which is just annoying. Note that it still asks for tool permissions
 - fix: ACP sessions with session modes (e.g. Claude Code's brave/bypassPermissions mode) now respect the `always_allow_tool_actions` setting — previously `respect_always_allow_setting` was set to `false` when `session_modes` existed, causing tool permission prompts even with brave mode enabled
 - show command output for `acp::ToolKind::Execute` always below the `Run Command` view in a plain text view to preserve newlines
   - I added `prepare_execute_tool_output_from_qwen()` to strip trailing and leading information for cleaner output
 - allow `New From Summary` for ACP agents, instead of only for Zed Agent
   - add `agent::SendMessage` action to trigger sending the current message in a text thread editor, otherwise you can't send messages from the text thread editor tab via keyboad
-
-#### Agent OS Notifications
-
-See  `crates/agent_ui/src/ui/agent_notification.rs`.
-
-- increase button size
-- use vertical lines and display the agent tab name in the notification, if set
+- agent OS notifications improvements. See `crates/agent_ui/src/ui/agent_notification.rs`
+  - increase button size
+  - use vertical lines and display the agent tab name in the notification, if set
 
 ### Command palette
 
