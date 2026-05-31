@@ -359,7 +359,7 @@ impl ScrollbarStyle {
     pub const fn to_pixels(&self) -> Pixels {
         match self {
             ScrollbarStyle::Regular => px(6.),
-            ScrollbarStyle::Editor => px(15.),
+            ScrollbarStyle::Editor => px(12.),
         }
     }
 }

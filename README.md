@@ -402,7 +402,7 @@ See `crates/workspace/src/confirmation_dialog.rs`. The dismiss action is current
 ### Scrollbar
 
 - hide horizontal scrollbar when soft wrap is enabled
-- adjust scrollbar UI to look rounded and more native to macOS (idea is from this fork: https://github.com/notnotjake/zed)
+- adjust scrollbar UI to look rounded and more native to macOS (idea is from this fork: https://github.com/notnotjake/zed) and make it not as big
 
 ## Tabs
 
