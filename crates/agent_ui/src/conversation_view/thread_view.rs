@@ -4881,7 +4881,6 @@ impl ThreadView {
                 this.toggle_following(window, cx);
             }))
     }
-
 }
 
 struct TokenUsageTooltip {

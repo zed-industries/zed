@@ -14,6 +14,9 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
+    "crates/assistant_slash_command",
+    "crates/assistant_slash_commands",
+    "crates/assistant_text_thread",
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_helper",
@@ -287,6 +290,9 @@ ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
+assistant_slash_command = { path = "crates/assistant_slash_command" }
+assistant_slash_commands = { path = "crates/assistant_slash_commands" }
+assistant_text_thread = { path = "crates/assistant_text_thread" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }

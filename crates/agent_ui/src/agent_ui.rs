@@ -24,11 +24,14 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
+mod slash_command;
+mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 pub mod terminal_thread_metadata_store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+mod text_thread_editor;
 mod thread_import;
 pub mod thread_metadata_store;
 pub mod thread_worktree_archive;
@@ -42,8 +45,11 @@ use std::sync::Arc;
 use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
+use anyhow::Result;
+use assistant_slash_command::{SlashCommandRegistry, SlashCommandWorkingSet};
+use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
-use editor::{Editor, SelectionEffects, scroll::Autoscroll};
+use editor::{AnchorRangeExt as _, Editor, SelectionEffects, scroll::Autoscroll};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
@@ -65,6 +71,7 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
+use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -74,6 +81,7 @@ pub use crate::agent_panel::{
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::text_thread_editor::TextThreadEditor;
 pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use conversation_view::ConversationView;
@@ -542,6 +550,60 @@ pub(crate) fn humanize_token_count(count: u64) -> String {
     }
 }
 
+struct StandaloneTextThreadDelegate;
+
+impl StandaloneTextThreadDelegate {
+    fn active_text_thread_editor(
+        workspace: &Workspace,
+        cx: &App,
+    ) -> Option<Entity<TextThreadEditor>> {
+        workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<TextThreadEditor>())
+            .or_else(|| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<TextThreadEditor>())
+            })
+    }
+}
+
+impl text_thread_editor::AgentPanelDelegate for StandaloneTextThreadDelegate {
+    fn active_text_thread_editor(
+        &self,
+        workspace: &mut Workspace,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Entity<TextThreadEditor>> {
+        Self::active_text_thread_editor(workspace, cx)
+    }
+
+    fn quote_selection(
+        &self,
+        workspace: &mut Workspace,
+        selection_ranges: Vec<std::ops::Range<editor::Anchor>>,
+        buffer: Entity<editor::MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(text_thread_editor) = Self::active_text_thread_editor(workspace, cx) else {
+            return;
+        };
+
+        let snapshot = buffer.read(cx).snapshot(cx);
+        let selection_ranges = selection_ranges
+            .into_iter()
+            .map(|range| range.to_point(&snapshot))
+            .collect::<Vec<_>>();
+
+        text_thread_editor.update(cx, |text_thread_editor, cx| {
+            text_thread_editor.quote_ranges(selection_ranges, snapshot, window, cx);
+        });
+    }
+}
+
 /// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -552,6 +614,7 @@ pub fn init(
     cx: &mut App,
 ) {
     agent::ThreadStore::init_global(cx);
+    assistant_text_thread::init(Client::global(cx), cx);
     prompt_store::init(cx);
     skill_creator::init(cx);
     if !is_eval {
@@ -559,10 +622,70 @@ pub fn init(
         // we're not running inside of the eval.
         init_language_model_settings(cx);
     }
+    assistant_slash_command::init(cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
+    <dyn text_thread_editor::AgentPanelDelegate>::set_global(
+        Arc::new(StandaloneTextThreadDelegate),
+        cx,
+    );
+    TextThreadEditor::init(cx);
+
+    {
+        let prompt_builder = prompt_builder.clone();
+        let fs = fs.clone();
+        cx.observe_new(move |workspace: &mut Workspace, _window, _cx| {
+            workspace.register_action({
+                let prompt_builder = prompt_builder.clone();
+                let fs = fs.clone();
+                move |workspace: &mut Workspace,
+                      _: &zed_actions::editor::NewTextThreadInEditor,
+                      window: &mut Window,
+                      cx: &mut Context<Workspace>| {
+                    let project = workspace.project().clone();
+                    let workspace_handle = cx.entity();
+                    let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+                    let text_thread_store_task = assistant_text_thread::TextThreadStore::new(
+                        project,
+                        prompt_builder.clone(),
+                        slash_commands,
+                        cx,
+                    );
+
+                    let fs = fs.clone();
+                    cx.spawn_in(window, async move |workspace, cx| {
+                        let text_thread_store = text_thread_store_task.await?;
+                        workspace
+                            .update_in(cx, |workspace, window, cx| {
+                                let text_thread_editor = TextThreadEditor::new_in_workspace(
+                                    workspace_handle,
+                                    workspace.project().clone(),
+                                    fs,
+                                    text_thread_store,
+                                    window,
+                                    cx,
+                                );
+                                workspace.add_item_to_active_pane(
+                                    Box::new(text_thread_editor),
+                                    None,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    register_slash_commands(cx);
 
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
@@ -649,6 +772,34 @@ pub fn init(
     }
 
     maybe_backfill_editor_layout(fs, is_new_install, cx);
+}
+
+fn register_slash_commands(cx: &mut App) {
+    let slash_command_registry = SlashCommandRegistry::global(cx);
+
+    slash_command_registry.register_command(assistant_slash_commands::FileSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
+    slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
+    slash_command_registry
+        .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
+
+    cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
+        move |is_enabled, _cx| {
+            if *is_enabled {
+                slash_command_registry.register_command(
+                    assistant_slash_commands::StreamingExampleSlashCommand,
+                    false,
+                );
+            }
+        }
+    })
+    .detach();
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
