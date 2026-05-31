@@ -1834,7 +1834,7 @@ impl PlatformWindow for MacWindow {
             ];
 
             let started = !session.is_null();
-            log::info!(
+            log::debug!(
                 "start_file_drag completed: started={}, item_count={}",
                 started,
                 count
@@ -2945,7 +2945,7 @@ extern "C" fn dragging_session_source_operation_mask(
         NSDRAGGING_CONTEXT_WITHIN_APPLICATION => NSDragOperationNone,
         _ => NSDragOperationNone,
     };
-    log::info!(
+    log::debug!(
         "dragging_session_source_operation_mask: context={}, operation={}",
         context,
         operation
@@ -2960,7 +2960,7 @@ extern "C" fn dragging_session_ended(
     _: NSPoint,
     operation: NSDragOperation,
 ) {
-    log::info!("dragging_session_ended operation={operation}");
+    log::debug!("dragging_session_ended operation={operation}");
     // SAFETY: AppKit invokes this selector on the GPUIWindow instance registered in build_classes,
     // which always has WINDOW_STATE_IVAR initialized to the owning MacWindowState.
     let window_state = unsafe { get_window_state(this) };
