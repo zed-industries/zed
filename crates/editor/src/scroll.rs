@@ -270,7 +270,7 @@ impl ScrollAnimation {
         !self.is_animating()
     }
 
-    fn progress(&self) -> ScrollAnimationProgress {
+    fn progress_at(&self, now: Instant) -> ScrollAnimationProgress {
         match self {
             Self::Completed { .. } => ScrollAnimationProgress::COMPLETE,
             Self::Animating {
@@ -284,7 +284,7 @@ impl ScrollAnimation {
                     return ScrollAnimationProgress::COMPLETE;
                 }
 
-                let elapsed = start_time.elapsed().as_secs_f32();
+                let elapsed = now.duration_since(*start_time).as_secs_f32();
                 let duration = duration.as_secs_f32();
 
                 ScrollAnimationProgress(elapsed / duration).min(ScrollAnimationProgress::COMPLETE)
@@ -293,6 +293,10 @@ impl ScrollAnimation {
     }
 
     pub fn advance(&mut self) {
+        self.advance_at(Instant::now());
+    }
+
+    fn advance_at(&mut self, now: Instant) {
         let Self::Animating {
             start_position,
             target_position,
@@ -302,7 +306,7 @@ impl ScrollAnimation {
             return;
         };
 
-        let progress = self.progress();
+        let progress = self.progress_at(now);
         if progress.is_finished() {
             *self = Self::Completed {
                 position: target_position,
@@ -318,7 +322,11 @@ impl ScrollAnimation {
     }
 
     pub fn restart(&mut self, target: gpui::Point<ScrollOffset>) {
-        self.advance();
+        self.restart_at(target, Instant::now());
+    }
+
+    fn restart_at(&mut self, target: gpui::Point<ScrollOffset>, now: Instant) {
+        self.advance_at(now);
         let current_position = self.position();
         if current_position == target {
             *self = Self::Completed { position: target };
@@ -327,11 +335,11 @@ impl ScrollAnimation {
 
         let new_duration = match self {
             Self::Animating { .. } => {
-                let progress = self.progress();
+                let progress = self.progress_at(now);
                 if progress.is_finished() {
                     SCROLL_ANIMATION_DURATION
                 } else {
-                    self.update_duration(target)
+                    self.update_duration_at(target, now)
                 }
             }
             Self::Completed { .. } => SCROLL_ANIMATION_DURATION,
@@ -341,12 +349,12 @@ impl ScrollAnimation {
             position: current_position,
             start_position: current_position,
             target_position: target,
-            start_time: Instant::now(),
+            start_time: now,
             duration: new_duration,
         };
     }
 
-    fn update_duration(&self, new_target: gpui::Point<ScrollOffset>) -> Duration {
+    fn update_duration_at(&self, new_target: gpui::Point<ScrollOffset>, now: Instant) -> Duration {
         let Self::Animating {
             start_position,
             target_position,
@@ -358,7 +366,7 @@ impl ScrollAnimation {
         };
 
         let current_position = self.position();
-        let remaining = self.progress().remaining();
+        let remaining = self.progress_at(now).remaining();
         // The derivative of ease_out_cubic f(t) = 1 - (1-t)^3 is f'(t) = 3(1-t)^2
         let derivative = 3.0 * remaining * remaining;
         let old_duration_secs = duration.as_secs_f64();
