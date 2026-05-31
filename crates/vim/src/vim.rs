@@ -1250,7 +1250,6 @@ impl Vim {
 
         let last_mode = self.mode;
         let prior_mode = self.last_mode;
-        let prior_tx = self.current_tx;
         self.last_mode = last_mode;
         self.mode = mode;
         self.operator_stack.clear();
@@ -1797,13 +1796,6 @@ impl Vim {
         popped_operator
     }
 
-    pub(crate) fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.helix_jump_ui.take();
-        self.update_editor(cx, move |_, editor, cx| {
-            editor.set_jump_labels(Vec::new(), cx);
-        });
-    }
-
     fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.active_operator(), Some(Operator::HelixJump { .. })) {
             self.clear_helix_jump_ui(window, cx);
@@ -1815,11 +1807,25 @@ impl Vim {
         self.sync_vim_settings(window, cx);
     }
 
-    fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.helix_jump_ui.take();
         self.update_editor(cx, move |_, editor, cx| {
+            editor.clear_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, cx);
             editor.set_jump_labels(Vec::new(), cx);
         });
+    }
+
+    pub(crate) fn apply_helix_jump_ui(
+        &mut self,
+        overlays: Vec<NavigationTargetOverlay>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.helix_jump_ui = Some(HelixJumpUi);
+        self.update_editor(cx, move |_, editor, cx| {
+            editor.set_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, overlays, cx);
+        });
+        true
     }
 
     pub(crate) fn handle_helix_jump_input(
@@ -1849,14 +1855,14 @@ impl Vim {
             }) {
                 self.finish_helix_jump(candidate, behaviour, window, cx);
             } else {
-                self.helix_clear_jump_ui(window, cx);
+                self.clear_helix_jump_ui(window, cx);
             }
         } else {
             if !labels
                 .iter()
                 .any(|label| label.label[0].eq_ignore_ascii_case(&input))
             {
-                self.helix_clear_jump_ui(window, cx);
+                self.clear_helix_jump_ui(window, cx);
                 return;
             }
 
@@ -1909,7 +1915,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |_, editor, cx| match behaviour {
-            HelixJumpBehaviour::Move => {
+            HelixJumpBehaviour::Move | HelixJumpBehaviour::MoveToWordStart => {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     let start = candidate.range.start;
                     s.select_anchor_ranges([start..start])
@@ -1917,7 +1923,7 @@ impl Vim {
             }
             HelixJumpBehaviour::Extend => {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let word_start = candidate.range.start.to_display_point(map);
                         let word_end = candidate.range.end.to_display_point(map);
                         let tail = selection.tail();
@@ -1933,8 +1939,22 @@ impl Vim {
                     });
                 });
             }
+            HelixJumpBehaviour::ExtendToWordStart => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(&mut |map, selection| {
+                        let word_start = candidate.range.start.to_display_point(map);
+                        let tail = selection.tail();
+
+                        if word_start >= tail {
+                            selection.set_head(word_start, SelectionGoal::None);
+                        } else {
+                            selection.set_head_tail(word_start, selection.end, SelectionGoal::None);
+                        }
+                    });
+                });
+            }
         });
-        self.helix_clear_jump_ui(window, cx);
+        self.clear_helix_jump_ui(window, cx);
     }
 
     fn active_operator(&self) -> Option<Operator> {

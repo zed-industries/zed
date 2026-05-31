@@ -48,7 +48,7 @@ impl CreateFileModal {
             editor.set_placeholder_text("Enter name (end with / for directory)...", window, cx);
             editor.set_show_line_numbers(false, cx);
             editor.set_show_gutter(false, cx);
-            editor.set_show_scrollbars(false, cx);
+            editor.scroll_manager.show_scrollbars(window, cx);
             editor.set_vim_insert_on_focus(true);
         });
 
@@ -139,9 +139,9 @@ impl CreateFileModal {
                         .read_with(cx, |worktree, _| worktree.absolutize(&project_path.path));
 
                     if is_directory {
-                        let _ = smol::fs::create_dir_all(&abs_path).await;
+                        let _ = std::fs::create_dir_all(&abs_path);
                     } else {
-                        let write_result = smol::fs::write(&abs_path, "").await;
+                        let write_result = std::fs::write(&abs_path, "");
                         if write_result.is_ok() {
                             let open_task = workspace.update_in(cx, |workspace, window, cx| {
                                 workspace.open_abs_path(

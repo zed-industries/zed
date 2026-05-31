@@ -289,6 +289,8 @@ actions!(
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
         NewTerminalThread,
+        /// Toggles the plan section expanded/collapsed.
+        TogglePlan,
     ]
 );
 

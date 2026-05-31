@@ -166,7 +166,6 @@ use crate::{
         model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
-    utility_pane::{DraggedUtilityPane, UtilityPaneSlot, UtilityPaneState},
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);

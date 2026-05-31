@@ -1,5 +1,4 @@
 use crate::command::command_interceptor;
-use crate::helix::JumpList;
 use crate::motion::MotionKind;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
@@ -288,9 +287,6 @@ pub struct VimGlobals {
     pub focused_vim: Option<WeakEntity<Vim>>,
 
     pub marks: HashMap<EntityId, Entity<MarksState>>,
-
-    /// Helix-style jump list for Ctrl-s/Ctrl-o/Ctrl-i navigation.
-    pub helix_jump_list: JumpList,
 }
 
 pub struct MarksState {
@@ -1123,7 +1119,6 @@ impl Operator {
             Operator::HelixSurroundAdd => "helix_ms",
             Operator::HelixSurroundReplace { .. } => "helix_mr",
             Operator::HelixSurroundDelete => "helix_md",
-            Operator::HelixJump { .. } => "gw",
         }
     }
 
@@ -1157,7 +1152,6 @@ impl Operator {
                 replaced_char: Some(c),
             } => format!("mr{}", c),
             Operator::HelixSurroundDelete => "md".to_string(),
-            Operator::HelixJump { .. } => "gw".to_string(),
             _ => self.id().to_string(),
         }
     }

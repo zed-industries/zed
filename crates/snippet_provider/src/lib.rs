@@ -13,7 +13,7 @@ use collections::{BTreeMap, BTreeSet, HashMap};
 use format::VsSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, TaskExt, WeakEntity};
 pub use registry::*;
 use util::ResultExt;
 
@@ -145,10 +145,10 @@ pub struct SnippetProvider {
     fs: Arc<dyn Fs>,
     snippets: HashMap<SnippetKind, BTreeMap<PathBuf, Vec<Arc<Snippet>>>>,
     watch_tasks: Vec<Task<Result<()>>>,
+    watched_directories: Vec<PathBuf>,
 }
 
-// Watches global snippet directory, is created just once and reused across multiple projects
-struct GlobalSnippetWatcher(Entity<SnippetProvider>);
+pub struct GlobalSnippetWatcher(pub Entity<SnippetProvider>);
 
 impl GlobalSnippetWatcher {
     fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Self {
@@ -157,6 +157,7 @@ impl GlobalSnippetWatcher {
             fs,
             snippets: Default::default(),
             watch_tasks: vec![],
+            watched_directories: vec![],
         });
         provider.update(cx, |this, cx| this.watch_directory(global_snippets_dir, cx));
         Self(provider)
@@ -176,6 +177,7 @@ impl SnippetProvider {
                 fs,
                 watch_tasks: Vec::new(),
                 snippets: Default::default(),
+                watched_directories: Vec::new(),
             };
 
             for dir in dirs_to_watch {
@@ -189,6 +191,7 @@ impl SnippetProvider {
     /// Add directory to be watched for content changes
     fn watch_directory(&mut self, path: &Path, cx: &Context<Self>) {
         let path: Arc<Path> = Arc::from(path);
+        self.watched_directories.push(path.to_path_buf());
 
         self.watch_tasks.push(cx.spawn(async move |this, cx| {
             let fs = this.read_with(cx, |this, _| this.fs.clone())?;
@@ -207,6 +210,23 @@ impl SnippetProvider {
             }
             Ok(())
         }));
+    }
+
+    pub fn reload_all_snippets(&mut self, cx: &mut Context<Self>) {
+        self.snippets.clear();
+
+        let directories_to_scan = self.watched_directories.clone();
+        if directories_to_scan.is_empty() {
+            return;
+        }
+
+        for directory in directories_to_scan {
+            cx.spawn(async move |this, cx| {
+                initial_scan(this.clone(), Arc::from(directory.as_path()), cx.clone()).await?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn lookup_snippets<'a, const LOOKUP_GLOBALS: bool>(

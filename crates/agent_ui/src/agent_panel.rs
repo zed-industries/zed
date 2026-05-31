@@ -1990,6 +1990,7 @@ impl AgentPanel {
                 TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
                 | TerminalEvent::NewNavigationTarget(_)
+                | TerminalEvent::ViModeChanged
                 | TerminalEvent::Open(_) => {}
             },
         );

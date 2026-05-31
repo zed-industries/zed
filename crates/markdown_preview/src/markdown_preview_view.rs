@@ -33,14 +33,10 @@ use workspace::searchable::{
 use workspace::{OpenOptions, OpenVisible, Pane, Workspace};
 
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageLittleDown,
-    ScrollPageLittleUp, ScrollPageUp,
-    markdown_elements::ParsedMarkdown,
-    markdown_parser::parse_markdown,
-    markdown_renderer::{RenderContext, render_markdown_block},
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown, ScrollDownByItem,
+    ScrollPageDown, ScrollPageLittleDown, ScrollPageLittleUp, ScrollPageUp, ScrollToBottom,
+    ScrollToTop, ScrollUp, ScrollUpByItem,
 };
-use crate::{ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ScrollUp, ScrollUpByItem};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -509,13 +505,12 @@ impl MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let viewport_height = self.list_state.viewport_bounds().size.height;
+        let viewport_height = self.scroll_handle.bounds().size.height;
         if viewport_height.is_zero() {
             return;
         }
 
-        // Scroll by a quarter of the viewport height
-        self.list_state.scroll_by(-viewport_height / 4.0);
+        self.scroll_by_amount(-viewport_height / 4.0);
         cx.notify();
     }
 
@@ -525,13 +520,12 @@ impl MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let viewport_height = self.list_state.viewport_bounds().size.height;
+        let viewport_height = self.scroll_handle.bounds().size.height;
         if viewport_height.is_zero() {
             return;
         }
 
-        // Scroll by a quarter of the viewport height
-        self.list_state.scroll_by(viewport_height / 4.0);
+        self.scroll_by_amount(viewport_height / 4.0);
         cx.notify();
     }
 

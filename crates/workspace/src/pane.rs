@@ -1,11 +1,8 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder, ZoomIn, ZoomOut,
-    confirmation_dialog::ConfirmationDialog,
     CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenOptions,
     OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
     Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    confirmation_dialog::ConfirmationDialog,
     focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{

@@ -1012,7 +1012,7 @@ impl Item for ProjectDiff {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         match self.branch_diff.read(cx).diff_base() {
             DiffBase::Head => {
-                let file_count = self.multibuffer.read(cx).paths().count();
+                let file_count = self.multibuffer.read(cx).all_buffers_iter().count();
                 if file_count == 0 {
                     "No Changes".into()
                 } else if file_count == 1 {

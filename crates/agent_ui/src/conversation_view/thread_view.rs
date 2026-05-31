@@ -2512,6 +2512,11 @@ impl ThreadView {
         }
     }
 
+    fn toggle_plan(&mut self, _: &crate::TogglePlan, _window: &mut Window, cx: &mut Context<Self>) {
+        self.plan_expanded = !self.plan_expanded;
+        cx.notify();
+    }
+
     fn toggle_following(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let following = self.is_following(cx);
 
@@ -4877,10 +4882,6 @@ impl ThreadView {
             }))
     }
 
-    fn toggle_plan(&mut self, _: &crate::TogglePlan, _window: &mut Window, cx: &mut Context<Self>) {
-        self.plan_expanded = !self.plan_expanded;
-        cx.notify();
-    }
 }
 
 struct TokenUsageTooltip {

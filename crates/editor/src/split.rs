@@ -26,8 +26,6 @@ use ui::{
     Styled as _, Window, div, px,
 };
 
-use settings::Settings;
-
 use crate::{
     EditorSettings,
     display_map::CompanionExcerptPatch,
@@ -41,7 +39,7 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, ToggleSoftWrap,
+    Autoscroll, Editor, EditorEvent, RenderDiffHunkControlsFn, ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
@@ -458,7 +456,7 @@ impl SplittableEditor {
 
     pub fn is_left_side_active(&self, _cx: &App) -> bool {
         if let Some(lhs) = &self.lhs {
-            lhs.has_latest_selection
+            lhs.was_last_focused
         } else {
             false // If not split, we're conceptually on the right side
         }
@@ -466,7 +464,7 @@ impl SplittableEditor {
 
     pub fn is_right_side_active(&self, _cx: &App) -> bool {
         if let Some(lhs) = &self.lhs {
-            !lhs.has_latest_selection
+            !lhs.was_last_focused
         } else {
             true // If not split, we're conceptually on the right side
         }
@@ -2112,8 +2110,6 @@ impl Render for SplittableEditor {
         div()
             .id("splittable-editor")
             .key_context(key_context)
-            .on_action(cx.listener(Self::split))
-            .on_action(cx.listener(Self::unsplit))
             .on_action(cx.listener(Self::toggle_split))
             .on_action(cx.listener(Self::activate_pane_left))
             .on_action(cx.listener(Self::activate_pane_right))

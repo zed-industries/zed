@@ -4,6 +4,9 @@ mod remote_connections;
 mod remote_servers;
 pub mod sidebar_recent_projects;
 mod ssh_config;
+mod zoxide_projects;
+
+pub use zoxide_projects::RecentProjectsZoxide;
 
 use std::{
     path::{Path, PathBuf},
@@ -55,7 +58,7 @@ use zed_actions::{OpenDevContainer, OpenRecent, OpenRecentZoxide, OpenRemote};
 /// Match strings with order-insensitive word matching.
 /// Splits the query into words and ensures all words match somewhere in the candidate,
 /// regardless of order.
-async fn match_strings_order_insensitive<T>(
+pub(crate) async fn match_strings_order_insensitive<T>(
     candidates: &[T],
     query: &str,
     smart_case: bool,

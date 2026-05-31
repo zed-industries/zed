@@ -402,7 +402,7 @@ impl JumpBar {
         // selection IDs so smooth cursor animation state stays connected.
         target_editor.update(cx, |editor, cx| {
             editor.change_selections(editor::SelectionEffects::default(), window, cx, |s| {
-                s.move_cursors_with(|_map, _current, _goal| {
+                s.move_cursors_with(&mut |_map, _current, _goal| {
                     (position, SelectionGoal::None)
                 });
             });
@@ -516,12 +516,11 @@ impl JumpBar {
 
                 let editor_matches = editor_entity.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
+                    let scroll_position = snapshot.scroll_position();
                     let display_snapshot = snapshot.display_snapshot;
 
                     // Get the visible range
                     let visible_line_count = editor.visible_line_count().unwrap_or(50.0);
-                    let scroll_position =
-                        editor.scroll_manager.scroll_position(&display_snapshot, cx);
 
                     let visible_start_row = scroll_position.y as u32;
                     let visible_end_row = visible_start_row + visible_line_count.ceil() as u32;

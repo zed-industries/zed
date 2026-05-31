@@ -14,9 +14,9 @@ use futures::future;
 
 use futures::{FutureExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
-use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::{Bias, Point};
 use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
+use std::collections::HashMap;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
@@ -490,9 +490,21 @@ pub async fn open_paths_with_positions(
     WindowHandle<MultiWorkspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
+    let mut caret_positions = HashMap::new();
+
     let paths = path_positions
         .iter()
-        .map(|path_with_position| path_with_position.path.clone())
+        .map(|path_with_position| {
+            let path = path_with_position.path.clone();
+            if let Some(row) = path_with_position.row
+                && path.is_file()
+            {
+                let row = row.saturating_sub(1);
+                let column = path_with_position.column.unwrap_or(0).saturating_sub(1);
+                caret_positions.insert(path.clone(), Point::new(row, column));
+            }
+            path
+        })
         .collect::<Vec<_>>();
 
     let OpenResult {
@@ -610,7 +622,7 @@ pub async fn open_paths_with_positions(
 
         if let Some(point) = point {
             if let Some(active_editor) = item.downcast::<Editor>() {
-                workspace
+                multi_workspace
                     .update(cx, |_, window, cx| {
                         active_editor.update(cx, |editor, cx| {
                             editor.set_soft_wrap_mode(

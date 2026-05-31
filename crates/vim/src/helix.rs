@@ -1178,6 +1178,7 @@ impl Vim {
             labels.push(HelixJumpLabel {
                 label,
                 range: start_anchor..end_anchor,
+                match_len: candidate.word_end.0 - candidate.word_start.0,
             });
 
             overlays.push(NavigationTargetOverlay {

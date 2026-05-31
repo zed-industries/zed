@@ -1,5 +1,6 @@
 use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
+use breadcrumbs::Breadcrumbs;
 use crate::{
     TerminalView, default_working_directory,
     persistence::{

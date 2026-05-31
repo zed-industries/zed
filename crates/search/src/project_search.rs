@@ -1018,8 +1018,6 @@ impl ProjectSearchView {
                                 model.pending_search = None;
                                 model.match_ranges.clear();
                                 model.excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
-                                model.no_results = None;
-                                model.limit_reached = false;
                                 cx.notify();
                             });
                         } else {
@@ -1800,9 +1798,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("search-on-input", "Search on input")
-                    .icon(IconName::Eye)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::Eye).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleSearchOnInput,
                         &focus_handle,

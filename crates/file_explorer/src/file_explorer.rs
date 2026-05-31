@@ -837,8 +837,8 @@ impl PickerDelegate for FileExplorerDelegate {
                 .child(
                     PopoverMenu::new("filter-menu-popover")
                         .with_handle(self.filter_popover_menu_handle.clone())
-                        .attach(gpui::Corner::BottomRight)
-                        .anchor(gpui::Corner::BottomLeft)
+                        .attach(gpui::Anchor::BottomRight)
+                        .anchor(gpui::Anchor::BottomLeft)
                         .offset(gpui::Point {
                             x: px(1.0),
                             y: px(1.0),
@@ -895,8 +895,8 @@ impl PickerDelegate for FileExplorerDelegate {
                         .child(
                             PopoverMenu::new("split-menu-popover")
                                 .with_handle(self.split_popover_menu_handle.clone())
-                                .attach(gpui::Corner::BottomRight)
-                                .anchor(gpui::Corner::BottomLeft)
+                                .attach(gpui::Anchor::BottomRight)
+                                .anchor(gpui::Anchor::BottomLeft)
                                 .offset(gpui::Point {
                                     x: px(1.0),
                                     y: px(1.0),

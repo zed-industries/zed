@@ -28,6 +28,7 @@ mod file_explorer_validation;
 mod fold;
 mod folding_ranges;
 mod git;
+mod global_change_list;
 mod highlight_matching_bracket;
 pub mod hover_links;
 pub mod hover_popover;
@@ -227,9 +228,7 @@ use project::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
         LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
     },
-    project_settings::{
-        DiagnosticSeverity, GoToDiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings,
-    },
+    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
 use regex::Regex;
@@ -367,7 +366,7 @@ impl Navigated {
 
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
-    cx.set_global(GlobalChangeList::default());
+    cx.set_global(global_change_list::GlobalChangeList::default());
     cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
 
     workspace::register_project_item::<Editor>(cx);
@@ -390,8 +389,8 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::cancel_language_server_work);
             workspace.register_action(Editor::toggle_focus);
             workspace.register_action(Editor::view_bookmarks);
-            workspace.register_action(Editor::go_to_next_global_change);
-            workspace.register_action(Editor::go_to_previous_global_change);
+            workspace.register_action(global_change_list::go_to_next_global_change);
+            workspace.register_action(global_change_list::go_to_previous_global_change);
             workspace.register_action(|workspace, action, window, cx| {
                 if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
                     editor.update(cx, |editor, cx| editor.count_tokens(action, window, cx))
@@ -419,17 +418,15 @@ pub fn init(cx: &mut App) {
     .on_action(move |action: &workspace::NewFileFromClipboard, cx| {
         let app_state = workspace::AppState::global(cx);
         let action = action.clone();
-        if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                move |workspace, window, cx| {
-                    Editor::new_file_from_clipboard(workspace, &action, window, cx)
-                },
-            )
-            .detach();
-        }
+        workspace::open_new(
+            Default::default(),
+            app_state,
+            cx,
+            move |workspace, window, cx| {
+                Editor::new_file_from_clipboard(workspace, &action, window, cx)
+            },
+        )
+        .detach();
     })
     .on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
@@ -833,34 +830,6 @@ pub struct ChangeList {
     /// Currently "selected" change.
     position: Option<usize>,
 }
-
-/// An entry in the global change list, tracking changes across all editors.
-#[derive(Clone)]
-struct GlobalChangeEntry {
-    /// Weak reference to the editor where the change occurred.
-    editor: WeakEntity<Editor>,
-    /// The project path of the buffer, if available.
-    project_path: Option<ProjectPath>,
-    /// The anchors representing the change positions.
-    anchors: Vec<Anchor>,
-    /// The points representing the change positions (for reopening closed editors).
-    points: Vec<Point>,
-    /// When the change was recorded.
-    timestamp: Instant,
-}
-
-const GLOBAL_CHANGE_GROUPING_THRESHOLD: Duration = Duration::from_millis(300);
-
-/// A global list of changes across all editors in the workspace.
-#[derive(Default)]
-struct GlobalChangeList {
-    /// All changes across all editors.
-    changes: Vec<GlobalChangeEntry>,
-    /// Currently "selected" change position.
-    position: Option<usize>,
-}
-
-impl gpui::Global for GlobalChangeList {}
 
 impl ChangeList {
     pub fn new() -> Self {
@@ -3757,10 +3726,9 @@ impl Editor {
                         let clean_name = name.trim_end_matches('/');
                         let path = base_path.join(clean_name);
 
-                        let output = smol::process::Command::new("trash")
+                        let output = std::process::Command::new("trash")
                             .arg(&path)
-                            .output()
-                            .await;
+                            .output();
 
                         match output {
                             Ok(output) => {
@@ -4334,53 +4302,6 @@ impl Editor {
     pub fn vim_insert_on_focus(&self) -> bool {
         self.vim_insert_on_focus
     }
-
-        /// Collect current selection IDs for smooth cursor animation remapping.
-        fn selection_ids_for_smooth_cursor(&self) -> Vec<usize> {
-            if self.smooth_cursor_animations.is_empty() {
-                return Vec::new();
-            }
-            self.selections
-                .disjoint_anchors()
-                .iter()
-                .map(|s| s.id)
-                .chain(self.selections.pending_anchor().iter().map(|s| s.id))
-                .collect()
-        }
-
-        /// When selection IDs change (e.g. `select_display_ranges` allocates new
-        /// IDs), transfer smooth cursor animation states from old IDs to new IDs
-        /// so the trail animation is continuous rather than lost.
-        fn remap_smooth_cursor_animations(&mut self, old_ids: &[usize]) {
-            if old_ids.is_empty() || self.smooth_cursor_animations.is_empty() {
-                return;
-            }
-            let new_ids: Vec<usize> = self
-                .selections
-                .disjoint_anchors()
-                .iter()
-                .map(|s| s.id)
-                .chain(self.selections.pending_anchor().iter().map(|s| s.id))
-                .collect();
-
-            // Fast path: IDs didn't change.
-            if old_ids == new_ids.as_slice() {
-                return;
-            }
-
-            // Transfer animation states positionally (old[i] → new[i]) when
-            // the cursor count is the same, which covers the common case of a
-            // single cursor being replaced by a single cursor.
-            if old_ids.len() == new_ids.len() {
-                for (old_id, new_id) in old_ids.iter().zip(new_ids.iter()) {
-                    if old_id != new_id {
-                        if let Some(state) = self.smooth_cursor_animations.remove(old_id) {
-                            self.smooth_cursor_animations.insert(*new_id, state);
-                        }
-                    }
-                }
-            }
-        }
 
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
     where
@@ -12143,6 +12064,30 @@ impl Editor {
             offset if offset < 0.0 || offset >= visible => None,
             offset => Some(offset),
         }
+    }
+
+    /// Copies the entire buffer content to clipboard.
+    pub fn copy_all(&mut self, _: &crate::actions::CopyAll, _: &mut Window, cx: &mut Context<Self>) {
+        let content = {
+            let buffer = self.buffer.read(cx).read(cx);
+            buffer.text()
+        };
+        clipboard_history::track_clipboard(&content, cx);
+        cx.write_to_clipboard(ClipboardItem::new_string(content));
+    }
+
+    pub fn push_to_global_change_list(
+        &self,
+        group: bool,
+        anchors: Vec<Anchor>,
+        cx: &mut Context<Self>,
+    ) {
+        global_change_list::push_to_global_change_list(self, group, anchors, cx);
+    }
+
+    pub(crate) fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let buffer = self.buffer.read(cx).as_singleton()?;
+        buffer.read(cx).project_path(cx)
     }
 }
 

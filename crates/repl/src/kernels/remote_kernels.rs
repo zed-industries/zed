@@ -3,17 +3,14 @@ use gpui::{App, AppContext as _, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
-use async_tungstenite::tokio::connect_async;
-use async_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
-
 use futures::StreamExt;
 use smol::io::AsyncReadExt as _;
 
 use super::{KernelSession, RunningKernel};
 use anyhow::Result;
 use jupyter_websocket_client::{
-    JupyterWebSocket, JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
-    KernelSpecsResponse, ProtocolMode, RemoteServer,
+    JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
+    KernelSpecsResponse, RemoteServer,
 };
 use std::{fmt::Debug, sync::Arc};
 
@@ -149,34 +146,7 @@ impl RemoteRunningKernel {
             )
             .await?;
 
-            let ws_url = format!(
-                "{}/api/kernels/{}/channels?token={}",
-                remote_server.base_url.replace("http", "ws"),
-                kernel_id,
-                remote_server.token
-            );
-
-            let mut req: Request<()> = ws_url.into_client_request()?;
-            let headers = req.headers_mut();
-
-            headers.insert(
-                "User-Agent",
-                HeaderValue::from_str(&format!(
-                    "Zed/{} ({}; {})",
-                    "repl",
-                    std::env::consts::OS,
-                    std::env::consts::ARCH
-                ))?,
-            );
-
-            let response = connect_async(req).await;
-
-            let (ws_stream, _response) = response?;
-
-            let kernel_socket = JupyterWebSocket {
-                inner: ws_stream,
-                protocol_mode: ProtocolMode::Json,
-            };
+            let (kernel_socket, _response) = remote_server.connect_to_kernel(&kernel_id).await?;
             let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
                 kernel_socket.split();
 

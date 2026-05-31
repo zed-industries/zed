@@ -1,7 +1,8 @@
 use collections::HashMap;
 use editor::{
-    Anchor as MultiBufferAnchor, Editor, EditorEvent, EditorSettings, HighlightKey, MultiBuffer,
-    MultiBufferOffset, MultiBufferSnapshot, SelectionEffects, ToOffset, scroll::Autoscroll,
+    Anchor as MultiBufferAnchor, CurrentLineHighlight, Editor, EditorEvent, EditorSettings,
+    HighlightKey, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, SelectionEffects,
+    ToOffset, scroll::Autoscroll,
 };
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
@@ -9,7 +10,7 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window, actions,
 };
 use language::language_settings::SoftWrap;
-use language::{HighlightId, Point, ToOffset as _};
+use language::{HighlightId, LanguageAwareStyling, Point};
 use picker::{Picker, PickerDelegate};
 use project::search::SearchQuery;
 use settings::Settings;
@@ -297,18 +298,17 @@ impl BufferSearchModal {
             let head = selection.head();
 
             let selected_text = if range.start.cmp(&range.end, &snapshot).is_ne() {
-                editor.buffer().read(cx).as_singleton().map(|buffer| {
-                    let buffer = buffer.read(cx);
-                    let start = range.start.text_anchor.to_offset(&buffer);
-                    let end = range.end.text_anchor.to_offset(&buffer);
-                    let mut text = buffer.text_for_range(start..end).collect::<String>();
-                    if text.ends_with('\n') {
-                        text.pop();
-                    }
-                    text
-                })
+                let start = range.start.to_offset(&snapshot).0;
+                let end = range.end.to_offset(&snapshot).0;
+                let mut text = snapshot
+                    .text_for_range(MultiBufferOffset(start)..MultiBufferOffset(end))
+                    .collect::<String>();
+                if text.ends_with('\n') {
+                    text.pop();
+                }
+                Some(text)
             } else if !VimModeSetting::get_global(cx).0 {
-                let query = editor.query_suggestion(window, cx);
+                let query = editor.query_suggestion(None, window, cx);
                 if query.is_empty() { None } else { Some(query) }
             } else {
                 None
@@ -363,10 +363,11 @@ impl BufferSearchModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (current_query_empty, cursor_snapshot) = {
+        let (current_query_empty, current_query, cursor_snapshot) = {
             let picker = self.picker.read(cx);
             (
                 picker.query(cx).is_empty(),
+                picker.query(cx).to_string(),
                 picker.delegate.search_history_cursor.clone(),
             )
         };
@@ -386,7 +387,10 @@ impl BufferSearchModal {
 
         let mut cursor_mut = cursor_snapshot;
         let prev_query = BufferSearchHistory::update_global(cx, |history, _| {
-            history.0.previous(&mut cursor_mut).map(|s| s.to_string())
+            history
+                .0
+                .previous(&mut cursor_mut, &current_query)
+                .map(|s| s.to_string())
         });
 
         if let Some(query) = prev_query {
@@ -571,17 +575,7 @@ impl BufferSearchModal {
 
         if let Some(editor) = &self.preview_editor {
             editor.update(cx, |editor, cx| {
-                editor.set_background(cx.theme().colors().elevated_surface_background, window, cx);
-                editor.set_gutter_background(
-                    cx.theme().colors().elevated_surface_background,
-                    window,
-                    cx,
-                );
-                editor.set_current_line_highlight_color(
-                    cx.theme().colors().ghost_element_selected,
-                    window,
-                    cx,
-                );
+                editor.set_current_line_highlight(Some(CurrentLineHighlight::Line));
                 Self::navigate_and_highlight_matches(
                     editor,
                     match_offset,
@@ -601,22 +595,11 @@ impl BufferSearchModal {
             let mut editor = Editor::for_multibuffer(buffer.clone(), None, window, cx);
             editor.set_show_gutter(true, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor.set_smooth_scroll(false, cx);
+            editor.set_current_line_highlight(Some(CurrentLineHighlight::Line));
             editor
         });
 
         editor.update(cx, |editor, cx| {
-            editor.set_background(cx.theme().colors().elevated_surface_background, window, cx);
-            editor.set_gutter_background(
-                cx.theme().colors().elevated_surface_background,
-                window,
-                cx,
-            );
-            editor.set_current_line_highlight_color(
-                cx.theme().colors().ghost_element_selected,
-                window,
-                cx,
-            );
             Self::navigate_and_highlight_matches(
                 editor,
                 match_offset,
@@ -760,9 +743,13 @@ impl BufferSearchDelegate {
                                 let left_trimmed_len =
                                     line_text.len() - line_text.trim_start().len();
                                 let mut current_offset: usize = 0;
-                                for chunk in
-                                    buffer_snapshot.chunks(line_start_offset..line_end_offset, true)
-                                {
+                                for chunk in buffer_snapshot.chunks(
+                                    line_start_offset..line_end_offset,
+                                    LanguageAwareStyling {
+                                        tree_sitter: true,
+                                        diagnostics: false,
+                                    },
+                                ) {
                                     let chunk_len = chunk.text.len();
                                     if let Some(highlight_id) = chunk.syntax_highlight_id {
                                         let chunk_in_trimmed_start =
@@ -789,7 +776,7 @@ impl BufferSearchDelegate {
                                 }
                             };
 
-                            let line_label = if let Some((_, buffer_point, _)) =
+                            let line_label = if let Some((_, buffer_point)) =
                                 buffer_snapshot.point_to_buffer_point(Point::new(line, 0))
                             {
                                 (buffer_point.row + 1).to_string().into()
@@ -916,7 +903,7 @@ impl BufferSearchDelegate {
                         if !is_valid_range(range) {
                             return None;
                         }
-                        id.style(&syntax_theme).map(|style| (range.clone(), style))
+                        syntax_theme.get(*id).cloned().map(|style| (range.clone(), style))
                     })
                     .collect()
             })
@@ -1056,8 +1043,10 @@ impl PickerDelegate for BufferSearchDelegate {
                                     })
                                     .child(
                                         Button::new("line-mode", "")
-                                            .icon(IconName::ListFilter)
-                                            .icon_size(IconSize::Small)
+                                            .start_icon(
+                                                Icon::new(IconName::ListFilter)
+                                                    .size(IconSize::Small),
+                                            )
                                             .style(ButtonStyle::Subtle)
                                             .toggle_state(self.line_mode)
                                             .key_binding(
@@ -1163,9 +1152,13 @@ impl PickerDelegate for BufferSearchDelegate {
                                     line_text.len() - line_text.trim_start().len();
 
                                 let mut current_offset = 0;
-                                for chunk in
-                                    buffer_snapshot_clone.chunks(line_start..line_end, true)
-                                {
+                                for chunk in buffer_snapshot_clone.chunks(
+                                    line_start..line_end,
+                                    LanguageAwareStyling {
+                                        tree_sitter: true,
+                                        diagnostics: false,
+                                    },
+                                ) {
                                     let chunk_len = chunk.text.len();
                                     if let Some(highlight_id) = chunk.syntax_highlight_id {
                                         let chunk_absolute_start = current_offset;
@@ -1213,7 +1206,7 @@ impl PickerDelegate for BufferSearchDelegate {
                                 }
                             };
 
-                            let line_label = if let Some((_, buffer_point, _)) =
+                            let line_label = if let Some((_, buffer_point)) =
                                 buffer_snapshot_clone.point_to_buffer_point(Point::new(line, 0))
                             {
                                 (buffer_point.row + 1).to_string().into()
@@ -1324,7 +1317,7 @@ impl PickerDelegate for BufferSearchDelegate {
                         ..buffer_snapshot.anchor_after(buffer_snapshot.len());
 
                     // Break down multi-buffer into individual buffer ranges, following Editor::find_matches pattern
-                    for (search_buffer, search_range, excerpt_id, deleted_hunk_anchor) in
+                    for (search_buffer, search_range, deleted_hunk_anchor) in
                         buffer_snapshot.range_to_buffer_ranges_with_deleted_hunks(full_range)
                     {
                         // Perform search on this buffer segment
@@ -1336,20 +1329,25 @@ impl PickerDelegate for BufferSearchDelegate {
                             .await;
 
                         // Convert buffer-relative matches to multi-buffer anchor ranges
-                        ranges.extend(buffer_matches.into_iter().map(|match_range| {
+                        ranges.extend(buffer_matches.into_iter().filter_map(|match_range| {
                             if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
                                 let start = search_buffer
                                     .anchor_after(search_range.start + match_range.start);
                                 let end = search_buffer
                                     .anchor_before(search_range.start + match_range.end);
-                                deleted_hunk_anchor.with_diff_base_anchor(start)
-                                    ..deleted_hunk_anchor.with_diff_base_anchor(end)
+                                Some(
+                                    deleted_hunk_anchor.with_diff_base_anchor(start)
+                                        ..deleted_hunk_anchor.with_diff_base_anchor(end),
+                                )
                             } else {
                                 let start = search_buffer
                                     .anchor_after(search_range.start + match_range.start);
                                 let end = search_buffer
                                     .anchor_before(search_range.start + match_range.end);
-                                MultiBufferAnchor::range_in_buffer(excerpt_id, start..end)
+                                Some(
+                                    buffer_snapshot.anchor_in_buffer(start)?
+                                        ..buffer_snapshot.anchor_in_buffer(end)?,
+                                )
                             }
                         }));
                     }
@@ -1467,7 +1465,10 @@ impl PickerDelegate for BufferSearchDelegate {
                                 for chunk in buffer_snapshot.chunks(
                                     MultiBufferOffset(chunk_offset_start)
                                         ..MultiBufferOffset(chunk_offset_end),
-                                    true,
+                                    LanguageAwareStyling {
+                                        tree_sitter: true,
+                                        diagnostics: false,
+                                    },
                                 ) {
                                     let len = chunk.text.len();
                                     if let Some(id) = chunk.syntax_highlight_id {
@@ -1484,7 +1485,7 @@ impl PickerDelegate for BufferSearchDelegate {
                                     Some(Arc::new(item_syntax))
                                 };
 
-                                let line_label = if let Some((_, buffer_point, _)) =
+                                let line_label = if let Some((_, buffer_point)) =
                                     buffer_snapshot.point_to_buffer_point(Point::new(line, 0))
                                 {
                                     (buffer_point.row + 1).to_string().into()

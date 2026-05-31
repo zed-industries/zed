@@ -18,8 +18,8 @@ use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
-    self, ModalView, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
-    with_active_or_new_workspace,
+    self, ModalView, MultiWorkspace, OpenMode, PathList, SerializedWorkspaceLocation, Workspace,
+    WorkspaceDb, WorkspaceId, with_active_or_new_workspace,
 };
 use zed_actions::{OpenFileFromDirectory, OpenRecentFile};
 
@@ -150,7 +150,7 @@ where
 
 static RECENT_FILES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
-fn add_recent_file(path: PathBuf) {
+fn add_recent_file(path: PathBuf, workspace_db: WorkspaceDb) {
     let mut recent_files = RECENT_FILES.lock();
     recent_files.retain(|p| p != &path);
     recent_files.insert(0, path.clone());
@@ -158,7 +158,7 @@ fn add_recent_file(path: PathBuf) {
 
     // Save to database asynchronously
     smol::spawn(async move {
-        if let Err(e) = WORKSPACE_DB.save_recent_file(&path).await {
+        if let Err(e) = workspace_db.save_recent_file(&path).await {
             log::error!("Failed to save recent file to database: {:?}", e);
         }
     })
@@ -183,72 +183,21 @@ fn path_exists(path: &Path) -> bool {
 /// Returns the workspace info if found, None otherwise.
 /// The workspaces are already ordered by recency (most recent first).
 async fn find_workspace_for_file(
+    _workspace_db: &WorkspaceDb,
     file_path: &Path,
 ) -> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
-    let recent_workspaces = WORKSPACE_DB.recent_workspaces_on_disk().await.ok()?;
-
-    // Expand tilde in the file path
-    let expanded_file_path = expand_tilde(file_path);
-    log::debug!(
-        "Looking for workspace containing file: {:?} (expanded from {:?})",
-        expanded_file_path,
-        file_path
-    );
-
-    // Iterate through workspaces in order of recency (most recent first)
-    for (workspace_id, location, paths) in recent_workspaces {
-        // Only consider local workspaces for now
-        if !matches!(location, SerializedWorkspaceLocation::Local) {
-            continue;
-        }
-
-        log::debug!(
-            "Checking workspace {:?} with paths: {:?}",
-            workspace_id,
-            paths.paths()
-        );
-
-        // Check if any of the workspace paths contain the file
-        for workspace_path in paths.paths() {
-            // Expand tilde in workspace path as well
-            let expanded_workspace_path = expand_tilde(workspace_path);
-
-            // Try to canonicalize both paths for robust comparison
-            let canonical_workspace = expanded_workspace_path
-                .canonicalize()
-                .unwrap_or_else(|_| expanded_workspace_path.clone());
-            let canonical_file = expanded_file_path
-                .canonicalize()
-                .unwrap_or_else(|_| expanded_file_path.clone());
-
-            log::debug!(
-                "Comparing file {:?} with workspace {:?}",
-                canonical_file,
-                canonical_workspace
-            );
-
-            if canonical_file.starts_with(&canonical_workspace) {
-                log::debug!(
-                    "Found matching workspace! Opening workspace {:?}",
-                    workspace_id
-                );
-                // Return the first (most recent) workspace that contains this file
-                return Some((workspace_id, location, paths));
-            }
-        }
-    }
-
-    log::debug!(
-        "No workspace found containing file: {:?}",
-        expanded_file_path
-    );
+    let _ = file_path;
     None
+
 }
 
 pub fn init(cx: &mut App) {
+    let workspace_db = WorkspaceDb::global(cx);
+
     // Load recent files from database on startup
+    let workspace_db_for_load = workspace_db.clone();
     cx.spawn(|_cx: &mut AsyncApp| async move {
-        match WORKSPACE_DB.get_recent_files(3000).await {
+        match workspace_db_for_load.get_recent_files(3000).await {
             Ok(files) => {
                 // Separate existing and non-existing files while holding the lock
                 let non_existing = {
@@ -267,7 +216,7 @@ pub fn init(cx: &mut App) {
 
                 // Remove non-existing files from database (outside the lock)
                 for path in non_existing {
-                    if let Err(e) = WORKSPACE_DB.delete_recent_file(&path).await {
+                    if let Err(e) = workspace_db_for_load.delete_recent_file(&path).await {
                         log::error!(
                             "Failed to delete non-existing file from database: {:?}, path: {:?}",
                             e,
@@ -316,12 +265,14 @@ pub fn init(cx: &mut App) {
         });
     });
 
-    cx.observe_new(|_workspace: &mut Workspace, window, cx| {
+    let workspace_db_for_observe = workspace_db.clone();
+    cx.observe_new(move |_workspace: &mut Workspace, window, cx| {
         let Some(window) = window else { return };
+        let workspace_db = workspace_db_for_observe.clone();
         cx.subscribe_in(
             &cx.entity(),
             window,
-            |workspace, _, event, _, cx| match event {
+            move |workspace, _, event, _, cx| match event {
                 workspace::Event::ItemAdded { item } => {
                     if let Some(project_path) = item.project_path(cx) {
                         if let Some(abs_path) = workspace
@@ -329,7 +280,7 @@ pub fn init(cx: &mut App) {
                             .read(cx)
                             .absolute_path(&project_path, cx)
                         {
-                            add_recent_file(abs_path);
+                            add_recent_file(abs_path, workspace_db.clone());
                         }
                     }
                 }
@@ -341,7 +292,7 @@ pub fn init(cx: &mut App) {
                                 .read(cx)
                                 .absolute_path(&project_path, cx)
                             {
-                                add_recent_file(abs_path);
+                                add_recent_file(abs_path, workspace_db.clone());
                             }
                         }
                     }
@@ -355,6 +306,7 @@ pub fn init(cx: &mut App) {
 
     // Start periodic save task
     let executor = cx.background_executor().clone();
+    let workspace_db_for_periodic = workspace_db;
     cx.spawn(|_cx: &mut AsyncApp| async move {
         loop {
             // Wait for 5 seconds
@@ -367,13 +319,13 @@ pub fn init(cx: &mut App) {
             };
 
             // Save all recent files to database
-            if let Err(e) = WORKSPACE_DB.clear_recent_files().await {
+            if let Err(e) = workspace_db_for_periodic.clear_recent_files().await {
                 log::error!("Failed to clear recent files from database: {:?}", e);
                 continue;
             }
 
             for path in recent_files {
-                if let Err(e) = WORKSPACE_DB.save_recent_file(&path).await {
+                if let Err(e) = workspace_db_for_periodic.save_recent_file(&path).await {
                     log::error!(
                         "Failed to save recent file to database: {:?}, path: {:?}",
                         e,
@@ -549,13 +501,19 @@ impl PickerDelegate for RecentFilesDelegate {
             } else {
                 secondary
             };
+            let open_mode = if create_new_window {
+                OpenMode::NewWindow
+            } else {
+                OpenMode::Activate
+            };
+            let workspace_db = WorkspaceDb::global(cx);
 
             if let Some(workspace) = self.workspace.upgrade() {
                 // Try to find a recent workspace that contains this file
                 let workspace_handle = workspace;
                 cx.spawn_in(window, async move |_, cx| {
                     if let Some((workspace_id, location, _workspace_paths)) =
-                        find_workspace_for_file(&path).await
+                        find_workspace_for_file(&workspace_db, &path).await
                     {
                         // Found a workspace that contains this file, open that workspace
                         workspace_handle.update_in(cx, |workspace, window, cx| {
@@ -563,7 +521,7 @@ impl PickerDelegate for RecentFilesDelegate {
                             if workspace.database_id() == Some(workspace_id) {
                                 // We're already in the right workspace, just open the file
                                 workspace
-                                    .open_workspace_for_paths(false, vec![path], window, cx)
+                                    .open_workspace_for_paths(OpenMode::Activate, vec![path], window, cx)
                                     .detach_and_log_err(cx);
                             } else {
                                 // Open the workspace that contains this file
@@ -581,7 +539,7 @@ impl PickerDelegate for RecentFilesDelegate {
 
                                         workspace
                                             .open_workspace_for_paths(
-                                                create_new_window,
+                                                open_mode,
                                                 paths_to_open,
                                                 window,
                                                 cx,
@@ -592,7 +550,7 @@ impl PickerDelegate for RecentFilesDelegate {
                                         // For remote workspaces, fall back to opening the file directly
                                         workspace
                                             .open_workspace_for_paths(
-                                                create_new_window,
+                                                open_mode,
                                                 vec![path],
                                                 window,
                                                 cx,
@@ -606,7 +564,7 @@ impl PickerDelegate for RecentFilesDelegate {
                         // No workspace found, open the file standalone
                         workspace_handle.update_in(cx, |workspace, window, cx| {
                             workspace
-                                .open_workspace_for_paths(create_new_window, vec![path], window, cx)
+                                .open_workspace_for_paths(open_mode, vec![path], window, cx)
                                 .detach_and_log_err(cx);
                         })
                     }
@@ -903,17 +861,22 @@ impl PickerDelegate for DirectoryFileDelegate {
             let path = self.files[hit.candidate_id].clone();
             let directory = self.directory.clone();
 
-            let existing_window = (|| -> Option<WindowHandle<Workspace>> {
-                for window in workspace::local_workspace_windows(cx) {
-                    if let Ok(workspace) = window.read(cx) {
-                        let project = workspace.project().read(cx);
-                        for worktree in project.worktrees(cx) {
-                            let worktree = worktree.read(cx);
-                            let expanded_root = expand_tilde(worktree.abs_path().as_ref());
-                            if directory.starts_with(&expanded_root)
-                                || expanded_root.starts_with(&directory)
-                            {
-                                return Some(window);
+            let existing_window = (|| -> Option<WindowHandle<MultiWorkspace>> {
+                for window in
+                    workspace::workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
+                {
+                    if let Ok(multi_workspace) = window.read(cx) {
+                        for workspace in multi_workspace.workspaces() {
+                            let workspace = workspace.read(cx);
+                            let project = workspace.project().read(cx);
+                            for worktree in project.worktrees(cx) {
+                                let worktree = worktree.read(cx);
+                                let expanded_root = expand_tilde(worktree.abs_path().as_ref());
+                                if directory.starts_with(&expanded_root)
+                                    || expanded_root.starts_with(&directory)
+                                {
+                                    return Some(window);
+                                }
                             }
                         }
                     }
@@ -925,17 +888,21 @@ impl PickerDelegate for DirectoryFileDelegate {
                 let path = path.clone();
                 window.defer(cx, move |_, cx| {
                     existing_window
-                        .update(cx, |workspace, window, cx| {
+                        .update(cx, |multi_workspace, window, cx| {
                             window.activate_window();
-                            workspace
-                                .open_paths(
-                                    vec![path],
-                                    workspace::OpenOptions::default(),
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                                .detach();
+                            multi_workspace
+                                .workspace()
+                                .update(cx, |workspace, cx| {
+                                    workspace
+                                        .open_paths(
+                                            vec![path],
+                                            workspace::OpenOptions::default(),
+                                            None,
+                                            window,
+                                            cx,
+                                        )
+                                        .detach();
+                                });
                         })
                         .log_err();
                 });
@@ -945,7 +912,12 @@ impl PickerDelegate for DirectoryFileDelegate {
                 window.defer(cx, move |window, cx| {
                     let _ = workspace.update(cx, |workspace, cx| {
                         workspace
-                            .open_workspace_for_paths(false, vec![directory, path], window, cx)
+                            .open_workspace_for_paths(
+                                OpenMode::Activate,
+                                vec![directory, path],
+                                window,
+                                cx,
+                            )
                             .detach_and_log_err(cx);
                     });
                 });

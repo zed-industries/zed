@@ -2,7 +2,7 @@ use collections::VecDeque;
 use gpui::{Global, SharedString};
 use parking_lot::Mutex;
 use std::time::Duration;
-use workspace::WORKSPACE_DB;
+use workspace::WorkspaceDb;
 
 const MAX_CLIPBOARD_HISTORY: usize = 300;
 const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -59,7 +59,7 @@ impl ClipboardHistory {
         Self {}
     }
 
-    pub fn add_entry(text: String) {
+    pub fn add_entry(text: String, cx: &gpui::App) {
         // Don't add empty entries or very short entries (<=3 chars)
         if text.is_empty() || text.len() <= 3 {
             return;
@@ -83,8 +83,9 @@ impl ClipboardHistory {
         drop(entries);
 
         // Save to database asynchronously
+        let db = WorkspaceDb::global(cx);
         smol::spawn(async move {
-            if let Err(e) = WORKSPACE_DB.save_clipboard_entry(&text, &timestamp).await {
+            if let Err(e) = db.save_clipboard_entry(&text, &timestamp).await {
                 log::error!("Failed to save clipboard entry to database: {:?}", e);
             }
         })
@@ -97,9 +98,9 @@ impl ClipboardHistory {
 }
 
 /// Helper function to track clipboard text in history
-pub fn track_clipboard(text: &str, _cx: &mut impl gpui::BorrowAppContext) {
+pub fn track_clipboard(text: &str, cx: &gpui::App) {
     *LAST_CLIPBOARD_TEXT.lock() = Some(text.to_string());
-    ClipboardHistory::add_entry(text.to_string());
+    ClipboardHistory::add_entry(text.to_string(), cx);
 }
 
 /// Format a SystemTime as an SQLite-compatible timestamp string
@@ -131,9 +132,10 @@ pub fn init(cx: &mut gpui::App) {
     cx.set_global(ClipboardHistory::new());
 
     // Load clipboard history from database on startup
-    cx.spawn(async move |_cx: &mut gpui::AsyncApp| {
+    let db = WorkspaceDb::global(cx);
+    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
         // Clean up duplicates in database first
-        match WORKSPACE_DB.delete_duplicate_clipboard_entries().await {
+        match db.delete_duplicate_clipboard_entries().await {
             Ok(()) => {
                 log::info!("Removed duplicate clipboard entries from database");
             }
@@ -143,10 +145,7 @@ pub fn init(cx: &mut gpui::App) {
         }
 
         // Load clipboard history from database
-        match WORKSPACE_DB
-            .get_clipboard_entries(MAX_CLIPBOARD_HISTORY)
-            .await
-        {
+        match db.get_clipboard_entries(MAX_CLIPBOARD_HISTORY).await {
             Ok(db_entries) => {
                 let mut entries = CLIPBOARD_ENTRIES.lock();
                 entries.clear();
@@ -162,18 +161,8 @@ pub fn init(cx: &mut gpui::App) {
                 log::error!("Failed to load clipboard history from database: {:?}", e);
             }
         }
-    })
-    .detach();
 
-    // Initialize last known clipboard text from current clipboard content
-    if let Some(item) = cx.read_from_clipboard() {
-        if let Some(text) = item.text() {
-            *LAST_CLIPBOARD_TEXT.lock() = Some(text);
-        }
-    }
-
-    // Poll the system clipboard for changes from other applications
-    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+        // Poll the system clipboard for changes from other applications
         loop {
             cx.background_executor()
                 .timer(CLIPBOARD_POLL_INTERVAL)
@@ -188,10 +177,20 @@ pub fn init(cx: &mut gpui::App) {
                 if is_new {
                     *last = Some(text.clone());
                     drop(last);
-                    ClipboardHistory::add_entry(text);
+                    // We need a reference to the db for saving; get it through the app context
+                    cx.update(|cx| {
+                        ClipboardHistory::add_entry(text, cx);
+                    });
                 }
             }
         }
     })
     .detach();
+
+    // Initialize last known clipboard text from current clipboard content
+    if let Some(item) = cx.read_from_clipboard() {
+        if let Some(text) = item.text() {
+            *LAST_CLIPBOARD_TEXT.lock() = Some(text);
+        }
+    }
 }

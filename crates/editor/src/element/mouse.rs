@@ -567,7 +567,7 @@ impl EditorElement {
                             }
 
                             if scroll_position != current_scroll_position {
-                                editor.scroll(scroll_position, axis, window, cx);
+                                editor.scroll(scroll_position, axis, true, window, cx);
                                 cx.stop_propagation();
                             } else if y < 0. {
                                 // Due to clamping, we may fail to detect cases of overscroll to the top;

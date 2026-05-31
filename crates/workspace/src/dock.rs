@@ -8,7 +8,7 @@ use client::proto;
 use db::kvp::KeyValueStore;
 
 use gpui::{
-    Action, Anchor, Animation, AnimationExt, AnyView, App, Axis, Context, Corner, Entity, EntityId,
+    Action, Anchor, Animation, AnimationExt, AnyView, App, Axis, Context, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent,
     MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, Task,
     WeakEntity, Window, deferred, div, ease_out_cubic, px,
@@ -1131,7 +1131,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
@@ -1243,6 +1243,7 @@ impl Render for Dock {
                     .with_easing(ease_out_cubic),
                     {
                         let position = self.position;
+                        let size = entry.size_state.size.unwrap_or_else(|| entry.panel.default_size(window, cx));
                         let target_size = f32::from(size);
                         move |this, delta| {
                             let progress = if is_closing { 1.0 - delta } else { delta };

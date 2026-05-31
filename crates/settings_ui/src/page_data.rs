@@ -1305,7 +1305,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.enabled.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .smooth_cursor
@@ -1328,7 +1328,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.trail.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .smooth_cursor
@@ -1351,7 +1351,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.smooth_time.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .smooth_cursor
@@ -1374,7 +1374,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.leading_smooth_time.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .smooth_cursor
@@ -1397,7 +1397,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.trail_opacity.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .smooth_cursor
@@ -1420,7 +1420,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.trail_min_distance.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .smooth_cursor
