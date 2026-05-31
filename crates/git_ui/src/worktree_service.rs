@@ -340,29 +340,37 @@ pub async fn map_subdirectories_to_new_root(
     if subdirs.is_empty() {
         return vec![new_root];
     }
-    let mut result: Vec<PathBuf> = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::default();
+
+    // Build candidates first, skipping malformed subdirs.
+    let mut candidates: Vec<PathBuf> = Vec::with_capacity(subdirs.len());
     for subdir in &subdirs {
-        let candidate = match path_style.join_path(&new_root, subdir) {
-            Ok(path) => path,
-            Err(err) => {
-                log::warn!(
-                    "map_subdirectories_to_new_root: skipping subdir {:?} under {:?}: {err}",
-                    subdir,
-                    new_root
-                );
-                continue;
-            }
-        };
-        if let Some(probe) = is_dir.as_ref() {
-            if !probe(candidate.clone()).await {
-                continue;
-            }
-        }
-        if seen.insert(candidate.clone()) {
-            result.push(candidate);
+        match path_style.join_path(&new_root, subdir) {
+            Ok(path) => candidates.push(path),
+            Err(err) => log::warn!(
+                "map_subdirectories_to_new_root: skipping subdir {:?} under {:?}: {err}",
+                subdir,
+                new_root
+            ),
         }
     }
+
+    // Probe all candidates in parallel, then filter in input order.
+    let kept: Vec<PathBuf> = if let Some(probe) = is_dir {
+        let probes: Vec<_> = candidates.iter().map(|c| probe(c.clone())).collect();
+        let results = futures::future::join_all(probes).await;
+        candidates
+            .into_iter()
+            .zip(results)
+            .filter_map(|(c, ok)| if ok { Some(c) } else { None })
+            .collect()
+    } else {
+        candidates
+    };
+
+    // Dedup while preserving order.
+    let mut seen: HashSet<PathBuf> = HashSet::default();
+    let result: Vec<PathBuf> = kept.into_iter().filter(|p| seen.insert(p.clone())).collect();
+
     if result.is_empty() {
         vec![new_root]
     } else {
