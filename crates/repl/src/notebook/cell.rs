@@ -455,7 +455,6 @@ impl MarkdownCell {
                 _ => {}
             });
 
-        let start_editing = source.is_empty();
         Self {
             id,
             metadata,
@@ -463,7 +462,7 @@ impl MarkdownCell {
             source,
             editor,
             markdown,
-            editing: start_editing,
+            editing: false,
             selected: false,
             cell_position: None,
             _editor_subscription: editor_subscription,
@@ -678,7 +677,15 @@ impl Render for MarkdownCell {
                                     cx.emit(MarkdownCellEvent::Clicked(this.id.clone()));
                                 }
                             }))
-                            .child(MarkdownElement::new(self.markdown.clone(), style)),
+                            .when(self.source.is_empty(), |this| {
+                                this.child(
+                                    Label::new("Empty markdown block. Double-click to edit.")
+                                        .color(Color::Placeholder),
+                                )
+                            })
+                            .when(!self.source.is_empty(), |this| {
+                                this.child(MarkdownElement::new(self.markdown.clone(), style))
+                            }),
                     ),
             )
             .children(self.cell_position_spacer(false, window, cx))
