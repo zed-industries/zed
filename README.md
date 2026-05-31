@@ -357,7 +357,15 @@ I am only using this inside multi buffers, because `jump::Toggle` does not work 
 
 ## DeepL integration
 
-There is this new action:  `zed::DeeplTranslate` which translates the current selection or the current line. It needs the `DEEPL_API_KEY` environment variable to be set. Bind like this:
+There is this new action: `zed::DeeplTranslate` which translates the current selection or the current line. Configure the DeepL API key in `settings.json` like this:
+
+```json
+"deepl": {
+  "api_key": "your-deepl-api-key"
+}
+```
+
+Then bind the action like this:
 
 ```json
 "space c g": [

@@ -863,22 +863,18 @@ fn deepl_translate(
     cx: &mut Context<Workspace>,
 ) {
     use std::collections::HashMap;
-    use std::env;
 
-    // Get the API key from environment variable
-    let api_key = match env::var("DEEPL_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<DeeplTranslate>(),
-                    "DEEPL_API_KEY environment variable not set".to_string(),
-                ),
-                cx,
-            );
-            return;
-        }
-    };
+    let api_key = DeeplSettings::get_global(cx).api_key.trim().to_string();
+    if api_key.is_empty() {
+        workspace.show_toast(
+            Toast::new(
+                NotificationId::unique::<DeeplTranslate>(),
+                "DeepL API key is not configured in settings.json".to_string(),
+            ),
+            cx,
+        );
+        return;
+    }
 
     // Get selected text from the active editor
     let editor = if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
@@ -2172,6 +2168,23 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
 
 #[derive(Copy, Clone, Debug, settings::RegisterSetting)]
 struct CursorHideModeSetting(gpui::CursorHideMode);
+
+#[derive(Clone, Debug, Default, settings::RegisterSetting)]
+struct DeeplSettings {
+    api_key: String,
+}
+
+impl Settings for DeeplSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self {
+            api_key: content
+                .deepl
+                .as_ref()
+                .and_then(|deepl| deepl.api_key.clone())
+                .unwrap_or_default(),
+        }
+    }
+}
 
 impl Settings for CursorHideModeSetting {
     fn from_settings(content: &settings::SettingsContent) -> Self {

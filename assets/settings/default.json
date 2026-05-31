@@ -560,6 +560,11 @@
     // Any unrecognized input device will fall back to system default.
     "experimental.input_audio_device": null,
   },
+  // Configuration for DeepL-powered translation actions.
+  "deepl": {
+    // DeepL API key used by translation actions.
+    "api_key": null,
+  },
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor.

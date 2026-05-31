@@ -175,6 +175,7 @@ impl VsCodeSettings {
             agent: self.agent_settings_content(),
             agent_servers: None,
             audio: None,
+            deepl: None,
             auto_update: None,
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,

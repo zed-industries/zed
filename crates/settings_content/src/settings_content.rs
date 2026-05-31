@@ -149,6 +149,9 @@ pub struct SettingsContent {
     /// Configuration of audio in Zed.
     pub audio: Option<AudioSettingsContent>,
 
+    /// Configuration for DeepL-powered translation actions.
+    pub deepl: Option<DeeplSettingsContent>,
+
     /// Whether or not to automatically check for updates.
     ///
     /// Default: true
@@ -292,6 +295,13 @@ pub struct PerformanceProfilerSettingsContent {
     ///
     /// Default: false
     pub enabled: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct DeeplSettingsContent {
+    /// DeepL API key used by translation actions.
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, MergeFrom)]
