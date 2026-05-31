@@ -278,7 +278,7 @@ The last big `main` UI upgrade introduced the `Threads Sidebar` which allows mul
   - increase button size
   - use vertical lines and display the agent tab name in the notification, if set
 
-### Command palette
+## Command palette
 
 - does not search individual character matches anymore, like when you enter `bsp`, it would show `editor: backspace` before. I do not like that behavior, so I removed that
 - change `command palette: toggle` to sort by recency instead of hit count
