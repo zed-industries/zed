@@ -299,6 +299,12 @@ pub fn classify_worktrees(
     (git_repos, non_git_paths)
 }
 
+/// Strips verbatim UNC prefixes (`\\?\`) on Windows so paths can be
+/// compared byte-for-byte regardless of how the OS returns them.
+fn canonical(path: &Path) -> PathBuf {
+    SanitizedPath::new(path).as_path().to_path_buf()
+}
+
 /// Returns open project paths relative to the active repo's work dir.
 /// An empty `PathBuf` means a path opened exactly at the work-dir root.
 pub fn visible_subdirectories_under_active_repo(project: &Project, cx: &gpui::App) -> Vec<PathBuf> {
@@ -307,10 +313,12 @@ pub fn visible_subdirectories_under_active_repo(project: &Project, cx: &gpui::Ap
         return Vec::new();
     };
     let work_dir = active_repo.read(cx).work_directory_abs_path.clone();
+    let wd_norm = canonical(work_dir.as_ref());
     let mut subdirs = Vec::new();
     for worktree in project.visible_worktrees(cx) {
         let abs_path = worktree.read(cx).abs_path();
-        if let Ok(relative) = abs_path.strip_prefix(work_dir.as_ref()) {
+        let p_norm = canonical(abs_path.as_ref());
+        if let Ok(relative) = p_norm.strip_prefix(&wd_norm) {
             subdirs.push(relative.to_path_buf());
         }
     }
@@ -1431,26 +1439,36 @@ fn apply_diff(
     expected_paths: &[PathBuf],
     work_dir: &Path,
 ) -> WorktreeSwitchMemory {
-    let expected_set: HashSet<&PathBuf> = expected_paths.iter().collect();
-    let current_set: HashSet<&PathBuf> = current.iter().collect();
+    let work_dir_c = canonical(work_dir);
+    let current_c: Vec<PathBuf> = current.iter().map(|p| canonical(p)).collect();
+    let expected_c: Vec<PathBuf> = expected_paths.iter().map(|p| canonical(p)).collect();
 
-    for added in current_set.difference(&expected_set) {
-        let added: &Path = added.as_path();
-        if let Ok(rel) = added.strip_prefix(work_dir) {
+    let expected_set: HashSet<&PathBuf> = expected_c.iter().collect();
+    let current_set: HashSet<&PathBuf> = current_c.iter().collect();
+
+    // add to memory: handle user adding folder from project event
+    for (orig, canon) in current.iter().zip(current_c.iter()) {
+        if expected_set.contains(canon) {
+            continue;
+        }
+        if let Ok(rel) = canon.strip_prefix(&work_dir_c) {
             if !memory.subdirs.contains(&rel.to_path_buf()) {
                 memory.subdirs.push(rel.to_path_buf());
             }
-        } else if !memory.non_git_paths.contains(&added.to_path_buf()) {
-            memory.non_git_paths.push(added.to_path_buf());
+        } else if !memory.non_git_paths.iter().any(|p| canonical(p) == *canon) {
+            memory.non_git_paths.push(orig.clone());
         }
     }
 
-    for removed in expected_set.difference(&current_set) {
-        let removed: &Path = removed.as_path();
-        if let Ok(rel) = removed.strip_prefix(work_dir) {
+    // remove from memory: handle user removing folder from project event
+    for canon in &expected_c {
+        if current_set.contains(canon) {
+            continue;
+        }
+        if let Ok(rel) = canon.strip_prefix(&work_dir_c) {
             memory.subdirs.retain(|s| s != rel);
         } else {
-            memory.non_git_paths.retain(|p| p.as_path() != removed);
+            memory.non_git_paths.retain(|p| canonical(p) != *canon);
         }
     }
 
@@ -1933,6 +1951,51 @@ mod tests {
             updated.non_git_paths,
             vec![PathBuf::from(path!("/y"))],
             "/x removed and /y added"
+        );
+    }
+
+    /// On Windows, `workspace.root_paths()` may return verbatim `\\?\C:\…` paths
+    /// while `path_style.join_path` returns plain `C:\…`. Canonicalization must
+    /// treat them as equal so no spurious add/remove fires.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_apply_diff_verbatim_prefix_no_spurious_diff() {
+        let work_dir = PathBuf::from(r"C:\r");
+        let memory = WorktreeSwitchMemory {
+            subdirs: vec![PathBuf::from("a")],
+            non_git_paths: vec![],
+        };
+        // current has verbatim prefix; expected does not
+        let current = vec![PathBuf::from(r"\\?\C:\r\a")];
+        let expected = vec![PathBuf::from(r"C:\r\a")];
+        let updated = apply_diff(memory.clone(), &current, &expected, &work_dir);
+        assert_eq!(updated, memory, "verbatim vs plain must not produce a diff");
+    }
+
+    /// Multiple additions must appear in the same order as in `current`, not in
+    /// arbitrary `HashSet` iteration order.
+    #[test]
+    fn test_apply_diff_addition_order_deterministic() {
+        let work_dir = PathBuf::from(path!("/r"));
+        let memory = WorktreeSwitchMemory {
+            subdirs: vec![],
+            non_git_paths: vec![],
+        };
+        let expected: Vec<PathBuf> = vec![];
+        let current = vec![
+            PathBuf::from(path!("/r/z")),
+            PathBuf::from(path!("/r/a")),
+            PathBuf::from(path!("/r/m")),
+        ];
+        let updated = apply_diff(memory, &current, &expected, &work_dir);
+        assert_eq!(
+            updated.subdirs,
+            vec![
+                PathBuf::from("z"),
+                PathBuf::from("a"),
+                PathBuf::from("m"),
+            ],
+            "additions must follow input order, not hash order"
         );
     }
 
