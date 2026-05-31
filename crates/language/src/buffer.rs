@@ -1,14 +1,14 @@
 pub mod row_chunk;
 
 use crate::{
-    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
-    RunnableCapture, RunnableTag, TextObject, TreeSitterOptions,
+    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
+    PLAIN_TEXT, RunnableCapture, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
-        MAX_CONTEXT_BYTES, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
+        MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
@@ -27,6 +27,7 @@ use collections::{HashMap, HashSet};
 use encoding_rs::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
+use futures_lite::future::yield_now;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TextStyle,
@@ -36,7 +37,6 @@ use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use settings::WorktreeId;
 use smallvec::SmallVec;
-use smol::future::yield_now;
 use std::{
     any::Any,
     borrow::Cow,
@@ -297,6 +297,19 @@ pub enum Operation {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BufferEditSource {
+    User,
+    Agent,
+    Remote,
+}
+
+impl BufferEditSource {
+    pub fn is_local(self) -> bool {
+        !matches!(self, Self::Remote)
+    }
+}
+
 /// An event that occurs in a buffer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BufferEvent {
@@ -307,7 +320,7 @@ pub enum BufferEvent {
         is_local: bool,
     },
     /// The buffer was edited.
-    Edited { is_local: bool },
+    Edited { source: BufferEditSource },
     /// The buffer's `dirty` bit changed.
     DirtyChanged,
     /// The buffer was saved.
@@ -1579,16 +1592,21 @@ impl Buffer {
 
             let target_encoding = force_encoding.unwrap_or(current_encoding);
 
+            let bytes = load_bytes_task.await?;
+
+            anyhow::ensure!(
+                analyze_byte_content(&bytes) != ByteContent::Binary,
+                "Binary files are not supported"
+            );
+
             let is_unicode = target_encoding == encoding_rs::UTF_8
                 || target_encoding == encoding_rs::UTF_16LE
                 || target_encoding == encoding_rs::UTF_16BE;
 
             let (new_text, has_bom, encoding_used) = if force_encoding.is_some() && !is_unicode {
-                let bytes = load_bytes_task.await?;
                 let (cow, _had_errors) = target_encoding.decode_without_bom_handling(&bytes);
                 (cow.into_owned(), false, target_encoding)
             } else {
-                let bytes = load_bytes_task.await?;
                 let (cow, used_enc, _had_errors) = target_encoding.decode(&bytes);
 
                 let actual_has_bom = if used_enc == encoding_rs::UTF_8 {
@@ -2428,12 +2446,29 @@ impl Buffer {
         self.end_transaction_at(Instant::now(), cx)
     }
 
+    pub fn end_transaction_with_source(
+        &mut self,
+        source: BufferEditSource,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
+        self.end_transaction_at_internal(Instant::now(), source, cx)
+    }
+
     /// Terminates the current transaction, providing the current time. Subsequent transactions
     /// that occur within a short period of time will be grouped together. This
     /// is controlled by the buffer's undo grouping duration.
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
+        self.end_transaction_at_internal(now, BufferEditSource::User, cx)
+    }
+
+    fn end_transaction_at_internal(
+        &mut self,
+        now: Instant,
+        source: BufferEditSource,
         cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
         assert!(self.transaction_depth > 0);
@@ -2444,7 +2479,7 @@ impl Buffer {
             false
         };
         if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
-            self.did_edit(&start_version, was_dirty, true, cx);
+            self.did_edit(&start_version, was_dirty, source, cx);
             Some(transaction_id)
         } else {
             None
@@ -2839,7 +2874,7 @@ impl Buffer {
         &mut self,
         old_version: &clock::Global,
         was_dirty: bool,
-        is_local: bool,
+        source: BufferEditSource,
         cx: &mut Context<Self>,
     ) {
         self.was_changed();
@@ -2849,7 +2884,7 @@ impl Buffer {
         }
 
         self.reparse(cx, true);
-        cx.emit(BufferEvent::Edited { is_local });
+        cx.emit(BufferEvent::Edited { source });
         let is_dirty = self.is_dirty();
         if was_dirty != is_dirty {
             cx.emit(BufferEvent::DirtyChanged);
@@ -2971,7 +3006,7 @@ impl Buffer {
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
-        self.did_edit(&old_version, was_dirty, false, cx);
+        self.did_edit(&old_version, was_dirty, BufferEditSource::Remote, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
@@ -3126,7 +3161,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3144,7 +3179,7 @@ impl Buffer {
         let old_version = self.version.clone();
         if let Some(operation) = self.text.undo_transaction(transaction_id) {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             true
         } else {
             false
@@ -3166,7 +3201,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if undone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx)
         }
         undone
     }
@@ -3176,7 +3211,7 @@ impl Buffer {
         let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
         self.send_operation(Operation::Buffer(operation), true, cx);
-        self.did_edit(&old_version, was_dirty, true, cx);
+        self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
@@ -3186,7 +3221,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3227,7 +3262,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if redone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx)
         }
         redone
     }
@@ -3337,7 +3372,7 @@ impl Buffer {
         if !ops.is_empty() {
             for op in ops {
                 self.send_operation(Operation::Buffer(op), true, cx);
-                self.did_edit(&old_version, was_dirty, true, cx);
+                self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             }
         }
     }
@@ -3441,7 +3476,7 @@ impl BufferSnapshot {
             range.clone(),
             &self.text,
             TreeSitterOptions {
-                max_context_bytes: Some(MAX_CONTEXT_BYTES),
+                max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                 max_start_depth: None,
             },
             |grammar| Some(&grammar.indents_config.as_ref()?.query),
@@ -3722,20 +3757,12 @@ impl BufferSnapshot {
 
     #[ztracing::instrument(skip_all)]
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
-        let captures = self.syntax.captures_with_options(
-            range,
-            &self.text,
-            TreeSitterOptions {
-                max_context_bytes: Some(1024),
-                max_start_depth: None,
-            },
-            |grammar| {
-                grammar
-                    .highlights_config
-                    .as_ref()
-                    .map(|config| &config.query)
-            },
-        );
+        let captures = self.syntax.captures(range, &self.text, |grammar| {
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
         let highlight_maps = captures
             .grammars()
             .iter()
@@ -4628,7 +4655,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_context_bytes: Some(MAX_CONTEXT_BYTES),
+                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),

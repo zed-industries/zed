@@ -144,8 +144,8 @@ Use inline `code` for:
 
 Use Zed's special syntax for dynamic rendering:
 
-- `{#action git::Commit}` — Renders the action name
-- `{#kb git::Commit}` — Renders the keybinding for that action
+- {#action git::Commit} — Renders the action name
+- {#kb git::Commit} — Renders the keybinding for that action
 
 This ensures keybindings stay accurate if defaults change.
 

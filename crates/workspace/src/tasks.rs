@@ -2,7 +2,7 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 use collections::HashSet;
-use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, WeakEntity};
+use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
@@ -121,7 +121,7 @@ impl Workspace {
         let save_action = match save_strategy {
             SaveStrategy::All => {
                 let save_all = workspace.update_in(cx, |workspace, window, cx| {
-                    let task = workspace.save_all_internal(SaveIntent::SaveAll, window, cx);
+                    let task = workspace.save_all_internal(SaveIntent::SaveAll, true, window, cx);
                     cx.background_spawn(async { task.await.map(|_| ()) })
                 });
                 save_all.ok()

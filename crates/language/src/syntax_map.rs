@@ -24,14 +24,7 @@ use tree_sitter::{
     QueryPredicateArg,
 };
 
-/// Default amount of byte context to allow on each side of the query range
-/// when restricting a `QueryCursor` via `set_containing_byte_range`.
-///
-/// Tree-sitter walks the subtree of the root node that's intersected by the
-/// containing range, so keeping this bounded matters when a file contains a
-/// large malformed region (e.g. an ERROR node that covers thousands of
-/// lines).
-pub const MAX_CONTEXT_BYTES: usize = 8 * 1024;
+pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
 
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
@@ -230,7 +223,7 @@ impl ParseStepLanguage {
     fn name(&self) -> SharedString {
         match self {
             ParseStepLanguage::Loaded { language } => language.name().0,
-            ParseStepLanguage::Pending { name } => name.into(),
+            ParseStepLanguage::Pending { name } => name.clone().into(),
         }
     }
 
@@ -961,7 +954,6 @@ impl SyntaxSnapshot {
             }]
             .into_iter(),
             query,
-            TreeSitterOptions::default(),
         )
     }
 
@@ -976,23 +968,6 @@ impl SyntaxSnapshot {
             buffer.as_rope(),
             self.layers_for_range(range, buffer, true),
             query,
-            TreeSitterOptions::default(),
-        )
-    }
-
-    pub fn captures_with_options<'a>(
-        &'a self,
-        range: Range<usize>,
-        buffer: &'a BufferSnapshot,
-        options: TreeSitterOptions,
-        query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapCaptures<'a> {
-        SyntaxMapCaptures::new(
-            range.clone(),
-            buffer.as_rope(),
-            self.layers_for_range(range, buffer, true),
-            query,
-            options,
         )
     }
 
@@ -1124,7 +1099,6 @@ impl<'a> SyntaxMapCaptures<'a> {
         text: &'a Rope,
         layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
-        options: TreeSitterOptions,
     ) -> Self {
         let mut result = Self {
             layers: Vec::new(),
@@ -1149,12 +1123,6 @@ impl<'a> SyntaxMapCaptures<'a> {
                     query_cursor.deref_mut(),
                 )
             };
-
-            // Force the query cursor to skip over nodes outside of a certain context
-            // range, to limit the worst-case performance of queries.
-            if let Some(max_context_bytes) = options.max_context_bytes {
-                cursor.set_containing_byte_range(containing_range(&range, max_context_bytes));
-            }
 
             cursor.set_byte_range(range.clone());
             let captures = cursor.captures(query, layer.node(), TextProvider(text));
@@ -1251,24 +1219,16 @@ impl<'a> SyntaxMapCaptures<'a> {
 #[derive(Default)]
 pub struct TreeSitterOptions {
     pub max_start_depth: Option<u32>,
-    /// When `Some(n)`, restricts the query cursor's containing byte range to
-    /// the query range extended by `n` bytes on each side. Matches whose nodes
-    /// don't all fall within that extended range are skipped, allowing
-    /// tree-sitter to avoid walking large subtrees that lie outside it.
-    pub max_context_bytes: Option<usize>,
+    pub max_bytes_to_query: Option<usize>,
 }
 
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
-            max_context_bytes: None,
+            max_bytes_to_query: None,
         }
     }
-}
-
-fn containing_range(range: &Range<usize>, max_context_bytes: usize) -> Range<usize> {
-    range.start.saturating_sub(max_context_bytes)..range.end.saturating_add(max_context_bytes)
 }
 
 impl<'a> SyntaxMapMatches<'a> {
@@ -1300,8 +1260,12 @@ impl<'a> SyntaxMapMatches<'a> {
             };
             cursor.set_max_start_depth(options.max_start_depth);
 
-            if let Some(max_context_bytes) = options.max_context_bytes {
-                cursor.set_containing_byte_range(containing_range(&range, max_context_bytes));
+            if let Some(max_bytes_to_query) = options.max_bytes_to_query {
+                let midpoint = (range.start + range.end) / 2;
+                let containing_range_start = midpoint.saturating_sub(max_bytes_to_query / 2);
+                let containing_range_end =
+                    containing_range_start.saturating_add(max_bytes_to_query);
+                cursor.set_containing_byte_range(containing_range_start..containing_range_end);
             }
 
             cursor.set_byte_range(range.clone());
@@ -1893,9 +1857,11 @@ impl<'a> SyntaxLayer<'a> {
         let config = self.language.grammar.as_ref()?.override_config.as_ref()?;
 
         let mut query_cursor = QueryCursorHandle::new();
-        let range = offset.saturating_sub(1)..offset.saturating_add(1);
-        query_cursor.set_byte_range(range.clone());
-        query_cursor.set_containing_byte_range(containing_range(&range, MAX_CONTEXT_BYTES));
+        query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
+        query_cursor.set_containing_byte_range(
+            offset.saturating_sub(MAX_BYTES_TO_QUERY / 2)
+                ..offset.saturating_add(MAX_BYTES_TO_QUERY / 2),
+        );
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         let mut matches = query_cursor.matches(&config.query, self.node(), text);

@@ -2019,7 +2019,8 @@ impl Render for KeymapEditor {
                                         context.add("BufferSearchBar");
                                         context
                                     })
-                                    .size_full()
+                                    .flex_1()
+                                    .min_w_0()
                                     .h_8()
                                     .pl_2()
                                     .pr_1()
@@ -2032,7 +2033,7 @@ impl Render for KeymapEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .min_w_96()
+                                    .flex_none()
                                     .items_center()
                                     .child(
                                         IconButton::new(
@@ -3518,6 +3519,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
+                    group: None,
                 })
                 .collect(),
             display_options: CompletionDisplayOptions::default(),
@@ -3627,7 +3629,7 @@ async fn save_keybinding_update(
     };
 
     let source = settings::KeybindUpdateTarget {
-        context: action_mapping.context.as_ref().map(|a| &***a),
+        context: action_mapping.context.as_deref(),
         keystrokes: &action_mapping.keystrokes,
         action_name: existing.action().name,
         action_arguments: new_args,

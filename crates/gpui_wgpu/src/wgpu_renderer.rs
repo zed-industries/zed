@@ -50,7 +50,8 @@ struct GammaParams {
     gamma_ratios: [f32; 4],
     grayscale_enhanced_contrast: f32,
     subpixel_enhanced_contrast: f32,
-    _pad: [f32; 2],
+    is_bgr: u32,
+    _pad: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +147,7 @@ pub struct WgpuRenderer {
     max_buffer_size: u64,
     storage_buffer_alignment: u64,
     rendering_params: RenderingParameters,
+    is_bgr: bool,
     dual_source_blending: bool,
     adapter_info: wgpu::AdapterInfo,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
@@ -475,6 +477,7 @@ impl WgpuRenderer {
             max_buffer_size,
             storage_buffer_alignment,
             rendering_params,
+            is_bgr: false,
             dual_source_blending,
             adapter_info,
             transparent_alpha_mode,
@@ -1016,6 +1019,10 @@ impl WgpuRenderer {
         resources.path_msaa_view = path_msaa_view;
     }
 
+    pub fn set_subpixel_layout(&mut self, is_bgr: bool) {
+        self.is_bgr = is_bgr;
+    }
+
     pub fn update_transparency(&mut self, transparent: bool) {
         let new_alpha_mode = if transparent {
             self.transparent_alpha_mode
@@ -1072,13 +1079,13 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene) -> bool {
         // Bail out early if the surface has been unconfigured (e.g. during
         // Android background/rotation transitions).  Attempting to acquire
         // a texture from an unconfigured surface can block indefinitely on
         // some drivers (Adreno).
         if !self.surface_configured {
-            return;
+            return false;
         }
 
         let last_error = self.last_error.lock().unwrap().take();
@@ -1090,15 +1097,16 @@ impl WgpuRenderer {
             );
 
             // TBD. Does retrying more actually help?
-            if self.failed_frame_count > 5 {
+            if self.failed_frame_count > 10 {
+                panic!("Too many consecutive GPU errors. Last error: {error}");
+            } else if self.failed_frame_count > 5 {
                 if let Some(res) = self.resources.as_mut() {
                     res.invalidate_intermediate_textures();
                 }
                 self.atlas.clear();
                 self.needs_redraw = true;
-                return;
-            } else if self.failed_frame_count > 10 {
-                panic!("Too many consecutive GPU errors. Last error: {error}");
+                self.failed_frame_count = 0;
+                return false;
             }
         } else {
             self.failed_frame_count = 0;
@@ -1116,7 +1124,7 @@ impl WgpuRenderer {
                 resources
                     .surface
                     .configure(&resources.device, &surface_config);
-                return;
+                return false;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 let surface_config = self.surface_config.clone();
@@ -1124,15 +1132,15 @@ impl WgpuRenderer {
                 resources
                     .surface
                     .configure(&resources.device, &surface_config);
-                return;
+                return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return;
+                return false;
             }
             wgpu::CurrentSurfaceTexture::Validation => {
                 *self.last_error.lock().unwrap() =
                     Some("Surface texture validation error".to_string());
-                return;
+                return false;
             }
         };
 
@@ -1147,7 +1155,8 @@ impl WgpuRenderer {
             gamma_ratios: self.rendering_params.gamma_ratios,
             grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
             subpixel_enhanced_contrast: self.rendering_params.subpixel_enhanced_contrast,
-            _pad: [0.0; 2],
+            is_bgr: self.is_bgr as u32,
+            _pad: 0,
         };
 
         let globals = GlobalParams {
@@ -1312,7 +1321,7 @@ impl WgpuRenderer {
                         self.instance_buffer_capacity
                     );
                     frame.present();
-                    return;
+                    return true;
                 }
                 self.grow_instance_buffer();
                 continue;
@@ -1322,7 +1331,7 @@ impl WgpuRenderer {
                 .queue
                 .submit(std::iter::once(encoder.finish()));
             frame.present();
-            return;
+            return true;
         }
     }
 
@@ -1791,12 +1800,16 @@ impl WgpuRenderer {
             self.resources = None;
             *gpu_context.borrow_mut() = None;
 
-            // Wait for GPU driver to stabilize (350ms copied from windows :shrug:)
+            // Wait briefly for the GPU driver to stabilize, then try to
+            // recreate the context without software renderers. If this fails
+            // the caller should request another frame and retry — the real GPU
+            // may need more time to come back (e.g. after suspend/resume).
             std::thread::sleep(std::time::Duration::from_millis(350));
 
             let instance = WgpuContext::instance(Box::new(window.clone()));
             let surface = create_surface(&instance, window_handle.as_raw())?;
-            let new_context = WgpuContext::new(instance, &surface, self.compositor_gpu)?;
+            let new_context =
+                WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
             *gpu_context.borrow_mut() = Some(new_context);
             surface
         } else {
