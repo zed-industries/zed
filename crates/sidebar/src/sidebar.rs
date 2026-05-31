@@ -5259,6 +5259,9 @@ impl Sidebar {
     ) {
         fn display_time(entry: &ListEntry) -> DateTime<Utc> {
             match entry {
+                ListEntry::Thread(thread) if thread.draft == Some(DraftKind::Empty) => {
+                    DateTime::<Utc>::MAX_UTC
+                }
                 ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
                 ListEntry::Terminal(terminal) => terminal.metadata.created_at,
                 ListEntry::ProjectHeader { .. } => unreachable!(),
@@ -5338,13 +5341,9 @@ impl Sidebar {
                         }
                     }?;
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
-
-                    let timestamp: SharedString = if thread.draft == Some(DraftKind::Empty) {
-                        SharedString::default()
-                    } else {
+                    let timestamp: SharedString =
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
-                            .into()
-                    };
+                            .into();
                     Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
                         title: thread.metadata.display_title(),
                         icon: thread.icon,

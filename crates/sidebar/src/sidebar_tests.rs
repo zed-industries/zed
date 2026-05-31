@@ -5677,6 +5677,41 @@ async fn test_plus_button_parks_nonempty_draft(cx: &mut TestAppContext) {
         parked.metadata.display_title().as_ref(),
         "something the user typed"
     );
+
+    // Reproduce the real-world inversion deterministically: parking
+    // re-saves the filled draft, which can leave its display time newer
+    // than the brand-new empty draft's. Force that here by pushing the
+    // parked draft's `updated_at` into the future.
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let mut parked_meta = store
+            .read(cx)
+            .entry(first_id)
+            .expect("parked draft metadata should exist")
+            .clone();
+        parked_meta.interacted_at = None;
+        parked_meta.updated_at = Utc::now() + chrono::Duration::hours(1);
+        store.update(cx, |store, cx| store.save(parked_meta, cx));
+    });
+    cx.run_until_parked();
+
+    // The empty-draft placeholder must still sort ABOVE the parked draft
+    // despite the parked draft's newer timestamp — it's pinned to the top.
+    let (empty_ix, parked_ix) = sidebar.read_with(cx, |sidebar, _| {
+        let position = |id: ThreadId| {
+            sidebar.contents.entries.iter().position(
+                |entry| matches!(entry, ListEntry::Thread(t) if t.metadata.thread_id == id),
+            )
+        };
+        (
+            position(second_id).expect("empty draft row should be present"),
+            position(first_id).expect("parked draft row should be present"),
+        )
+    });
+    assert!(
+        empty_ix < parked_ix,
+        "the new empty draft (ix {empty_ix}) should sort above the parked filled draft (ix {parked_ix})"
+    );
 }
 
 #[gpui::test]
