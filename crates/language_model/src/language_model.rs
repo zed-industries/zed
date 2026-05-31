@@ -232,10 +232,6 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
-    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        None
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
@@ -293,6 +289,20 @@ pub trait LanguageModelProvider: 'static {
         cx: &mut App,
     ) -> AnyView;
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+
+    /// Copy shown the first time a user enables fast mode for a model from
+    /// this provider. Returning `None` skips the confirmation prompt and lets
+    /// the toggle apply silently.
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        None
+    }
+}
+
+/// Provider-specific copy shown the first time a user enables fast mode.
+#[derive(Debug, Clone)]
+pub struct FastModeConfirmation {
+    pub title: SharedString,
+    pub message: SharedString,
 }
 
 #[derive(Default, Clone, PartialEq, Eq)]

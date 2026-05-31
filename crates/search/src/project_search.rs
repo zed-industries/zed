@@ -22,7 +22,8 @@ use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
     Action, AnyElement, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point, Render,
-    SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
+    SharedString, Styled, Subscription, Task, TaskExt, UpdateGlobal, WeakEntity, Window, actions,
+    div,
 };
 use itertools::Itertools;
 use language::{Buffer, Language};
@@ -678,6 +679,10 @@ impl Item for ProjectSearchView {
         self.results_editor.for_each_project_item(cx, f)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.results_editor.read(cx).active_project_path(cx)
+    }
+
     fn can_save(&self, _: &App) -> bool {
         true
     }
@@ -1221,7 +1226,7 @@ impl ProjectSearchView {
             }
 
             let editor = item.act_as::<Editor>(cx)?;
-            let query = editor.query_suggestion(false, window, cx);
+            let query = editor.query_suggestion(None, window, cx);
             if query.is_empty() { None } else { Some(query) }
         });
 

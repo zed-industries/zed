@@ -11,7 +11,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{Client, proto, telemetry::Telemetry};
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
-use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
+use collections::{BTreeMap, BTreeSet, FxHashSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -19,7 +19,7 @@ use extension::{
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
-use fs::{Fs, RemoveOptions};
+use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::join_all;
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
@@ -31,8 +31,8 @@ use futures::{
     select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, UpdateGlobal as _,
-    WeakEntity, actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, TaskExt,
+    UpdateGlobal as _, WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -48,6 +48,7 @@ use serde::{Deserialize, Serialize};
 use settings::{SemanticTokenRules, Settings, SettingsStore};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
     path::{self, Path, PathBuf},
@@ -77,7 +78,25 @@ const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 ///
 /// These snippets should no longer be downloaded or loaded, because their
 /// functionality has been integrated into the core editor.
-const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright"];
+static SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
+    FxHashSet::from_iter([
+        "snippets",
+        "ruff",
+        "ty",
+        "basedpyright",
+        "basher",
+        // ACP
+        "opencode",
+        "mistral-vibe",
+        "auggie",
+        "stakpak",
+        "codebuddy",
+        "autohand-acp",
+        "corust-agent",
+        "factory-droid",
+        "qqcode",
+    ])
+});
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
@@ -117,6 +136,7 @@ pub struct ExtensionStore {
     pub reload_tx: UnboundedSender<Option<Arc<str>>>,
     pub reload_complete_senders: Vec<oneshot::Sender<()>>,
     pub installed_dir: PathBuf,
+    pub staging_dir: PathBuf,
     pub outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
     pub index_path: PathBuf,
     pub modified_extensions: HashSet<Arc<str>>,
@@ -246,6 +266,7 @@ impl ExtensionStore {
         let work_dir = extensions_dir.join("work");
         let build_dir = build_dir.unwrap_or_else(|| extensions_dir.join("build"));
         let installed_dir = extensions_dir.join("installed");
+        let staging_dir = extensions_dir.join("staging");
         let index_path = extensions_dir.join("index.json");
 
         let (reload_tx, mut reload_rx) = unbounded();
@@ -254,6 +275,7 @@ impl ExtensionStore {
             proxy: extension_host_proxy.clone(),
             extension_index: Default::default(),
             installed_dir,
+            staging_dir,
             index_path,
             builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
@@ -601,7 +623,7 @@ impl ExtensionStore {
                     .extension_index
                     .extensions
                     .contains_key(extension_id.as_ref());
-                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref())
+                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -684,7 +706,7 @@ impl ExtensionStore {
 
             response
                 .data
-                .retain(|extension| !SUPPRESSED_EXTENSIONS.contains(&extension.id.as_ref()));
+                .retain(|extension| !SUPPRESSED_EXTENSIONS.contains(extension.id.as_ref()));
 
             Ok(response.data)
         })
@@ -708,6 +730,7 @@ impl ExtensionStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
+        let staging_dir = self.staging_dir.clone();
         let http_client = self.http_client.clone();
         let fs = self.fs.clone();
 
@@ -726,41 +749,72 @@ impl ExtensionStore {
                 }
             });
 
-            let mut response = http_client
-                .get(url.as_ref(), Default::default(), true)
-                .await
-                .context("downloading extension")?;
+            cx.background_spawn(async move {
+                let mut response = http_client
+                    .get(url.as_ref(), Default::default(), true)
+                    .await
+                    .context("downloading extension")?;
 
-            fs.remove_dir(
-                &extension_dir,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
+                let content_length = response
+                    .headers()
+                    .get(http_client::http::header::CONTENT_LENGTH)
+                    .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+
+                let mut body = BufReader::new(response.body_mut());
+                let mut tar_gz_bytes = Vec::new();
+                body.read_to_end(&mut tar_gz_bytes).await?;
+
+                if let Some(content_length) = content_length {
+                    let actual_len = tar_gz_bytes.len();
+                    if content_length != actual_len {
+                        bail!(
+                            "downloaded extension size {actual_len} \
+                        does not match content length {content_length}"
+                        );
+                    }
+                }
+
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+                let archive = Archive::new(decompressed_bytes);
+
+                let remove_dir = || {
+                    fs.remove_dir(
+                        &extension_dir,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                };
+
+                let temp_dir = fs
+                    .create_dir(&staging_dir)
+                    .await
+                    .and_then(|()| tempfile::tempdir_in(&staging_dir).map_err(Into::into));
+
+                match temp_dir {
+                    Ok(temp_dir) => {
+                        archive.unpack(temp_dir.path()).await?;
+                        remove_dir().await?;
+                        fs.rename(
+                            temp_dir.path(),
+                            &extension_dir,
+                            RenameOptions {
+                                overwrite: true,
+                                ignore_if_exists: true,
+                                create_parents: true,
+                            },
+                        )
+                        .await
+                    }
+                    Err(_) => {
+                        remove_dir().await?;
+                        archive.unpack(extension_dir).await.map_err(Into::into)
+                    }
+                }
+            })
             .await?;
 
-            let content_length = response
-                .headers()
-                .get(http_client::http::header::CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
-
-            let mut body = BufReader::new(response.body_mut());
-            let mut tar_gz_bytes = Vec::new();
-            body.read_to_end(&mut tar_gz_bytes).await?;
-
-            if let Some(content_length) = content_length {
-                let actual_len = tar_gz_bytes.len();
-                if content_length != actual_len {
-                    bail!(concat!(
-                        "downloaded extension size {actual_len} ",
-                        "does not match content length {content_length}"
-                    ));
-                }
-            }
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(extension_dir).await?;
             this.update(cx, |this, cx| this.reload(Some(extension_id.clone()), cx))?
                 .await;
 
@@ -1077,9 +1131,12 @@ impl ExtensionStore {
     ) -> Task<()> {
         let old_index = &self.extension_index;
 
-        new_index
+        let suppressed_extensions_to_remove = new_index
             .extensions
-            .retain(|extension_id, _| !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
+            .extract_if(.., |extension_id, _| {
+                SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref())
+            })
+            .collect::<Vec<_>>();
 
         // Determine which extensions need to be loaded and unloaded, based
         // on the changes to the manifest and the extensions that we know have been
@@ -1120,8 +1177,16 @@ impl ExtensionStore {
             self.modified_extensions.clear();
         }
 
+        let trigger_suppressed_extension_removal =
+            move |this: &mut ExtensionStore, cx: &mut Context<ExtensionStore>| {
+                for (id, _) in suppressed_extensions_to_remove {
+                    this.uninstall_extension(id, cx).detach_and_log_err(cx);
+                }
+            };
+
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
             self.reload_complete_senders.clear();
+            trigger_suppressed_extension_removal(self, cx);
             return Task::ready(());
         }
 
@@ -1461,6 +1526,7 @@ impl ExtensionStore {
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
+                trigger_suppressed_extension_removal(this, cx);
 
                 if let Some(events) = ExtensionEvents::try_global(cx) {
                     events.update(cx, |this, cx| {
@@ -1530,10 +1596,6 @@ impl ExtensionStore {
     ) -> Result<()> {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
-
-        if SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()) {
-            return Ok(());
-        }
 
         // TODO: distinguish dev extensions more explicitly, by the absence
         // of a checksum file that we'll create when downloading normal extensions.

@@ -1,7 +1,10 @@
 mod kept_rate;
 mod patch_metrics;
+mod prediction_score;
 mod reversal;
+mod summary;
 mod tokenize;
+#[cfg(feature = "tree-sitter")]
 mod tree_sitter;
 
 pub use kept_rate::AnnotatedToken;
@@ -22,5 +25,11 @@ pub use patch_metrics::extract_changed_lines_from_diff;
 pub use patch_metrics::has_isolated_whitespace_changes;
 pub use patch_metrics::is_editable_region_correct;
 pub use patch_metrics::reconstruct_texts_from_diff;
+pub use prediction_score::{
+    ActualPredictionCursor, PredictionReversalContext, PredictionScore, PredictionScoringInput,
+    PrepareExpectedPatchError, PreparedExpectedPatch, prepare_expected_patches, score_prediction,
+};
 pub use reversal::compute_prediction_reversal_ratio_from_history;
+pub use summary::{PredictionSummaryInput, QaSummaryData, SummaryJson, compute_summary};
+#[cfg(feature = "tree-sitter")]
 pub use tree_sitter::count_tree_sitter_errors;

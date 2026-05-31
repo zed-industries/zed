@@ -1,3 +1,4 @@
+use agent_skills::SkillSummary;
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
@@ -18,8 +19,6 @@ use util::{
     ResultExt, get_default_system_shell_preferring_bash, rel_path::RelPath, shell::ShellKind,
 };
 
-use crate::UserPromptId;
-
 pub const RULES_FILE_NAMES: &[&str] = &[
     ".rules",
     ".cursorrules",
@@ -32,42 +31,57 @@ pub const RULES_FILE_NAMES: &[&str] = &[
     "GEMINI.md",
 ];
 
-#[derive(Default, Debug, Clone, Serialize)]
+#[derive(Default, Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
     pub has_rules: bool,
-    pub user_rules: Vec<UserRulesContext>,
-    /// `!user_rules.is_empty()` - provided as a field because handlebars can't do this.
-    pub has_user_rules: bool,
     pub os: String,
     pub arch: String,
     pub shell: String,
+    // Similarly to `has_rules`, `has_skills` is a derived flag exposed
+    // to the handlebars template (which can't do
+    // `!skills.is_empty()`). These are `pub(crate)` so the only way to
+    // set them from outside is via `with_skills`, which keeps the two
+    // fields in sync.
+    pub(crate) skills: Vec<SkillSummary>,
+    pub(crate) has_skills: bool,
 }
 
 impl ProjectContext {
-    pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
+    pub fn new(worktrees: Vec<WorktreeContext>) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
         Self {
             worktrees,
             has_rules,
-            has_user_rules: !default_user_rules.is_empty(),
-            user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
                 .to_string(),
+            skills: Vec::new(),
+            has_skills: false,
         }
     }
-}
 
-#[derive(Debug, Clone, Serialize)]
-pub struct UserRulesContext {
-    pub uuid: UserPromptId,
-    pub title: Option<String>,
-    pub contents: String,
+    // Hidden skills (`disable_model_invocation: true`) and any skills
+    // dropped to fit the catalog description budget are excluded
+    // upstream by `select_catalog_skills` in `agent.rs`, which already
+    // returns only catalog `SkillSummary` values.
+    pub fn with_skills(mut self, skills: Vec<SkillSummary>) -> Self {
+        self.has_skills = !skills.is_empty();
+        self.skills = skills;
+        self
+    }
+
+    pub fn skills(&self) -> &[SkillSummary] {
+        &self.skills
+    }
+
+    pub fn has_skills(&self) -> bool {
+        self.has_skills
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -114,6 +128,48 @@ pub struct ContentPromptContextV2 {
     pub document_content: String,
     pub rewrite_section: String,
     pub diagnostic_errors: Vec<ContentPromptDiagnosticContext>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_skills::{Skill, SkillSource};
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_project_context_does_not_filter_by_budget() {
+        // The budget is enforced upstream in `agent.rs::select_catalog_skills`
+        // so that dropped skills can surface as load errors. ProjectContext
+        // should accept whatever summaries it's given.
+        let huge_description = "x".repeat(60 * 1024);
+        let skill = Skill {
+            name: "oversized".to_string(),
+            description: huge_description.clone(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/oversized"),
+            skill_file_path: PathBuf::from("/skills/oversized/SKILL.md"),
+            disable_model_invocation: false,
+            embedded_body: None,
+        };
+        let summary = SkillSummary::from(&skill);
+
+        let context = ProjectContext::new(vec![]).with_skills(vec![summary]);
+        assert_eq!(context.skills.len(), 1);
+        assert_eq!(context.skills[0].description, huge_description);
+    }
+
+    #[test]
+    fn test_empty_skills_sets_has_skills_false() {
+        let context = ProjectContext::new(vec![]);
+        assert!(!context.has_skills);
+        assert!(context.skills.is_empty());
+    }
+
+    // Hidden-skill filtering used to live here, but it's now the
+    // responsibility of `select_catalog_skills` in `agent.rs`, which is the
+    // single source of truth for which skills enter the catalog.
+    // `ProjectContext::new` simply converts whatever skills it receives
+    // into summaries, so there's no behavior left to test at this layer.
 }
 
 #[derive(Serialize)]
