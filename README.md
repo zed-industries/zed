@@ -249,7 +249,7 @@ Note that the keyboard context in the text threads is called `ContextEditor` for
 
 AI edit predictions also work in those buffers.
 
-Commit `f2dc71f6171c` is the large merge commit which was done based on a 
+Commit `f2dc71f6171c` is the large merge commit which was done based on the patch of the PR link above.
 
 ### Agent UI changes (probably missing on latest `dima` branch)
 
