@@ -2885,6 +2885,74 @@ async fn test_instant_scroll_request_during_scroll_animation(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_smooth_scroll_setting_update_during_animation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.smooth_scroll = Some(settings::SmoothScrollContent {
+            enabled: Some(true),
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 4. * line_height));
+    cx.set_state(indoc! {"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        eleven
+        twelve
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.scroll_manager.smooth_scroll);
+        editor.scroll(point(0., 8.), None, None, window, cx);
+        assert!(
+            editor
+                .scroll_manager
+                .scroll_animation()
+                .is_some_and(|animation| animation.is_animating())
+        );
+    });
+
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.smooth_scroll = Some(settings::SmoothScrollContent {
+                    enabled: Some(false),
+                });
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(!editor.scroll_manager.smooth_scroll);
+
+        editor.set_scroll_top_row(DisplayRow(3), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 3.));
+        assert!(editor.scroll_manager.scroll_animation().is_none());
+
+        editor.set_scroll_top_row(DisplayRow(6), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 6.));
+        assert!(editor.scroll_manager.scroll_animation().is_none());
+    });
+}
+
+#[gpui::test]
 async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
