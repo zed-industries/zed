@@ -172,7 +172,7 @@ pub fn empty_draft_placeholder_label(
     cx: &App,
 ) -> SharedString {
     let agent_name = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
-        SharedString::from("Zed Agent")
+        SharedString::from(ZED_AGENT_ID.to_string())
     } else {
         workspace
             .map(|ws| ws.read(cx).project().read(cx).agent_server_store().clone())

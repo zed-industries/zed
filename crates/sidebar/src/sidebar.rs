@@ -253,15 +253,13 @@ fn draft_display_label_for_thread_metadata(
 fn thread_metadata_would_render_sidebar_row(
     metadata: &ThreadMetadata,
     workspace: &ThreadEntryWorkspace,
-    hidden_draft_thread_ids: &HashSet<ThreadId>,
     cx: &App,
 ) -> bool {
     if !metadata.is_draft() {
         return true;
     }
 
-    !hidden_draft_thread_ids.contains(&metadata.thread_id)
-        && draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
+    draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1464,8 +1462,6 @@ impl Sidebar {
             let mut waiting_thread_count: usize = 0;
             let group_host = group_key.host();
 
-            let hidden_draft_thread_ids: HashSet<ThreadId> = HashSet::default();
-
             if should_load_threads {
                 let thread_store = ThreadMetadataStore::global(cx);
 
@@ -1577,19 +1573,10 @@ impl Sidebar {
                     }
                 }
 
-                if !hidden_draft_thread_ids.is_empty() {
-                    threads.retain(|thread| {
-                        !hidden_draft_thread_ids.contains(&thread.metadata.thread_id)
-                    });
-                }
                 for thread in &mut threads {
                     if thread.draft.is_none() {
                         continue;
                     }
-                    // `Arc::make_mut` is needed because `threads` now holds
-                    // `Arc<ThreadEntry>`. It clones the inner value iff there
-                    // are other outstanding `Arc`s; here we own this slot, so
-                    // in practice this is a cheap reference-bump path.
                     if let Some((label, kind)) = draft_display_label_for_thread_metadata(
                         &thread.metadata,
                         &thread.workspace,
@@ -1725,23 +1712,13 @@ impl Sidebar {
                     .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
                     .any(|metadata| {
                         let workspace = resolve_workspace(metadata.folder_paths());
-                        thread_metadata_would_render_sidebar_row(
-                            metadata,
-                            &workspace,
-                            &hidden_draft_thread_ids,
-                            cx,
-                        )
+                        thread_metadata_would_render_sidebar_row(metadata, &workspace, cx)
                     })
                     || store
                         .entries_for_path(group_key.path_list(), group_host.as_ref())
                         .any(|metadata| {
                             let workspace = resolve_workspace(metadata.folder_paths());
-                            thread_metadata_would_render_sidebar_row(
-                                metadata,
-                                &workspace,
-                                &hidden_draft_thread_ids,
-                                cx,
-                            )
+                            thread_metadata_would_render_sidebar_row(metadata, &workspace, cx)
                         })
             };
             let has_threads = has_visible_rows || has_stored_thread_rows;

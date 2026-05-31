@@ -6071,7 +6071,6 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
     // Now open a fresh ephemeral draft in the main panel.
     agent_ui::test_support::open_draft_with_connection(&main_panel, StubAgentConnection::new(), cx);
     cx.run_until_parked();
-    cx.run_until_parked();
 
     // And an ephemeral draft in the worktree panel as well.
     agent_ui::test_support::open_draft_with_connection(

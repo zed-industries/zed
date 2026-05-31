@@ -1745,6 +1745,10 @@ impl AgentPanel {
     /// If the active view already holds this thread — because the user's
     /// last-active thread was the new-draft itself — we reuse that
     /// ConversationView instead of building a second one.
+    ///
+    /// If the draft has no persisted prompt content, there's nothing
+    /// worth restoring, so we drop the stale metadata (and any empty
+    /// prompt-store entry) and return without creating a view.
     fn restore_new_draft(
         &mut self,
         thread_id: ThreadId,
@@ -1786,6 +1790,9 @@ impl AgentPanel {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
                 store.delete(thread_id, cx);
             });
+            // `read` may have returned an empty (but present) prompt entry;
+            // delete it too so we don't leak an orphaned kvp record.
+            crate::draft_prompt_store::delete(thread_id, cx).detach_and_log_err(cx);
             return;
         }
 
