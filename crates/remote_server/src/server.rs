@@ -41,6 +41,7 @@ use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::{
+    Timer,
     channel::{Receiver, Sender},
     io::AsyncReadExt,
     stream::StreamExt as _,
@@ -54,9 +55,10 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
+    time::Instant,
 };
 use thiserror::Error;
-use util::{ResultExt, command::new_smol_command};
+use util::{ResultExt, command::new_command};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -151,18 +153,102 @@ fn init_logging_proxy() {
         .init();
 }
 
+const REMOTE_SERVER_LOG_MAX_BYTES: u64 = 1024 * 1024;
+
+struct RotatingLogFile {
+    path: PathBuf,
+    file: File,
+    size_bytes: u64,
+}
+
+impl RotatingLogFile {
+    fn open(path: &Path) -> Result<Self> {
+        if std::fs::metadata(path)
+            .map(|metadata| metadata.len() >= REMOTE_SERVER_LOG_MAX_BYTES)
+            .unwrap_or(false)
+        {
+            rotate_log_file(path, &rotated_log_path(path))
+                .context("failed to rotate existing remote server log")?;
+        }
+
+        let file = open_log_file(path).context("failed to open remote server log")?;
+        let size_bytes = file
+            .metadata()
+            .context("failed to read remote server log metadata")?
+            .len();
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            size_bytes,
+        })
+    }
+
+    fn rotate(&mut self) -> std::io::Result<()> {
+        self.file.flush()?;
+        rotate_log_file(&self.path, &rotated_log_path(&self.path))?;
+        self.file = open_log_file(&self.path)?;
+        self.size_bytes = 0;
+        Ok(())
+    }
+}
+
+impl Write for RotatingLogFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.size_bytes.saturating_add(buf.len() as u64) > REMOTE_SERVER_LOG_MAX_BYTES {
+            self.rotate()?;
+        }
+
+        self.file.write_all(buf)?;
+        self.size_bytes += buf.len() as u64;
+
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+fn open_log_file(path: &Path) -> std::io::Result<File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+}
+
+fn rotated_log_path(path: &Path) -> PathBuf {
+    path.with_extension("1.log")
+}
+
+fn rotate_log_file(path: &Path, rotated_path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(rotated_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    match std::fs::rename(path, rotated_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    Ok(())
+}
+
 fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
     struct MultiWrite {
-        file: File,
+        file: RotatingLogFile,
         channel: Sender<Vec<u8>>,
         buffer: Vec<u8>,
     }
 
     impl Write for MultiWrite {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let written = self.file.write(buf)?;
-            self.buffer.extend_from_slice(&buf[..written]);
-            Ok(written)
+            self.file.write_all(buf)?;
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
@@ -174,13 +260,10 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         }
     }
 
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file_path)
-        .context("Failed to open log file in append mode")?;
+    let log_file = RotatingLogFile::open(log_file_path)
+        .context("Failed to open rotating remote server log file")?;
 
-    let (tx, rx) = smol::channel::unbounded();
+    let (tx, rx) = async_channel::unbounded();
 
     let target = Box::new(MultiWrite {
         file: log_file,
@@ -355,9 +438,18 @@ fn start_server(
 
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
-                while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
-                    if (stdin_msg_tx.send(msg).await).is_err() {
-                        break;
+                loop {
+                    match read_message(&mut stdin_stream, &mut input_buffer).await {
+                        Ok(msg) => {
+                            if (stdin_msg_tx.send(msg).await).is_err() {
+                                log::info!("stdin message channel closed, stopping stdin reader");
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!("stdin read failed: {error:?}");
+                            break;
+                        }
                     }
                 }
             }).detach();
@@ -447,18 +539,39 @@ pub fn execute_run(
 ) -> Result<()> {
     init_paths()?;
 
-    let app = gpui::Application::headless();
+    let startup_time = Instant::now();
+    let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    app.background_executor()
-        .spawn(crashes::init(crashes::InitCrashHandler {
-            session_id: id,
-            zed_version: VERSION.to_owned(),
-            binary: "zed-remote-server".to_string(),
-            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        }))
-        .detach();
+    let should_install_crash_handler = matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+
+    let crash_handler = if should_install_crash_handler {
+        Some(app.background_executor().spawn(crashes::init(
+            crashes::InitCrashHandler {
+                session_id: id,
+                zed_version: VERSION.to_owned(),
+                binary: "zed-remote-server".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+            },
+            {
+                let background_executor = app.background_executor();
+                move |task| {
+                    background_executor.spawn(task).detach();
+                }
+            },
+            |pid| paths::temp_dir().join(format!("zed-remote-server-crash-handler-{pid}")),
+            // we are running outside gpui
+            #[allow(clippy::disallowed_methods)]
+            |duration| FutureExt::map(Timer::after(duration), |_| ()),
+        )))
+    } else {
+        crashes::force_backtrace();
+        None
+    };
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
         "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -497,7 +610,14 @@ pub fn execute_run(
     let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let run = move |cx: &mut _| {
+    let run = move |cx: &mut App| {
+        if let Some(crash_handler) = crash_handler {
+            cx.spawn(async move |_cx| {
+                let _crash_handler = crash_handler.await;
+                // cx.update(|cx| cx.set_global(CrashHandler(crash_handler)))
+            })
+            .detach();
+        }
         settings::init(cx);
         let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
         let app_version = AppVersion::load(
@@ -512,7 +632,7 @@ pub fn execute_run(
 
         let is_wsl_interop = if cfg!(target_os = "linux") {
             // See: https://learn.microsoft.com/en-us/windows/wsl/filesystems#disable-interoperability
-            matches!(std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop"), Ok(s) if s.contains("enabled"))
+            matches!(std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop").or_else(|_| std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop-late")), Ok(s) if s.contains("enabled"))
         } else {
             false
         };
@@ -567,6 +687,7 @@ pub fn execute_run(
                     node_runtime,
                     languages,
                     extension_host_proxy,
+                    startup_time,
                 },
                 true,
                 cx,
@@ -701,15 +822,30 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    smol::spawn(crashes::init(crashes::InitCrashHandler {
-        session_id: id,
-        zed_version: VERSION.to_owned(),
-        binary: "zed-remote-server".to_string(),
-        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-    }))
-    .detach();
+    let should_install_crash_handler = matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
 
+    if should_install_crash_handler {
+        smol::spawn(crashes::init(
+            crashes::InitCrashHandler {
+                session_id: id,
+                zed_version: VERSION.to_owned(),
+                binary: "zed-remote-proxy".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+            },
+            |task| {
+                smol::spawn(task).detach();
+            },
+            |pid| paths::temp_dir().join(format!("zed-remote-server-proxy-crash-handler-{pid}")),
+            // we are running outside gpui
+            #[allow(clippy::disallowed_methods)]
+            |duration| FutureExt::map(Timer::after(duration), |_| ()),
+        ))
+        .detach();
+    };
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
         let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
@@ -736,7 +872,7 @@ pub(crate) fn execute_proxy(
                 );
                 kill_running_server(pid, &server_paths)?;
             }
-            smol::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
+            gpui::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
             std::fs::read_to_string(&server_paths.pid_file)
                 .and_then(|contents| {
                     contents.parse::<u32>().map_err(|_| {
@@ -807,7 +943,7 @@ pub(crate) fn execute_proxy(
         }
     });
 
-    if let Err(forwarding_result) = smol::block_on(async move {
+    if let Err(forwarding_result) = gpui::block_on(async move {
         futures::select! {
             result = stdin_task.fuse() => result.map_err(ExecuteProxyError::StdinTask),
             result = stdout_task.fuse() => result.map_err(ExecuteProxyError::StdoutTask),
@@ -815,7 +951,7 @@ pub(crate) fn execute_proxy(
         }
     }) {
         log::error!("encountered error while forwarding messages: {forwarding_result:#}",);
-        if !matches!(smol::block_on(check_server_running(server_pid)), Ok(true)) {
+        if !matches!(gpui::block_on(check_server_running(server_pid)), Ok(true)) {
             log::error!("server exited unexpectedly");
             return Err(ExecuteProxyError::ServerNotRunning(
                 ProxyLaunchError::ServerNotRunning,
@@ -945,11 +1081,11 @@ fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), S
 
 #[cfg(not(windows))]
 fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
-    let mut server_process = new_smol_command(binary_name);
+    let mut server_process = new_command(binary_name);
     server_process
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdin(util::command::Stdio::null())
+        .stdout(util::command::Stdio::null())
+        .stderr(util::command::Stdio::null())
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -977,7 +1113,7 @@ pub struct CheckPidError {
     pid: u32,
 }
 async fn check_server_running(pid: u32) -> std::io::Result<bool> {
-    new_smol_command("kill")
+    new_command("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()
@@ -1208,4 +1344,64 @@ fn is_file_in_use(file_name: &OsStr) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotated_remote_log_path_uses_numbered_log_suffix() {
+        assert_eq!(
+            rotated_log_path(Path::new("server-workspace-12.log")),
+            PathBuf::from("server-workspace-12.1.log")
+        );
+    }
+
+    #[test]
+    fn opening_remote_log_rotates_existing_oversized_log() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = temp_dir.path().join("server-workspace-12.log");
+        let rotated_path = temp_dir.path().join("server-workspace-12.1.log");
+        let existing_contents = vec![b'x'; REMOTE_SERVER_LOG_MAX_BYTES as usize];
+        std::fs::write(&log_path, &existing_contents).expect("write oversized log");
+
+        let _log_file = RotatingLogFile::open(&log_path).expect("open rotating log file");
+
+        assert_eq!(
+            std::fs::read(&rotated_path).expect("read rotated log"),
+            existing_contents
+        );
+        assert_eq!(
+            std::fs::metadata(&log_path)
+                .expect("active log metadata")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn writing_remote_log_rotates_before_exceeding_size_limit() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = temp_dir.path().join("server-workspace-12.log");
+        let rotated_path = temp_dir.path().join("server-workspace-12.1.log");
+        let existing_contents = vec![b'x'; REMOTE_SERVER_LOG_MAX_BYTES as usize - 1];
+        let new_contents = b"yz";
+        std::fs::write(&log_path, &existing_contents).expect("write existing log contents");
+        let mut log_file = RotatingLogFile::open(&log_path).expect("open rotating log file");
+
+        log_file
+            .write_all(new_contents)
+            .expect("write log contents");
+        log_file.flush().expect("flush log file");
+
+        assert_eq!(
+            std::fs::read(&rotated_path).expect("read rotated log"),
+            existing_contents
+        );
+        assert_eq!(
+            std::fs::read(&log_path).expect("read active log"),
+            new_contents
+        );
+    }
 }

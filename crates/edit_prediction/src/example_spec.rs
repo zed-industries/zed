@@ -1,16 +1,24 @@
-use crate::udiff::DiffLine;
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc};
+use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
 use telemetry_events::EditPredictionRating;
 
-pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
+pub use zeta_prompt::udiff::{
+    CURSOR_POSITION_MARKER, encode_cursor_in_patch, extract_cursor_from_patch,
+};
 pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
 /// Maximum cursor file size to capture (64KB).
 /// Files larger than this will not have their content captured,
 /// falling back to git-based loading.
 pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RecentFile {
+    pub path: Arc<Path>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_position: Option<usize>,
+}
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -24,14 +32,18 @@ pub struct ExampleSpec {
     pub reasoning: Option<String>,
     #[serde(default)]
     pub uncommitted_diff: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recently_opened_files: Vec<RecentFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recently_viewed_files: Vec<RecentFile>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub uncommitted_diff_contains_edit_history: bool,
     pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patches: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rejected_patch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub captured_prompt_input: Option<CapturedPromptInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<TelemetrySource>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -55,76 +67,51 @@ pub struct TelemetrySource {
     pub was_shown: bool,
 }
 
-/// All data needed to run format_prompt without loading the project.
-#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
-pub struct CapturedPromptInput {
-    pub cursor_file_content: String,
-    pub cursor_offset: usize,
-    pub cursor_row: u32,
-    pub cursor_column: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub excerpt_start_row: Option<u32>,
-    pub events: Vec<CapturedEvent>,
-    pub related_files: Vec<CapturedRelatedFile>,
-}
-
-#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
-pub struct CapturedEvent {
-    pub path: Arc<Path>,
-    pub old_path: Arc<Path>,
-    pub diff: String,
-    pub predicted: bool,
-    pub in_open_source_repo: bool,
-}
-
-impl CapturedEvent {
-    pub fn to_event(&self) -> zeta_prompt::Event {
-        zeta_prompt::Event::BufferChange {
-            path: self.path.clone(),
-            old_path: self.old_path.clone(),
-            diff: self.diff.clone(),
-            predicted: self.predicted,
-            in_open_source_repo: self.in_open_source_repo,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
-pub struct CapturedRelatedFile {
-    pub path: Arc<Path>,
-    pub max_row: u32,
-    pub excerpts: Vec<CapturedRelatedExcerpt>,
-}
-
-impl CapturedRelatedFile {
-    pub fn to_related_file(&self) -> zeta_prompt::RelatedFile {
-        zeta_prompt::RelatedFile {
-            path: self.path.clone(),
-            max_row: self.max_row,
-            excerpts: self
-                .excerpts
-                .iter()
-                .map(|e| zeta_prompt::RelatedExcerpt {
-                    row_range: e.row_range.clone(),
-                    text: e.text.clone().into(),
-                })
-                .collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
-pub struct CapturedRelatedExcerpt {
-    pub row_range: Range<u32>,
-    pub text: String,
-}
-
 const REASONING_HEADING: &str = "Reasoning";
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
+const RECENTLY_OPENED_FILES_HEADING: &str = "Recently Opened Files";
+const RECENTLY_VIEWED_FILES_HEADING: &str = "Recently Viewed Files";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const REJECTED_PATCH_HEADING: &str = "Rejected Patch";
+const ACCEPTED_PREDICTION_MARKER: &str = "// User accepted prediction:";
+
+fn write_path_list(markdown: &mut String, heading: &str, files: &[RecentFile]) {
+    if files.is_empty() {
+        return;
+    }
+
+    _ = writeln!(markdown, "## {heading}");
+    _ = writeln!(markdown);
+    _ = writeln!(markdown, "```");
+    for file in files {
+        _ = write!(markdown, "{}", file.path.display());
+        if let Some(position) = file.cursor_position {
+            _ = write!(markdown, "\t{position}");
+        }
+        _ = writeln!(markdown);
+    }
+    _ = writeln!(markdown, "```");
+    markdown.push('\n');
+}
+
+fn parse_path_list(text: &str) -> Vec<RecentFile> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let (path, cursor_position) = line
+                .rsplit_once('\t')
+                .map(|(path, position)| (path, position.parse().ok()))
+                .unwrap_or((line, None));
+            RecentFile {
+                path: Path::new(path).into(),
+                cursor_position,
+            }
+        })
+        .collect()
+}
 
 #[derive(Serialize, Deserialize)]
 struct FrontMatter<'a> {
@@ -132,6 +119,12 @@ struct FrontMatter<'a> {
     revision: Cow<'a, str>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    uncommitted_diff_requires_edit_history_rollback: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl ExampleSpec {
@@ -155,6 +148,8 @@ impl ExampleSpec {
             repository_url: Cow::Borrowed(&self.repository_url),
             revision: Cow::Borrowed(&self.revision),
             tags: self.tags.clone(),
+            uncommitted_diff_requires_edit_history_rollback: self
+                .uncommitted_diff_contains_edit_history,
         };
         let front_matter_toml =
             toml::to_string_pretty(&front_matter).unwrap_or_else(|_| String::new());
@@ -193,6 +188,17 @@ impl ExampleSpec {
             _ = writeln!(markdown, "```");
             markdown.push('\n');
         }
+
+        write_path_list(
+            &mut markdown,
+            RECENTLY_OPENED_FILES_HEADING,
+            &self.recently_opened_files,
+        );
+        write_path_list(
+            &mut markdown,
+            RECENTLY_VIEWED_FILES_HEADING,
+            &self.recently_viewed_files,
+        );
 
         _ = writeln!(markdown, "## {}", EDIT_HISTORY_HEADING);
         _ = writeln!(markdown);
@@ -258,12 +264,14 @@ impl ExampleSpec {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
             rejected_patch: None,
-            captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
             rating: None,
@@ -276,6 +284,8 @@ impl ExampleSpec {
                 spec.repository_url = data.repository_url.into_owned();
                 spec.revision = data.revision.into_owned();
                 spec.tags = data.tags;
+                spec.uncommitted_diff_contains_edit_history =
+                    data.uncommitted_diff_requires_edit_history_rollback;
             }
             input = rest.trim_start();
         }
@@ -288,6 +298,8 @@ impl ExampleSpec {
         enum Section {
             Start,
             UncommittedDiff,
+            RecentlyOpenedFiles,
+            RecentlyViewedFiles,
             EditHistory,
             CursorPosition,
             ExpectedPatch,
@@ -296,6 +308,7 @@ impl ExampleSpec {
         }
 
         let mut current_section = Section::Start;
+        let mut next_edit_predicted = false;
 
         for event in parser {
             match event {
@@ -309,6 +322,10 @@ impl ExampleSpec {
                     let title = mem::take(&mut text);
                     current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
                         Section::UncommittedDiff
+                    } else if title.eq_ignore_ascii_case(RECENTLY_OPENED_FILES_HEADING) {
+                        Section::RecentlyOpenedFiles
+                    } else if title.eq_ignore_ascii_case(RECENTLY_VIEWED_FILES_HEADING) {
+                        Section::RecentlyViewedFiles
                     } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
                         Section::EditHistory
                     } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
@@ -331,6 +348,12 @@ impl ExampleSpec {
                     anyhow::bail!("Unexpected heading level: {level}");
                 }
                 Event::Start(Tag::CodeBlock(kind)) => {
+                    if current_section == Section::EditHistory
+                        && text.trim() == ACCEPTED_PREDICTION_MARKER
+                    {
+                        next_edit_predicted = true;
+                    }
+                    text.clear();
                     match kind {
                         CodeBlockKind::Fenced(info) => {
                             block_info = info;
@@ -350,7 +373,20 @@ impl ExampleSpec {
                         Section::UncommittedDiff => {
                             spec.uncommitted_diff = mem::take(&mut text);
                         }
+                        Section::RecentlyOpenedFiles => {
+                            spec.recently_opened_files = parse_path_list(&text);
+                            text.clear();
+                        }
+                        Section::RecentlyViewedFiles => {
+                            spec.recently_viewed_files = parse_path_list(&text);
+                            text.clear();
+                        }
                         Section::EditHistory => {
+                            if next_edit_predicted {
+                                spec.edit_history
+                                    .push_str(&format!("{}\n", ACCEPTED_PREDICTION_MARKER));
+                                next_edit_predicted = false;
+                            }
                             spec.edit_history.push_str(&mem::take(&mut text));
                         }
                         Section::CursorPosition => {
@@ -505,53 +541,7 @@ impl ExampleSpec {
     pub fn expected_patches_with_cursor_positions(&self) -> Vec<(String, Option<usize>)> {
         self.expected_patches
             .iter()
-            .map(|patch| {
-                let mut clean_patch = String::new();
-                let mut cursor_offset: Option<usize> = None;
-                let mut line_start_offset = 0usize;
-                let mut prev_line_start_offset = 0usize;
-
-                for line in patch.lines() {
-                    let diff_line = DiffLine::parse(line);
-
-                    match &diff_line {
-                        DiffLine::Garbage(content)
-                            if content.starts_with('#')
-                                && content.contains(CURSOR_POSITION_MARKER) =>
-                        {
-                            let caret_column = if let Some(caret_pos) = content.find('^') {
-                                caret_pos
-                            } else if let Some(_) = content.find('<') {
-                                0
-                            } else {
-                                continue;
-                            };
-                            let cursor_column = caret_column.saturating_sub('#'.len_utf8());
-                            cursor_offset = Some(prev_line_start_offset + cursor_column);
-                        }
-                        _ => {
-                            if !clean_patch.is_empty() {
-                                clean_patch.push('\n');
-                            }
-                            clean_patch.push_str(line);
-
-                            match diff_line {
-                                DiffLine::Addition(content) | DiffLine::Context(content) => {
-                                    prev_line_start_offset = line_start_offset;
-                                    line_start_offset += content.len() + 1;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                if patch.ends_with('\n') && !clean_patch.is_empty() {
-                    clean_patch.push('\n');
-                }
-
-                (clean_patch, cursor_offset)
-            })
+            .map(|patch| extract_cursor_from_patch(patch))
             .collect()
     }
 
@@ -561,52 +551,7 @@ impl ExampleSpec {
     ) {
         self.expected_patches = patches
             .into_iter()
-            .map(|(patch, cursor_offset)| {
-                let Some(cursor_offset) = cursor_offset else {
-                    return patch;
-                };
-
-                let mut result = String::new();
-                let mut line_start_offset = 0usize;
-
-                for line in patch.lines() {
-                    if !result.is_empty() {
-                        result.push('\n');
-                    }
-                    result.push_str(line);
-
-                    match DiffLine::parse(line) {
-                        DiffLine::Addition(content) => {
-                            let line_end_offset = line_start_offset + content.len();
-
-                            if cursor_offset >= line_start_offset
-                                && cursor_offset <= line_end_offset
-                            {
-                                let cursor_column = cursor_offset - line_start_offset;
-
-                                result.push('\n');
-                                result.push('#');
-                                for _ in 0..cursor_column {
-                                    result.push(' ');
-                                }
-                                write!(result, "^{}", CURSOR_POSITION_MARKER).unwrap();
-                            }
-
-                            line_start_offset = line_end_offset + 1;
-                        }
-                        DiffLine::Context(content) => {
-                            line_start_offset += content.len() + 1;
-                        }
-                        _ => {}
-                    }
-                }
-
-                if patch.ends_with('\n') {
-                    result.push('\n');
-                }
-
-                result
-            })
+            .map(|(patch, cursor_offset)| encode_cursor_in_patch(&patch, cursor_offset))
             .collect();
     }
 }
@@ -625,12 +570,14 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
             rejected_patch: None,
-            captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
             rating: None,
@@ -762,12 +709,14 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
             rejected_patch: None,
-            captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
             rating: None,
@@ -835,12 +784,14 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
             rejected_patch: None,
-            captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
             rating: None,
@@ -896,5 +847,107 @@ mod tests {
 
         let results = spec.expected_patches_with_cursor_positions();
         assert_eq!(results, vec![(clean_patch, None)]);
+    }
+
+    #[test]
+    fn test_encode_cursor_in_patch_is_idempotent() {
+        let patch = indoc! {r#"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,2 +1,2 @@
+            -fn old() {}
+            +fn new_name() {}
+            #       ^[CURSOR_POSITION]
+        "#};
+
+        let cursor_offset = "fn new_name() {}".find("name").unwrap();
+        let encoded_once = encode_cursor_in_patch(patch, Some(cursor_offset));
+        let encoded_twice = encode_cursor_in_patch(&encoded_once, Some(cursor_offset));
+
+        assert_eq!(encoded_once, encoded_twice);
+        assert_eq!(
+            encoded_once
+                .lines()
+                .filter(|line| line.contains(CURSOR_POSITION_MARKER))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_from_markdown_accepted_prediction_marker() {
+        let markdown = indoc! {r#"
+            +++
+            repository_url = "https://github.com/example/repo"
+            revision = "abc123"
+            +++
+
+            ## Edit History
+
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello() {}
+            +fn hello_world() {}
+            ```
+
+            // User accepted prediction:
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello_world() {}
+            +fn hello_world() { println!("hi"); }
+            ```
+
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello_world() { println!("hi"); }
+            +fn hello_world() { println!("hello"); }
+            ```
+
+            ## Cursor Position
+
+            ```src/main.rs
+            fn hello_world() { println!("hello"); }
+            #                                    ^[CURSOR_POSITION]
+            ```
+
+            ## Expected Patch
+
+            ```diff
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,3 +1,3 @@
+            -fn hello_world() { println!("hello"); }
+            +fn hello_world() { println!("hello, world!"); }
+            ```
+        "#};
+
+        let spec = ExampleSpec::from_markdown(markdown).unwrap();
+
+        // The first diff should NOT have the marker
+        assert!(spec.edit_history.starts_with("--- a/src/main.rs"));
+
+        // The second diff should be preceded by the accepted prediction marker
+        assert!(
+            spec.edit_history
+                .contains("// User accepted prediction:\n--- a/src/main.rs")
+        );
+
+        // Count occurrences of the marker - should be exactly one
+        let marker_count = spec
+            .edit_history
+            .matches("// User accepted prediction:")
+            .count();
+        assert_eq!(marker_count, 1);
+
+        // The third diff should NOT have the marker
+        // Verify all three diffs are present
+        let diff_count = spec.edit_history.matches("--- a/src/main.rs").count();
+        assert_eq!(diff_count, 3);
     }
 }

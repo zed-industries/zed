@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::tasks::workflows::{
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{FluentBuilder, NamedJob, dependant_job, named},
+    steps::{FluentBuilder, IfNoFilesFound, NamedJob, UploadArtifactStep, dependant_job, named},
     vars::{assets, bundle_envs},
 };
 
@@ -90,19 +90,9 @@ pub(crate) fn bundle_mac(
     }
 }
 
-pub fn upload_artifact(path: &str) -> Step<Use> {
+pub fn upload_artifact(path: &str) -> UploadArtifactStep {
     let name = Path::new(path).file_name().unwrap().to_str().unwrap();
-    Step::new(format!("@actions/upload-artifact {}", name))
-        .uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        // N.B. "name" is the name for the asset. The uploaded
-        // file retains its filename.
-        .add_with(("name", name))
-        .add_with(("path", path))
-        .add_with(("if-no-files-found", "error"))
+    steps::upload_artifact(name, path).if_no_files_found(IfNoFilesFound::Error)
 }
 
 pub(crate) fn bundle_linux(
@@ -124,6 +114,8 @@ pub(crate) fn bundle_linux(
         job: bundle_job(deps)
             .runs_on(arch.linux_bundler())
             .envs(bundle_envs(platform))
+            .add_env(Env::new("CC", "clang-18"))
+            .add_env(Env::new("CXX", "clang++-18"))
             .add_step(steps::checkout_repo())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))

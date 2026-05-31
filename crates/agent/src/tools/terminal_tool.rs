@@ -1,11 +1,11 @@
-use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use settings::Settings;
 use std::{
     path::{Path, PathBuf},
@@ -14,10 +14,8 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolPermissionDecision,
-    decide_permission_from_settings,
-};
+use crate::sandboxing::sandboxing_enabled;
+use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -110,23 +108,59 @@ where
 ///
 /// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
 ///
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
+///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
-/// The terminal emulator is an interactive pty, so commands may block waiting for user input.
-/// Some commands can be configured not to do this, such as `git --no-pager diff` and similar.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
+///
+/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
+/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
-    /// The one-liner command to execute.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    ///
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     #[serde(default, deserialize_with = "deserialize_timeout")]
     pub timeout_ms: Option<u64>,
+    /// Request network access for this command.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. By default sandboxed commands
+    /// cannot make outbound network connections; set this to `true` only
+    /// when the command needs network access. The user will be prompted
+    /// to approve before the command runs.
+    #[serde(default)]
+    pub allow_network: Option<bool>,
+    /// Request unrestricted filesystem-write access for this command.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. By default sandboxed commands can
+    /// only write to the project worktree directories and a per-command
+    /// temporary directory; set this to `true` only when the command
+    /// needs to write elsewhere. The user will be prompted to approve
+    /// before the command runs.
+    #[serde(default)]
+    pub allow_fs_write: Option<bool>,
+    /// Request to run this command outside the sandbox entirely.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. Prefer `allow_network: true` or
+    /// `allow_fs_write: true` when one of those is enough. Set this to
+    /// `true` ONLY when the command needs behavior that the sandbox can't
+    /// grant on a per-permission basis. The user will be prompted to
+    /// approve before the command runs without sandbox restrictions.
+    #[serde(default)]
+    pub unsandboxed: Option<bool>,
 }
 
 pub struct TerminalTool {
@@ -147,9 +181,7 @@ impl AgentTool for TerminalTool {
     type Input = TerminalToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "terminal"
-    }
+    const NAME: &'static str = "terminal";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute
@@ -169,47 +201,113 @@ impl AgentTool for TerminalTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
-        let working_dir = match working_dir(&input, &self.project, cx) {
-            Ok(dir) => dir,
-            Err(err) => return Task::ready(Err(err)),
-        };
-
-        let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.command, settings);
-
-        let authorize = match decision {
-            ToolPermissionDecision::Allow => None,
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
-            }
-            ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: "terminal".to_string(),
-                    input_value: input.command.clone(),
-                };
-                Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))
-            }
-        };
+    ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
-            if let Some(authorize) = authorize {
-                authorize.await?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
+
+            let (working_dir, authorize, sandboxing) = cx.update(|cx| {
+                let working_dir =
+                    working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
+                let authorize =
+                    event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
+                let sandboxing = sandboxing_enabled(cx);
+                Result::<_, String>::Ok((working_dir, authorize, sandboxing))
+            })?;
+
+            authorize.await.map_err(|e| e.to_string())?;
+
+            // Sandbox flags only do anything when sandboxing is on. When
+            // off, we treat them as `None` so the model can't surreptitiously
+            // change runtime behavior by setting flags described as a no-op
+            // in the system prompt.
+            let want_network = sandboxing && input.allow_network == Some(true);
+            let want_fs_write = sandboxing && input.allow_fs_write == Some(true);
+            let want_unsandboxed = sandboxing && input.unsandboxed == Some(true);
+
+            // `unsandboxed: true` bypasses the wrap entirely; per-permission
+            // requests are only meaningful when the command is still being
+            // sandboxed.
+            let escalate = !want_unsandboxed && (want_network || want_fs_write);
+
+            if want_unsandboxed || escalate {
+                let title = sandbox_approval_title(want_network, want_fs_write, want_unsandboxed);
+                let approve = cx.update(|cx| {
+                    let context = crate::ToolPermissionContext::new(
+                        Self::NAME,
+                        vec![input.command.clone()],
+                    );
+                    // Sandbox escalations always prompt, even if the user
+                    // has `always_allow` rules for this command — the
+                    // escalation is a stronger trust boundary than the
+                    // baseline command approval.
+                    event_stream.authorize_always_prompt(title, context, cx)
+                });
+                if let Err(error) = approve.await {
+                    return Ok(if want_unsandboxed {
+                        format!(
+                            "Command cancelled: user denied permission to run outside the sandbox ({error})."
+                        )
+                    } else {
+                        format!(
+                            "Command cancelled: user denied the requested sandbox permissions ({error})."
+                        )
+                    });
+                }
             }
+
+            // The per-thread scratch directory (and the `$TMPDIR`/`TMP`/
+            // `TEMP` environment variables pointing at it) is provisioned by
+            // the thread environment in `create_terminal`, which also adds it
+            // to the sandbox's writable scope. We must not set `$TMPDIR` here:
+            // the environment overrides it with the per-thread directory, so a
+            // per-command directory set here would never be the `$TMPDIR` the
+            // command actually sees and would be left out of the writable
+            // scope, breaking writes into `$TMPDIR`.
+            let extra_env = Vec::new();
+
+            // Build the writable scope from the project's worktrees. The
+            // per-thread temp directory is appended by the thread environment
+            // (which owns it and points `$TMPDIR` at it). Crucially we do
+            // *not* include the resolved `cd` working directory — that's
+            // model-controlled, and using it as the writable scope would
+            // let the model widen its own write permissions outside the
+            // project.
+            let sandbox_wrap = if sandboxing && !want_unsandboxed {
+                let writable_paths: Vec<PathBuf> = cx.update(|cx| {
+                    self.project
+                        .read(cx)
+                        .worktrees(cx)
+                        .map(|w| w.read(cx).abs_path().to_path_buf())
+                        .collect::<Vec<_>>()
+                });
+                Some(acp_thread::SandboxWrap {
+                    writable_paths,
+                    allow_network: want_network,
+                    allow_fs_write: want_fs_write,
+                })
+            } else {
+                None
+            };
 
             let terminal = self
                 .environment
                 .create_terminal(
                     input.command.clone(),
+                    extra_env,
                     working_dir,
                     Some(COMMAND_OUTPUT_LIMIT),
+                    sandbox_wrap,
                     cx,
                 )
-                .await?;
+                .await
+                .map_err(|e| e.to_string())?;
 
-            let terminal_id = terminal.id(cx)?;
+            let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
             event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                 acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
             ]));
@@ -218,7 +316,7 @@ impl AgentTool for TerminalTool {
 
             let mut timed_out = false;
             let mut user_stopped_via_signal = false;
-            let wait_for_exit = terminal.wait_for_exit(cx)?;
+            let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
 
             match timeout {
                 Some(timeout) => {
@@ -228,12 +326,12 @@ impl AgentTool for TerminalTool {
                         _ = wait_for_exit.clone().fuse() => {},
                         _ = timeout_task.fuse() => {
                             timed_out = true;
-                            terminal.kill(cx)?;
+                            terminal.kill(cx).map_err(|e| e.to_string())?;
                             wait_for_exit.await;
                         }
                         _ = event_stream.cancelled_by_user().fuse() => {
                             user_stopped_via_signal = true;
-                            terminal.kill(cx)?;
+                            terminal.kill(cx).map_err(|e| e.to_string())?;
                             wait_for_exit.await;
                         }
                     }
@@ -243,7 +341,7 @@ impl AgentTool for TerminalTool {
                         _ = wait_for_exit.clone().fuse() => {},
                         _ = event_stream.cancelled_by_user().fuse() => {
                             user_stopped_via_signal = true;
-                            terminal.kill(cx)?;
+                            terminal.kill(cx).map_err(|e| e.to_string())?;
                             wait_for_exit.await;
                         }
                     }
@@ -260,7 +358,7 @@ impl AgentTool for TerminalTool {
             let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
             let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
 
-            let output = terminal.current_output(cx)?;
+            let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
             Ok(process_content(
                 output,
@@ -269,6 +367,29 @@ impl AgentTool for TerminalTool {
                 user_stopped,
             ))
         })
+    }
+}
+
+/// User-facing title for the sandbox-escalation approval prompt.
+///
+/// `want_unsandboxed` wins over the per-permission flags because
+/// `unsandboxed: true` bypasses the per-permission machinery entirely.
+fn sandbox_approval_title(
+    want_network: bool,
+    want_fs_write: bool,
+    want_unsandboxed: bool,
+) -> &'static str {
+    if want_unsandboxed {
+        "Allow this command to run outside the sandbox?"
+    } else {
+        match (want_network, want_fs_write) {
+            (true, true) => "Allow network access and arbitrary filesystem writes?",
+            (true, false) => "Allow network access?",
+            (false, true) => "Allow arbitrary filesystem writes?",
+            // Caller only invokes this when at least one flag is set, so
+            // this fallback is unreachable in practice.
+            (false, false) => "Allow this command to run?",
+        }
     }
 }
 
@@ -400,6 +521,7 @@ mod tests {
                 .to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+                    ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -459,6 +581,7 @@ mod tests {
                 command: cmd.to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
+                ..Default::default()
             };
 
             let title = format_initial_title(Ok(input));
@@ -496,6 +619,7 @@ mod tests {
             command: "echo 'hello world'".to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -525,6 +649,7 @@ mod tests {
             command: long_command,
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -697,5 +822,903 @@ mod tests {
             "Expected 'No output was captured' for empty output, got: {}",
             result
         );
+    }
+
+    #[gpui::test]
+    async fn test_run_rejects_invalid_substitution_before_terminal_creation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default()
+                .with_terminal(crate::tests::FakeTerminalHandle::new_never_exits(cx))
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $HOME".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        let error = result.expect_err("expected invalid terminal command to be rejected");
+        assert!(
+            error.contains("does not allow shell substitutions or interpolations"),
+            "expected explicit invalid-command message, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "terminal should not be created for invalid commands"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "invalid command should not request authorization"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
+                    acp_thread::ToolCallUpdate::UpdateFields(_)
+                )))
+            ),
+            "invalid command should not emit a terminal card update"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_allows_invalid_substitution_in_unconditional_allow_all_mode(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $HOME".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content update in unconditional allow-all mode"
+        );
+
+        let result = task
+            .await
+            .expect("command should proceed in unconditional allow-all mode");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created exactly once"
+        );
+        assert!(
+            !result.contains("could not be approved"),
+            "unexpected invalid-command rejection output: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_hardcoded_denial_still_wins_in_unconditional_allow_all_mode(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default()
+                .with_terminal(crate::tests::FakeTerminalHandle::new_never_exits(cx))
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $(rm -rf /)".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let error = task
+            .await
+            .expect_err("hardcoded denial should override unconditional allow-all");
+        assert!(
+            error.contains("built-in security rule"),
+            "expected hardcoded denial message, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "hardcoded denial should prevent terminal creation"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "hardcoded denial should not request authorization"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_env_prefixed_allow_pattern_is_used_end_to_end(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^PAGER=blah\s+git\s+log(\s|$)", false)
+                            .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=blah git log --oneline".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content update for matching env-prefixed allow rule"
+        );
+
+        let result = task
+            .await
+            .expect("expected env-prefixed command to be allowed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created for allowed env-prefixed command"
+        );
+        assert!(
+            result.contains("command output") || result.contains("Command executed successfully."),
+            "unexpected terminal result: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_old_anchored_git_pattern_no_longer_auto_allows_env_prefix(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Confirm),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^git\b", false).unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let _task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=blah git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let _auth = rx.expect_authorization().await;
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "confirm flow should not create terminal before authorization"
+        );
+    }
+
+    #[test]
+    fn test_terminal_tool_description_mentions_forbidden_substitutions() {
+        let description = <TerminalTool as crate::AgentTool>::description().to_string();
+
+        assert!(
+            description.contains("$VAR"),
+            "missing $VAR example: {description}"
+        );
+        assert!(
+            description.contains("${VAR}"),
+            "missing ${{VAR}} example: {description}"
+        );
+        assert!(
+            description.contains("$(...)"),
+            "missing $(...) example: {description}"
+        );
+        assert!(
+            description.contains("backticks"),
+            "missing backticks example: {description}"
+        );
+        assert!(
+            description.contains("$((...))"),
+            "missing $((...)) example: {description}"
+        );
+        assert!(
+            description.contains("<(...)") && description.contains(">(...)"),
+            "missing process substitution examples: {description}"
+        );
+    }
+
+    #[test]
+    fn test_terminal_tool_input_schema_mentions_forbidden_substitutions() {
+        let schema = <TerminalTool as crate::AgentTool>::input_schema(
+            language_model::LanguageModelToolSchemaFormat::JsonSchema,
+        );
+        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_text = schema_json.to_string();
+
+        assert!(
+            schema_text.contains("$VAR"),
+            "missing $VAR example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("${VAR}"),
+            "missing ${{VAR}} example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("$(...)"),
+            "missing $(...) example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("backticks"),
+            "missing backticks example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("$((...))"),
+            "missing $((...)) example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("<(...)") && schema_text.contains(">(...)"),
+            "missing process substitution examples: {schema_text}"
+        );
+    }
+
+    async fn assert_rejected_before_terminal_creation(
+        command: &str,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default()
+                .with_terminal(crate::tests::FakeTerminalHandle::new_never_exits(cx))
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: command.to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("does not allow shell substitutions or interpolations"),
+            "command {command:?} should be rejected with substitution message, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "no terminal should be created for rejected command {command:?}"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "rejected command {command:?} should not request authorization"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rejects_variable_expansion(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo ${HOME}", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_positional_parameter(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $1", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_special_parameter_question(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $?", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_special_parameter_dollar(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $$", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_special_parameter_at(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $@", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_command_substitution_dollar_parens(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $(whoami)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_command_substitution_backticks(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo `whoami`", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_arithmetic_expansion(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $((1 + 1))", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_process_substitution_input(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("cat <(ls)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_process_substitution_output(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("ls >(cat)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_env_prefix_with_variable(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("PAGER=$HOME git log", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_env_prefix_with_command_substitution(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("PAGER=$(whoami) git log", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_env_prefix_with_brace_expansion(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation(
+            "GIT_SEQUENCE_EDITOR=${EDITOR} git rebase -i HEAD~2",
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_multiline_with_forbidden_on_second_line(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo ok\necho $HOME", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_multiline_with_forbidden_mixed(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("PAGER=less git log\necho $(whoami)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_nested_command_substitution(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $(cat $(whoami).txt)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_allow_all_terminal_specific_default_with_empty_patterns(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Allow),
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $(whoami)".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "terminal-specific allow-all should bypass substitution rejection"
+        );
+
+        let result = task
+            .await
+            .expect("terminal-specific allow-all should let the command proceed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created exactly once"
+        );
+        assert!(
+            !result.contains("could not be approved"),
+            "unexpected rejection output: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_env_prefix_pattern_rejects_different_value(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^PAGER=blah\s+git\s+log(\s|$)", false)
+                            .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=other git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let error = task
+            .await
+            .expect_err("different env-var value should not match allow pattern");
+        assert!(
+            error.contains("could not be approved")
+                || error.contains("denied")
+                || error.contains("disabled"),
+            "expected denial for mismatched env value, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "terminal should not be created for non-matching env value"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_env_prefix_multiple_assignments_preserved_in_order(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^A=1\s+B=2\s+git\s+log(\s|$)", false)
+                            .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "A=1 B=2 git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "multi-assignment pattern should match and produce terminal content"
+        );
+
+        let result = task
+            .await
+            .expect("multi-assignment command matching pattern should be allowed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created for matching multi-assignment command"
+        );
+        assert!(
+            result.contains("command output") || result.contains("Command executed successfully."),
+            "unexpected terminal result: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_env_prefix_quoted_whitespace_value_matches_only_with_quotes_in_pattern(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(
+                            r#"^PAGER="less\ -R"\s+git\s+log(\s|$)"#,
+                            false,
+                        )
+                        .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=\"less -R\" git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "quoted whitespace value should match pattern with quoted form"
+        );
+
+        let result = task
+            .await
+            .expect("quoted whitespace env value matching pattern should be allowed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created for matching quoted-value command"
+        );
+        assert!(
+            result.contains("command output") || result.contains("Command executed successfully."),
+            "unexpected terminal result: {result}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_unsandboxed_wins() {
+        // `unsandboxed: true` skips the sandbox entirely, so the title should
+        // reflect that even when other flags are also set — they're moot.
+        assert_eq!(
+            sandbox_approval_title(true, true, true),
+            "Allow this command to run outside the sandbox?"
+        );
+        assert_eq!(
+            sandbox_approval_title(false, false, true),
+            "Allow this command to run outside the sandbox?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_per_permission_flags() {
+        assert_eq!(
+            sandbox_approval_title(true, true, false),
+            "Allow network access and arbitrary filesystem writes?"
+        );
+        assert_eq!(
+            sandbox_approval_title(true, false, false),
+            "Allow network access?"
+        );
+        assert_eq!(
+            sandbox_approval_title(false, true, false),
+            "Allow arbitrary filesystem writes?"
+        );
+    }
+
+    #[test]
+    fn test_input_schema_includes_sandbox_flags() {
+        // The model only sees these fields when the sandboxing prompt
+        // section is rendered, but they're always present in the schema so
+        // input validation doesn't reject them when sent. Guard against
+        // accidentally renaming or removing them.
+        let schema = serde_json::to_string(&schemars::schema_for!(TerminalToolInput))
+            .expect("input schema should serialize");
+        assert!(
+            schema.contains("allow_network"),
+            "schema should advertise allow_network: {schema}"
+        );
+        assert!(
+            schema.contains("allow_fs_write"),
+            "schema should advertise allow_fs_write: {schema}"
+        );
+        assert!(
+            schema.contains("unsandboxed"),
+            "schema should advertise unsandboxed: {schema}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_flags_default_to_none_when_absent() {
+        // The model is expected to omit the sandbox fields entirely on most
+        // calls. Make sure deserialization doesn't reject the minimal
+        // payload and that the fields default to `None` (which the tool
+        // interprets as "no escalation requested").
+        let input: TerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": ".",
+        }))
+        .expect("minimal input should deserialize");
+        assert_eq!(input.allow_network, None);
+        assert_eq!(input.allow_fs_write, None);
+        assert_eq!(input.unsandboxed, None);
     }
 }

@@ -1,14 +1,15 @@
 use anyhow::Result;
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
-    Role, env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -18,7 +19,7 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use x_ai::{Model, XAI_API_URL};
+use x_ai::XAI_API_URL;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
@@ -39,6 +40,7 @@ pub struct XAiLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl State {
@@ -47,30 +49,51 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = XAiLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = XAiLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 }
 
 impl XAiLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let credentials_provider = this.credentials_provider.clone();
                 let api_url = Self::api_url(cx);
-                this.api_key_state
-                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
+                this.api_key_state.handle_url_change(
+                    api_url,
+                    |this| &mut this.api_key_state,
+                    credentials_provider,
+                    cx,
+                );
                 cx.notify();
             })
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
             }
         });
 
@@ -232,6 +255,75 @@ impl XAiLanguageModel {
     }
 }
 
+fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEffort] {
+    if model.supports_reasoning_effort() {
+        &[
+            open_ai::ReasoningEffort::None,
+            open_ai::ReasoningEffort::Low,
+            open_ai::ReasoningEffort::Medium,
+            open_ai::ReasoningEffort::High,
+        ]
+    } else {
+        &[]
+    }
+}
+
+fn default_thinking_reasoning_effort(model: &x_ai::Model) -> Option<open_ai::ReasoningEffort> {
+    if model.supports_reasoning_effort() {
+        Some(open_ai::ReasoningEffort::Low)
+    } else {
+        None
+    }
+}
+
+fn reasoning_effort_for_request(
+    request: &LanguageModelRequest,
+    model: &x_ai::Model,
+) -> Option<open_ai::ReasoningEffort> {
+    let supported_efforts = x_ai_reasoning_efforts(model);
+    if supported_efforts.is_empty() {
+        return None;
+    }
+
+    if request.thinking_allowed {
+        request
+            .thinking_effort
+            .as_deref()
+            .and_then(|effort| effort.parse::<open_ai::ReasoningEffort>().ok())
+            .filter(|effort| supported_efforts.contains(effort))
+            .filter(|effort| *effort != open_ai::ReasoningEffort::None)
+            .or_else(|| default_thinking_reasoning_effort(model))
+    } else if supported_efforts.contains(&open_ai::ReasoningEffort::None) {
+        Some(open_ai::ReasoningEffort::None)
+    } else {
+        None
+    }
+}
+
+fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEffortLevel> {
+    let default_effort = default_thinking_reasoning_effort(model);
+    x_ai_reasoning_efforts(model)
+        .iter()
+        .copied()
+        .filter_map(|effort| {
+            let (name, value) = match effort {
+                open_ai::ReasoningEffort::None => return None,
+                open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                open_ai::ReasoningEffort::Low => ("Low", "low"),
+                open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
+                open_ai::ReasoningEffort::High => ("High", "high"),
+                open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+            };
+
+            Some(LanguageModelEffortLevel {
+                name: name.into(),
+                value: value.into(),
+                is_default: Some(effort) == default_effort,
+            })
+        })
+        .collect()
+}
+
 impl LanguageModel for XAiLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -257,6 +349,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -264,9 +360,17 @@ impl LanguageModel for XAiLanguageModel {
             | LanguageModelToolChoice::None => true,
         }
     }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_reasoning_effort()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        supported_thinking_effort_levels(&self.model)
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        let model_id = self.model.id().trim().to_lowercase();
-        if model_id.eq(x_ai::Model::Grok4.id()) || model_id.eq(x_ai::Model::GrokCodeFast1.id()) {
+        if self.model.requires_json_schema_subset() {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
@@ -285,12 +389,8 @@ impl LanguageModel for XAiLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_xai_tokens(request, self.model.clone(), cx)
+    fn supports_split_token_display(&self) -> bool {
+        true
     }
 
     fn stream_completion(
@@ -307,13 +407,15 @@ impl LanguageModel for XAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let reasoning_effort = reasoning_effort_for_request(&request, &self.model);
         let request = crate::provider::open_ai::into_open_ai(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
-            None,
+            reasoning_effort,
+            false,
         );
         let completions = self.stream_completion(request, cx);
         async move {
@@ -322,37 +424,6 @@ impl LanguageModel for XAiLanguageModel {
         }
         .boxed()
     }
-}
-
-pub fn count_xai_tokens(
-    request: LanguageModelRequest,
-    model: Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        let model_name = if model.max_token_count() >= 100_000 {
-            "gpt-4o"
-        } else {
-            "gpt-4"
-        };
-        tiktoken_rs::num_tokens_from_messages(model_name, &messages).map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {
@@ -433,6 +504,56 @@ impl ConfigurationView {
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grok_43_supports_selectable_thinking_effort_levels() {
+        let effort_levels = supported_thinking_effort_levels(&x_ai::Model::Grok43);
+        let values = effort_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, ["low", "medium", "high"]);
+        assert_eq!(
+            effort_levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn grok_43_request_uses_selected_reasoning_effort() {
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok43),
+            Some(open_ai::ReasoningEffort::High)
+        );
+    }
+
+    #[test]
+    fn grok_43_request_uses_none_when_thinking_is_disabled() {
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok43),
+            Some(open_ai::ReasoningEffort::None)
+        );
     }
 }
 

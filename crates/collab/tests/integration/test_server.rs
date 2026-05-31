@@ -7,9 +7,10 @@ use client::{
     proto::PeerId,
 };
 use clock::FakeSystemClock;
+use collab::services::{FakeUserService, NewUserParams};
 use collab::{
     AppState, Config,
-    db::{NewUserParams, UserId},
+    db::UserId,
     executor::Executor,
     rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
 };
@@ -45,7 +46,7 @@ use std::{
     },
 };
 use util::path;
-use workspace::{Workspace, WorkspaceStore};
+use workspace::{MultiWorkspace, Workspace, WorkspaceStore};
 
 use livekit_client::test::TestServer as LivekitTestServer;
 
@@ -173,20 +174,25 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
 
         let clock = Arc::new(FakeSystemClock::new());
 
-        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
+        let user_id = if let Ok(Some(user)) = self
+            .app_state
+            .user_service
+            .get_user_by_github_login(name)
+            .await
         {
             user.id
         } else {
             let github_user_id = self.next_github_user_id;
             self.next_github_user_id += 1;
             self.app_state
-                .db
+                .user_service
+                .as_fake()
                 .create_user(
                     &format!("{name}@example.com"),
                     None,
@@ -197,8 +203,6 @@ impl TestServer {
                     },
                 )
                 .await
-                .expect("creating user failed")
-                .user_id
         };
 
         let http = FakeHttpClient::create({
@@ -242,14 +246,13 @@ impl TestServer {
         });
 
         let client_name = name.to_string();
-        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
+        let client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
-        let db = self.app_state.db.clone();
+        let user_service = self.app_state.user_service.clone();
         let connection_killers = self.connection_killers.clone();
         let forbid_connections = self.forbid_connections.clone();
 
-        Arc::get_mut(&mut client)
-            .unwrap()
+        client
             .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
                 cx.spawn(async move |_| {
@@ -269,7 +272,7 @@ impl TestServer {
                 );
 
                 let server = server.clone();
-                let db = db.clone();
+                let user_service = user_service.clone();
                 let connection_killers = connection_killers.clone();
                 let forbid_connections = forbid_connections.clone();
                 let client_name = client_name.clone();
@@ -282,7 +285,8 @@ impl TestServer {
                         let (client_conn, server_conn, killed) =
                             Connection::in_memory(cx.background_executor().clone());
                         let (connection_id_tx, connection_id_rx) = oneshot::channel();
-                        let user = db
+                        let user = user_service
+                            .as_fake()
                             .get_user_by_id(user_id)
                             .await
                             .map_err(|e| {
@@ -342,7 +346,7 @@ impl TestServer {
         let os_keymap = "keymaps/default-macos.json";
 
         cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
             client::init(&client, cx);
             editor::init(cx);
@@ -357,7 +361,6 @@ impl TestServer {
                 settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
             );
             language_model::LanguageModelRegistry::test(cx);
-            assistant_text_thread::init(client.clone(), cx);
         });
 
         client
@@ -439,7 +442,12 @@ impl TestServer {
         admin: (&TestClient, &mut TestAppContext),
         members: &mut [(&TestClient, &mut TestAppContext)],
     ) -> ChannelId {
-        let (_, admin_cx) = admin;
+        let (admin_client, admin_cx) = admin;
+
+        // Subscribe to channels (simulates opening the collab panel)
+        admin_client.initialize_channel_store(admin_cx);
+        admin_cx.executor().run_until_parked();
+
         let channel_id = admin_cx
             .read(ChannelStore::global)
             .update(admin_cx, |channel_store, cx| {
@@ -449,6 +457,10 @@ impl TestServer {
             .unwrap();
 
         for (member_client, member_cx) in members {
+            // Subscribe member to channels (simulates opening the collab panel)
+            member_client.initialize_channel_store(member_cx);
+            member_cx.executor().run_until_parked();
+
             admin_cx
                 .read(ChannelStore::global)
                 .update(admin_cx, |channel_store, cx| {
@@ -564,44 +576,29 @@ impl TestServer {
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
+            http_client: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
             executor,
             kinesis_client: None,
+            user_service: FakeUserService::new(test_db.db().clone()),
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
                 database_max_connections: 0,
-                api_token: "".into(),
-                invite_link_prefix: "".into(),
                 livekit_server: None,
                 livekit_key: None,
                 livekit_secret: None,
-                llm_database_url: None,
-                llm_database_max_connections: None,
-                llm_database_migrations_path: None,
-                llm_api_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                zed_cloud_internal_api_key: "test-internal-api-key".into(),
                 blob_store_url: None,
                 blob_store_region: None,
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
-                openai_api_key: None,
-                google_ai_api_key: None,
-                anthropic_api_key: None,
-                anthropic_staff_api_key: None,
-                llm_closed_beta_model_name: None,
-                prediction_api_url: None,
-                prediction_api_key: None,
-                prediction_model: None,
                 zed_client_checksum_seed: None,
-                auto_join_channel_id: None,
-                migrations_path: None,
-                seed_path: None,
-                supermaven_admin_api_key: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,
@@ -660,11 +657,9 @@ impl TestClient {
     }
 
     pub fn current_user_id(&self, cx: &TestAppContext) -> UserId {
-        UserId::from_proto(
-            self.app_state
-                .user_store
-                .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
-        )
+        UserId::from_proto(self.app_state.user_store.read_with(cx, |user_store, _| {
+            user_store.current_user().unwrap().legacy_id
+        }))
     }
 
     pub async fn wait_for_current_user(&self, cx: &TestAppContext) {
@@ -680,6 +675,12 @@ impl TestClient {
             .user_store
             .update(cx, |store, _| store.clear_contacts())
             .await;
+    }
+
+    /// Subscribe to channels. In production this happens when the user opens the collab panel.
+    pub fn initialize_channel_store(&self, cx: &mut TestAppContext) {
+        self.channel_store
+            .update(cx, |channel_store, _| channel_store.initialize());
     }
 
     pub fn local_projects(&self) -> impl Deref<Target = Vec<Entity<Project>>> + '_ {
@@ -843,7 +844,7 @@ impl TestClient {
         channel_id: ChannelId,
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
-        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
+        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, None, cx))
             .await
             .unwrap();
         cx.run_until_parked();
@@ -897,10 +898,19 @@ impl TestClient {
         project: &Entity<Project>,
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
-        cx.add_window_view(|window, cx| {
+        let app_state = self.app_state.clone();
+        let project = project.clone();
+        let window = cx.add_window(|window, cx| {
             window.activate_window();
-            Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
-        })
+            let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+        cx.run_until_parked();
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        (workspace, cx)
     }
 
     pub async fn build_test_workspace<'a>(
@@ -908,19 +918,33 @@ impl TestClient {
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
         let project = self.build_test_project(cx).await;
-        cx.add_window_view(|window, cx| {
+        let app_state = self.app_state.clone();
+        let window = cx.add_window(|window, cx| {
             window.activate_window();
-            Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
-        })
+            let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        (workspace, cx)
     }
 
     pub fn active_workspace<'a>(
         &'a self,
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
-        let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+        let window = cx.update(|cx| {
+            cx.active_window()
+                .unwrap()
+                .downcast::<MultiWorkspace>()
+                .unwrap()
+        });
 
-        let entity = window.root(cx).unwrap();
+        let entity = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (entity, cx)
@@ -931,8 +955,15 @@ pub fn open_channel_notes(
     channel_id: ChannelId,
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<Entity<ChannelView>>> {
-    let window = cx.update(|_, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
-    let entity = window.root(cx).unwrap();
+    let window = cx.update(|_, cx| {
+        cx.active_window()
+            .unwrap()
+            .downcast::<MultiWorkspace>()
+            .unwrap()
+    });
+    let entity = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
 
     cx.update(|window, cx| ChannelView::open(channel_id, None, entity.clone(), window, cx))
 }

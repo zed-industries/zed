@@ -18,7 +18,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
-use settings::SettingsStore;
+use settings::{ActionName, SettingsStore};
 use ui::Pixels;
 use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
@@ -29,7 +29,7 @@ use project::FakeFs;
 use search::BufferSearchBar;
 use search::{ProjectSearchView, project_search};
 use serde_json::json;
-use workspace::DeploySearch;
+use workspace::{DeploySearch, MultiWorkspace};
 
 use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
@@ -91,6 +91,117 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     cx.disable_vim();
     cx.enable_vim();
     assert_eq!(cx.mode(), Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_delete_x(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("x");
+    cx.assert_editor_state("<diˇ></di>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_change_iw(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("c i w s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_substitute_s(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("s s p a n escape");
+    cx.assert_editor_state("<dispaˇn></dispan>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_visual_change(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    // Visual change routes through substitute; visual `s` shares this path.
+    cx.simulate_keystrokes("v i w c s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_visual_substitute_s(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("v i w s s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
 }
 
 #[perf]
@@ -1293,6 +1404,204 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_lsp_completions_undo(cx: &mut gpui::TestAppContext) {
+    use editor::test::editor_lsp_test_context::EditorLspTestContext;
+    VimTestContext::init(cx);
+    let mut cx = VimTestContext::new_with_lsp(
+        EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    resolve_provider: Some(true),
+                    ..Default::default()
+                }),
+                signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await,
+        true,
+    );
+
+    cx.set_state("fn main() { let a = ˇ }", Mode::Normal);
+    cx.simulate_keystroke("i");
+    cx.set_state("fn main() { let a = ˇ }", Mode::Insert);
+
+    cx.simulate_keystroke(";");
+    cx.assert_state("fn main() { let a = ;ˇ }", Mode::Insert);
+
+    cx.simulate_keystroke("escape");
+    cx.assert_state("fn main() { let a = ˇ; }", Mode::Normal);
+
+    cx.simulate_keystroke("i");
+    cx.simulate_keystroke("2");
+    cx.assert_state("fn main() { let a = 2ˇ; }", Mode::Insert);
+    cx.simulate_keystroke(".");
+
+    let completion_item = lsp::CompletionItem {
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+            },
+            new_text: "completion".to_string(),
+        })),
+        additional_text_edits: None,
+        ..Default::default()
+    };
+
+    let closure_completion_item = completion_item.clone();
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let task_completion_item = closure_completion_item.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                task_completion_item,
+            ])))
+        }
+    });
+
+    request.next().await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    let _ = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx)
+            .unwrap()
+    });
+
+    cx.assert_editor_state("fn main() { let a = 2.completionˇ; }");
+
+    cx.simulate_keystrokes("escape u");
+
+    cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_lsp_completions_with_additional_edits_undo(cx: &mut gpui::TestAppContext) {
+    use editor::test::editor_lsp_test_context::EditorLspTestContext;
+    VimTestContext::init(cx);
+    let mut cx = VimTestContext::new_with_lsp(
+        EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    resolve_provider: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await,
+        true,
+    );
+
+    cx.set_state("fn main() { let a = ˇ }", Mode::Normal);
+    cx.simulate_keystroke("i");
+    cx.set_state("fn main() { let a = ˇ }", Mode::Insert);
+
+    cx.simulate_keystroke("2");
+    cx.simulate_keystroke(";");
+    cx.assert_state("fn main() { let a = 2;ˇ }", Mode::Insert);
+
+    cx.simulate_keystroke("escape");
+    cx.assert_state("fn main() { let a = 2ˇ; }", Mode::Normal);
+
+    cx.simulate_keystroke("i");
+    cx.assert_state("fn main() { let a = 2ˇ; }", Mode::Insert);
+
+    cx.simulate_keystroke(".");
+    let completion_item = lsp::CompletionItem {
+        label: "some".into(),
+        kind: Some(lsp::CompletionItemKind::SNIPPET),
+        detail: Some("Wrap the expression in an `Option::Some`".to_string()),
+        documentation: Some(lsp::Documentation::MarkupContent(lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value: "```rust\nSome(2)\n```".to_string(),
+        })),
+        deprecated: Some(false),
+        sort_text: Some("fffffff2".to_string()),
+        filter_text: Some("some".to_string()),
+        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+            },
+            new_text: "Some(2)".to_string(),
+        })),
+        additional_text_edits: Some(vec![lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 20,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+            },
+            new_text: "".to_string(),
+        }]),
+        ..Default::default()
+    };
+
+    let closure_completion_item = completion_item.clone();
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let task_completion_item = closure_completion_item.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                task_completion_item,
+            ])))
+        }
+    });
+
+    request.next().await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state("fn main() { let a = 2.Some(2)ˇ; }");
+
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+        let task_completion_item = completion_item.clone();
+        async move { Ok(task_completion_item) }
+    })
+    .next()
+    .await
+    .unwrap();
+
+    apply_additional_edits.await.unwrap();
+    cx.assert_editor_state("fn main() { let a = Some(2)ˇ; }");
+
+    cx.simulate_keystrokes("escape u");
+
+    cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
+}
+
+#[perf]
+#[gpui::test]
 async fn test_mouse_selection(cx: &mut TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
@@ -1585,6 +1894,134 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_toggle_block_comments(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = std::sync::Arc::new(language::Language::new(
+        language::LanguageConfig {
+            block_comment: Some(language::BlockCommentConfig {
+                start: "/* ".into(),
+                prefix: "".into(),
+                end: " */".into(),
+                tab_size: 1,
+            }),
+            ..Default::default()
+        },
+        Some(language::tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // works in normal mode with current-line shorthand
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // toggle off with cursor inside the comment
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works in visual line mode (wraps full lines)
+    cx.simulate_keystrokes("shift-v j g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two */
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works in visual mode and restores the cursor to the selection start
+    cx.set_state(
+        indoc! {"
+        «oneˇ»
+        two
+        three
+        "},
+        Mode::Visual,
+    );
+    cx.simulate_keystrokes("g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works with multiple visual selections and restores each cursor
+    cx.set_state(
+        indoc! {"
+        «oneˇ» «twoˇ»
+        three
+        "},
+        Mode::Visual,
+    );
+    cx.simulate_keystrokes("g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */ /* ˇtwo */
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works with count
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b 2 j");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two
+        three */
+        "},
+        Mode::Normal,
+    );
+
+    // works with motion object
+    cx.simulate_keystrokes("shift-g");
+    cx.simulate_keystrokes("g b g g");
+    cx.assert_state(
+        indoc! {"
+        one
+        two
+        three
+        ˇ"},
+        Mode::Normal,
+    );
+}
+
+#[perf]
+#[gpui::test]
 async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1687,7 +2124,7 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.update_user_settings(cx, |s| {
             let mut aliases = HashMap::default();
-            aliases.insert("Q".to_string(), "upper".to_string());
+            aliases.insert("Q".to_string(), ActionName::new("upper"));
             s.workspace.command_aliases = aliases
         });
     });
@@ -2006,7 +2443,12 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         );
         let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
 
-        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        let buffer_ids = multi_buffer
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
         // fold all but the second buffer, so that we test navigating between two
         // adjacent folded buffers, as well as folded buffers at the start and
         // end the multibuffer
@@ -2151,7 +2593,13 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         "
     });
     cx.update_editor(|editor, _, cx| {
-        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        let buffer_ids = editor
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
         editor.fold_buffer(buffer_ids[1], cx);
     });
 
@@ -2674,31 +3122,30 @@ async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext)
     .await;
 
     let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let workspace =
-        cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+    let window_handle =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window_handle
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
 
     cx.update(|cx| {
         VimTestContext::init_keybindings(true, cx);
     });
 
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
-    workspace
-        .update(cx, |workspace, window, cx| {
-            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
-        })
-        .unwrap();
+    workspace.update_in(cx, |workspace, window, cx| {
+        ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+    });
 
-    let search_view = workspace
-        .update(cx, |workspace, _, cx| {
-            workspace
-                .active_pane()
-                .read(cx)
-                .items()
-                .find_map(|item| item.downcast::<ProjectSearchView>())
-                .expect("Project search view should be active")
-        })
-        .unwrap();
+    let search_view = workspace.update_in(cx, |workspace, _, cx| {
+        workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .find_map(|item| item.downcast::<ProjectSearchView>())
+            .expect("Project search view should be active")
+    });
 
     project_search::perform_project_search(&search_view, "File A", cx);
 

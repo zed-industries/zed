@@ -1,6 +1,11 @@
+---
+title: Key Bindings and Shortcuts - Zed
+description: Customize Zed's keyboard shortcuts. Rebind actions, create key sequences, and set context-specific bindings.
+---
+
 # Key bindings
 
-Zed has a very customizable key binding system—you can tweak everything to work exactly how your fingers expect!
+Zed's key binding system is fully customizable. You can rebind any action, create key sequences, and define context-specific bindings.
 
 ## Predefined Keymaps
 
@@ -16,7 +21,7 @@ We currently support:
 - Cursor
 - None (disables _all_ key bindings)
 
-This setting can also be changed via the command palette through the `zed: toggle base keymap selector` action.
+This setting can also be changed via the command palette through the {#action zed::ToggleBaseKeymapSelector} action.
 
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
@@ -74,7 +79,7 @@ You can see all of Zed's default bindings for each platform in the default keyma
 - [Windows](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-windows.json)
 - [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
-If you want to debug problems with custom keymaps, you can use `dev: Open Key Context View` from the command palette.
+If you want to debug problems with custom keymaps, you can use {#action dev::OpenKeyContextView} from the command palette.
 Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
 
 ### Keybinding Syntax
@@ -94,13 +99,15 @@ The keys can be any single Unicode codepoint that your keyboard generates (for e
 
 A few examples:
 
-```json [settings]
- "bindings": {
-   "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
-   "space e": "editor::Complete", // type space then e
-   "ç": "editor::Complete", // matches ⌥-c
-   "shift shift": "file_finder::Toggle", // matches pressing and releasing shift twice
- }
+```json [keymap]
+{
+  "bindings": {
+    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
+    "space e": "editor::ShowCompletions", // type space then e
+    "ç": "editor::ShowCompletions", // matches ⌥-c
+    "shift shift": "file_finder::Toggle" // matches pressing and releasing shift twice
+  }
+}
 ```
 
 The `shift-` modifier can only be used in combination with a letter to indicate the uppercase version. For example, `shift-g` matches typing `G`. Although on many keyboards shift is used to type punctuation characters like `(`, the keypress is not considered to be modified, and so `shift-(` does not match.
@@ -113,7 +120,7 @@ It is possible to match against typing a modifier key on its own. For example, `
 
 If a binding group has a `"context"` key, it will be matched against the currently active contexts in Zed.
 
-Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with the `dev: open key context view` command in the command palette.
+Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with the {#action dev::OpenKeyContextView} command in the command palette.
 
 For example:
 
@@ -179,7 +186,7 @@ Otherwise, read on...
 
 On Cyrillic, Hebrew, Armenian, and other keyboards that are mostly non-ASCII, macOS automatically maps keys to the ASCII range when `cmd` is held. Zed takes this a step further, and it can always match key-presses against either the ASCII layout or the real layout, regardless of modifiers and the `use_key_equivalents` setting. For example, in Thai, pressing `ctrl-ๆ` will match bindings associated with `ctrl-q` or `ctrl-ๆ`.
 
-On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.), it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity: `option-2` produces `@`. To ensure that all the built-in keyboard shortcuts can still be typed on these keyboards, we move key bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running `dev: open key context view` from the command palette.
+On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.), it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity: `option-2` produces `@`. To ensure that all the built-in keyboard shortcuts can still be typed on these keyboards, we move key bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running {#action dev::OpenKeyContextView} from the command palette.
 
 If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
@@ -198,7 +205,7 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
 
 Since v0.196.0, on Linux, if the key that you type doesn't produce an ASCII character, then we use the QWERTY-layout equivalent key for keyboard shortcuts. This means that many shortcuts can be typed on many layouts.
 
-We do not yet move shortcuts around to ensure that all the built-in shortcuts can be typed on every layout, so if there are some ASCII characters that cannot be typed, and your keyboard layout has different ASCII characters on the same keys as would be needed to type them, you may need to add custom key bindings to make this work. We do intend to fix this at some point, and help is very much appreciated!
+We do not yet remap shortcuts so every built-in shortcut is typeable on every layout. If your layout cannot type some ASCII characters, you may need custom key bindings. We plan to improve this.
 
 ## Tips and tricks
 
@@ -284,7 +291,7 @@ If you're on Linux or Windows, you might find yourself wanting to forward key co
 
 For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Terminal",
   "bindings": {

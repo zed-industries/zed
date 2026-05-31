@@ -1,10 +1,21 @@
+---
+title: Getting Started with Zed
+description: Get started with Zed, the fast open-source code editor. Essential commands, environment setup, and navigation basics.
+---
+
 # Getting Started
 
-Welcome to Zed! We are excited to have you. Zed is a powerful multiplayer code editor designed to stay out of your way and help you build what's next.
+Zed is an open-source code editor with built-in collaboration and AI tools.
 
-This guide gets you from zero to productive in Zed. You'll learn the essential commands, configure your environment, and find your way around.
+This guide covers the essential commands, environment setup, and navigation basics.
 
 ## Quick Start
+
+### Welcome Page
+
+When you open Zed without a folder, you see the welcome page in the main editor area. The welcome page offers quick actions to open a folder, clone a repository, or view documentation. Once you open a folder or file, the welcome page disappears. If you split the editor into multiple panes, the welcome page appears only in the center pane when empty—other panes show a standard empty state.
+
+To reopen the welcome page, close all items in the center pane or use the command palette to search for "Welcome".
 
 ### 1. Open a Project
 
@@ -15,6 +26,8 @@ zed ~/projects/my-app
 ```
 
 Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Zed.
+
+By default, new projects open in your current window's threads sidebar. To open in a new window instead, use `zed -n ~/projects/my-app` or press `Cmd+Enter` when selecting from Open Recent. See [Windows & Projects](./windows-and-projects.md) for more details.
 
 ### 2. Learn the Essential Commands
 
@@ -72,7 +85,7 @@ You can also enable familiar keybindings:
 
 ## Join the Community
 
-Zed is proudly open source, and we get better with every contribution. Join us on GitHub or in Discord to contribute code, report bugs, or suggest features.
+Zed is open source. Join us on GitHub or in Discord to contribute code, report bugs, or suggest features.
 
 - [Discord](https://discord.com/invite/zedindustries)
 - [GitHub Discussions](https://github.com/zed-industries/zed/discussions)

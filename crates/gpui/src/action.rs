@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use gpui_macros::Action;
-pub use no_action::{NoAction, is_no_action};
+pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
@@ -290,19 +290,6 @@ impl ActionRegistry {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn load_action<A: Action>(&mut self) {
-        self.insert_action(MacroActionData {
-            name: A::name_for_type(),
-            type_id: TypeId::of::<A>(),
-            build: A::build,
-            json_schema: A::action_json_schema,
-            deprecated_aliases: A::deprecated_aliases(),
-            deprecation_message: A::deprecation_message(),
-            documentation: A::documentation(),
-        });
-    }
-
     fn insert_action(&mut self, action: MacroActionData) {
         let name = action.name;
         if self.by_name.contains_key(name) {
@@ -432,7 +419,8 @@ pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroAc
 
 mod no_action {
     use crate as gpui;
-    use std::any::Any as _;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
     actions!(
         zed,
@@ -443,8 +431,23 @@ mod no_action {
         ]
     );
 
+    /// Action with special handling which unbinds later bindings for the same keystrokes when they
+    /// dispatch the named action, regardless of that action's context.
+    ///
+    /// In keymap JSON this is written as:
+    ///
+    /// `["zed::Unbind", "editor::NewLine"]`
+    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, gpui::Action)]
+    #[action(namespace = zed)]
+    pub struct Unbind(pub gpui::SharedString);
+
     /// Returns whether or not this action represents a removed key binding.
     pub fn is_no_action(action: &dyn gpui::Action) -> bool {
-        action.as_any().type_id() == (NoAction {}).type_id()
+        action.as_any().is::<NoAction>()
+    }
+
+    /// Returns whether or not this action represents an unbind marker.
+    pub fn is_unbind(action: &dyn gpui::Action) -> bool {
+        action.as_any().is::<Unbind>()
     }
 }

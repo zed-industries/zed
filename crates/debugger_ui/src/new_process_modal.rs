@@ -16,12 +16,12 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, Subscription, Task, WeakEntity, actions,
+    KeyContext, Render, Subscription, Task, TaskExt, WeakEntity, actions,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{DebugScenarioContext, Project, TaskContexts, TaskSourceKind, task_store::TaskStore};
-use task::{DebugScenario, RevealTarget, VariableName, ZedDebugConfig};
+use task::{DebugScenario, RevealTarget, SharedTaskContext, VariableName, ZedDebugConfig};
 use ui::{
     ContextMenu, DropdownMenu, IconWithIndicator, Indicator, KeyBinding, ListItem, ListItemSpacing,
     Switch, SwitchLabelPosition, ToggleButtonGroup, ToggleButtonSimple, ToggleState, Tooltip,
@@ -371,7 +371,11 @@ impl NewProcessModal {
             return;
         };
 
-        let task_context = task_contexts.active_context().cloned().unwrap_or_default();
+        let task_context = task_contexts
+            .active_context()
+            .cloned()
+            .unwrap_or_default()
+            .into();
         let worktree_id = task_contexts.worktree();
         let mode = self.mode;
         cx.spawn_in(window, async move |this, cx| {
@@ -519,7 +523,7 @@ impl NewProcessModal {
         )
         .style(ui::DropdownStyle::Outlined)
         .tab_index(0)
-        .attach(gpui::Corner::BottomLeft)
+        .attach(gpui::Anchor::BottomLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -1292,7 +1296,7 @@ impl PickerDelegate for DebugDelegate {
             .as_ref()
             .and_then(|task_contexts| {
                 Some((
-                    task_contexts.active_context().cloned()?,
+                    SharedTaskContext::from(task_contexts.active_context().cloned()?),
                     task_contexts.worktree(),
                 ))
             })
@@ -1333,11 +1337,10 @@ impl PickerDelegate for DebugDelegate {
         else {
             return;
         };
-        let file = location.buffer.read(cx).file();
-        let language = location.buffer.read(cx).language();
-        let language_name = language.as_ref().map(|l| l.name());
+        let buffer = location.buffer.read(cx);
+        let language = buffer.language();
         let Some(adapter): Option<DebugAdapterName> =
-            language::language_settings::language_settings(language_name, file, cx)
+            language::language_settings::LanguageSettings::for_buffer(buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -1418,7 +1421,7 @@ impl PickerDelegate for DebugDelegate {
                 .as_ref()
                 .and_then(|task_contexts| {
                     Some(DebugScenarioContext {
-                        task_context: task_contexts.active_context().cloned()?,
+                        task_context: task_contexts.active_context().cloned()?.into(),
                         active_buffer: None,
                         worktree_id: task_contexts.worktree(),
                     })
@@ -1585,6 +1588,8 @@ impl PickerDelegate for DebugDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .w_full()
+                        .min_w_0()
                         .items_start()
                         .child(highlighted_location.render(window, cx))
                         .when_some(subtitle, |this, subtitle_text| {

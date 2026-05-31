@@ -3,7 +3,7 @@ use call::ActiveCall;
 use collab::rpc::RECONNECT_TIMEOUT;
 use collections::{HashMap, HashSet};
 use editor::{
-    DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
+    DocumentColorsRenderMode, Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
     SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, CopyFileLocation,
@@ -19,12 +19,13 @@ use fs::Fs;
 use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
 use git::repository::repo_path;
 use gpui::{
-    App, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext,
+    App, AppContext as _, Entity, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext,
+    VisualTestContext,
 };
 use indoc::indoc;
-use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
-use lsp::LSP_REQUEST_TIMEOUT;
-use multi_buffer::DiffbaselessAnchorRangeExt as _;
+use language::{FakeLspAdapter, language_settings::LanguageSettings, rust_lang};
+use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
+use multi_buffer::{AnchorRangeExt as _, MultiBufferRow};
 use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
@@ -34,12 +35,16 @@ use project::{
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
-use settings::{InlayHintSettingsContent, InlineBlameSettings, SemanticTokens, SettingsStore};
+use settings::{
+    DocumentFoldingRanges, DocumentSymbols, InlayHintSettingsContent, InlineBlameSettings,
+    SemanticTokens, SettingsStore,
+};
 use std::{
     collections::BTreeSet,
     num::NonZeroU32,
     ops::{Deref as _, Range},
     path::{Path, PathBuf},
+    str::FromStr as _,
     sync::{
         Arc,
         atomic::{self, AtomicBool, AtomicUsize},
@@ -48,7 +53,8 @@ use std::{
 };
 use text::Point;
 use util::{path, rel_path::rel_path, uri};
-use workspace::{CloseIntent, Workspace};
+use workspace::item::Item as _;
+use workspace::{CloseIntent, MultiWorkspace, Workspace};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -92,34 +98,46 @@ async fn test_host_disconnect(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
-    let workspace_b = cx_b.add_window(|window, cx| {
-        Workspace::new(
-            None,
-            project_b.clone(),
-            client_b.app_state.clone(),
-            window,
-            cx,
-        )
+    let window_b = cx_b.add_window(|window, cx| {
+        let workspace = cx.new(|cx| {
+            Workspace::new(
+                None,
+                project_b.clone(),
+                client_b.app_state.clone(),
+                window,
+                cx,
+            )
+        });
+        MultiWorkspace::new(workspace, window, cx)
     });
-    let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
-    let workspace_b_view = workspace_b.root(cx_b).unwrap();
+    let cx_b = &mut VisualTestContext::from_window(*window_b, cx_b);
+    let workspace_b = window_b
+        .root(cx_b)
+        .unwrap()
+        .read_with(cx_b, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
 
-    let editor_b = workspace_b
-        .update(cx_b, |workspace, window, cx| {
+    let editor_b: Entity<Editor> = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
             workspace.open_path((worktree_id, rel_path("b.txt")), None, true, window, cx)
         })
-        .unwrap()
         .await
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
 
     //TODO: focus
-    assert!(cx_b.update_window_entity(&editor_b, |editor, window, _| editor.is_focused(window)));
-    editor_b.update_in(cx_b, |editor, window, cx| editor.insert("X", window, cx));
+    assert!(
+        cx_b.update_window_entity(&editor_b, |editor: &mut Editor, window, _| editor
+            .is_focused(window))
+    );
+    editor_b.update_in(cx_b, |editor: &mut Editor, window, cx| {
+        editor.insert("X", window, cx)
+    });
 
     cx_b.update(|_, cx| {
-        assert!(workspace_b_view.read(cx).is_edited());
+        assert!(workspace_b.read(cx).is_edited());
     });
 
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
@@ -137,19 +155,16 @@ async fn test_host_disconnect(
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.has_update_observer()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
-    workspace_b
-        .update(cx_b, |workspace, _, cx| {
-            assert!(workspace.active_modal::<DisconnectedOverlay>(cx).is_some());
-            assert!(!workspace.is_edited());
-        })
-        .unwrap();
+    workspace_b.update(cx_b, |workspace, cx| {
+        assert!(workspace.active_modal::<DisconnectedOverlay>(cx).is_some());
+        assert!(!workspace.is_edited());
+    });
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
-    let can_close = workspace_b
-        .update(cx_b, |workspace, window, cx| {
+    let can_close: bool = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
             workspace.prepare_to_close(CloseIntent::Quit, window, cx)
         })
-        .unwrap()
         .await
         .unwrap();
     assert!(can_close);
@@ -1189,6 +1204,13 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     cx_b.update(editor::init);
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.code_lens = Some(settings::CodeLens::Menu);
+            });
+        });
+    });
 
     let command_name = "test_command";
     let capabilities = lsp::ServerCapabilities {
@@ -1252,7 +1274,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_a.run_until_parked();
     cx_b.run_until_parked();
 
-    let long_request_time = LSP_REQUEST_TIMEOUT / 2;
+    let long_request_time = DEFAULT_LSP_REQUEST_TIMEOUT / 2;
     let (request_started_tx, mut request_started_rx) = mpsc::unbounded();
     let requests_started = Arc::new(AtomicUsize::new(0));
     let requests_completed = Arc::new(AtomicUsize::new(0));
@@ -1359,8 +1381,8 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     assert_eq!(
         requests_completed.load(atomic::Ordering::Acquire),
-        3,
-        "After enough time, all 3 LSP requests should have been served by the language server"
+        1,
+        "After enough time, a single, deduplicated, LSP request should have been served by the language server"
     );
     let resulting_lens_actions = editor_b
         .update(cx_b, |editor, cx| {
@@ -1378,8 +1400,13 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         "Should have fetched one code lens action, but got: {resulting_lens_actions:?}"
     );
     assert_eq!(
-        resulting_lens_actions.first().unwrap().lsp_action.title(),
-        "LSP Command 3",
+        resulting_lens_actions
+            .values()
+            .next()
+            .unwrap()
+            .lsp_action
+            .title(),
+        "LSP Command 1",
         "Only the final code lens action should be in the data"
     )
 }
@@ -2161,7 +2188,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -2372,7 +2399,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     other_hints.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -2557,7 +2584,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .unwrap();
 
     color_request_handle.next().await.unwrap();
-    executor.advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     assert_eq!(
@@ -2683,6 +2710,317 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
     });
 }
 
+#[gpui::test]
+async fn test_lsp_document_links(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    for cx in [&mut *cx_a, &mut *cx_b] {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.lsp_document_links = Some(true);
+                });
+            });
+        });
+    }
+
+    let capabilities = lsp::ServerCapabilities {
+        document_link_provider: Some(lsp::DocumentLinkOptions {
+            resolve_provider: Some(true),
+            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let other_contents = concat!(
+        "fn first() {}\n",
+        "fn second() {}\n",
+        "fn third(x: i32) {}\n",
+        "fn fourth() {}\n",
+        "fn fifth() {}\n",
+    );
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "// see LICENSE for details\nfn main() {}",
+                "other.rs": other_contents,
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let _editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+
+    let link_range = lsp::Range {
+        start: lsp::Position {
+            line: 0,
+            character: 7,
+        },
+        end: lsp::Position {
+            line: 0,
+            character: 14,
+        },
+    };
+    let other_uri = lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap();
+    // The server points at line 3, column 5 (1-based) of `other.rs` using the
+    // json-language-server fragment convention.
+    let other_uri_with_fragment =
+        lsp::Uri::from_str(&format!("{}#3,5", other_uri.as_str())).unwrap();
+    let other_target = other_uri_with_fragment.to_string();
+    let tooltip = "Open other.rs";
+    let resolve_marker = serde_json::json!({"id": 42});
+
+    let document_link_requests = Arc::new(AtomicUsize::new(0));
+    let document_link_count = Arc::clone(&document_link_requests);
+    let resolve_marker_for_links = resolve_marker.clone();
+    let mut document_link_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentLinkRequest, _, _>(move |params, _| {
+            let document_link_count = Arc::clone(&document_link_count);
+            let resolve_marker = resolve_marker_for_links.clone();
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                );
+                document_link_count.fetch_add(1, atomic::Ordering::Release);
+                Ok(Some(vec![lsp::DocumentLink {
+                    range: link_range,
+                    target: None,
+                    tooltip: None,
+                    data: Some(resolve_marker),
+                }]))
+            }
+        });
+
+    let resolve_requests = Arc::new(AtomicUsize::new(0));
+    let resolve_count = Arc::clone(&resolve_requests);
+    let other_uri_for_resolve = other_uri_with_fragment.clone();
+    let resolve_marker_for_resolve = resolve_marker.clone();
+    let _resolve_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentLinkResolve, _, _>(move |link, _| {
+            let resolve_count = Arc::clone(&resolve_count);
+            let other_uri = other_uri_for_resolve.clone();
+            let expected_marker = resolve_marker_for_resolve.clone();
+            async move {
+                assert_eq!(link.range, link_range);
+                assert_eq!(link.data.as_ref(), Some(&expected_marker));
+                resolve_count.fetch_add(1, atomic::Ordering::Release);
+                Ok(lsp::DocumentLink {
+                    range: link.range,
+                    target: Some(other_uri),
+                    tooltip: Some(tooltip.to_string()),
+                    data: None,
+                })
+            }
+        });
+
+    document_link_handle.next().await.unwrap();
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
+    executor.run_until_parked();
+
+    assert_eq!(
+        1,
+        document_link_requests.load(atomic::Ordering::Acquire),
+        "Host opening the file should issue exactly one documentLink request"
+    );
+    assert_eq!(
+        0,
+        resolve_requests.load(atomic::Ordering::Acquire),
+        "No resolve happens until a hover triggers it"
+    );
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT + Duration::from_millis(100));
+    executor.run_until_parked();
+
+    assert_eq!(
+        1,
+        document_link_requests.load(atomic::Ordering::Acquire),
+        "Guest's proto fetch should be served from the host's cached document links \
+         without issuing a fresh documentLink LSP request"
+    );
+
+    let guest_buffer = editor_b
+        .read_with(cx_b, |editor, cx| editor.buffer().read(cx).as_singleton())
+        .unwrap();
+    let buffer_id = guest_buffer.read_with(cx_b, |buffer, _| buffer.remote_id());
+    let unresolved = project_b
+        .read_with(cx_b, |project, cx| {
+            project
+                .lsp_store()
+                .read(cx)
+                .document_links_for_buffer(buffer_id)
+                .unwrap_or_default()
+        })
+        .into_values()
+        .flat_map(|per_server| per_server.into_values())
+        .next()
+        .expect("guest should mirror the fetched document link");
+    assert!(
+        !unresolved.resolved,
+        "freshly fetched links must come back unresolved"
+    );
+
+    let resolve_task = editor_b
+        .update(cx_b, |editor, cx| {
+            editor.document_links_at(guest_buffer.clone(), unresolved.range.start, cx)
+        })
+        .expect("editor should have a cached link covering the position");
+    let resolved_links = resolve_task.await;
+    assert_eq!(
+        1,
+        resolved_links.len(),
+        "`document_links_at` should yield the single matching link"
+    );
+    executor.run_until_parked();
+
+    assert_eq!(
+        1,
+        resolve_requests.load(atomic::Ordering::Acquire),
+        "Guest's resolve should reach the host's LSP exactly once"
+    );
+
+    let guest_links = project_b.read_with(cx_b, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .document_links_for_buffer(buffer_id)
+            .unwrap_or_default()
+    });
+    assert_eq!(
+        1,
+        guest_links.values().map(|m| m.len()).sum::<usize>(),
+        "Guest should mirror exactly one document link from the host"
+    );
+    let link = guest_links
+        .values()
+        .flat_map(|per_server| per_server.values())
+        .next()
+        .expect("guest cache should contain the mirrored link");
+    assert_eq!(
+        link.target.as_deref(),
+        Some(other_target.as_str()),
+        "Guest should see the resolved file:// target from the host"
+    );
+    assert_eq!(link.tooltip.as_deref(), Some(tooltip));
+
+    let click_anchor = guest_buffer.read_with(cx_b, |buffer, _| buffer.anchor_before(10));
+    let resolved_at_click = editor_b
+        .update(cx_b, |editor, cx| {
+            editor.document_links_at(guest_buffer.clone(), click_anchor, cx)
+        })
+        .expect("cached document link should cover the click anchor")
+        .await;
+    let (click_server_id, click_link) = resolved_at_click
+        .into_iter()
+        .next()
+        .expect("resolved links should not be empty");
+    let click_target = click_link
+        .target
+        .as_deref()
+        .expect("link should be resolved")
+        .to_owned();
+    let navigated = editor_b
+        .update_in(cx_b, |editor, window, cx| {
+            let hover_link = editor::hover_links::document_link_target_to_hover_link(
+                &click_target,
+                click_server_id,
+            );
+            editor.navigate_to_hover_links(None, vec![hover_link], None, false, window, cx)
+        })
+        .await
+        .expect("navigation task should complete");
+    assert_eq!(
+        navigated,
+        editor::Navigated::Yes,
+        "Clicking a resolved file:// document link should navigate",
+    );
+    executor.run_until_parked();
+
+    let other_editor = workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx).unwrap()
+    });
+    other_editor.update(cx_b, |editor, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        assert_eq!(
+            buffer.read(cx).text(),
+            other_contents,
+            "Following the resolved link should open other.rs from the same worktree",
+        );
+        let head = editor
+            .selections
+            .newest::<Point>(&editor.display_snapshot(cx))
+            .head();
+        assert_eq!(
+            head,
+            Point::new(2, 4),
+            "Cursor should land at the URI fragment's line/column (1-based 3,5 -> 0-based 2,4)",
+        );
+    });
+}
+
 async fn test_lsp_pull_diagnostics(
     should_stream_workspace_diagnostic: bool,
     cx_a: &mut TestAppContext,
@@ -2718,9 +3056,9 @@ async fn test_lsp_pull_diagnostics(
     let closure_workspace_diagnostics_pulls_result_ids =
         workspace_diagnostics_pulls_result_ids.clone();
     let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
     let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
 
     let capabilities = lsp::ServerCapabilities {
         diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
@@ -3411,7 +3749,7 @@ async fn test_lsp_pull_diagnostics(
     }
 
     fake_language_server
-        .request::<lsp::request::WorkspaceDiagnosticRefresh>(())
+        .request::<lsp::request::WorkspaceDiagnosticRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("workspace diagnostics refresh request failed");
@@ -4022,6 +4360,8 @@ async fn test_collaborating_with_external_editorconfig(
         .await
         .unwrap();
 
+    project_a.update(cx_a, |project, _| project.languages().add(rust_lang()));
+
     // Open buffer on client A
     let buffer_a = project_a
         .update(cx_a, |p, cx| {
@@ -4034,13 +4374,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees external editorconfig settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
     // Client B joins the project
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    project_b.update(cx_b, |project, _| project.languages().add(rust_lang()));
     let buffer_b = project_b
         .update(cx_b, |p, cx| {
             p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
@@ -4052,8 +4392,7 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client B also sees external editorconfig settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
@@ -4072,15 +4411,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees updated settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 
     // Verify client B also sees updated settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 }
@@ -4707,6 +5044,54 @@ async fn test_copy_file_location(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         cx_b.read_from_clipboard().and_then(|item| item.text()),
         Some(format!("{}:2", path!("src/main.rs")))
     );
+
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(44)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_a.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2-3", path!("src/main.rs")))
+    );
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(44)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_b.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2-3", path!("src/main.rs")))
+    );
+
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(43)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_a.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2", path!("src/main.rs")))
+    );
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(16)..MultiBufferOffset(43)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx_b.read_from_clipboard().and_then(|item| item.text()),
+        Some(format!("{}:2", path!("src/main.rs")))
+    );
 }
 
 #[track_caller]
@@ -5182,12 +5567,12 @@ async fn test_semantic_token_refresh_is_forwarded(
 
     other_tokens.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::SemanticTokensRefresh>(())
+        .request::<lsp::request::SemanticTokensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("semantic tokens refresh request failed");
     // wait out the debounce timeout
-    executor.advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
         assert!(
@@ -5202,6 +5587,187 @@ async fn test_semantic_token_refresh_is_forwarded(
             vec![MultiBufferOffset(0)..MultiBufferOffset(2)],
             extract_semantic_token_ranges(editor, cx),
             "Guest should get a /refresh LSP request propagated by host despite host tokens are off"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_document_folding_ranges(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let capabilities = lsp::ServerCapabilities {
+        folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() {\n    if true {\n        println!(\"hello\");\n    }\n}\n",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    let _buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+
+    let folding_request_count = Arc::new(AtomicUsize::new(0));
+    let closure_count = Arc::clone(&folding_request_count);
+    let mut folding_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::FoldingRangeRequest, _, _>(move |_, _| {
+            let count = Arc::clone(&closure_count);
+            async move {
+                count.fetch_add(1, atomic::Ordering::Release);
+                Ok(Some(vec![lsp::FoldingRange {
+                    start_line: 0,
+                    start_character: Some(10),
+                    end_line: 4,
+                    end_character: Some(1),
+                    kind: None,
+                    collapsed_text: None,
+                }]))
+            }
+        });
+
+    executor.run_until_parked();
+
+    assert_eq!(
+        0,
+        folding_request_count.load(atomic::Ordering::Acquire),
+        "LSP folding ranges are off by default, no request should have been made"
+    );
+    editor_a.update(cx_a, |editor, cx| {
+        assert!(
+            !editor.document_folding_ranges_enabled(cx),
+            "Host should not have LSP folding ranges enabled"
+        );
+    });
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    executor.run_until_parked();
+
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(
+            !editor.document_folding_ranges_enabled(cx),
+            "Client should not have LSP folding ranges enabled by default"
+        );
+    });
+
+    cx_b.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .document_folding_ranges = Some(DocumentFoldingRanges::On);
+            });
+        });
+    });
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
+    folding_request_handle.next().await.unwrap();
+    executor.run_until_parked();
+
+    assert!(
+        folding_request_count.load(atomic::Ordering::Acquire) > 0,
+        "After the client enables LSP folding ranges, a request should be made"
+    );
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(
+            editor.document_folding_ranges_enabled(cx),
+            "Client should have LSP folding ranges enabled after toggling the setting on"
+        );
+    });
+    editor_a.update(cx_a, |editor, cx| {
+        assert!(
+            !editor.document_folding_ranges_enabled(cx),
+            "Host should remain unaffected by the client's setting change"
+        );
+    });
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        assert!(
+            !snapshot.is_line_folded(MultiBufferRow(0)),
+            "Line 0 should not be folded before fold_at"
+        );
+        editor.fold_at(MultiBufferRow(0), window, cx);
+    });
+    executor.run_until_parked();
+
+    editor_b.update(cx_b, |editor, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        assert!(
+            snapshot.is_line_folded(MultiBufferRow(0)),
+            "Line 0 should be folded after fold_at using LSP folding range"
         );
     });
 }
@@ -5317,6 +5883,181 @@ async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mu
         !has_restricted_worktrees(&project_b, cx_b),
         "remote client should still be trusted"
     );
+}
+
+#[gpui::test]
+async fn test_document_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let capabilities = lsp::ServerCapabilities {
+        document_symbol_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    #[allow(deprecated)]
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            initializer: Some(Box::new(|fake_language_server| {
+                #[allow(deprecated)]
+                fake_language_server
+                    .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                        move |_, _| async move {
+                            Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                                lsp::DocumentSymbol {
+                                    name: "Foo".to_string(),
+                                    detail: None,
+                                    kind: lsp::SymbolKind::STRUCT,
+                                    tags: None,
+                                    deprecated: None,
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(2, 1),
+                                    ),
+                                    selection_range: lsp::Range::new(
+                                        lsp::Position::new(0, 7),
+                                        lsp::Position::new(0, 10),
+                                    ),
+                                    children: Some(vec![lsp::DocumentSymbol {
+                                        name: "bar".to_string(),
+                                        detail: None,
+                                        kind: lsp::SymbolKind::FIELD,
+                                        tags: None,
+                                        deprecated: None,
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(1, 4),
+                                            lsp::Position::new(1, 13),
+                                        ),
+                                        selection_range: lsp::Range::new(
+                                            lsp::Position::new(1, 4),
+                                            lsp::Position::new(1, 7),
+                                        ),
+                                        children: None,
+                                    }]),
+                                },
+                            ])))
+                        },
+                    );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "struct Foo {\n    bar: u32,\n}\n",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let _fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
+
+    cx_a.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.document_symbols =
+                    Some(DocumentSymbols::On);
+            });
+        });
+    });
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT + Duration::from_millis(100));
+    executor.run_until_parked();
+
+    editor_a.update(cx_a, |editor, cx| {
+        let (breadcrumbs, _) = editor
+            .breadcrumbs(cx)
+            .expect("Host should have breadcrumbs");
+        let texts: Vec<_> = breadcrumbs.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["main.rs", "struct Foo"],
+            "Host should see file path and LSP symbol 'Foo' in breadcrumbs"
+        );
+    });
+
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.document_symbols =
+                    Some(DocumentSymbols::On);
+            });
+        });
+    });
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT + Duration::from_millis(100));
+    executor.run_until_parked();
+
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(
+            editor
+                .breadcrumbs(cx)
+                .expect("Client B should have breadcrumbs")
+                .0
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["main.rs", "struct Foo"],
+            "Client B should see file path and LSP symbol 'Foo' via remote project"
+        );
+    });
 }
 
 fn blame_entry(sha: &str, range: Range<u32>) -> git::blame::BlameEntry {

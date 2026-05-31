@@ -1,6 +1,6 @@
 use crate::{
     call_settings::CallSettings,
-    participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
+    participant::{LocalParticipant, RemoteParticipant},
 };
 use anyhow::{Context as _, Result, anyhow};
 use audio::{Audio, Sound};
@@ -14,17 +14,21 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FutureExt as _,
-    ScreenCaptureSource, ScreenCaptureStream, Task, Timeout, WeakEntity,
+    ScreenCaptureSource, ScreenCaptureStream, Task, TaskExt, Timeout, WeakEntity,
 };
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
-use project::Project;
+use project::{CURRENT_PROJECT_FEATURES, Project};
 use settings::Settings as _;
+use std::sync::atomic::AtomicU64;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
+
+use super::diagnostics::CallDiagnostics;
 use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
+use workspace::ParticipantLocation;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -62,12 +66,15 @@ pub enum Event {
     RoomLeft {
         channel_id: Option<ChannelId>,
     },
+    LocalScreenShareStarted,
+    LocalScreenShareStopped,
 }
 
 pub struct Room {
     id: u64,
     channel_id: Option<ChannelId>,
     live_kit: Option<LiveKitRoom>,
+    diagnostics: Option<Entity<CallDiagnostics>>,
     status: RoomStatus,
     shared_projects: HashSet<WeakEntity<Project>>,
     joined_projects: HashSet<WeakEntity<Project>>,
@@ -135,6 +142,7 @@ impl Room {
             id,
             channel_id,
             live_kit: None,
+            diagnostics: None,
             status: RoomStatus::Online,
             shared_projects: Default::default(),
             joined_projects: Default::default(),
@@ -349,6 +357,7 @@ impl Room {
         self.participant_user_ids.clear();
         self.client_subscriptions.clear();
         self.live_kit.take();
+        self.diagnostics.take();
         self.pending_room_update.take();
         self.maintain_connection.take();
     }
@@ -539,6 +548,42 @@ impl Room {
         }
     }
 
+    pub fn get_stats(&self, cx: &App) -> Task<Option<livekit::SessionStats>> {
+        match self.live_kit.as_ref() {
+            Some(lk) => {
+                let task = lk.room.stats_task(cx);
+                cx.background_executor()
+                    .spawn(async move { task.await.ok() })
+            }
+            None => Task::ready(None),
+        }
+    }
+
+    pub fn input_lag(&self) -> Option<Duration> {
+        let us = self
+            .live_kit
+            .as_ref()?
+            .input_lag_us
+            .as_ref()?
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if us > 0 {
+            Some(Duration::from_micros(us))
+        } else {
+            None
+        }
+    }
+
+    pub fn diagnostics(&self) -> Option<&Entity<CallDiagnostics>> {
+        self.diagnostics.as_ref()
+    }
+
+    pub fn connection_quality(&self) -> livekit::ConnectionQuality {
+        self.live_kit
+            .as_ref()
+            .map(|lk| lk.room.local_participant().connection_quality())
+            .unwrap_or(livekit::ConnectionQuality::Lost)
+    }
+
     pub fn status(&self) -> RoomStatus {
         self.status
     }
@@ -635,7 +680,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(participant.user.id);
+                    .0 = Some(participant.user.legacy_id);
             }
         }
 
@@ -644,7 +689,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(user.id);
+                    .0 = Some(user.legacy_id);
             }
         }
 
@@ -857,7 +902,7 @@ impl Room {
 
                             if let Some(livekit_participants) = &livekit_participants
                                 && let Some(livekit_participant) = livekit_participants
-                                    .get(&ParticipantIdentity(user.id.to_string()))
+                                    .get(&ParticipantIdentity(user.legacy_id.to_string()))
                             {
                                 for publication in
                                     livekit_participant.track_publications().into_values()
@@ -890,6 +935,11 @@ impl Room {
                             for sid in participant.video_tracks.keys() {
                                 cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: sid.clone() });
                             }
+                            if !participant.video_tracks.is_empty() {
+                                cx.emit(Event::RemoteVideoTracksChanged {
+                                    participant_id: participant.peer_id,
+                                });
+                            }
                             false
                         }
                     });
@@ -898,7 +948,7 @@ impl Room {
                 if let Some(pending_participants) = pending_participants.log_err() {
                     this.pending_participants = pending_participants;
                     for participant in &this.pending_participants {
-                        this.participant_user_ids.insert(participant.id);
+                        this.participant_user_ids.insert(participant.legacy_id);
                     }
                 }
 
@@ -1103,13 +1153,16 @@ impl Room {
         #[cfg(any(test, feature = "test-support"))]
         {
             for participant in self.remote_participants.values() {
-                assert!(self.participant_user_ids.contains(&participant.user.id));
-                assert_ne!(participant.user.id, self.client.user_id().unwrap());
+                assert!(
+                    self.participant_user_ids
+                        .contains(&participant.user.legacy_id)
+                );
+                assert_ne!(participant.user.legacy_id, self.client.user_id().unwrap());
             }
 
             for participant in &self.pending_participants {
-                assert!(self.participant_user_ids.contains(&participant.id));
-                assert_ne!(participant.id, self.client.user_id().unwrap());
+                assert!(self.participant_user_ids.contains(&participant.legacy_id));
+                assert_ne!(participant.legacy_id, self.client.user_id().unwrap());
             }
 
             assert_eq!(
@@ -1194,6 +1247,10 @@ impl Room {
             worktrees: project.read(cx).worktree_metadata_protos(cx),
             is_ssh_project: project.read(cx).is_via_remote_server(),
             windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
+            features: CURRENT_PROJECT_FEATURES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         });
 
         cx.spawn(async move |this, cx| {
@@ -1382,7 +1439,7 @@ impl Room {
                 };
 
                 match publication {
-                    Ok((publication, stream)) => {
+                    Ok((publication, stream, input_lag_us)) => {
                         if canceled {
                             cx.spawn(async move |_, cx| {
                                 room.unpublish_local_track(publication.sid(), cx).await
@@ -1392,6 +1449,7 @@ impl Room {
                             if live_kit.muted_by_user || live_kit.deafened {
                                 publication.mute(cx);
                             }
+                            live_kit.input_lag_us = Some(input_lag_us);
                             live_kit.microphone_track = LocalTrack::Published {
                                 track_publication: publication,
                                 _stream: Box::new(stream),
@@ -1461,6 +1519,85 @@ impl Room {
                             })
                             .detach()
                         } else {
+                            live_kit.screen_track = LocalTrack::Published {
+                                track_publication: publication,
+                                _stream: stream,
+                            };
+                            cx.emit(Event::LocalScreenShareStarted);
+                            cx.notify();
+                        }
+
+                        Audio::play_sound(Sound::StartScreenshare, cx);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        if canceled {
+                            Ok(())
+                        } else {
+                            live_kit.screen_track = LocalTrack::None;
+                            cx.notify();
+                            Err(error)
+                        }
+                    }
+                }
+            })?
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn share_screen_wayland(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        log::info!("will screenshare on wayland");
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+        if self.is_sharing_screen() {
+            return Task::ready(Err(anyhow!("screen was already shared")));
+        }
+
+        let (participant, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
+            let publish_id = post_inc(&mut live_kit.next_publish_id);
+            live_kit.screen_track = LocalTrack::Pending { publish_id };
+            cx.notify();
+            (live_kit.room.local_participant(), publish_id)
+        } else {
+            return Task::ready(Err(anyhow!("live-kit was not initialized")));
+        };
+
+        cx.spawn(async move |this, cx| {
+            let publication = participant.publish_screenshare_track_wayland(cx).await;
+
+            this.update(cx, |this, cx| {
+                let live_kit = this
+                    .live_kit
+                    .as_mut()
+                    .context("live-kit was not initialized")?;
+
+                let canceled = if let LocalTrack::Pending {
+                    publish_id: cur_publish_id,
+                } = &live_kit.screen_track
+                {
+                    *cur_publish_id != publish_id
+                } else {
+                    true
+                };
+
+                match publication {
+                    Ok((publication, stream, failure_rx)) => {
+                        if canceled {
+                            cx.spawn(async move |_, cx| {
+                                participant.unpublish_track(publication.sid(), cx).await
+                            })
+                            .detach()
+                        } else {
+                            cx.spawn(async move |this, cx| {
+                                if failure_rx.await.is_ok() {
+                                    log::warn!("Wayland capture died, auto-unsharing screen");
+                                    let _ =
+                                        this.update(cx, |this, cx| this.unshare_screen(false, cx));
+                                }
+                            })
+                            .detach();
+
                             live_kit.screen_track = LocalTrack::Published {
                                 track_publication: publication,
                                 _stream: stream,
@@ -1548,6 +1685,7 @@ impl Room {
                     let sid = track_publication.sid();
                     cx.spawn(async move |_, cx| local_participant.unpublish_track(sid, cx).await)
                         .detach_and_log_err(cx);
+                    cx.emit(Event::LocalScreenShareStopped);
                     cx.notify();
                 }
 
@@ -1622,6 +1760,7 @@ fn spawn_room_connection(
                 livekit::Room::connect(connection_info.server_url, connection_info.token, cx)
                     .await?;
 
+            let weak_room = this.clone();
             this.update(cx, |this, cx| {
                 let _handle_updates = cx.spawn(async move |this, cx| {
                     while let Some(event) = events.next().await {
@@ -1641,14 +1780,24 @@ fn spawn_room_connection(
                     room: Rc::new(room),
                     screen_track: LocalTrack::None,
                     microphone_track: LocalTrack::None,
+                    input_lag_us: None,
                     next_publish_id: 0,
                     muted_by_user,
                     deafened: false,
                     speaking: false,
                     _handle_updates,
                 });
+                this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
 
-                if !muted_by_user && this.can_use_microphone() {
+                // Always open the microphone track on join, even when
+                // `muted_by_user` is set. Note that the microphone will still
+                // be muted, as it is still gated in `share_microphone` by
+                // `muted_by_user`. For users that have `mute_on_join` enabled,
+                // this moves the Bluetooth profile switch (A2DP -> HFP) (which
+                // can cause 1-2 seconds of audio silence on some Bluetooth
+                // headphones) from first unmute to channel join, where
+                // instability is expected.
+                if this.can_use_microphone() {
                     this.share_microphone(cx)
                 } else {
                     Task::ready(Ok(()))
@@ -1664,6 +1813,9 @@ struct LiveKitRoom {
     room: Rc<livekit::Room>,
     screen_track: LocalTrack<dyn ScreenCaptureStream>,
     microphone_track: LocalTrack<AudioStream>,
+    /// Shared atomic storing the most recent input lag measurement in microseconds.
+    /// Written by the audio capture/transmit pipeline, read here for diagnostics.
+    input_lag_us: Option<Arc<AtomicU64>>,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.
     muted_by_user: bool,
     deafened: bool,
@@ -1680,6 +1832,7 @@ impl LiveKitRoom {
         } = mem::replace(&mut self.microphone_track, LocalTrack::None)
         {
             tracks_to_unpublish.push(track_publication.sid());
+            self.input_lag_us = None;
             cx.notify();
         }
 

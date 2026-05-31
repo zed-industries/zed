@@ -1,33 +1,31 @@
-use anthropic::{
-    ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest, Event,
-    ResponseContent, ToolResultContent, ToolResultPart, Usage,
-};
+pub mod telemetry;
+
+use anthropic::{ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode};
 use anyhow::Result;
-use collections::{BTreeMap, HashMap};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
+use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, env_var,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
+    ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    env_var,
 };
 use settings::{Settings, SettingsStore};
-use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
-use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
+pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
-const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = language_model::ANTHROPIC_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = ANTHROPIC_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = ANTHROPIC_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
@@ -46,6 +44,10 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
+    http_client: Arc<dyn HttpClient>,
+    fetched_models: Vec<anthropic::Model>,
+    fetch_models_task: Option<Task<Result<()>>>,
 }
 
 impl State {
@@ -54,30 +56,107 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = AnthropicLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        let should_fetch_models = api_key.is_some();
+        let task = self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
+        self.fetched_models.clear();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            if result.is_ok() && should_fetch_models {
+                this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                    .ok();
+            }
+            result
+        })
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = AnthropicLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            if result.is_ok() {
+                this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                    .ok();
+            }
+            result
+        })
+    }
+
+    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let http_client = self.http_client.clone();
+        let api_url = AnthropicLanguageModelProvider::api_url(cx);
+        let Some(api_key) = self.api_key_state.key(&api_url) else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "cannot fetch Anthropic models without an API key"
+            )));
+        };
+
+        cx.spawn(async move |this, cx| {
+            let models =
+                anthropic::list_models(http_client.as_ref(), &api_url, api_key.as_ref()).await?;
+
+            this.update(cx, |this, cx| {
+                this.fetched_models = models;
+                cx.notify();
+            })
+        })
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        let task = self.fetch_models(cx);
+        self.fetch_models_task.replace(task);
     }
 }
 
 impl AnthropicLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
-            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let api_url = Self::api_url(cx);
-                this.api_key_state
-                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
-                cx.notify();
+            cx.observe_global::<SettingsStore>({
+                let mut last_api_url = Self::api_url(cx);
+                move |this: &mut State, cx| {
+                    let credentials_provider = this.credentials_provider.clone();
+                    let api_url = Self::api_url(cx);
+                    let url_changed = api_url != last_api_url;
+                    last_api_url = api_url.clone();
+                    this.api_key_state.handle_url_change(
+                        api_url,
+                        |this| &mut this.api_key_state,
+                        credentials_provider,
+                        cx,
+                    );
+                    if url_changed {
+                        this.fetched_models.clear();
+                        this.authenticate(cx).detach();
+                    }
+                    cx.notify();
+                }
             })
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
+                http_client: http_client.clone(),
+                fetched_models: Vec::new(),
+                fetch_models_task: None,
             }
         });
 
@@ -86,7 +165,7 @@ impl AnthropicLanguageModelProvider {
 
     fn create_language_model(&self, model: anthropic::Model) -> Arc<dyn LanguageModel> {
         Arc::new(AnthropicModel {
-            id: LanguageModelId::from(model.id().to_string()),
+            id: LanguageModelId::from(model.id.to_string()),
             model,
             state: self.state.clone(),
             http_client: self.http_client.clone(),
@@ -129,56 +208,44 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiAnthropic)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(anthropic::Model::default()))
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let fetched = self.state.read(cx).fetched_models.clone();
+        // Pick the highest-version Sonnet we know about; otherwise the first
+        // Claude model returned. Returning `None` until the fetch completes
+        // matches the Ollama provider's behavior.
+        pick_preferred_model(&fetched, &["claude-sonnet-", "claude-opus-", "claude-"])
+            .map(|model| self.create_language_model(model))
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(anthropic::Model::default_fast()))
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let fetched = self.state.read(cx).fetched_models.clone();
+        pick_preferred_model(&fetched, &["claude-haiku-", "claude-"])
+            .map(|model| self.create_language_model(model))
     }
 
-    fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        [
-            anthropic::Model::ClaudeSonnet4_5,
-            anthropic::Model::ClaudeSonnet4_5Thinking,
-        ]
-        .into_iter()
-        .map(|model| self.create_language_model(model))
-        .collect()
+    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let fetched = self.state.read(cx).fetched_models.clone();
+        pick_preferred_model(&fetched, &["claude-sonnet-"])
+            .map(|model| vec![self.create_language_model(model)])
+            .unwrap_or_default()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = BTreeMap::default();
+        let mut models: BTreeMap<String, anthropic::Model> = BTreeMap::default();
 
-        // Add base models from anthropic::Model::iter()
-        for model in anthropic::Model::iter() {
-            if !matches!(model, anthropic::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
-            }
+        // Models reported by Anthropic's `/v1/models` endpoint are the
+        // primary source. The list will be empty until authentication has
+        // succeeded and the first fetch completes.
+        for model in &self.state.read(cx).fetched_models {
+            models.insert(model.id.to_string(), model.clone());
         }
 
-        // Override with available models from settings
-        for model in &AnthropicLanguageModelProvider::settings(cx).available_models {
-            models.insert(
-                model.name.clone(),
-                anthropic::Model::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    tool_override: model.tool_override.clone(),
-                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
-                        anthropic::AnthropicModelCacheConfiguration {
-                            max_cache_anchors: config.max_cache_anchors,
-                            should_speculate: config.should_speculate,
-                            min_total_token: config.min_total_token,
-                        }
-                    }),
-                    max_output_tokens: model.max_output_tokens,
-                    default_temperature: model.default_temperature,
-                    extra_beta_headers: model.extra_beta_headers.clone(),
-                    mode: model.mode.unwrap_or_default().into(),
-                },
-            );
+        // User-defined `available_models` from settings can either add
+        // entirely new entries or override fields on a fetched model with
+        // the same id (e.g. enable Fast mode or set a tool override).
+        for available in &AnthropicLanguageModelProvider::settings(cx).available_models {
+            let model = available_model_to_anthropic_model(available);
+            models.insert(model.id.to_string(), model);
         }
 
         models
@@ -209,6 +276,81 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for Anthropic?".into(),
+            message: "Fast mode lets requests use your Anthropic Priority Tier capacity, which \
+                Anthropic prioritizes over standard requests during peak load. Requires a \
+                Priority Tier commitment with Anthropic; without one, requests behave the same \
+                as the standard tier."
+                .into(),
+        })
+    }
+}
+
+/// Pick the model from `models` whose id starts with the earliest matching
+/// prefix in `preferred_prefixes`. Within a single prefix bucket the model
+/// with the lexicographically greatest id wins, which roughly corresponds to
+/// the highest version since Anthropic ids embed dated suffixes.
+fn pick_preferred_model(
+    models: &[anthropic::Model],
+    preferred_prefixes: &[&str],
+) -> Option<anthropic::Model> {
+    for prefix in preferred_prefixes {
+        let candidate = models
+            .iter()
+            .filter(|m| m.id.starts_with(prefix))
+            .max_by(|a, b| a.id.cmp(&b.id));
+        if let Some(model) = candidate {
+            return Some(model.clone());
+        }
+    }
+    None
+}
+
+/// Convert a settings-defined `available_models` entry into an `anthropic::Model`.
+fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::Model {
+    let mode = match available.mode.unwrap_or_default() {
+        settings::ModelMode::Default => AnthropicModelMode::Default,
+        settings::ModelMode::Thinking { budget_tokens } => {
+            AnthropicModelMode::Thinking { budget_tokens }
+        }
+    };
+    let supports_thinking = matches!(
+        mode,
+        AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
+    );
+    let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking);
+
+    anthropic::Model {
+        display_name: available
+            .display_name
+            .clone()
+            .unwrap_or_else(|| available.name.clone()),
+        id: available.name.clone(),
+        max_input_tokens: available.max_tokens,
+        max_output_tokens: available.max_output_tokens.unwrap_or(4_096),
+        default_temperature: available.default_temperature.unwrap_or(1.0),
+        mode,
+        supports_thinking,
+        supports_adaptive_thinking,
+        supports_images: true,
+        supports_speed: false,
+        supported_effort_levels: if supports_adaptive_thinking {
+            vec![
+                anthropic::Effort::Low,
+                anthropic::Effort::Medium,
+                anthropic::Effort::High,
+                anthropic::Effort::XHigh,
+                anthropic::Effort::Max,
+            ]
+        } else {
+            vec![]
+        },
+        tool_override: available.tool_override.clone(),
+        extra_beta_headers: available.extra_beta_headers.clone(),
+    }
 }
 
 pub struct AnthropicModel {
@@ -217,217 +359,6 @@ pub struct AnthropicModel {
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
-}
-
-/// Convert a LanguageModelRequest to an Anthropic CountTokensRequest.
-pub fn into_anthropic_count_tokens_request(
-    request: LanguageModelRequest,
-    model: String,
-    mode: AnthropicModelMode,
-) -> CountTokensRequest {
-    let mut new_messages: Vec<anthropic::Message> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages {
-        if message.contents_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                let anthropic_message_content: Vec<anthropic::RequestContent> = message
-                    .content
-                    .into_iter()
-                    .filter_map(|content| match content {
-                        MessageContent::Text(text) => {
-                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
-                                text.trim_end().to_string()
-                            } else {
-                                text
-                            };
-                            if !text.is_empty() {
-                                Some(anthropic::RequestContent::Text {
-                                    text,
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Thinking {
-                            text: thinking,
-                            signature,
-                        } => {
-                            if !thinking.is_empty() {
-                                Some(anthropic::RequestContent::Thinking {
-                                    thinking,
-                                    signature: signature.unwrap_or_default(),
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::RedactedThinking(data) => {
-                            if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking { data })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
-                            source: anthropic::ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: "image/png".to_string(),
-                                data: image.source.to_string(),
-                            },
-                            cache_control: None,
-                        }),
-                        MessageContent::ToolUse(tool_use) => {
-                            Some(anthropic::RequestContent::ToolUse {
-                                id: tool_use.id.to_string(),
-                                name: tool_use.name.to_string(),
-                                input: tool_use.input,
-                                cache_control: None,
-                            })
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            Some(anthropic::RequestContent::ToolResult {
-                                tool_use_id: tool_result.tool_use_id.to_string(),
-                                is_error: tool_result.is_error,
-                                content: match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text) => {
-                                        ToolResultContent::Plain(text.to_string())
-                                    }
-                                    LanguageModelToolResultContent::Image(image) => {
-                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                                            source: anthropic::ImageSource {
-                                                source_type: "base64".to_string(),
-                                                media_type: "image/png".to_string(),
-                                                data: image.source.to_string(),
-                                            },
-                                        }])
-                                    }
-                                },
-                                cache_control: None,
-                            })
-                        }
-                    })
-                    .collect();
-                let anthropic_role = match message.role {
-                    Role::User => anthropic::Role::User,
-                    Role::Assistant => anthropic::Role::Assistant,
-                    Role::System => unreachable!("System role should never occur here"),
-                };
-                if let Some(last_message) = new_messages.last_mut()
-                    && last_message.role == anthropic_role
-                {
-                    last_message.content.extend(anthropic_message_content);
-                    continue;
-                }
-
-                new_messages.push(anthropic::Message {
-                    role: anthropic_role,
-                    content: anthropic_message_content,
-                });
-            }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.string_contents());
-            }
-        }
-    }
-
-    CountTokensRequest {
-        model,
-        messages: new_messages,
-        system: if system_message.is_empty() {
-            None
-        } else {
-            Some(anthropic::StringOrContents::String(system_message))
-        },
-        thinking: if request.thinking_allowed
-            && let AnthropicModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(anthropic::Thinking::Enabled { budget_tokens })
-        } else {
-            None
-        },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| anthropic::Tool {
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.input_schema,
-            })
-            .collect(),
-        tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => anthropic::ToolChoice::Auto,
-            LanguageModelToolChoice::Any => anthropic::ToolChoice::Any,
-            LanguageModelToolChoice::None => anthropic::ToolChoice::None,
-        }),
-    }
-}
-
-/// Estimate tokens using tiktoken. Used as a fallback when the API is unavailable,
-/// or by providers (like Zed Cloud) that don't have direct Anthropic API access.
-pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Result<u64> {
-    let messages = request.messages;
-    let mut tokens_from_images = 0;
-    let mut string_messages = Vec::with_capacity(messages.len());
-
-    for message in messages {
-        let mut string_contents = String::new();
-
-        for content in message.content {
-            match content {
-                MessageContent::Text(text) => {
-                    string_contents.push_str(&text);
-                }
-                MessageContent::Thinking { .. } => {
-                    // Thinking blocks are not included in the input token count.
-                }
-                MessageContent::RedactedThinking(_) => {
-                    // Thinking blocks are not included in the input token count.
-                }
-                MessageContent::Image(image) => {
-                    tokens_from_images += image.estimate_tokens();
-                }
-                MessageContent::ToolUse(_tool_use) => {
-                    // TODO: Estimate token usage from tool uses.
-                }
-                MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                    LanguageModelToolResultContent::Text(text) => {
-                        string_contents.push_str(text);
-                    }
-                    LanguageModelToolResultContent::Image(image) => {
-                        tokens_from_images += image.estimate_tokens();
-                    }
-                },
-            }
-        }
-
-        if !string_contents.is_empty() {
-            string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(string_contents),
-                name: None,
-                function_call: None,
-            });
-        }
-    }
-
-    // Tiktoken doesn't yet support these models, so we manually use the
-    // same tokenizer as GPT-4.
-    tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-        .map(|tokens| (tokens + tokens_from_images) as u64)
 }
 
 impl AnthropicModel {
@@ -476,7 +407,7 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
+        LanguageModelName::from(self.model.display_name.clone())
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
@@ -492,7 +423,7 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn supports_images(&self) -> bool {
-        true
+        self.model.supports_images
     }
 
     fn supports_streaming_tools(&self) -> bool {
@@ -507,8 +438,38 @@ impl LanguageModel for AnthropicModel {
         }
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking
+    }
+
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_speed
+    }
+
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        self.model
+            .supported_effort_levels
+            .iter()
+            .map(|e| {
+                let is_default = matches!(e, anthropic::Effort::High);
+                let (name, value) = match e {
+                    anthropic::Effort::Low => ("Low".into(), "low".into()),
+                    anthropic::Effort::Medium => ("Medium".into(), "medium".into()),
+                    anthropic::Effort::High => ("High".into(), "high".into()),
+                    anthropic::Effort::XHigh => ("XHigh".into(), "xhigh".into()),
+                    anthropic::Effort::Max => ("Max".into(), "max".into()),
+                };
+                language_model::LanguageModelEffortLevel {
+                    name,
+                    value,
+                    is_default,
+                }
+            })
+            .collect::<Vec<_>>()
+    }
+
     fn telemetry_id(&self) -> String {
-        format!("anthropic/{}", self.model.id())
+        format!("anthropic/{}", self.model.id)
     }
 
     fn api_key(&self, cx: &App) -> Option<String> {
@@ -519,52 +480,11 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        self.model.max_input_tokens
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens())
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let http_client = self.http_client.clone();
-        let model_id = self.model.request_id().to_string();
-        let mode = self.model.mode();
-
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
-            let api_url = AnthropicLanguageModelProvider::api_url(cx);
-            (
-                state.api_key_state.key(&api_url).map(|k| k.to_string()),
-                api_url.to_string(),
-            )
-        });
-
-        async move {
-            // If no API key, fall back to tiktoken estimation
-            let Some(api_key) = api_key else {
-                return count_anthropic_tokens_with_tiktoken(request);
-            };
-
-            let count_request =
-                into_anthropic_count_tokens_request(request.clone(), model_id, mode);
-
-            match anthropic::count_tokens(http_client.as_ref(), &api_url, &api_key, count_request)
-                .await
-            {
-                Ok(response) => Ok(response.input_tokens),
-                Err(err) => {
-                    log::error!(
-                        "Anthropic count_tokens API failed, falling back to tiktoken: {err:?}"
-                    );
-                    count_anthropic_tokens_with_tiktoken(request)
-                }
-            }
-        }
-        .boxed()
+        Some(self.model.max_output_tokens)
     }
 
     fn stream_completion(
@@ -578,419 +498,25 @@ impl LanguageModel for AnthropicModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_anthropic(
+        let has_tools = !request.tools.is_empty();
+        let request_id = self.model.request_id(has_tools).to_string();
+        let mut request = into_anthropic(
             request,
-            self.model.request_id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-            self.model.mode(),
+            request_id,
+            self.model.default_temperature,
+            self.model.max_output_tokens,
+            self.model.mode.clone(),
+            AnthropicPromptCacheMode::Automatic,
         );
+        if !self.model.supports_speed {
+            request.speed = None;
+        }
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        self.model
-            .cache_configuration()
-            .map(|config| LanguageModelCacheConfiguration {
-                max_cache_anchors: config.max_cache_anchors,
-                should_speculate: config.should_speculate,
-                min_total_token: config.min_total_token,
-            })
-    }
-}
-
-pub fn into_anthropic(
-    request: LanguageModelRequest,
-    model: String,
-    default_temperature: f32,
-    max_output_tokens: u64,
-    mode: AnthropicModelMode,
-) -> anthropic::Request {
-    let mut new_messages: Vec<anthropic::Message> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages {
-        if message.contents_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                let mut anthropic_message_content: Vec<anthropic::RequestContent> = message
-                    .content
-                    .into_iter()
-                    .filter_map(|content| match content {
-                        MessageContent::Text(text) => {
-                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
-                                text.trim_end().to_string()
-                            } else {
-                                text
-                            };
-                            if !text.is_empty() {
-                                Some(anthropic::RequestContent::Text {
-                                    text,
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Thinking {
-                            text: thinking,
-                            signature,
-                        } => {
-                            if !thinking.is_empty() {
-                                Some(anthropic::RequestContent::Thinking {
-                                    thinking,
-                                    signature: signature.unwrap_or_default(),
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::RedactedThinking(data) => {
-                            if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking { data })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
-                            source: anthropic::ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: "image/png".to_string(),
-                                data: image.source.to_string(),
-                            },
-                            cache_control: None,
-                        }),
-                        MessageContent::ToolUse(tool_use) => {
-                            Some(anthropic::RequestContent::ToolUse {
-                                id: tool_use.id.to_string(),
-                                name: tool_use.name.to_string(),
-                                input: tool_use.input,
-                                cache_control: None,
-                            })
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            Some(anthropic::RequestContent::ToolResult {
-                                tool_use_id: tool_result.tool_use_id.to_string(),
-                                is_error: tool_result.is_error,
-                                content: match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text) => {
-                                        ToolResultContent::Plain(text.to_string())
-                                    }
-                                    LanguageModelToolResultContent::Image(image) => {
-                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                                            source: anthropic::ImageSource {
-                                                source_type: "base64".to_string(),
-                                                media_type: "image/png".to_string(),
-                                                data: image.source.to_string(),
-                                            },
-                                        }])
-                                    }
-                                },
-                                cache_control: None,
-                            })
-                        }
-                    })
-                    .collect();
-                let anthropic_role = match message.role {
-                    Role::User => anthropic::Role::User,
-                    Role::Assistant => anthropic::Role::Assistant,
-                    Role::System => unreachable!("System role should never occur here"),
-                };
-                if let Some(last_message) = new_messages.last_mut()
-                    && last_message.role == anthropic_role
-                {
-                    last_message.content.extend(anthropic_message_content);
-                    continue;
-                }
-
-                // Mark the last segment of the message as cached
-                if message.cache {
-                    let cache_control_value = Some(anthropic::CacheControl {
-                        cache_type: anthropic::CacheControlType::Ephemeral,
-                    });
-                    for message_content in anthropic_message_content.iter_mut().rev() {
-                        match message_content {
-                            anthropic::RequestContent::RedactedThinking { .. } => {
-                                // Caching is not possible, fallback to next message
-                            }
-                            anthropic::RequestContent::Text { cache_control, .. }
-                            | anthropic::RequestContent::Thinking { cache_control, .. }
-                            | anthropic::RequestContent::Image { cache_control, .. }
-                            | anthropic::RequestContent::ToolUse { cache_control, .. }
-                            | anthropic::RequestContent::ToolResult { cache_control, .. } => {
-                                *cache_control = cache_control_value;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                new_messages.push(anthropic::Message {
-                    role: anthropic_role,
-                    content: anthropic_message_content,
-                });
-            }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.string_contents());
-            }
-        }
-    }
-
-    anthropic::Request {
-        model,
-        messages: new_messages,
-        max_tokens: max_output_tokens,
-        system: if system_message.is_empty() {
-            None
-        } else {
-            Some(anthropic::StringOrContents::String(system_message))
-        },
-        thinking: if request.thinking_allowed
-            && let AnthropicModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(anthropic::Thinking::Enabled { budget_tokens })
-        } else {
-            None
-        },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| anthropic::Tool {
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.input_schema,
-            })
-            .collect(),
-        tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => anthropic::ToolChoice::Auto,
-            LanguageModelToolChoice::Any => anthropic::ToolChoice::Any,
-            LanguageModelToolChoice::None => anthropic::ToolChoice::None,
-        }),
-        metadata: None,
-        stop_sequences: Vec::new(),
-        temperature: request.temperature.or(Some(default_temperature)),
-        top_k: None,
-        top_p: None,
-    }
-}
-
-pub struct AnthropicEventMapper {
-    tool_uses_by_index: HashMap<usize, RawToolUse>,
-    usage: Usage,
-    stop_reason: StopReason,
-}
-
-impl AnthropicEventMapper {
-    pub fn new() -> Self {
-        Self {
-            tool_uses_by_index: HashMap::default(),
-            usage: Usage::default(),
-            stop_reason: StopReason::EndTurn,
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: Event,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        match event {
-            Event::ContentBlockStart {
-                index,
-                content_block,
-            } => match content_block {
-                ResponseContent::Text { text } => {
-                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
-                }
-                ResponseContent::Thinking { thinking } => {
-                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                        text: thinking,
-                        signature: None,
-                    })]
-                }
-                ResponseContent::RedactedThinking { data } => {
-                    vec![Ok(LanguageModelCompletionEvent::RedactedThinking { data })]
-                }
-                ResponseContent::ToolUse { id, name, .. } => {
-                    self.tool_uses_by_index.insert(
-                        index,
-                        RawToolUse {
-                            id,
-                            name,
-                            input_json: String::new(),
-                        },
-                    );
-                    Vec::new()
-                }
-            },
-            Event::ContentBlockDelta { index, delta } => match delta {
-                ContentDelta::TextDelta { text } => {
-                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
-                }
-                ContentDelta::ThinkingDelta { thinking } => {
-                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                        text: thinking,
-                        signature: None,
-                    })]
-                }
-                ContentDelta::SignatureDelta { signature } => {
-                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                        text: "".to_string(),
-                        signature: Some(signature),
-                    })]
-                }
-                ContentDelta::InputJsonDelta { partial_json } => {
-                    if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
-                        tool_use.input_json.push_str(&partial_json);
-
-                        // Try to convert invalid (incomplete) JSON into
-                        // valid JSON that serde can accept, e.g. by closing
-                        // unclosed delimiters. This way, we can update the
-                        // UI with whatever has been streamed back so far.
-                        if let Ok(input) = serde_json::Value::from_str(
-                            &partial_json_fixer::fix_json(&tool_use.input_json),
-                        ) {
-                            return vec![Ok(LanguageModelCompletionEvent::ToolUse(
-                                LanguageModelToolUse {
-                                    id: tool_use.id.clone().into(),
-                                    name: tool_use.name.clone().into(),
-                                    is_input_complete: false,
-                                    raw_input: tool_use.input_json.clone(),
-                                    input,
-                                    thought_signature: None,
-                                },
-                            ))];
-                        }
-                    }
-                    vec![]
-                }
-            },
-            Event::ContentBlockStop { index } => {
-                if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
-                    let input_json = tool_use.input_json.trim();
-                    let input_value = if input_json.is_empty() {
-                        Ok(serde_json::Value::Object(serde_json::Map::default()))
-                    } else {
-                        serde_json::Value::from_str(input_json)
-                    };
-                    let event_result = match input_value {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_use.id.into(),
-                                name: tool_use.name.into(),
-                                is_input_complete: true,
-                                input,
-                                raw_input: tool_use.input_json.clone(),
-                                thought_signature: None,
-                            },
-                        )),
-                        Err(json_parse_err) => {
-                            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: tool_use.id.into(),
-                                tool_name: tool_use.name.into(),
-                                raw_input: input_json.into(),
-                                json_parse_error: json_parse_err.to_string(),
-                            })
-                        }
-                    };
-
-                    vec![event_result]
-                } else {
-                    Vec::new()
-                }
-            }
-            Event::MessageStart { message } => {
-                update_usage(&mut self.usage, &message.usage);
-                vec![
-                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
-                        &self.usage,
-                    ))),
-                    Ok(LanguageModelCompletionEvent::StartMessage {
-                        message_id: message.id,
-                    }),
-                ]
-            }
-            Event::MessageDelta { delta, usage } => {
-                update_usage(&mut self.usage, &usage);
-                if let Some(stop_reason) = delta.stop_reason.as_deref() {
-                    self.stop_reason = match stop_reason {
-                        "end_turn" => StopReason::EndTurn,
-                        "max_tokens" => StopReason::MaxTokens,
-                        "tool_use" => StopReason::ToolUse,
-                        "refusal" => StopReason::Refusal,
-                        _ => {
-                            log::error!("Unexpected anthropic stop_reason: {stop_reason}");
-                            StopReason::EndTurn
-                        }
-                    };
-                }
-                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
-                    convert_usage(&self.usage),
-                ))]
-            }
-            Event::MessageStop => {
-                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
-            }
-            Event::Error { error } => {
-                vec![Err(error.into())]
-            }
-            _ => Vec::new(),
-        }
-    }
-}
-
-struct RawToolUse {
-    id: String,
-    name: String,
-    input_json: String,
-}
-
-/// Updates usage data by preferring counts from `new`.
-fn update_usage(usage: &mut Usage, new: &Usage) {
-    if let Some(input_tokens) = new.input_tokens {
-        usage.input_tokens = Some(input_tokens);
-    }
-    if let Some(output_tokens) = new.output_tokens {
-        usage.output_tokens = Some(output_tokens);
-    }
-    if let Some(cache_creation_input_tokens) = new.cache_creation_input_tokens {
-        usage.cache_creation_input_tokens = Some(cache_creation_input_tokens);
-    }
-    if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
-        usage.cache_read_input_tokens = Some(cache_read_input_tokens);
-    }
-}
-
-fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
-    language_model::TokenUsage {
-        input_tokens: usage.input_tokens.unwrap_or(0),
-        output_tokens: usage.output_tokens.unwrap_or(0),
-        cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
-        cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
     }
 }
 
@@ -1132,78 +658,5 @@ impl Render for ConfigurationView {
                 })
                 .into_any_element()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anthropic::AnthropicModelMode;
-    use language_model::{LanguageModelRequestMessage, MessageContent};
-
-    #[test]
-    fn test_cache_control_only_on_last_segment() {
-        let request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![
-                    MessageContent::Text("Some prompt".to_string()),
-                    MessageContent::Image(language_model::LanguageModelImage::empty()),
-                    MessageContent::Image(language_model::LanguageModelImage::empty()),
-                    MessageContent::Image(language_model::LanguageModelImage::empty()),
-                    MessageContent::Image(language_model::LanguageModelImage::empty()),
-                ],
-                cache: true,
-                reasoning_details: None,
-            }],
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            stop: vec![],
-            temperature: None,
-            tools: vec![],
-            tool_choice: None,
-            thinking_allowed: true,
-        };
-
-        let anthropic_request = into_anthropic(
-            request,
-            "claude-3-5-sonnet".to_string(),
-            0.7,
-            4096,
-            AnthropicModelMode::Default,
-        );
-
-        assert_eq!(anthropic_request.messages.len(), 1);
-
-        let message = &anthropic_request.messages[0];
-        assert_eq!(message.content.len(), 5);
-
-        assert!(matches!(
-            message.content[0],
-            anthropic::RequestContent::Text {
-                cache_control: None,
-                ..
-            }
-        ));
-        for i in 1..3 {
-            assert!(matches!(
-                message.content[i],
-                anthropic::RequestContent::Image {
-                    cache_control: None,
-                    ..
-                }
-            ));
-        }
-
-        assert!(matches!(
-            message.content[4],
-            anthropic::RequestContent::Image {
-                cache_control: Some(anthropic::CacheControl {
-                    cache_type: anthropic::CacheControlType::Ephemeral,
-                }),
-                ..
-            }
-        ));
     }
 }

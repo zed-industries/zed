@@ -23,7 +23,7 @@ pub fn rgba(hex: u32) -> Rgba {
 }
 
 /// Swap from RGBA with premultiplied alpha to BGRA
-pub(crate) fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
+pub fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
     color.swap(0, 2);
     if color[3] > 0 {
         let a = color[3] as f32 / 255.;
@@ -281,6 +281,32 @@ pub struct Hsla {
 
     /// Alpha, in a range from 0 to 1
     pub a: f32,
+}
+
+#[cfg(feature = "proptest")]
+mod property {
+    use super::Hsla;
+    use proptest::prelude::*;
+
+    impl Hsla {
+        /// Proptest [`Strategy`] that produces opaque colors (i.e. alpha = 1).
+        ///
+        /// For truly arbitrary colors, use the [`Arbitrary`] implementation.
+        pub fn opaque_strategy() -> impl Strategy<Value = Self> {
+            (0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0).prop_map(|(h, s, l)| Hsla { h, s, l, a: 1. })
+        }
+    }
+
+    impl Arbitrary for Hsla {
+        type Strategy = BoxedStrategy<Self>;
+        type Parameters = ();
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            (0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
+                .prop_map(|(h, s, l, a)| Hsla { h, s, l, a })
+                .boxed()
+        }
+    }
 }
 
 impl PartialEq for Hsla {
@@ -658,6 +684,7 @@ pub(crate) enum BackgroundTag {
     Solid = 0,
     LinearGradient = 1,
     PatternSlash = 2,
+    Checkerboard = 3,
 }
 
 /// A color space for color interpolation.
@@ -701,20 +728,21 @@ impl std::fmt::Debug for Background {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.tag {
             BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
-            BackgroundTag::LinearGradient => {
-                write!(
-                    f,
-                    "LinearGradient({}, {:?}, {:?})",
-                    self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
-                )
-            }
-            BackgroundTag::PatternSlash => {
-                write!(
-                    f,
-                    "PatternSlash({:?}, {})",
-                    self.solid, self.gradient_angle_or_pattern_height
-                )
-            }
+            BackgroundTag::LinearGradient => write!(
+                f,
+                "LinearGradient({}, {:?}, {:?})",
+                self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+            ),
+            BackgroundTag::PatternSlash => write!(
+                f,
+                "PatternSlash({:?}, {})",
+                self.solid, self.gradient_angle_or_pattern_height
+            ),
+            BackgroundTag::Checkerboard => write!(
+                f,
+                "Checkerboard({:?}, {})",
+                self.solid, self.gradient_angle_or_pattern_height
+            ),
         }
     }
 }
@@ -743,6 +771,16 @@ pub fn pattern_slash(color: impl Into<Hsla>, width: f32, interval: f32) -> Backg
         tag: BackgroundTag::PatternSlash,
         solid: color.into(),
         gradient_angle_or_pattern_height: height,
+        ..Default::default()
+    }
+}
+
+/// Creates a checkerboard pattern background
+pub fn checkerboard(color: impl Into<Hsla>, size: f32) -> Background {
+    Background {
+        tag: BackgroundTag::Checkerboard,
+        solid: color.into(),
+        gradient_angle_or_pattern_height: size,
         ..Default::default()
     }
 }
@@ -808,6 +846,15 @@ impl LinearColorStop {
 }
 
 impl Background {
+    /// Returns the solid color if this is a solid background, None otherwise.
+    pub fn as_solid(&self) -> Option<Hsla> {
+        if self.tag == BackgroundTag::Solid {
+            Some(self.solid)
+        } else {
+            None
+        }
+    }
+
     /// Use specified color space for color interpolation.
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
@@ -833,6 +880,7 @@ impl Background {
             BackgroundTag::Solid => self.solid.is_transparent(),
             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
             BackgroundTag::PatternSlash => self.solid.is_transparent(),
+            BackgroundTag::Checkerboard => self.solid.is_transparent(),
         }
     }
 }

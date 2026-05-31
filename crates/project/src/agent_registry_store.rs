@@ -2,27 +2,36 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use fs::Fs;
-use futures::AsyncReadExt;
-use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
-use http_client::{AsyncBody, HttpClient};
+use futures::{AsyncReadExt, future::join_all};
+use gpui::{
+    App, AppContext as _, BackgroundExecutor, Context, Entity, FutureExt as _, Global,
+    SharedString, Task, TaskExt,
+};
+use http_client::{AsyncBody, HttpClient, StatusCode};
 use serde::Deserialize;
-use settings::Settings;
+use settings::Settings as _;
+use util::ResultExt;
 
-use crate::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
+use crate::{AgentId, DisableAiSettings};
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
+// Bound the full request lifecycle, including response body reads; the shared
+// HTTP client only has a connect timeout.
+const REGISTRY_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const REGISTRY_ICON_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub struct RegistryAgentMetadata {
-    pub id: SharedString,
+    pub id: AgentId,
     pub name: SharedString,
     pub description: SharedString,
     pub version: SharedString,
     pub repository: Option<SharedString>,
+    pub website: Option<SharedString>,
     pub icon_path: Option<SharedString>,
 }
 
@@ -55,7 +64,7 @@ impl RegistryAgent {
         }
     }
 
-    pub fn id(&self) -> &SharedString {
+    pub fn id(&self) -> &AgentId {
         &self.metadata().id
     }
 
@@ -73,6 +82,10 @@ impl RegistryAgent {
 
     pub fn repository(&self) -> Option<&SharedString> {
         self.metadata().repository.as_ref()
+    }
+
+    pub fn website(&self) -> Option<&SharedString> {
+        self.metadata().website.as_ref()
     }
 
     pub fn icon_path(&self) -> Option<&SharedString> {
@@ -117,29 +130,23 @@ impl AgentRegistryStore {
     /// are registry agents configured in settings, it will trigger a network fetch.
     /// Otherwise, call `refresh()` explicitly when you need fresh data
     /// (e.g., when opening the Agent Registry page).
-    pub fn init_global(cx: &mut App) -> Entity<Self> {
+    pub fn init_global(
+        cx: &mut App,
+        fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Entity<Self> {
         if let Some(store) = Self::try_global(cx) {
             return store;
         }
 
-        let fs = <dyn Fs>::global(cx);
-        let http_client: Arc<dyn HttpClient> = cx.http_client();
-
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
 
-        let has_registry_agents_in_settings = AllAgentServersSettings::get_global(cx)
-            .custom
-            .values()
-            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }));
-
-        if has_registry_agents_in_settings {
-            store.update(cx, |store, cx| {
-                if store.agents.is_empty() {
-                    store.refresh(cx);
-                }
-            });
-        }
+        store.update(cx, |store, cx| {
+            if store.agents.is_empty() {
+                store.refresh(cx);
+            }
+        });
 
         store
     }
@@ -153,12 +160,34 @@ impl AgentRegistryStore {
             .map(|store| store.0.clone())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn init_test_global(cx: &mut App, agents: Vec<RegistryAgent>) -> Entity<Self> {
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
+        let store = cx.new(|_cx| Self {
+            fs,
+            http_client: http_client::FakeHttpClient::with_404_response(),
+            agents,
+            is_fetching: false,
+            fetch_error: None,
+            pending_refresh: None,
+            last_refresh: None,
+        });
+        cx.set_global(GlobalAgentRegistryStore(store.clone()));
+        store
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_agents(&mut self, agents: Vec<RegistryAgent>, cx: &mut Context<Self>) {
+        self.agents = agents;
+        cx.notify();
+    }
+
     pub fn agents(&self) -> &[RegistryAgent] {
         &self.agents
     }
 
-    pub fn agent(&self, id: &str) -> Option<&RegistryAgent> {
-        self.agents.iter().find(|agent| agent.id().as_ref() == id)
+    pub fn agent(&self, id: &AgentId) -> Option<&RegistryAgent> {
+        self.agents.iter().find(|agent| agent.id() == id)
     }
 
     pub fn is_fetching(&self) -> bool {
@@ -177,6 +206,10 @@ impl AgentRegistryStore {
             return;
         }
 
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
         self.is_fetching = true;
         self.fetch_error = None;
         self.last_refresh = Some(Instant::now());
@@ -184,14 +217,25 @@ impl AgentRegistryStore {
 
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
+        let executor = cx.background_executor().clone();
 
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            let result = match fetch_registry_index(http_client.clone()).await {
+            let result = match fetch_registry_index(http_client.clone(), &executor).await {
                 Ok(data) => {
-                    build_registry_agents(fs.clone(), http_client, data.index, data.raw_body, true)
-                        .await
+                    build_registry_agents(
+                        fs.clone(),
+                        http_client,
+                        data.index,
+                        data.raw_body,
+                        true,
+                        &executor,
+                    )
+                    .await
                 }
-                Err(error) => Err(error),
+                Err(error) => {
+                    log::error!("AgentRegistryStore::refresh: fetch failed: {error:#}");
+                    Err(error)
+                }
             };
 
             this.update(cx, |this, cx| {
@@ -203,7 +247,7 @@ impl AgentRegistryStore {
                         this.fetch_error = None;
                     }
                     Err(error) => {
-                        this.fetch_error = Some(SharedString::from(error.to_string()));
+                        this.fetch_error = Some(SharedString::from(format!("{error:#}")));
                     }
                 }
                 cx.notify();
@@ -250,6 +294,10 @@ impl AgentRegistryStore {
         http_client: Arc<dyn HttpClient>,
         cx: &mut Context<Self>,
     ) {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
         cx.spawn(async move |this, cx| -> Result<()> {
             let cache_path = registry_cache_path();
             if !fs.is_file(&cache_path).await {
@@ -263,7 +311,9 @@ impl AgentRegistryStore {
             let index: RegistryIndex =
                 serde_json::from_slice(&bytes).context("parsing cached registry")?;
 
-            let agents = build_registry_agents(fs, http_client, index, bytes, false).await?;
+            let executor = cx.background_executor().clone();
+            let agents =
+                build_registry_agents(fs, http_client, index, bytes, false, &executor).await?;
 
             this.update(cx, |this, cx| {
                 this.agents = agents;
@@ -281,24 +331,20 @@ struct RegistryFetchResult {
     raw_body: Vec<u8>,
 }
 
-async fn fetch_registry_index(http_client: Arc<dyn HttpClient>) -> Result<RegistryFetchResult> {
-    let mut response = http_client
-        .get(REGISTRY_URL, AsyncBody::default(), true)
-        .await
-        .context("requesting ACP registry")?;
+async fn fetch_registry_index(
+    http_client: Arc<dyn HttpClient>,
+    executor: &BackgroundExecutor,
+) -> Result<RegistryFetchResult> {
+    let (status, body) =
+        fetch_url_body(http_client, REGISTRY_URL, REGISTRY_FETCH_TIMEOUT, executor)
+            .await
+            .context("fetching ACP registry")?;
 
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .context("reading ACP registry response")?;
-
-    if response.status().is_client_error() {
+    if status.is_client_error() {
         let text = String::from_utf8_lossy(body.as_slice());
         bail!(
             "registry status error {}, response: {text:?}",
-            response.status().as_u16()
+            status.as_u16()
         );
     }
 
@@ -315,6 +361,7 @@ async fn build_registry_agents(
     index: RegistryIndex,
     raw_body: Vec<u8>,
     update_cache: bool,
+    executor: &BackgroundExecutor,
 ) -> Result<Vec<RegistryAgent>> {
     let cache_dir = registry_cache_dir();
     fs.create_dir(&cache_dir).await?;
@@ -330,24 +377,25 @@ async fn build_registry_agents(
     }
 
     let current_platform = current_platform_key();
+    let icon_paths = resolve_icon_paths(
+        &index.agents,
+        &icons_dir,
+        update_cache,
+        fs.clone(),
+        http_client.clone(),
+        executor,
+    )
+    .await;
 
     let mut agents = Vec::new();
-    for entry in index.agents {
-        let icon_path = resolve_icon_path(
-            &entry,
-            &icons_dir,
-            update_cache,
-            fs.clone(),
-            http_client.clone(),
-        )
-        .await?;
-
+    for (entry, icon_path) in index.agents.into_iter().zip(icon_paths) {
         let metadata = RegistryAgentMetadata {
-            id: entry.id.into(),
+            id: AgentId::new(entry.id),
             name: entry.name.into(),
             description: entry.description.into(),
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
+            website: entry.website.map(Into::into),
             icon_path,
         };
 
@@ -407,12 +455,34 @@ async fn build_registry_agents(
     Ok(agents)
 }
 
+async fn resolve_icon_paths(
+    entries: &[RegistryEntry],
+    icons_dir: &Path,
+    update_cache: bool,
+    fs: Arc<dyn Fs>,
+    http_client: Arc<dyn HttpClient>,
+    executor: &BackgroundExecutor,
+) -> Vec<Option<SharedString>> {
+    join_all(entries.iter().map(|entry| {
+        let fs = fs.clone();
+        let http_client = http_client.clone();
+        async move {
+            resolve_icon_path(entry, icons_dir, update_cache, fs, http_client, executor)
+                .await
+                .log_err()
+                .flatten()
+        }
+    }))
+    .await
+}
+
 async fn resolve_icon_path(
     entry: &RegistryEntry,
     icons_dir: &Path,
     update_cache: bool,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
+    executor: &BackgroundExecutor,
 ) -> Result<Option<SharedString>> {
     let icon_url = resolve_icon_url(entry);
     let Some(icon_url) = icon_url else {
@@ -421,7 +491,8 @@ async fn resolve_icon_path(
 
     let icon_path = icons_dir.join(format!("{}.svg", entry.id));
     if update_cache && !fs.is_file(&icon_path).await {
-        if let Err(error) = download_icon(fs.clone(), http_client, &icon_url, entry).await {
+        if let Err(error) = download_icon(fs.clone(), http_client, &icon_url, entry, executor).await
+        {
             log::warn!(
                 "Failed to download ACP registry icon for {}: {error:#}",
                 entry.id
@@ -443,25 +514,16 @@ async fn download_icon(
     http_client: Arc<dyn HttpClient>,
     icon_url: &str,
     entry: &RegistryEntry,
+    executor: &BackgroundExecutor,
 ) -> Result<()> {
-    let mut response = http_client
-        .get(icon_url, AsyncBody::default(), true)
-        .await
-        .with_context(|| format!("requesting icon for {}", entry.id))?;
+    let (status, body) =
+        fetch_url_body(http_client, icon_url, REGISTRY_ICON_FETCH_TIMEOUT, executor)
+            .await
+            .with_context(|| format!("fetching icon for {}", entry.id))?;
 
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .with_context(|| format!("reading icon for {}", entry.id))?;
-
-    if response.status().is_client_error() {
+    if status.is_client_error() {
         let text = String::from_utf8_lossy(body.as_slice());
-        bail!(
-            "icon status error {}, response: {text:?}",
-            response.status().as_u16()
-        );
+        bail!("icon status error {}, response: {text:?}", status.as_u16());
     }
 
     let icon_path = registry_cache_dir()
@@ -469,6 +531,38 @@ async fn download_icon(
         .join(format!("{}.svg", entry.id));
     fs.write(&icon_path, &body).await?;
     Ok(())
+}
+
+async fn fetch_url_body(
+    http_client: Arc<dyn HttpClient>,
+    url: &str,
+    timeout: Duration,
+    executor: &BackgroundExecutor,
+) -> Result<(StatusCode, Vec<u8>)> {
+    async {
+        let mut response = http_client
+            .get(url, AsyncBody::default(), true)
+            .await
+            .with_context(|| format!("requesting {url}"))?;
+
+        let status = response.status();
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .with_context(|| format!("reading response from {url}"))?;
+
+        Ok((status, body))
+    }
+    .with_timeout(timeout, executor)
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "timed out after {}s while fetching {url}",
+            timeout.as_secs()
+        )
+    })?
 }
 
 fn resolve_icon_url(entry: &RegistryEntry) -> Option<String> {
@@ -536,8 +630,6 @@ struct RegistryIndex {
     #[serde(rename = "version")]
     _version: String,
     agents: Vec<RegistryEntry>,
-    #[serde(rename = "extensions")]
-    _extensions: Vec<RegistryEntry>,
 }
 
 #[derive(Deserialize)]
@@ -548,6 +640,8 @@ struct RegistryEntry {
     description: String,
     #[serde(default)]
     repository: Option<String>,
+    #[serde(default)]
+    website: Option<String>,
     #[serde(default)]
     icon: Option<String>,
     distribution: RegistryDistribution,

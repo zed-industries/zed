@@ -40,11 +40,14 @@ actions!(
         /// Restores the selected hunks to their original state.
         #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
         Restore,
+        /// Restores the selected hunks to their original state and moves to the
+        /// next one.
+        RestoreAndNext,
         // per-file
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
-        /// Shows the git history for the current file.
+        /// Shows the git history for the selected file, folder, or project.
         FileHistory,
         /// Shows a diff of the current file against a selected commit.
         DiffWithCommit,
@@ -95,6 +98,9 @@ actions!(
         Cancel,
         /// Expands the commit message editor.
         ExpandCommitEditor,
+        /// Toggles whether the commit message editor fills all the available
+        /// vertical space within the git panel.
+        ToggleFillCommitEditor,
         /// Generates a commit message using AI.
         GenerateCommitMessage,
         /// Initializes a new git repository.
@@ -103,8 +109,11 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        ViewCommit,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Copies the current branch name to the clipboard.
+        CopyBranchName,
     ]
 );
 
@@ -162,13 +171,24 @@ impl Oid {
     }
 }
 
+impl TryFrom<&str> for Oid {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+        Oid::from_str(value)
+    }
+}
+
 impl FromStr for Oid {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        libgit::Oid::from_str(s)
-            .context("parsing git oid")
-            .map(Self)
+        let oid = if s.len() == 64 {
+            libgit::Oid::from_str_ext(s, libgit::ObjectFormat::Sha256)
+        } else {
+            libgit::Oid::from_str_ext(s, libgit::ObjectFormat::Sha1)
+        };
+        oid.context("parsing git oid").map(Self)
     }
 }
 
@@ -205,7 +225,7 @@ impl<'de> Deserialize<'de> for Oid {
 
 impl Default for Oid {
     fn default() -> Self {
-        Self(libgit::Oid::zero())
+        Self(libgit::Oid::ZERO_SHA1)
     }
 }
 

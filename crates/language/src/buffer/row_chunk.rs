@@ -31,7 +31,7 @@ impl std::fmt::Debug for RowChunks {
 }
 
 impl RowChunks {
-    pub fn new(snapshot: text::BufferSnapshot, max_rows_per_chunk: u32) -> Self {
+    pub fn new(snapshot: &text::BufferSnapshot, max_rows_per_chunk: u32) -> Self {
         let buffer_point_range = (0..snapshot.len()).to_point(&snapshot);
         let last_row = buffer_point_range.end.row;
         let chunks = (buffer_point_range.start.row..=last_row)

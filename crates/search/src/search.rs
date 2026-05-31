@@ -95,7 +95,7 @@ pub enum SearchOption {
     Backwards,
 }
 
-pub(crate) enum SearchSource<'a, 'b> {
+pub enum SearchSource<'a, 'b> {
     Buffer,
     Project(&'a Context<'b, ProjectSearchBar>),
 }
@@ -139,7 +139,7 @@ impl SearchOption {
         }
     }
 
-    pub(crate) fn as_button(
+    pub fn as_button(
         &self,
         active: SearchOptions,
         search_source: SearchSource,
@@ -205,7 +205,7 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
         struct NotifType();
         let notification_id = NotificationId::unique::<NotifType>();
 
-        let Some(workspace) = window.root::<Workspace>().flatten() else {
+        let Some(workspace) = Workspace::for_window(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {

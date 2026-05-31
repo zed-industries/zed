@@ -8,15 +8,17 @@ use std::{
 
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
+use language::language_settings::{EditPredictionProvider, all_language_settings};
+
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Corner, Entity, Subscription, Task, WeakEntity, actions};
+use gpui::{Action as _, Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
     LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
-    project_settings::ProjectSettings,
+    project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
@@ -24,7 +26,7 @@ use ui::{
 };
 
 use util::{ResultExt, paths::PathExt, rel_path::RelPath};
-use workspace::{StatusItemView, Workspace};
+use workspace::{StatusItemView, ToggleWorktreeSecurity, Workspace};
 
 use crate::lsp_log_view;
 
@@ -123,7 +125,11 @@ impl ProcessMemoryCache {
 
     fn is_descendant_of(&self, pid: Pid, root_pid: Pid, parent_map: &HashMap<Pid, Pid>) -> bool {
         let mut current = pid;
+        let mut visited = HashSet::default();
         while current != root_pid {
+            if !visited.insert(current) {
+                return false;
+            }
             match parent_map.get(&current) {
                 Some(&parent) => current = parent,
                 None => return false,
@@ -215,6 +221,45 @@ impl LanguageServerState {
             return menu;
         };
 
+        let is_restricted = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
+            })
+            .unwrap_or(false);
+
+        if is_restricted {
+            menu = menu.custom_entry(
+                move |_window, _cx| {
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .color(Color::Warning)
+                                        .size(IconSize::XSmall),
+                                )
+                                .child(
+                                    Label::new("Project is in Restricted Mode")
+                                        .size(LabelSize::Small),
+                                ),
+                        )
+                        .child(
+                            Label::new("Language Servers can't run until you trust this project.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .into_any_element()
+                },
+                move |window, cx| {
+                    window.dispatch_action(ToggleWorktreeSecurity.boxed_clone(), cx);
+                },
+            );
+        }
+
         let server_metadata = self
             .lsp_store
             .update(cx, |lsp_store, _| {
@@ -224,7 +269,7 @@ impl LanguageServerState {
                         (
                             server_id,
                             (
-                                status.server_version.clone(),
+                                status.server_readable_version.clone(),
                                 status.binary.as_ref().map(|b| b.path.clone()),
                                 status.process_id,
                             ),
@@ -327,13 +372,7 @@ impl LanguageServerState {
                 })
                 .unwrap_or((None, None, None));
 
-            let truncated_message = message.as_ref().and_then(|message| {
-                message
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .map(SharedString::new)
-                    .next()
-            });
+            let server_message = message.clone();
 
             let submenu_server_name = server_info.name.clone();
             let submenu_server_info = server_info.clone();
@@ -420,7 +459,7 @@ impl LanguageServerState {
                             let workspace_for_debug = workspace.clone();
                             let server_selector_for_debug = server_selector.clone();
                             submenu = submenu.entry("View Logs", None, move |window, cx| {
-                                lsp_log_view::open_server_trace(
+                                lsp_log_view::open(
                                     &lsp_logs_for_debug,
                                     workspace_for_debug.clone(),
                                     server_selector_for_debug.clone(),
@@ -543,9 +582,9 @@ impl LanguageServerState {
                         submenu = submenu.separator().custom_row({
                             let binary_path = binary_path.clone();
                             let server_version = server_version.clone();
-                            let truncated_message = truncated_message.clone();
+                            let server_message = server_message.clone();
                             let process_memory_cache = process_memory_cache.clone();
-                            move |_, _| {
+                            move |_, cx| {
                                 let memory_usage = process_id.map(|pid| {
                                     process_memory_cache.borrow_mut().get_memory_usage(pid)
                                 });
@@ -561,63 +600,63 @@ impl LanguageServerState {
                                     }
                                 });
 
-                                let metadata_label =
-                                    match (&server_version, &memory_label, &truncated_message) {
-                                        (None, None, None) => None,
-                                        (Some(version), None, None) => {
-                                            Some(format!("v{}", version.as_ref()))
-                                        }
-                                        (None, Some(memory), None) => Some(memory.clone()),
-                                        (Some(version), Some(memory), None) => {
-                                            Some(format!("v{} • {}", version.as_ref(), memory))
-                                        }
-                                        (None, None, Some(message)) => Some(message.to_string()),
-                                        (Some(version), None, Some(message)) => Some(format!(
-                                            "v{}\n\n{}",
-                                            version.as_ref(),
-                                            message.as_ref()
-                                        )),
-                                        (None, Some(memory), Some(message)) => {
-                                            Some(format!("{}\n\n{}", memory, message.as_ref()))
-                                        }
-                                        (Some(version), Some(memory), Some(message)) => {
-                                            Some(format!(
-                                                "v{} • {}\n\n{}",
-                                                version.as_ref(),
-                                                memory,
-                                                message.as_ref()
-                                            ))
-                                        }
-                                    };
+                                let version_label =
+                                    server_version.as_ref().map(|v| format!("v{}", v.as_ref()));
 
-                                h_flex()
+                                let separator_color =
+                                    cx.theme().colors().icon_disabled.opacity(0.8);
+
+                                v_flex()
                                     .id("metadata-container")
-                                    .ml_neg_1()
                                     .gap_1()
-                                    .max_w(rems(164.))
+                                    .when_some(server_message.as_ref(), |this, _| {
+                                        this.w(rems_from_px(240.))
+                                    })
                                     .child(
-                                        Icon::new(IconName::Circle)
-                                            .color(status_color)
-                                            .size(IconSize::Small),
-                                    )
-                                    .child(
-                                        Label::new(status_label)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .when_some(metadata_label.as_ref(), |submenu, metadata| {
-                                        submenu
+                                        h_flex()
+                                            .ml_neg_1()
+                                            .gap_1()
                                             .child(
-                                                Icon::new(IconName::Dash)
-                                                    .color(Color::Disabled)
-                                                    .size(IconSize::XSmall),
+                                                Icon::new(IconName::Circle)
+                                                    .color(status_color)
+                                                    .size(IconSize::Small),
                                             )
                                             .child(
-                                                Label::new(metadata)
+                                                Label::new(status_label)
                                                     .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .truncate(),
+                                                    .color(Color::Muted),
                                             )
+                                            .when_some(version_label.as_ref(), |row, version| {
+                                                row.child(
+                                                    Icon::new(IconName::Dash)
+                                                        .color(Color::Custom(separator_color))
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .child(
+                                                    Label::new(version)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                            })
+                                            .when_some(memory_label.as_ref(), |row, memory| {
+                                                row.child(
+                                                    Icon::new(IconName::Dash)
+                                                        .color(Color::Custom(separator_color))
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .child(
+                                                    Label::new(memory)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                            }),
+                                    )
+                                    .when_some(server_message.clone(), |container, message| {
+                                        container.child(
+                                            Label::new(message)
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
                                     })
                                     .when_some(binary_path.clone(), |el, path| {
                                         el.tooltip(Tooltip::text(path))
@@ -832,12 +871,18 @@ impl LspButton {
             lsp_menu_refresh: Task::ready(()),
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
         };
-        if !lsp_button
-            .server_state
-            .read(cx)
-            .language_servers
-            .binary_statuses
-            .is_empty()
+        let is_restricted = TrustedWorktrees::has_restricted_worktrees(
+            &workspace.project().read(cx).worktree_store(),
+            cx,
+        );
+
+        if is_restricted
+            || !lsp_button
+                .server_state
+                .read(cx)
+                .language_servers
+                .binary_statuses
+                .is_empty()
         {
             lsp_button.refresh_lsp_menu(true, window, cx);
         }
@@ -1179,13 +1224,20 @@ impl StatusItemView for LspButton {
                         .and_then(|active_editor| active_editor.editor.upgrade())
                         .as_ref()
                 {
-                    let editor_buffers =
-                        HashSet::from_iter(editor.read(cx).buffer().read(cx).excerpt_buffer_ids());
+                    let editor_buffers = HashSet::from_iter(
+                        editor
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .snapshot(cx)
+                            .excerpts()
+                            .map(|excerpt| excerpt.context.start.buffer_id),
+                    );
                     let _editor_subscription = cx.subscribe_in(
                         &editor,
                         window,
                         |lsp_button, _, e: &EditorEvent, window, cx| match e {
-                            EditorEvent::ExcerptsAdded { buffer, .. } => {
+                            EditorEvent::BufferRangesUpdated { buffer, .. } => {
                                 let updated = lsp_button.server_state.update(cx, |state, cx| {
                                     if let Some(active_editor) = state.active_editor.as_mut() {
                                         let buffer_id = buffer.read(cx).remote_id();
@@ -1198,9 +1250,7 @@ impl StatusItemView for LspButton {
                                     lsp_button.refresh_lsp_menu(false, window, cx);
                                 }
                             }
-                            EditorEvent::ExcerptsRemoved {
-                                removed_buffer_ids, ..
-                            } => {
+                            EditorEvent::BuffersRemoved { removed_buffer_ids } => {
                                 let removed = lsp_button.server_state.update(cx, |state, _| {
                                     let mut removed = false;
                                     if let Some(active_editor) = state.active_editor.as_mut() {
@@ -1243,18 +1293,43 @@ impl StatusItemView for LspButton {
             self.refresh_lsp_menu(false, window, cx);
         }
     }
+
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.global_lsp_settings.get_or_insert_default().button = Some(false);
+        }))
+    }
 }
 
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
+        let is_restricted = self
+            .server_state
+            .read(cx)
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
+            })
+            .unwrap_or(false);
+
+        if !is_restricted
+            && (self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none())
+        {
             return div().hidden();
         }
+
+        let state = self.server_state.read(cx);
+        let is_via_ssh = state
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server())
+            .unwrap_or(false);
 
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
-        let state = self.server_state.read(cx);
         for binary_status in state.language_servers.binary_statuses.values() {
             has_errors |= matches!(binary_status.status, BinaryStatus::Failed { .. });
             has_other_notifications |= binary_status.message.is_some();
@@ -1271,7 +1346,12 @@ impl Render for LspButton {
             }
         }
 
-        let (indicator, description) = if has_errors {
+        let (indicator, description) = if is_restricted {
+            (
+                Some(Indicator::dot().color(Color::Warning)),
+                "Restricted Mode",
+            )
+        } else if has_errors {
             (
                 Some(Indicator::dot().color(Color::Error)),
                 "Server with errors",
@@ -1294,18 +1374,29 @@ impl Render for LspButton {
 
         div().child(
             PopoverMenu::new("lsp-tool")
+                .on_open(Rc::new(move |_window, cx| {
+                    let copilot_enabled = all_language_settings(None, cx).edit_predictions.provider
+                        == EditPredictionProvider::Copilot;
+                    telemetry::event!(
+                        "Toolbar Menu Opened",
+                        name = "Language Servers",
+                        copilot_enabled,
+                        is_via_ssh,
+                    );
+                }))
                 .menu(move |_, cx| {
                     lsp_button
                         .read_with(cx, |lsp_button, _| lsp_button.lsp_menu.clone())
                         .ok()
                         .flatten()
                 })
-                .anchor(Corner::BottomLeft)
+                .anchor(Anchor::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
                         .when_some(indicator, IconButton::indicator)
                         .icon_size(IconSize::Small)
+                        .when(is_restricted, |s| s.icon_color(Color::Warning))
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                     move |_window, cx| {
                         Tooltip::with_meta("Language Servers", Some(&ToggleMenu), description, cx)

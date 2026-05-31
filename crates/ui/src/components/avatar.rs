@@ -73,7 +73,7 @@ impl Avatar {
 impl RenderOnce for Avatar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let border_width = if self.border_color.is_some() {
-            px(2.)
+            px(1.)
         } else {
             px(0.)
         };
@@ -235,15 +235,14 @@ impl Component for Avatar {
         ComponentScope::Collaboration
     }
 
-    fn description() -> Option<&'static str> {
-        Some(Avatar::DOCS)
+    fn description() -> &'static str {
+        Avatar::DOCS
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let example_avatar = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
-        Some(
-            v_flex()
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group(vec![
@@ -297,7 +296,6 @@ impl Component for Avatar {
                         ],
                     ),
                 ])
-                .into_any_element(),
-        )
+                .into_any_element()
     }
 }

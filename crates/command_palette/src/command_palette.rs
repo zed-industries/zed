@@ -7,13 +7,18 @@ use std::{
     time::Duration,
 };
 
-use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter};
+use client::parse_zed_link;
+use command_palette_hooks::{
+    CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
+    GlobalCommandPaletteInterceptor,
+};
 
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, Task, UniformListScrollHandle, WeakEntity, Window,
+    ParentElement, Render, Styled, Task, TaskExt, WeakEntity, Window,
 };
-use persistence::COMMAND_PALETTE_HISTORY;
+use persistence::CommandPaletteDB;
 use picker::Direction;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
@@ -21,7 +26,7 @@ use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::command_palette::Toggle;
+use zed_actions::{OpenZedUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
     command_palette_hooks::init(cx);
@@ -34,24 +39,28 @@ pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
 }
 
-/// Removes subsequent whitespace characters and double colons from the query.
+/// Removes subsequent whitespace characters and double colons from the query, and converts
+/// underscores to spaces.
 ///
 /// This improves the likelihood of a match by either humanized name or keymap-style name.
+/// Underscores are converted to spaces because `humanize_action_name` converts them to spaces
+/// when building the search candidates (e.g. `terminal_panel::Toggle` -> `terminal panel: toggle`).
 pub fn normalize_action_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
 
     for char in input.trim().chars() {
-        match (last_char, char) {
+        let normalized_char = if char == '_' { ' ' } else { char };
+        match (last_char, normalized_char) {
             (Some(':'), ':') => continue,
-            (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => {
+            (Some(last_char), c) if last_char.is_whitespace() && c.is_whitespace() => {
                 continue;
             }
             _ => {
-                last_char = Some(char);
+                last_char = Some(normalized_char);
             }
         }
-        result.push(char);
+        result.push(normalized_char);
     }
 
     result
@@ -87,7 +96,7 @@ impl CommandPalette {
     fn new(
         previous_focus_handle: FocusHandle,
         query: &str,
-        workspace_entity: WeakEntity<Workspace>,
+        entity: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -98,28 +107,25 @@ impl CommandPalette {
             .into_iter()
             .filter_map(|action| {
                 if filter.is_some_and(|filter| filter.is_hidden(&*action)) {
-                    None
-                } else {
-                    Some(Command {
-                        name: action.name().to_string(),
-                        action: action.boxed_clone(),
-                    })
+                    return None;
                 }
+
+                Some(Command {
+                    name: humanize_action_name(action.name()),
+                    action,
+                })
             })
             .collect();
 
         let delegate = CommandPaletteDelegate::new(
             cx.entity().downgrade(),
-            workspace_entity,
+            entity,
             commands,
             previous_focus_handle,
         );
 
-        let scroll_handle = UniformListScrollHandle::new();
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx)
-                .track_scroll(scroll_handle.clone())
-                .show_scrollbar(true);
+            let picker = Picker::uniform_list(delegate, window, cx);
             picker.set_query(query, window, cx);
             picker
         });
@@ -141,7 +147,7 @@ impl Focusable for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
             .w(rems(34.))
@@ -149,28 +155,18 @@ impl Render for CommandPalette {
     }
 }
 
-/// A command that matched the user's query.
-pub struct CommandMatch {
-    /// The index of the command in the `CommandPaletteDelegate::commands` vec.
-    pub candidate_id: usize,
-    /// The name of the command.
-    pub name: String,
-    /// The character indices to highlight in the UI.
-    pub positions: Vec<usize>,
-}
-
 pub struct CommandPaletteDelegate {
     latest_query: String,
     command_palette: WeakEntity<CommandPalette>,
-    _workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<Workspace>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
-    matches: Vec<CommandMatch>,
+    matches: Vec<StringMatch>,
     selected_ix: usize,
     previous_focus_handle: FocusHandle,
     updating_matches: Option<(
         Task<()>,
-        postage::dispatch::Receiver<(Vec<Command>, Vec<CommandMatch>, CommandInterceptResult)>,
+        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>, CommandInterceptResult)>,
     )>,
     query_history: QueryHistory,
 }
@@ -188,9 +184,9 @@ struct QueryHistory {
 }
 
 impl QueryHistory {
-    fn history(&mut self) -> &mut VecDeque<String> {
+    fn history(&mut self, cx: &App) -> &mut VecDeque<String> {
         self.history.get_or_insert_with(|| {
-            COMMAND_PALETTE_HISTORY
+            CommandPaletteDB::global(cx)
                 .list_recent_queries()
                 .unwrap_or_default()
                 .into_iter()
@@ -198,18 +194,18 @@ impl QueryHistory {
         })
     }
 
-    fn add(&mut self, query: String) {
-        if let Some(pos) = self.history().iter().position(|h| h == &query) {
-            self.history().remove(pos);
+    fn add(&mut self, query: String, cx: &App) {
+        if let Some(pos) = self.history(cx).iter().position(|h| h == &query) {
+            self.history(cx).remove(pos);
         }
-        self.history().push_back(query);
+        self.history(cx).push_back(query);
         self.cursor = None;
         self.prefix = None;
     }
 
-    fn validate_cursor(&mut self, current_query: &str) -> Option<usize> {
+    fn validate_cursor(&mut self, current_query: &str, cx: &App) -> Option<usize> {
         if let Some(pos) = self.cursor {
-            if self.history().get(pos).map(|s| s.as_str()) != Some(current_query) {
+            if self.history(cx).get(pos).map(|s| s.as_str()) != Some(current_query) {
                 self.cursor = None;
                 self.prefix = None;
             }
@@ -217,39 +213,39 @@ impl QueryHistory {
         self.cursor
     }
 
-    fn previous(&mut self, current_query: &str) -> Option<&str> {
-        if self.validate_cursor(current_query).is_none() {
+    fn previous(&mut self, current_query: &str, cx: &App) -> Option<&str> {
+        if self.validate_cursor(current_query, cx).is_none() {
             self.prefix = Some(current_query.to_string());
         }
 
         let prefix = self.prefix.clone().unwrap_or_default();
-        let start_index = self.cursor.unwrap_or(self.history().len());
+        let start_index = self.cursor.unwrap_or(self.history(cx).len());
 
         for i in (0..start_index).rev() {
             if self
-                .history()
+                .history(cx)
                 .get(i)
                 .is_some_and(|e| e.starts_with(&prefix))
             {
                 self.cursor = Some(i);
-                return self.history().get(i).map(|s| s.as_str());
+                return self.history(cx).get(i).map(|s| s.as_str());
             }
         }
         None
     }
 
-    fn next(&mut self, current_query: &str) -> Option<&str> {
-        let selected = self.validate_cursor(current_query)?;
+    fn next(&mut self, current_query: &str, cx: &App) -> Option<&str> {
+        let selected = self.validate_cursor(current_query, cx)?;
         let prefix = self.prefix.clone().unwrap_or_default();
 
-        for i in (selected + 1)..self.history().len() {
+        for i in (selected + 1)..self.history(cx).len() {
             if self
-                .history()
+                .history(cx)
                 .get(i)
                 .is_some_and(|e| e.starts_with(&prefix))
             {
                 self.cursor = Some(i);
-                return self.history().get(i).map(|s| s.as_str());
+                return self.history(cx).get(i).map(|s| s.as_str());
             }
         }
         None
@@ -283,7 +279,7 @@ impl CommandPaletteDelegate {
     ) -> Self {
         Self {
             command_palette,
-            _workspace: workspace,
+            workspace,
             all_commands: commands.clone(),
             matches: vec![],
             commands,
@@ -299,7 +295,7 @@ impl CommandPaletteDelegate {
         &mut self,
         query: String,
         mut commands: Vec<Command>,
-        mut matches: Vec<CommandMatch>,
+        mut matches: Vec<StringMatch>,
         intercept_result: CommandInterceptResult,
         _: &mut Context<Picker<Self>>,
     ) {
@@ -324,10 +320,11 @@ impl CommandPaletteDelegate {
                 name: string.clone(),
                 action,
             });
-            new_matches.push(CommandMatch {
+            new_matches.push(StringMatch {
                 candidate_id: commands.len() - 1,
-                name: string,
+                string: string.into(),
                 positions,
+                score: 0.0,
             })
         }
         if !intercept_result.exclusive {
@@ -342,13 +339,14 @@ impl CommandPaletteDelegate {
         }
     }
 
-    /// Last invocation time for each command in the palette.
-    /// Used for sorting by recency when the command palette is toggled.
-    fn last_invocation_times(&self) -> HashMap<String, time::OffsetDateTime> {
-        if let Ok(commands) = COMMAND_PALETTE_HISTORY.list_commands_used() {
+    /// Hit count for each command in the palette.
+    /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
+    /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
+    fn hit_counts(&self, cx: &App) -> HashMap<String, u16> {
+        if let Ok(commands) = CommandPaletteDB::global(cx).list_commands_used() {
             commands
                 .into_iter()
-                .map(|command| (command.command_name, command.last_invoked))
+                .map(|command| (command.command_name, command.invocations))
                 .collect()
         } else {
             HashMap::new()
@@ -356,6 +354,9 @@ impl CommandPaletteDelegate {
     }
 
     fn selected_command(&self) -> Option<&Command> {
+        if self.matches.is_empty() {
+            return None;
+        }
         let action_ix = self
             .matches
             .get(self.selected_ix)
@@ -384,21 +385,25 @@ impl PickerDelegate for CommandPaletteDelegate {
         direction: Direction,
         query: &str,
         _window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Option<String> {
         match direction {
             Direction::Up => {
                 let should_use_history =
                     self.selected_ix == 0 || self.query_history.is_navigating();
                 if should_use_history {
-                    if let Some(query) = self.query_history.previous(query).map(|s| s.to_string()) {
+                    if let Some(query) = self
+                        .query_history
+                        .previous(query, cx)
+                        .map(|s| s.to_string())
+                    {
                         return Some(query);
                     }
                 }
             }
             Direction::Down => {
                 if self.query_history.is_navigating() {
-                    if let Some(query) = self.query_history.next(query).map(|s| s.to_string()) {
+                    if let Some(query) = self.query_history.next(query, cx).map(|s| s.to_string()) {
                         return Some(query);
                     } else {
                         let prefix = self.query_history.prefix.take().unwrap_or_default();
@@ -436,81 +441,70 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> gpui::Task<()> {
         let settings = WorkspaceSettings::get_global(cx);
         if let Some(alias) = settings.command_aliases.get(&query) {
-            query = alias.to_string();
+            query = alias.as_ref().to_owned();
         }
+
+        let workspace = self.workspace.clone();
+
+        let intercept_task = GlobalCommandPaletteInterceptor::intercept(&query, workspace, cx);
 
         let (mut tx, mut rx) = postage::dispatch::channel(1);
 
         let query_str = query.as_str();
+        let is_zed_link = parse_zed_link(query_str, cx).is_some();
+
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
-            let last_invocation_times = self.last_invocation_times();
+            let hit_counts = self.hit_counts(cx);
+            let executor = cx.background_executor().clone();
             let query = normalize_action_query(query_str);
+            let query_for_link = query_str.to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
-                        Reverse(last_invocation_times.get(&action.name).cloned()),
+                        Reverse(hit_counts.get(&action.name).cloned()),
                         action.name.clone(),
                     )
                 });
 
-                let matches = if query.trim().is_empty() {
-                    // If query is empty, show all commands in their sorted order.
-                    commands
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, command)| CommandMatch {
-                            candidate_id: ix,
-                            positions: Default::default(),
-                            name: command.name.clone(),
-                        })
-                        .collect()
-                } else {
-                    // If there is a query, filter the commands while preserving order.
-                    let words: Vec<String> =
-                        query.split_whitespace().map(|s| s.to_lowercase()).collect();
-                    let mut results = Vec::new();
+                let candidates = commands
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .collect::<Vec<_>>();
 
-                    for (ix, command) in commands.iter().enumerate() {
-                        let candidate_lower = command.name.to_lowercase();
-                        let humanized_lower = humanize_action_name(&command.name).to_lowercase();
+                let matches = fuzzy_nucleo::match_strings_async(
+                    &candidates,
+                    &query,
+                    fuzzy_nucleo::Case::Smart,
+                    fuzzy_nucleo::LengthPenalty::On,
+                    10000,
+                    &Default::default(),
+                    executor,
+                )
+                .await;
 
-                        // Check if all query words match either the original name or the humanized name
-                        if words.iter().all(|word| {
-                            candidate_lower.contains(word) || humanized_lower.contains(word)
-                        }) {
-                            // Find positions for highlighting - prioritize matches in the original name
-                            let mut positions = Vec::new();
-                            for word in &words {
-                                // First try to match in the original name
-                                for (start, matched_word) in candidate_lower.match_indices(word) {
-                                    positions.extend(start..(start + matched_word.len()));
-                                }
-                                // If no match in original, try humanized name
-                                if positions.is_empty() {
-                                    for (start, matched_word) in humanized_lower.match_indices(word)
-                                    {
-                                        positions.extend(start..(start + matched_word.len()));
-                                    }
-                                }
+                let intercept_result = if is_zed_link {
+                    CommandInterceptResult {
+                        results: vec![CommandInterceptItem {
+                            action: OpenZedUrl {
+                                url: query_for_link.clone(),
                             }
-                            positions.sort_unstable();
-                            positions.dedup();
-
-                            results.push(CommandMatch {
-                                candidate_id: ix, // `ix` is the index in the recency-sorted list
-                                positions,
-                                name: command.name.clone(),
-                            });
-                        }
+                            .boxed_clone(),
+                            string: query_for_link,
+                            positions: vec![],
+                        }],
+                        exclusive: false,
                     }
-                    results
+                } else if let Some(task) = intercept_task {
+                    task.await
+                } else {
+                    CommandInterceptResult::default()
                 };
 
-                // Always use an empty intercept result to prevent special commands from being injected.
-                let intercept_result = CommandInterceptResult::default();
-
-                let _ = tx.send((commands, matches, intercept_result)).await;
+                tx.send((commands, matches, intercept_result))
+                    .await
+                    .log_err();
             }
         });
 
@@ -527,7 +521,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .delegate
                         .matches_updated(query, commands, matches, intercept_result, cx)
                 })
-                .log_err();
+                .ok();
         })
     }
 
@@ -560,11 +554,14 @@ impl PickerDelegate for CommandPaletteDelegate {
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.command_palette
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if secondary {
+            if self.matches.is_empty() {
+                return;
+            }
             let Some(selected_command) = self.selected_command() else {
                 return;
             };
@@ -583,7 +580,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
 
         if !self.latest_query.is_empty() {
-            self.query_history.add(self.latest_query.clone());
+            self.query_history.add(self.latest_query.clone(), cx);
             self.query_history.reset_cursor();
         }
 
@@ -598,9 +595,9 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.commands.clear();
         let command_name = command.name.clone();
         let latest_query = self.latest_query.clone();
+        let db = CommandPaletteDB::global(cx);
         cx.background_spawn(async move {
-            COMMAND_PALETTE_HISTORY
-                .write_command_invocation(command_name, latest_query)
+            db.write_command_invocation(command_name, latest_query)
                 .await
         })
         .detach_and_log_err(cx);
@@ -631,7 +628,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .py_px()
                         .justify_between()
                         .child(HighlightedLabel::new(
-                            humanize_action_name(&command.name),
+                            command.name.clone(),
                             matching_command.positions.clone(),
                         ))
                         .child(KeyBinding::for_action_in(
@@ -698,26 +695,69 @@ impl PickerDelegate for CommandPaletteDelegate {
 }
 
 pub fn humanize_action_name(name: &str) -> String {
-    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
+    let chars = name.chars().collect::<Vec<_>>();
+    let capacity = name.len() + chars.iter().filter(|c| c.is_uppercase()).count();
     let mut result = String::with_capacity(capacity);
-    for char in name.chars() {
+    let mut index = 0;
+
+    while index < chars.len() {
+        let char = chars[index];
         if char == ':' {
             if result.ends_with(':') {
                 result.push(' ');
             } else {
                 result.push(':');
             }
+            index += 1;
         } else if char == '_' {
             result.push(' ');
+            index += 1;
         } else if char.is_uppercase() {
-            if !result.ends_with(' ') {
-                result.push(' ');
+            let start = index;
+            index += 1;
+            while chars
+                .get(index)
+                .is_some_and(|next_char| next_char.is_uppercase())
+            {
+                index += 1;
             }
-            result.extend(char.to_lowercase());
+
+            let uppercase_run = &chars[start..index];
+            if uppercase_run.len() > 1 {
+                let split_before_last = chars
+                    .get(index)
+                    .is_some_and(|next_char| next_char.is_lowercase());
+                let acronym_end = if split_before_last {
+                    uppercase_run.len() - 1
+                } else {
+                    uppercase_run.len()
+                };
+
+                if acronym_end > 0 {
+                    if !result.ends_with(' ') {
+                        result.push(' ');
+                    }
+                    result.extend(&uppercase_run[..acronym_end]);
+                }
+
+                if split_before_last {
+                    if !result.ends_with(' ') {
+                        result.push(' ');
+                    }
+                    result.extend(uppercase_run[acronym_end].to_lowercase());
+                }
+            } else {
+                if !result.ends_with(' ') {
+                    result.push(' ');
+                }
+                result.extend(char.to_lowercase());
+            }
         } else {
             result.push(char);
+            index += 1;
         }
     }
+
     result
 }
 
@@ -740,7 +780,7 @@ mod tests {
     use language::Point;
     use project::Project;
     use settings::KeymapFile;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace, Workspace};
 
     #[test]
     fn test_humanize_action_name() {
@@ -756,44 +796,19 @@ mod tests {
             humanize_action_name("go_to_line::Deploy"),
             "go to line: deploy"
         );
-    }
-
-    #[test]
-    fn test_order_insensitive_word_matching() {
-        // Create test candidates
-        let candidates = vec![
-            "workspace: close",
-            "editor: close tab",
-            "work with files",
-            "close workspace",
-            "open file",
-        ];
-
-        // Test that "close work" and "work close" should match the same items
-        // We'll test the logic directly without async
-        let query1 = "close work";
-        let query2 = "work close";
-
-        let words1: Vec<&str> = query1.split_whitespace().collect();
-        let words2: Vec<&str> = query2.split_whitespace().collect();
-
-        // Both should find candidates 0 and 3 (workspace: close, close workspace)
-        for candidate_string in &candidates {
-            let candidate_lower = candidate_string.to_lowercase();
-
-            let matches1 = words1
-                .iter()
-                .all(|word| candidate_lower.contains(&word.to_lowercase()));
-            let matches2 = words2
-                .iter()
-                .all(|word| candidate_lower.contains(&word.to_lowercase()));
-
-            assert_eq!(
-                matches1, matches2,
-                "Candidate '{}' should match both queries equally",
-                candidate_string
-            );
-        }
+        assert_eq!(
+            humanize_action_name("agent::OpenGlobalAGENTS.mdRules"),
+            "agent: open global AGENTS.md rules"
+        );
+        assert_eq!(
+            humanize_action_name("agent::OpenProjectAGENTS.mdRules"),
+            "agent: open project AGENTS.md rules"
+        );
+        assert_eq!(humanize_action_name("editor::OpenURL"), "editor: open URL");
+        assert_eq!(
+            humanize_action_name("editor::OpenURLParser"),
+            "editor: open URL parser"
+        );
     }
 
     #[test]
@@ -822,18 +837,25 @@ mod tests {
             normalize_action_query("editor: :GoToDefinition"),
             "editor: :GoToDefinition"
         );
+        assert_eq!(
+            normalize_action_query("terminal_panel::Toggle"),
+            "terminal panel:Toggle"
+        );
+        assert_eq!(
+            normalize_action_query("project_panel::ToggleFocus"),
+            "project panel:ToggleFocus"
+        );
     }
 
     #[gpui::test]
     async fn test_command_palette(cx: &mut TestAppContext) {
-        persistence::COMMAND_PALETTE_HISTORY
-            .clear_all()
-            .await
-            .unwrap();
         let app_state = init_test(cx);
+        let db = cx.update(|cx| persistence::CommandPaletteDB::global(cx));
+        db.clear_all().await.unwrap();
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -867,7 +889,7 @@ mod tests {
         cx.simulate_input("bcksp");
 
         palette.read_with(cx, |palette, _| {
-            assert_eq!(palette.delegate.matches[0].name, "editor: backspace");
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
         });
 
         cx.simulate_keystrokes("enter");
@@ -899,12 +921,40 @@ mod tests {
             assert!(palette.delegate.matches.is_empty())
         });
     }
+
+    #[gpui::test]
+    async fn test_selected_command_none_when_no_matches(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.simulate_keystrokes("cmd-shift-p");
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        cx.simulate_input("definitely-no-command-should-match-this");
+        cx.background_executor.run_until_parked();
+
+        picker.read_with(cx, |picker, _cx| {
+            assert!(picker.delegate.matches.is_empty());
+            assert!(picker.delegate.selected_command().is_none());
+        });
+    }
     #[gpui::test]
     async fn test_normalized_matches(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -931,7 +981,7 @@ mod tests {
 
         cx.simulate_input("Editor::    Backspace");
         palette.read_with(cx, |palette, _| {
-            assert_eq!(palette.delegate.matches[0].name, "editor: backspace");
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
         });
     }
 
@@ -939,8 +989,9 @@ mod tests {
     async fn test_go_to_line(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.simulate_keystrokes("cmd-n");
 
@@ -977,7 +1028,7 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             go_to_line::init(cx);
@@ -1029,8 +1080,9 @@ mod tests {
     async fn test_history_navigation_basic(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["backspace", "select all"], cx);
 
@@ -1072,8 +1124,9 @@ mod tests {
     async fn test_history_mode_exit_on_typing(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["backspace"], cx);
 
@@ -1096,8 +1149,9 @@ mod tests {
     async fn test_history_navigation_with_suggestions(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["editor: close", "editor: open"], cx);
 
@@ -1138,8 +1192,9 @@ mod tests {
     async fn test_history_prefix_search(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(
             &workspace,
@@ -1191,8 +1246,9 @@ mod tests {
     async fn test_history_prefix_search_no_matches(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette =
             open_palette_with_history(&workspace, &["open file", "backspace", "select all"], cx);
@@ -1213,8 +1269,9 @@ mod tests {
     async fn test_history_empty_prefix_searches_all(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["alpha", "beta", "gamma"], cx);
 

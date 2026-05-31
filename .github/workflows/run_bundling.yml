@@ -19,9 +19,11 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: clang-18
+      CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -30,20 +32,18 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-    - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-linux-aarch64.tar.gz
         path: target/release/zed-linux-aarch64.tar.gz
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-linux-aarch64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-linux-aarch64.gz
         path: target/zed-remote-server-linux-aarch64.gz
@@ -58,9 +58,11 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: clang-18
+      CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -69,20 +71,18 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-    - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-linux-x86_64.tar.gz
         path: target/release/zed-linux-x86_64.tar.gz
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-linux-x86_64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-linux-x86_64.gz
         path: target/zed-remote-server-linux-x86_64.gz
@@ -104,7 +104,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_node
@@ -116,17 +116,17 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
-    - name: '@actions/upload-artifact Zed-aarch64.dmg'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-aarch64.dmg
         path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-macos-aarch64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
@@ -148,7 +148,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_node
@@ -160,17 +160,17 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
-    - name: '@actions/upload-artifact Zed-x86_64.dmg'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-x86_64.dmg
         path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-macos-x86_64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
@@ -196,7 +196,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -207,14 +207,14 @@ jobs:
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: '@actions/upload-artifact Zed-aarch64.exe'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-aarch64.exe
         path: target/Zed-aarch64.exe
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-windows-aarch64.zip'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-windows-aarch64.zip
         path: target/zed-remote-server-windows-aarch64.zip
@@ -240,7 +240,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -251,14 +251,14 @@ jobs:
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: '@actions/upload-artifact Zed-x86_64.exe'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-x86_64.exe
         path: target/Zed-x86_64.exe
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-windows-x86_64.zip'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-windows-x86_64.zip
         path: target/zed-remote-server-windows-x86_64.zip

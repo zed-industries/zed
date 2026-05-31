@@ -1,84 +1,93 @@
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
-    WebSearchTool, decide_permission_from_settings,
+    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
+    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
+    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
+    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use agent_settings::UserAgentsMd;
+use feature_flags::{
+    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+    UpdateTitleToolFeatureFlag,
+};
 
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::{
-    AgentProfileId, AgentProfileSettings, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT,
-    SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
-use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
-use futures::stream;
 use futures::{
     FutureExt,
     channel::{mpsc, oneshot},
     future::Shared,
     stream::FuturesUnordered,
 };
+use futures::{StreamExt, stream};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
+use heck::ToSnakeCase as _;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason,
+    TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings, ToolPermissionMode, update_settings_file};
-use smol::stream::StreamExt;
+use settings::{
+    LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
+};
+use std::fmt::Write;
 use std::{
     collections::BTreeMap,
+    marker::PhantomData,
     ops::RangeInclusive,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
-use std::{fmt::Write, path::PathBuf};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
-pub const MAX_SUBAGENT_DEPTH: u8 = 4;
-pub const MAX_PARALLEL_SUBAGENTS: usize = 8;
+pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+
+/// Returned when a turn is attempted but no language model has been selected.
+#[derive(Debug)]
+pub struct NoModelConfiguredError;
+
+impl std::fmt::Display for NoModelConfiguredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no language model configured")
+    }
+}
+
+impl std::error::Error for NoModelConfiguredError {}
 
 /// Context passed to a subagent thread for lifecycle management
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
     /// ID of the parent thread
     pub parent_thread_id: acp::SessionId,
 
-    /// ID of the tool call that spawned this subagent
-    pub tool_use_id: LanguageModelToolUseId,
-
     /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
     pub depth: u8,
-
-    /// Prompt to send when subagent completes successfully
-    pub summary_prompt: String,
-
-    /// Prompt to send when context is running low (≤25% remaining)
-    pub context_low_prompt: String,
 }
 
 /// The ID of the user prompt that initiated a request.
@@ -114,7 +123,7 @@ enum RetryStrategy {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
@@ -167,21 +176,24 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub id: UserMessageId,
-    pub content: Vec<UserMessageContent>,
+    pub content: Arc<[UserMessageContent]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserMessageContent {
     Text(String),
-    Mention { uri: MentionUri, content: String },
+    Mention {
+        uri: MentionUri,
+        content: SharedString,
+    },
     Image(LanguageModelImage),
 }
 
 impl UserMessage {
     pub fn to_markdown(&self) -> String {
-        let mut markdown = String::from("## User\n\n");
+        let mut markdown = String::new();
 
-        for content in &self.content {
+        for content in &*self.content {
             match content {
                 UserMessageContent::Text(text) => {
                     markdown.push_str(text);
@@ -224,6 +236,10 @@ impl UserMessage {
         const OPEN_RULES_TAG: &str =
             "<rules>\nThe user has specified the following rules that should be applied:\n";
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
+        const OPEN_DIFFS_TAG: &str = "<diffs>";
+        const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
+        const OPEN_SKILLS_TAG: &str =
+            "<skills>\nThe user has attached the following agent skills:\n";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -233,8 +249,11 @@ impl UserMessage {
         let mut fetch_context = OPEN_FETCH_TAG.to_string();
         let mut rules_context = OPEN_RULES_TAG.to_string();
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
+        let mut diffs_context = OPEN_DIFFS_TAG.to_string();
+        let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
+        let mut skills_context = OPEN_SKILLS_TAG.to_string();
 
-        for chunk in &self.content {
+        for chunk in &*self.content {
             let chunk = match chunk {
                 UserMessageContent::Text(text) => {
                     language_model::MessageContent::Text(text.clone())
@@ -250,12 +269,12 @@ impl UserMessage {
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: &codeblock_tag(abs_path, None),
-                                    text: &content.to_string(),
+                                    text: content,
                                 }
                             )
                             .ok();
                         }
-                        MentionUri::PastedImage => {
+                        MentionUri::PastedImage { .. } => {
                             debug_panic!("pasted image URI should not be used in mention content")
                         }
                         MentionUri::Directory { .. } => {
@@ -297,20 +316,6 @@ impl UserMessage {
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
-                        MentionUri::TextThread { .. } => {
-                            write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::Rule { .. } => {
-                            write!(
-                                &mut rules_context,
-                                "\n{}",
-                                MarkdownCodeBlock {
-                                    tag: "",
-                                    text: content
-                                }
-                            )
-                            .ok();
-                        }
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
                         }
@@ -327,6 +332,34 @@ impl UserMessage {
                                 }
                             )
                             .ok();
+                        }
+                        MentionUri::GitDiff { base_ref } => {
+                            write!(
+                                &mut diffs_context,
+                                "\nBranch diff against {}:\n{}",
+                                base_ref,
+                                MarkdownCodeBlock {
+                                    tag: "diff",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::MergeConflict { file_path } => {
+                            write!(
+                                &mut merge_conflict_context,
+                                "\nMerge conflict in {}:\n{}",
+                                file_path,
+                                MarkdownCodeBlock {
+                                    tag: "diff",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::Skill { name, source, .. } => {
+                            let label = format!("{} ({})", name, source);
+                            write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
                         }
                     }
 
@@ -367,6 +400,13 @@ impl UserMessage {
                 .push(language_model::MessageContent::Text(selection_context));
         }
 
+        if diffs_context.len() > OPEN_DIFFS_TAG.len() {
+            diffs_context.push_str("</diffs>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(diffs_context));
+        }
+
         if thread_context.len() > OPEN_THREADS_TAG.len() {
             thread_context.push_str("</threads>\n");
             message
@@ -393,6 +433,20 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(diagnostics_context));
+        }
+
+        if skills_context.len() > OPEN_SKILLS_TAG.len() {
+            skills_context.push_str("</skills>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(skills_context));
+        }
+
+        if merge_conflict_context.len() > MERGE_CONFLICT_TAG.len() {
+            merge_conflict_context.push_str("</merge_conflicts>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(merge_conflict_context));
         }
 
         if message.content.len() > len_before_context {
@@ -431,7 +485,7 @@ fn codeblock_tag(full_path: &Path, line_range: Option<&RangeInclusive<u32>>) -> 
 
 impl AgentMessage {
     pub fn to_markdown(&self) -> String {
-        let mut markdown = String::from("## Assistant\n\n");
+        let mut markdown = String::new();
 
         for content in &self.content {
             match content {
@@ -472,12 +526,14 @@ impl AgentMessage {
                 markdown.push_str("**ERROR:**\n");
             }
 
-            match &tool_result.content {
-                LanguageModelToolResultContent::Text(text) => {
-                    writeln!(markdown, "{text}\n").ok();
-                }
-                LanguageModelToolResultContent::Image(_) => {
-                    writeln!(markdown, "<image />\n").ok();
+            for part in &tool_result.content {
+                match part {
+                    LanguageModelToolResultContent::Text(text) => {
+                        writeln!(markdown, "{text}\n").ok();
+                    }
+                    LanguageModelToolResultContent::Image(_) => {
+                        writeln!(markdown, "<image />\n").ok();
+                    }
                 }
             }
 
@@ -542,8 +598,8 @@ impl AgentMessage {
             let mut tool_result = tool_result.clone();
             // Surprisingly, the API fails if we return an empty string here.
             // It thinks we are sending a tool use without a tool result.
-            if tool_result.content.is_empty() {
-                tool_result.content = "<Tool returned an empty string>".into();
+            if tool_result.is_content_empty() {
+                tool_result.content = vec!["<Tool returned an empty string>".into()];
             }
             user_message
                 .content
@@ -563,9 +619,9 @@ impl AgentMessage {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentMessage {
-    pub content: Vec<AgentMessageContent>,
-    pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
-    pub reasoning_details: Option<serde_json::Value>,
+    pub(crate) content: Vec<AgentMessageContent>,
+    pub(crate) tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
+    pub(crate) reasoning_details: Option<Arc<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -587,14 +643,38 @@ pub trait TerminalHandle {
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool>;
 }
 
+pub trait SubagentHandle {
+    /// The session ID of this subagent thread
+    fn id(&self) -> acp::SessionId;
+    /// The current number of entries in the thread.
+    /// Useful for knowing where the next turn will begin
+    fn num_entries(&self, cx: &App) -> usize;
+    /// Runs a turn for a given message and returns both the response and the index of that output message.
+    fn send(&self, message: String, cx: &AsyncApp) -> Task<Result<String>>;
+}
+
 pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
+        extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
+
+    fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>>;
+
+    fn resume_subagent(
+        &self,
+        _session_id: acp::SessionId,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        Err(anyhow::anyhow!(
+            "Resuming subagent sessions is not supported"
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -604,7 +684,9 @@ pub enum ThreadEvent {
     AgentThinking(String),
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
+    Plan(acp::Plan),
     ToolCallAuthorization(ToolCallAuthorization),
+    SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
@@ -620,14 +702,30 @@ pub struct NewTerminal {
 #[derive(Debug, Clone)]
 pub struct ToolPermissionContext {
     pub tool_name: String,
-    pub input_value: String,
+    pub input_values: Vec<String>,
+    pub scope: ToolPermissionScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolPermissionScope {
+    ToolInput,
+    SymlinkTarget,
 }
 
 impl ToolPermissionContext {
-    pub fn new(tool_name: impl Into<String>, input_value: impl Into<String>) -> Self {
+    pub fn new(tool_name: impl Into<String>, input_values: Vec<String>) -> Self {
         Self {
             tool_name: tool_name.into(),
-            input_value: input_value.into(),
+            input_values,
+            scope: ToolPermissionScope::ToolInput,
+        }
+    }
+
+    pub fn symlink_target(tool_name: impl Into<String>, target_paths: Vec<String>) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            input_values: target_paths,
+            scope: ToolPermissionScope::SymlinkTarget,
         }
     }
 
@@ -660,56 +758,136 @@ impl ToolPermissionContext {
         use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
-        let input_value = &self.input_value;
+        let input_values = &self.input_values;
+        if self.scope == ToolPermissionScope::SymlinkTarget {
+            return acp_thread::PermissionOptions::Flat(vec![
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("allow"),
+                    "Yes",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("deny"),
+                    "No",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ]);
+        }
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
-        let shell_supports_always_allow = if tool_name == TerminalTool::name() {
+        let shell_supports_always_allow = if tool_name == TerminalTool::NAME {
             ShellKind::system().supports_posix_chaining()
         } else {
             true
         };
 
-        let (pattern, pattern_display) = if tool_name == TerminalTool::name() {
-            (
-                extract_terminal_pattern(input_value),
-                extract_terminal_pattern_display(input_value),
-            )
-        } else if tool_name == EditFileTool::name()
-            || tool_name == DeletePathTool::name()
-            || tool_name == MovePathTool::name()
-            || tool_name == CreateDirectoryTool::name()
-            || tool_name == SaveFileTool::name()
-        {
-            (
-                extract_path_pattern(input_value),
-                extract_path_pattern_display(input_value),
-            )
-        } else if tool_name == FetchTool::name() {
-            (
-                extract_url_pattern(input_value),
-                extract_url_pattern_display(input_value),
-            )
-        } else {
-            (None, None)
+        // For terminal commands with multiple pipeline commands, use DropdownWithPatterns
+        // to let users individually select which command patterns to always allow.
+        if tool_name == TerminalTool::NAME && shell_supports_always_allow {
+            if let Some(input) = input_values.first() {
+                let all_patterns = extract_all_terminal_patterns(input);
+                if all_patterns.len() > 1 {
+                    let mut choices = Vec::new();
+                    choices.push(acp_thread::PermissionOptionChoice {
+                        allow: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new(format!("always_allow:{}", tool_name)),
+                            format!("Always for {}", tool_name.replace('_', " ")),
+                            acp::PermissionOptionKind::AllowAlways,
+                        ),
+                        deny: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new(format!("always_deny:{}", tool_name)),
+                            format!("Always for {}", tool_name.replace('_', " ")),
+                            acp::PermissionOptionKind::RejectAlways,
+                        ),
+                        sub_patterns: vec![],
+                    });
+                    choices.push(acp_thread::PermissionOptionChoice {
+                        allow: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("allow"),
+                            "Only this time",
+                            acp::PermissionOptionKind::AllowOnce,
+                        ),
+                        deny: acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("deny"),
+                            "Only this time",
+                            acp::PermissionOptionKind::RejectOnce,
+                        ),
+                        sub_patterns: vec![],
+                    });
+                    return acp_thread::PermissionOptions::DropdownWithPatterns {
+                        choices,
+                        patterns: all_patterns,
+                        tool_name: tool_name.clone(),
+                    };
+                }
+            }
+        }
+
+        let extract_for_value = |value: &str| -> (Option<String>, Option<String>) {
+            if tool_name == TerminalTool::NAME {
+                (
+                    extract_terminal_pattern(value),
+                    extract_terminal_pattern_display(value),
+                )
+            } else if tool_name == CopyPathTool::NAME
+                || tool_name == MovePathTool::NAME
+                || tool_name == EditFileTool::NAME
+                || tool_name == WriteFileTool::NAME
+                || tool_name == DeletePathTool::NAME
+                || tool_name == CreateDirectoryTool::NAME
+            {
+                (
+                    extract_path_pattern(value),
+                    extract_path_pattern_display(value),
+                )
+            } else if tool_name == FetchTool::NAME {
+                (
+                    extract_url_pattern(value),
+                    extract_url_pattern_display(value),
+                )
+            } else {
+                (None, None)
+            }
+        };
+
+        // Extract patterns from all input values. Only offer a pattern-specific
+        // "always allow/deny" button when every value produces the same pattern.
+        let (pattern, pattern_display) = match input_values.as_slice() {
+            [single] => extract_for_value(single),
+            _ => {
+                let mut iter = input_values.iter().map(|v| extract_for_value(v));
+                match iter.next() {
+                    Some(first) => {
+                        if iter.all(|pair| pair.0 == first.0) {
+                            first
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    None => (None, None),
+                }
+            }
         };
 
         let mut choices = Vec::new();
 
-        let mut push_choice = |label: String, allow_id, deny_id, allow_kind, deny_kind| {
-            choices.push(acp_thread::PermissionOptionChoice {
-                allow: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new(allow_id),
-                    label.clone(),
-                    allow_kind,
-                ),
-                deny: acp::PermissionOption::new(
-                    acp::PermissionOptionId::new(deny_id),
-                    label,
-                    deny_kind,
-                ),
-            });
-        };
+        let mut push_choice =
+            |label: String, allow_id, deny_id, allow_kind, deny_kind, sub_patterns: Vec<String>| {
+                choices.push(acp_thread::PermissionOptionChoice {
+                    allow: acp::PermissionOption::new(
+                        acp::PermissionOptionId::new(allow_id),
+                        label.clone(),
+                        allow_kind,
+                    ),
+                    deny: acp::PermissionOption::new(
+                        acp::PermissionOptionId::new(deny_id),
+                        label,
+                        deny_kind,
+                    ),
+                    sub_patterns,
+                });
+            };
 
         if shell_supports_always_allow {
             push_choice(
@@ -718,20 +896,22 @@ impl ToolPermissionContext {
                 format!("always_deny:{}", tool_name),
                 acp::PermissionOptionKind::AllowAlways,
                 acp::PermissionOptionKind::RejectAlways,
+                vec![],
             );
 
             if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-                let button_text = if tool_name == TerminalTool::name() {
+                let button_text = if tool_name == TerminalTool::NAME {
                     format!("Always for `{}` commands", display)
                 } else {
                     format!("Always for `{}`", display)
                 };
                 push_choice(
                     button_text,
-                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    format!("always_allow:{}", tool_name),
+                    format!("always_deny:{}", tool_name),
                     acp::PermissionOptionKind::AllowAlways,
                     acp::PermissionOptionKind::RejectAlways,
+                    vec![pattern],
                 );
             }
         }
@@ -742,6 +922,7 @@ impl ToolPermissionContext {
             "deny".to_string(),
             acp::PermissionOptionKind::AllowOnce,
             acp::PermissionOptionKind::RejectOnce,
+            vec![],
         );
 
         acp_thread::PermissionOptions::Dropdown(choices)
@@ -752,8 +933,9 @@ impl ToolPermissionContext {
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
     pub options: acp_thread::PermissionOptions,
-    pub response: oneshot::Sender<acp::PermissionOptionId>,
+    pub response: oneshot::Sender<acp_thread::SelectedPermissionOutcome>,
     pub context: Option<ToolPermissionContext>,
+    pub kind: acp_thread::AuthorizationKind,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -772,9 +954,10 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
     pending_title_generation: Option<Task<()>>,
+    title_generation_failed: bool,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
-    messages: Vec<Message>,
+    messages: Vec<Arc<Message>>,
     user_store: Entity<UserStore>,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -797,18 +980,23 @@ pub struct Thread {
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
+    thinking_effort: Option<String>,
+    speed: Option<Speed>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
-    /// Tracks the last time files were read by the agent, to detect external modifications
-    pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
     /// True if this thread was imported from a shared thread and can be synced.
     imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
+    /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
+    draft_prompt: Option<Vec<acp::ContentBlock>>,
+    ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    inherits_parent_model_settings: bool,
+    sandboxed_terminal_temp_dir: Option<PathBuf>,
 }
 
 impl Thread {
@@ -819,6 +1007,36 @@ impl Thread {
             .embedded_context(true)
     }
 
+    pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
+        let project = parent_thread.read(cx).project.clone();
+        let project_context = parent_thread.read(cx).project_context.clone();
+        let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
+        let templates = parent_thread.read(cx).templates.clone();
+        let model = parent_thread.read(cx).model().cloned();
+        let parent_action_log = parent_thread.read(cx).action_log().clone();
+        let action_log =
+            cx.new(|_cx| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
+        let mut thread = Self::new_internal(
+            project,
+            project_context,
+            context_server_registry,
+            templates,
+            model,
+            action_log,
+            cx,
+        );
+        thread.subagent_context = Some(SubagentContext {
+            parent_thread_id: parent_thread.read(cx).id().clone(),
+            depth: parent_thread.read(cx).depth() + 1,
+        });
+        thread.inherit_parent_settings(parent_thread, cx);
+        if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
+            thread.inherits_parent_model_settings = false;
+            thread.apply_model_selection(&subagent_model, cx);
+        }
+        thread
+    }
+
     pub fn new(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
@@ -827,8 +1045,40 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
+        Self::new_internal(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            templates,
+            model,
+            cx.new(|_cx| ActionLog::new(project)),
+            cx,
+        )
+    }
+
+    fn new_internal(
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Option<Arc<dyn LanguageModel>>,
+        action_log: Entity<ActionLog>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
+        let speed = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
@@ -837,6 +1087,7 @@ impl Thread {
             updated_at: Utc::now(),
             title: None,
             pending_title_generation: None,
+            title_generation_failed: false,
             pending_summary_generation: None,
             summary: None,
             messages: Vec::new(),
@@ -859,82 +1110,85 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
+            speed,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
             action_log,
-            file_read_times: HashMap::default(),
             imported: false,
             subagent_context: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
             running_subagents: Vec::new(),
+            inherits_parent_model_settings: true,
+            sandboxed_terminal_temp_dir: None,
         }
     }
 
-    pub fn new_subagent(
-        project: Entity<Project>,
-        project_context: Entity<ProjectContext>,
-        context_server_registry: Entity<ContextServerRegistry>,
-        templates: Arc<Templates>,
-        model: Arc<dyn LanguageModel>,
-        subagent_context: SubagentContext,
-        parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    /// Copies runtime-mutable settings from the parent thread so that
+    /// subagents start with the same configuration the user selected.
+    /// Every property that `set_*` propagates to `running_subagents`
+    /// should be inherited here as well.
+    fn inherit_parent_settings(&mut self, parent_thread: &Entity<Thread>, cx: &mut Context<Self>) {
+        let parent = parent_thread.read(cx);
+        self.speed = parent.speed;
+        self.thinking_enabled = parent.thinking_enabled;
+        self.thinking_effort = parent.thinking_effort.clone();
+        self.summarization_model = parent.summarization_model.clone();
+        self.profile_id = parent.profile_id.clone();
+    }
+
+    fn apply_model_selection(
+        &mut self,
+        selection: &LanguageModelSelection,
         cx: &mut Context<Self>,
-    ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
-        let (prompt_capabilities_tx, prompt_capabilities_rx) =
-            watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
+    ) {
+        let Some(model) = Self::resolve_model_from_selection(selection, cx) else {
+            log::warn!(
+                "failed to resolve configured subagent model: {}/{}",
+                selection.provider.0,
+                selection.model
+            );
+            return;
+        };
 
-        // Rebind tools that hold thread references to use this subagent's thread
-        // instead of the parent's thread. This is critical for tools like EditFileTool
-        // that make model requests using the thread's ID.
-        let weak_self = cx.weak_entity();
-        let tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> = parent_tools
-            .into_iter()
-            .map(|(name, tool)| {
-                let rebound = tool.rebind_thread(weak_self.clone()).unwrap_or(tool);
-                (name, rebound)
-            })
-            .collect();
-
-        Self {
-            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
-            prompt_id: PromptId::new(),
-            updated_at: Utc::now(),
-            title: None,
-            pending_title_generation: None,
-            pending_summary_generation: None,
-            summary: None,
-            messages: Vec::new(),
-            user_store: project.read(cx).user_store(),
-            running_turn: None,
-            has_queued_message: false,
-            pending_message: None,
-            tools,
-            request_token_usage: HashMap::default(),
-            cumulative_token_usage: TokenUsage::default(),
-            initial_project_snapshot: Task::ready(None).shared(),
-            context_server_registry,
-            profile_id,
-            project_context,
-            templates,
-            model: Some(model),
-            summarization_model: None,
-            thinking_enabled: true,
-            prompt_capabilities_tx,
-            prompt_capabilities_rx,
-            project,
-            action_log,
-            file_read_times: HashMap::default(),
-            imported: false,
-            subagent_context: Some(subagent_context),
-            running_subagents: Vec::new(),
-        }
+        self.model = Some(model.clone());
+        self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
+        self.thinking_effort = selection.effort.clone();
+        self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.prompt_capabilities_tx
+            .send(Self::prompt_capabilities(self.model.as_deref()))
+            .log_err();
     }
 
     pub fn id(&self) -> &acp::SessionId {
         &self.id
+    }
+
+    pub(crate) fn sandboxed_terminal_temp_dir(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<PathBuf> {
+        if let Some(temp_dir) = &self.sandboxed_terminal_temp_dir {
+            std::fs::create_dir_all(temp_dir).with_context(|| {
+                format!(
+                    "failed to recreate sandboxed terminal temp directory {}",
+                    temp_dir.display()
+                )
+            })?;
+            return Ok(temp_dir.clone());
+        }
+
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-agent-terminal-")
+            .tempdir()
+            .context("failed to create sandboxed terminal temp directory")?;
+        let temp_dir = temp_dir.keep();
+        self.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
+        cx.notify();
+        Ok(temp_dir)
     }
 
     /// Returns true if this thread was imported from a shared thread.
@@ -949,7 +1203,7 @@ impl Thread {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream(tx);
         for message in &self.messages {
-            match message {
+            match &**message {
                 Message::User(user_message) => stream.send_user_message(user_message),
                 Message::Agent(assistant_message) => {
                     for content in &assistant_message.content {
@@ -983,6 +1237,20 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
+        let output = tool_result
+            .as_ref()
+            .and_then(|result| result.output.clone());
+        let replay_content = tool_result.and_then(Self::tool_result_content_for_replay);
+        let status = tool_result
+            .as_ref()
+            .map_or(acp::ToolCallStatus::Failed, |result| {
+                if result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                }
+            });
+
         let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
             self.context_server_registry
                 .read(cx)
@@ -997,14 +1265,29 @@ impl Thread {
         });
 
         let Some(tool) = tool else {
+            // Tool not found (e.g., MCP server not connected after restart),
+            // but still display the saved result if available.
+            // We need to send both ToolCall and ToolCallUpdate events because the UI
+            // only converts raw_output to displayable content in update_fields, not from_acp.
+            let title = Self::title_for_replayed_tool_use(tool_use);
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
-                    acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
-                        .status(acp::ToolCallStatus::Failed)
+                    acp::ToolCall::new(tool_use.id.to_string(), title.clone())
+                        .status(status)
                         .raw_input(tool_use.input.clone()),
                 )))
                 .ok();
+            let mut fields = acp::ToolCallUpdateFields::new()
+                .status(status)
+                .raw_output(output);
+            if tool_use.name.as_ref() == UpdateTitleTool::NAME {
+                fields = fields.title(title);
+            }
+            if let Some(content) = replay_content {
+                fields = fields.content(content);
+            }
+            stream.update_tool_call_fields(&tool_use.id, fields, None);
             return;
         };
 
@@ -1018,9 +1301,14 @@ impl Thread {
             tool_use.input.clone(),
         );
 
-        let output = tool_result
-            .as_ref()
-            .and_then(|result| result.output.clone());
+        if let Some(content) = replay_content {
+            stream.update_tool_call_fields(
+                &tool_use.id,
+                acp::ToolCallUpdateFields::new().content(content),
+                None,
+            );
+        }
+
         if let Some(output) = output.clone() {
             // For replay, we use a dummy cancellation receiver since the tool already completed
             let (_cancellation_tx, cancellation_rx) = watch::channel(false);
@@ -1037,19 +1325,59 @@ impl Thread {
         stream.update_tool_call_fields(
             &tool_use.id,
             acp::ToolCallUpdateFields::new()
-                .status(
-                    tool_result
-                        .as_ref()
-                        .map_or(acp::ToolCallStatus::Failed, |result| {
-                            if result.is_error {
-                                acp::ToolCallStatus::Failed
-                            } else {
-                                acp::ToolCallStatus::Completed
-                            }
-                        }),
-                )
+                .status(status)
                 .raw_output(output),
+            None,
         );
+    }
+
+    fn title_for_replayed_tool_use(tool_use: &LanguageModelToolUse) -> String {
+        if tool_use.name.as_ref() == UpdateTitleTool::NAME {
+            let input = serde_json::from_value(tool_use.input.clone())
+                .map_err(|_| serde_json::Value::String(tool_use.raw_input.clone()));
+            UpdateTitleTool::title_for_input(input).to_string()
+        } else {
+            tool_use.name.to_string()
+        }
+    }
+
+    fn tool_result_content_for_replay(
+        tool_result: &LanguageModelToolResult,
+    ) -> Option<Vec<acp::ToolCallContent>> {
+        let has_image = tool_result
+            .content
+            .iter()
+            .any(|part| matches!(part, LanguageModelToolResultContent::Image(_)));
+        if !has_image && tool_result.output.is_some() {
+            return None;
+        }
+
+        let content = tool_result
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                LanguageModelToolResultContent::Text(text) => {
+                    if text.is_empty() {
+                        None
+                    } else {
+                        Some(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+                        )))
+                    }
+                }
+                LanguageModelToolResultContent::Image(image) => Some(
+                    acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                        acp::ImageContent::new(image.source.clone(), "image/png"),
+                    ))),
+                ),
+            })
+            .collect::<Vec<_>>();
+
+        if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        }
     }
 
     pub fn from_db(
@@ -1061,9 +1389,10 @@ impl Thread {
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let settings = AgentSettings::get_global(cx);
         let profile_id = db_thread
             .profile
-            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+            .unwrap_or_else(|| settings.default_profile.clone());
 
         let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
@@ -1102,6 +1431,7 @@ impl Thread {
                 Some(db_thread.title.clone())
             },
             pending_title_generation: None,
+            title_generation_failed: false,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
@@ -1119,24 +1449,31 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            // TODO: Persist this on the `DbThread`.
-            thinking_enabled: true,
+            thinking_enabled: db_thread.thinking_enabled,
+            thinking_effort: db_thread.thinking_effort,
+            speed: db_thread.speed,
             project,
             action_log,
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
-            file_read_times: HashMap::default(),
             imported: db_thread.imported,
-            subagent_context: None,
+            subagent_context: db_thread.subagent_context,
+            draft_prompt: db_thread.draft_prompt,
+            ui_scroll_position: db_thread.ui_scroll_position.map(|sp| gpui::ListOffset {
+                item_ix: sp.item_ix,
+                offset_in_item: gpui::px(sp.offset_in_item),
+            }),
             running_subagents: Vec::new(),
+            inherits_parent_model_settings: true,
+            sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
         }
     }
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         let mut thread = DbThread {
-            title: self.title(),
+            title: self.title().unwrap_or_default(),
             messages: self.messages.clone(),
             updated_at: self.updated_at,
             detailed_summary: self.summary.clone(),
@@ -1145,10 +1482,22 @@ impl Thread {
             request_token_usage: self.request_token_usage.clone(),
             model: self.model.as_ref().map(|model| DbLanguageModel {
                 provider: model.provider_id().to_string(),
-                model: model.name().0.to_string(),
+                model: model.id().0.to_string(),
             }),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
+            subagent_context: self.subagent_context.clone(),
+            speed: self.speed,
+            thinking_enabled: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
+            draft_prompt: self.draft_prompt.clone(),
+            ui_scroll_position: self.ui_scroll_position.map(|lo| {
+                crate::db::SerializedScrollPosition {
+                    item_ix: lo.item_ix,
+                    offset_in_item: lo.offset_in_item.as_f32(),
+                }
+            }),
+            sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
         };
 
         cx.background_spawn(async move {
@@ -1190,19 +1539,46 @@ impl Thread {
         self.messages.is_empty() && self.title.is_none()
     }
 
+    pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
+        self.draft_prompt.as_deref()
+    }
+
+    pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
+        self.draft_prompt = prompt;
+    }
+
+    pub fn ui_scroll_position(&self) -> Option<gpui::ListOffset> {
+        self.ui_scroll_position
+    }
+
+    pub fn set_ui_scroll_position(&mut self, position: Option<gpui::ListOffset>) {
+        self.ui_scroll_position = position;
+    }
+
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
         self.model.as_ref()
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
-        self.model = Some(model);
+        self.model = Some(model.clone());
         let new_caps = Self::prompt_capabilities(self.model.as_deref());
         let new_usage = self.latest_token_usage();
         if old_usage != new_usage {
             cx.emit(TokenUsageUpdated(new_usage));
         }
         self.prompt_capabilities_tx.send(new_caps).log_err();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_model(model.clone(), cx);
+                    }
+                })
+                .ok();
+        }
+
         cx.notify()
     }
 
@@ -1215,7 +1591,15 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) {
-        self.summarization_model = model;
+        self.summarization_model = model.clone();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    thread.set_summarization_model(model.clone(), cx)
+                })
+                .ok();
+        }
         cx.notify()
     }
 
@@ -1225,12 +1609,65 @@ impl Thread {
 
     pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.thinking_enabled = enabled;
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_enabled(enabled, cx);
+                    }
+                })
+                .ok();
+        }
         cx.notify();
     }
 
-    pub fn last_message(&self) -> Option<Message> {
+    pub fn thinking_effort(&self) -> Option<&String> {
+        self.thinking_effort.as_ref()
+    }
+
+    pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+        self.thinking_effort = effort.clone();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_effort(effort.clone(), cx)
+                    }
+                })
+                .ok();
+        }
+        cx.notify();
+    }
+
+    pub fn speed(&self) -> Option<Speed> {
+        self.speed
+    }
+
+    pub fn set_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
+        self.speed = Some(speed);
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_speed(speed, cx);
+                    }
+                })
+                .ok();
+        }
+        cx.notify();
+    }
+
+    pub fn last_message(&self) -> Option<&Message> {
+        self.messages.last().map(std::ops::Deref::deref)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_received_or_pending_message(&self) -> Option<Arc<Message>> {
         if let Some(message) = self.pending_message.clone() {
-            Some(Message::Agent(message))
+            Some(Arc::new(Message::Agent(message)))
         } else {
             self.messages.last().cloned()
         }
@@ -1241,6 +1678,9 @@ impl Thread {
         environment: Rc<dyn ThreadEnvironment>,
         cx: &mut Context<Self>,
     ) {
+        // Only update the agent location for the root thread, not for subagents.
+        let update_agent_location = self.parent_thread_id().is_none();
+
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
@@ -1248,52 +1688,69 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            self.action_log.clone(),
             language_registry.clone(),
-            Templates::new(),
         ));
-        self.add_tool(StreamingEditFileTool::new(
+        self.add_tool(WriteFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            self.action_log.clone(),
             language_registry,
-            Templates::new(),
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(MovePathTool::new(self.project.clone()));
-        self.add_tool(NowTool);
-        self.add_tool(OpenTool::new(self.project.clone()));
+        if cx.has_flag::<UpdatePlanToolFeatureFlag>() {
+            self.add_tool(UpdatePlanTool);
+        }
+        if cx.has_flag::<UpdateTitleToolFeatureFlag>() {
+            self.add_tool(UpdateTitleTool::new(cx.weak_entity()));
+        }
         self.add_tool(ReadFileTool::new(
-            cx.weak_entity(),
             self.project.clone(),
             self.action_log.clone(),
+            update_agent_location,
         ));
-        self.add_tool(SaveFileTool::new(self.project.clone()));
-        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
-        self.add_tool(ThinkingTool);
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
-        if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
+        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+
+        let code_action_store: CodeActionStore = cx.new(|_cx| None);
+        self.add_tool(FindReferencesTool::new(self.project.clone()));
+        self.add_tool(GetCodeActionsTool::new(
+            self.project.clone(),
+            code_action_store.clone(),
+        ));
+        self.add_tool(ApplyCodeActionTool::new(
+            self.project.clone(),
+            code_action_store,
+        ));
+        self.add_tool(GoToDefinitionTool::new(self.project.clone()));
+        self.add_tool(RenameTool::new(self.project.clone()));
+
+        if self.depth() < MAX_SUBAGENT_DEPTH {
+            self.add_tool(SpawnAgentTool::new(environment));
         }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
-        self.tools.insert(T::name().into(), tool.erase());
+        debug_assert!(
+            !self.tools.contains_key(T::NAME),
+            "Duplicate tool name: {}",
+            T::NAME,
+        );
+        self.tools.insert(T::NAME.into(), tool.erase());
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
-    }
-
-    pub fn restrict_tools(&mut self, allowed: &collections::HashSet<SharedString>) {
-        self.tools.retain(|name, _| allowed.contains(name));
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -1305,11 +1762,17 @@ impl Thread {
             return;
         }
 
-        self.profile_id = profile_id;
+        self.profile_id = profile_id.clone();
 
         // Swap to the profile's preferred model when available.
         if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
             self.set_model(model, cx);
+        }
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
+                .ok();
         }
     }
 
@@ -1361,13 +1824,13 @@ impl Thread {
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
         let Some(position) = self.messages.iter().position(
-            |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
+            |msg| matches!(&**msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
             return Err(anyhow!("Message not found"));
         };
 
         for message in self.messages.drain(position..) {
-            match message {
+            match &*message {
                 Message::User(message) => {
                     self.request_token_usage.remove(&message.id);
                 }
@@ -1388,10 +1851,13 @@ impl Thread {
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
         let usage = self.latest_request_token_usage()?;
         let model = self.model.clone()?;
+        let input_tokens = total_input_tokens(usage);
+
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count(),
+            max_output_tokens: model.max_output_tokens(),
             used_tokens: usage.total_tokens(),
-            input_tokens: usage.input_tokens,
+            input_tokens,
             output_tokens: usage.output_tokens,
         })
     }
@@ -1406,11 +1872,11 @@ impl Thread {
         let mut previous_user_message_id: Option<&UserMessageId> = None;
 
         for message in &self.messages {
-            if let Message::User(user_msg) = message {
+            if let Message::User(user_msg) = &**message {
                 if &user_msg.id == target_id {
                     let prev_id = previous_user_message_id?;
                     let usage = self.request_token_usage.get(prev_id)?;
-                    return Some(usage.input_tokens);
+                    return Some(total_input_tokens(*usage));
                 }
                 previous_user_message_id = Some(&user_msg.id);
             }
@@ -1451,7 +1917,7 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.messages.push(Message::Resume);
+        self.messages.push(Arc::new(Message::Resume));
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
@@ -1470,11 +1936,11 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
+        let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
         self.messages
-            .push(Message::User(UserMessage { id, content }));
+            .push(Arc::new(Message::User(UserMessage { id, content })));
         cx.notify();
 
         self.send_existing(cx)
@@ -1484,7 +1950,9 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let model = self.model().context("No language model configured")?;
+        let model = self
+            .model()
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
 
         log::info!("Thread::send called with model: {}", model.name().0);
         self.advance_prompt_id();
@@ -1503,9 +1971,9 @@ impl Thread {
         let content = blocks
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
-            .collect::<Vec<_>>();
+            .collect::<Arc<_>>();
         self.messages
-            .push(Message::User(UserMessage { id, content }));
+            .push(Arc::new(Message::User(UserMessage { id, content })));
         cx.notify();
     }
 
@@ -1523,19 +1991,11 @@ impl Thread {
             _ => "[unknown]".to_string(),
         };
 
-        self.messages.push(Message::Agent(AgentMessage {
+        self.messages.push(Arc::new(Message::Agent(AgentMessage {
             content: vec![AgentMessageContent::Text(text)],
             ..Default::default()
-        }));
+        })));
         cx.notify();
-    }
-
-    #[cfg(feature = "eval")]
-    pub fn proceed(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.run_turn(cx)
     }
 
     fn run_turn(
@@ -1548,11 +2008,6 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
-        let model = self.model.clone().context("No language model configured")?;
-        let profile = AgentSettings::get_global(cx)
-            .profiles
-            .get(&self.profile_id)
-            .context("Profile not found")?;
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
@@ -1560,19 +2015,15 @@ impl Thread {
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
-            tools: self.enabled_tools(profile, &model, cx),
+            tools: self.enabled_tools(cx),
             cancellation_tx,
+            streaming_tool_inputs: HashMap::default(),
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result = Self::run_turn_internal(
-                    &this,
-                    model,
-                    &event_stream,
-                    cancellation_rx.clone(),
-                    cx,
-                )
-                .await;
+                let turn_result =
+                    Self::run_turn_internal(&this, &event_stream, cancellation_rx.clone(), cx)
+                        .await;
 
                 // Check if we were cancelled - if so, cancel() already took running_turn
                 // and we shouldn't touch it (it might be a NEW turn now)
@@ -1614,7 +2065,6 @@ impl Thread {
 
     async fn run_turn_internal(
         this: &WeakEntity<Self>,
-        model: Arc<dyn LanguageModel>,
         event_stream: &ThreadEventStream,
         mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
@@ -1622,12 +2072,25 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
-            let request =
-                this.update(cx, |this, cx| this.build_completion_request(intent, cx))??;
+            // Re-read the model and refresh tools on each iteration so that
+            // mid-turn changes (e.g. the user switches model, toggles tools,
+            // or changes profile) take effect between tool-call rounds.
+            let (model, request) = this.update(cx, |this, cx| {
+                let model = this
+                    .model
+                    .clone()
+                    .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+                this.refresh_turn_tools(cx);
+                let request = this.build_completion_request(intent, cx)?;
+                anyhow::Ok((model, request))
+            })??;
 
             telemetry::event!(
                 "Agent Thread Completion",
                 thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
+                parent_thread_id = this.read_with(cx, |this, _| this
+                    .parent_thread_id()
+                    .map(|id| id.to_string()))?,
                 prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
                 model = model.telemetry_id(),
                 model_provider = model.provider_id().to_string(),
@@ -1640,12 +2103,37 @@ impl Thread {
                 Ok(events) => (events.fuse(), None),
                 Err(err) => (stream::empty().boxed().fuse(), Some(err)),
             };
-            let mut tool_results = FuturesUnordered::new();
+            let mut tool_results: FuturesUnordered<Task<LanguageModelToolResult>> =
+                FuturesUnordered::new();
+            let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
             loop {
-                // Race between getting the first event and cancellation
+                // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
                     event = events.next().fuse() => event,
+                    tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
+                        let is_error = tool_result.is_error;
+                        let is_still_streaming = this
+                            .read_with(cx, |this, _cx| {
+                                this.running_turn
+                                    .as_ref()
+                                    .and_then(|turn| turn.streaming_tool_inputs.get(&tool_result.tool_use_id))
+                                    .map_or(false, |inputs| !inputs.has_received_final())
+                            })
+                            .unwrap_or(false);
+
+                        early_tool_results.push(tool_result);
+
+                        // Only break if the tool errored and we are still
+                        // streaming the input of the tool. If the tool errored
+                        // but we are no longer streaming its input (i.e. there
+                        // are parallel tool calls) we want to continue
+                        // processing those tool inputs.
+                        if is_error && is_still_streaming {
+                            break;
+                        }
+                        continue;
+                    }
                     _ = cancellation_rx.changed().fuse() => {
                         if *cancellation_rx.borrow() {
                             cancelled = true;
@@ -1712,29 +2200,33 @@ impl Thread {
             // that need their own permits.
             drop(events);
 
-            let end_turn = tool_results.is_empty();
-            while let Some(tool_result) = tool_results.next().await {
-                log::debug!("Tool finished {:?}", tool_result);
+            // Drop streaming tool input senders that never received their final input.
+            // This prevents deadlock when the LLM stream ends (e.g. because of an error)
+            // before sending a tool use with `is_input_complete: true`.
+            this.update(cx, |this, _cx| {
+                if let Some(running_turn) = this.running_turn.as_mut() {
+                    if running_turn.streaming_tool_inputs.is_empty() {
+                        return;
+                    }
+                    log::warn!("Dropping partial tool inputs because the stream ended");
+                    running_turn.streaming_tool_inputs.drain();
+                }
+            })?;
 
-                event_stream.update_tool_call_fields(
-                    &tool_result.tool_use_id,
-                    acp::ToolCallUpdateFields::new()
-                        .status(if tool_result.is_error {
-                            acp::ToolCallStatus::Failed
-                        } else {
-                            acp::ToolCallStatus::Completed
-                        })
-                        .raw_output(tool_result.output.clone()),
-                );
-                this.update(cx, |this, _cx| {
-                    this.pending_message()
-                        .tool_results
-                        .insert(tool_result.tool_use_id.clone(), tool_result);
-                })?;
+            let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
+
+            for tool_result in early_tool_results {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
+            }
+            while let Some(tool_result) = tool_results.next().await {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
             }
 
             this.update(cx, |this, cx| {
                 this.flush_pending_message(cx);
+                if this.title.is_none() {
+                    this.generate_title(cx);
+                }
             })?;
 
             if cancelled {
@@ -1750,22 +2242,24 @@ impl Thread {
                 })??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
-                timer.await;
+                futures::select! {
+                    _ = timer.fuse() => {}
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            log::debug!("Turn cancelled during retry delay, exiting");
+                            return Ok(());
+                        }
+                    }
+                }
                 this.update(cx, |this, _cx| {
-                    if let Some(Message::Agent(message)) = this.messages.last() {
+                    if let Some(Message::Agent(message)) = this.last_message() {
                         if message.tool_results.is_empty() {
                             intent = CompletionIntent::UserPrompt;
-                            this.messages.push(Message::Resume);
+                            this.messages.push(Arc::new(Message::Resume));
                         }
                     }
                 })?;
             } else if end_turn {
-                this.update(cx, |this, cx| {
-                    // Generate/regenerate title whenever AI finishes and there are messages
-                    if !this.messages.is_empty() && this.pending_title_generation.is_none() {
-                        this.generate_title(cx);
-                    }
-                })?;
                 return Ok(());
             } else {
                 let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
@@ -1777,6 +2271,33 @@ impl Thread {
                 attempt = 0;
             }
         }
+    }
+
+    fn process_tool_result(
+        this: &WeakEntity<Thread>,
+        event_stream: &ThreadEventStream,
+        cx: &mut AsyncApp,
+        tool_result: LanguageModelToolResult,
+    ) -> Result<(), anyhow::Error> {
+        log::debug!("Tool finished {:?}", tool_result);
+
+        event_stream.update_tool_call_fields(
+            &tool_result.tool_use_id,
+            acp::ToolCallUpdateFields::new()
+                .status(if tool_result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                })
+                .raw_output(tool_result.output.clone()),
+            None,
+        );
+        this.update(cx, |this, _cx| {
+            this.pending_message()
+                .tool_results
+                .insert(tool_result.tool_use_id.clone(), tool_result)
+        })?;
+        Ok(())
     }
 
     fn handle_completion_error(
@@ -1857,12 +2378,12 @@ impl Thread {
                 let last_message = self.pending_message();
                 // Store the last non-empty reasoning_details (overwrites earlier ones)
                 // This ensures we keep the encrypted reasoning with signatures, not the early text reasoning
-                if let serde_json::Value::Array(ref arr) = details {
+                if let serde_json::Value::Array(arr) = &details {
                     if !arr.is_empty() {
-                        last_message.reasoning_details = Some(details);
+                        last_message.reasoning_details = Some(Arc::new(details));
                     }
                 } else {
-                    last_message.reasoning_details = Some(details);
+                    last_message.reasoning_details = Some(Arc::new(details));
                 }
             }
             ToolUse(tool_use) => {
@@ -1874,19 +2395,21 @@ impl Thread {
                 raw_input,
                 json_parse_error,
             } => {
-                return Ok(Some(Task::ready(
-                    self.handle_tool_use_json_parse_error_event(
-                        id,
-                        tool_name,
-                        raw_input,
-                        json_parse_error,
-                    ),
-                )));
+                return Ok(self.handle_tool_use_json_parse_error_event(
+                    id,
+                    tool_name,
+                    raw_input,
+                    json_parse_error,
+                    event_stream,
+                    cancellation_rx,
+                    cx,
+                ));
             }
             UsageUpdate(usage) => {
                 telemetry::event!(
                     "Agent Thread Completion Usage Updated",
                     thread_id = self.id.to_string(),
+                    parent_thread_id = self.parent_thread_id().map(|id| id.to_string()),
                     prompt_id = self.prompt_id.to_string(),
                     model = self.model.as_ref().map(|m| m.telemetry_id()),
                     model_provider = self.model.as_ref().map(|m| m.provider_id().to_string()),
@@ -1965,22 +2488,233 @@ impl Thread {
             kind = tool.kind();
         }
 
+        self.send_or_update_tool_use(&tool_use, title, kind, event_stream);
+
+        let Some(tool) = tool else {
+            let content = format!("No tool named {} exists", tool_use.name);
+            return Some(Task::ready(LanguageModelToolResult {
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
+                tool_use_id: tool_use.id,
+                tool_name: tool_use.name,
+                is_error: true,
+                output: None,
+            }));
+        };
+
+        if !tool_use.is_input_complete {
+            if tool.supports_input_streaming() {
+                let running_turn = self.running_turn.as_mut()?;
+                if let Some(sender) = running_turn.streaming_tool_inputs.get_mut(&tool_use.id) {
+                    sender.send_partial(tool_use.input);
+                    return None;
+                }
+
+                let (mut sender, tool_input) = ToolInputSender::channel();
+                sender.send_partial(tool_use.input);
+                running_turn
+                    .streaming_tool_inputs
+                    .insert(tool_use.id.clone(), sender);
+
+                let tool = tool.clone();
+                log::debug!("Running streaming tool {}", tool_use.name);
+                return Some(self.run_tool(
+                    tool,
+                    tool_input,
+                    tool_use.id,
+                    tool_use.name,
+                    event_stream,
+                    cancellation_rx,
+                    cx,
+                ));
+            } else {
+                return None;
+            }
+        }
+
+        if let Some(mut sender) = self
+            .running_turn
+            .as_mut()?
+            .streaming_tool_inputs
+            .remove(&tool_use.id)
+        {
+            sender.send_full(tool_use.input);
+            return None;
+        }
+
+        log::debug!("Running tool {}", tool_use.name);
+        let tool_input = ToolInput::ready(tool_use.input);
+        Some(self.run_tool(
+            tool,
+            tool_input,
+            tool_use.id,
+            tool_use.name,
+            event_stream,
+            cancellation_rx,
+            cx,
+        ))
+    }
+
+    fn run_tool(
+        &self,
+        tool: Arc<dyn AnyAgentTool>,
+        tool_input: ToolInput<serde_json::Value>,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
+        cx: &mut Context<Self>,
+    ) -> Task<LanguageModelToolResult> {
+        let fs = self.project.read(cx).fs().clone();
+        let tool_event_stream = ToolCallEventStream::new(
+            tool_use_id.clone(),
+            event_stream.clone(),
+            Some(fs),
+            cancellation_rx,
+        );
+        tool_event_stream.update_fields(
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+        );
+        let supports_images = self.model().is_some_and(|model| model.supports_images());
+        let tool_result = tool.run(tool_input, tool_event_stream, cx);
+        cx.foreground_executor().spawn(async move {
+            let (is_error, output) = match tool_result.await {
+                Ok(mut output) => {
+                    let contains_image = output
+                        .llm_output
+                        .iter()
+                        .any(|part| matches!(part, LanguageModelToolResultContent::Image(_)));
+                    if contains_image && !supports_images {
+                        // Replace each image part with an inline placeholder so
+                        // any accompanying text is still presented to the model.
+                        // If there's nothing else in the output, surface an error
+                        // to match the pre-multi-part behavior for image-only
+                        // tool results.
+                        let placeholder = LanguageModelToolResultContent::Text(Arc::from(
+                            "[Tool responded with an image, but this model doesn't support images]",
+                        ));
+                        let has_non_image = output
+                            .llm_output
+                            .iter()
+                            .any(|part| !matches!(part, LanguageModelToolResultContent::Image(_)));
+                        if has_non_image {
+                            output.llm_output = output
+                                .llm_output
+                                .into_iter()
+                                .map(|part| match part {
+                                    LanguageModelToolResultContent::Image(_) => placeholder.clone(),
+                                    other => other,
+                                })
+                                .collect();
+                            (false, output)
+                        } else {
+                            let output = anyhow::anyhow!(
+                                "Attempted to read an image, but this model doesn't support it.",
+                            )
+                            .into();
+                            (true, output)
+                        }
+                    } else {
+                        (false, output)
+                    }
+                }
+                Err(output) => (true, output),
+            };
+
+            LanguageModelToolResult {
+                tool_use_id,
+                tool_name,
+                is_error,
+                content: output.llm_output,
+                output: Some(output.raw_output),
+            }
+        })
+    }
+
+    fn handle_tool_use_json_parse_error_event(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<LanguageModelToolResult>> {
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id,
+            name: tool_name,
+            raw_input: raw_input.to_string(),
+            input: serde_json::json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        self.send_or_update_tool_use(
+            &tool_use,
+            SharedString::from(&tool_use.name),
+            acp::ToolKind::Other,
+            event_stream,
+        );
+
+        let tool = self.tool(tool_use.name.as_ref());
+
+        let Some(tool) = tool else {
+            let content = format!("No tool named {} exists", tool_use.name);
+            return Some(Task::ready(LanguageModelToolResult {
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
+                tool_use_id: tool_use.id,
+                tool_name: tool_use.name,
+                is_error: true,
+                output: None,
+            }));
+        };
+
+        let error_message = format!("Error parsing input JSON: {json_parse_error}");
+
+        if tool.supports_input_streaming()
+            && let Some(mut sender) = self
+                .running_turn
+                .as_mut()?
+                .streaming_tool_inputs
+                .remove(&tool_use.id)
+        {
+            sender.send_invalid_json(error_message);
+            return None;
+        }
+
+        log::debug!("Running tool {}. Received invalid JSON", tool_use.name);
+        let tool_input = ToolInput::invalid_json(error_message);
+        Some(self.run_tool(
+            tool,
+            tool_input,
+            tool_use.id,
+            tool_use.name,
+            event_stream,
+            cancellation_rx,
+            cx,
+        ))
+    }
+
+    fn send_or_update_tool_use(
+        &mut self,
+        tool_use: &LanguageModelToolUse,
+        title: SharedString,
+        kind: acp::ToolKind,
+        event_stream: &ThreadEventStream,
+    ) {
         // Ensure the last message ends in the current tool use
         let last_message = self.pending_message();
-        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
+
+        let has_tool_use = last_message.content.iter_mut().rev().any(|content| {
             if let AgentMessageContent::ToolUse(last_tool_use) = content {
                 if last_tool_use.id == tool_use.id {
                     *last_tool_use = tool_use.clone();
-                    false
-                } else {
-                    true
+                    return true;
                 }
-            } else {
-                true
             }
+            false
         });
 
-        if push_new_tool_use {
+        if !has_tool_use {
             event_stream.send_tool_call(
                 &tool_use.id,
                 &tool_use.name,
@@ -1998,87 +2732,13 @@ impl Thread {
                     .title(title.as_str())
                     .kind(kind)
                     .raw_input(tool_use.input.clone()),
+                None,
             );
         }
-
-        if !tool_use.is_input_complete {
-            return None;
-        }
-
-        let Some(tool) = tool else {
-            let content = format!("No tool named {} exists", tool_use.name);
-            return Some(Task::ready(LanguageModelToolResult {
-                content: LanguageModelToolResultContent::Text(Arc::from(content)),
-                tool_use_id: tool_use.id,
-                tool_name: tool_use.name,
-                is_error: true,
-                output: None,
-            }));
-        };
-
-        let fs = self.project.read(cx).fs().clone();
-        let tool_event_stream = ToolCallEventStream::new(
-            tool_use.id.clone(),
-            event_stream.clone(),
-            Some(fs),
-            cancellation_rx,
-        );
-        tool_event_stream.update_fields(
-            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
-        );
-        let supports_images = self.model().is_some_and(|model| model.supports_images());
-        let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
-        log::debug!("Running tool {}", tool_use.name);
-        Some(cx.foreground_executor().spawn(async move {
-            let tool_result = tool_result.await.and_then(|output| {
-                if let LanguageModelToolResultContent::Image(_) = &output.llm_output
-                    && !supports_images
-                {
-                    return Err(anyhow!(
-                        "Attempted to read an image, but this model doesn't support it.",
-                    ));
-                }
-                Ok(output)
-            });
-
-            match tool_result {
-                Ok(output) => LanguageModelToolResult {
-                    tool_use_id: tool_use.id,
-                    tool_name: tool_use.name,
-                    is_error: false,
-                    content: output.llm_output,
-                    output: Some(output.raw_output),
-                },
-                Err(error) => LanguageModelToolResult {
-                    tool_use_id: tool_use.id,
-                    tool_name: tool_use.name,
-                    is_error: true,
-                    content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                    output: Some(error.to_string().into()),
-                },
-            }
-        }))
     }
 
-    fn handle_tool_use_json_parse_error_event(
-        &mut self,
-        tool_use_id: LanguageModelToolUseId,
-        tool_name: Arc<str>,
-        raw_input: Arc<str>,
-        json_parse_error: String,
-    ) -> LanguageModelToolResult {
-        let tool_output = format!("Error parsing input JSON: {json_parse_error}");
-        LanguageModelToolResult {
-            tool_use_id,
-            tool_name,
-            is_error: true,
-            content: LanguageModelToolResultContent::Text(tool_output.into()),
-            output: Some(serde_json::Value::String(raw_input.to_string())),
-        }
-    }
-
-    pub fn title(&self) -> SharedString {
-        self.title.clone().unwrap_or("New Thread".into())
+    pub fn title(&self) -> Option<SharedString> {
+        self.title.clone()
     }
 
     pub fn is_generating_summary(&self) -> bool {
@@ -2087,6 +2747,24 @@ impl Thread {
 
     pub fn is_generating_title(&self) -> bool {
         self.pending_title_generation.is_some()
+    }
+
+    pub fn has_failed_title_generation(&self) -> bool {
+        self.title_generation_failed
+    }
+
+    pub fn can_generate_title(&self, cx: &App) -> bool {
+        self.pending_title_generation.is_none()
+            && self.summarization_model.is_some()
+            && !self.update_title_tool_available(cx)
+    }
+
+    fn update_title_tool_available(&self, cx: &App) -> bool {
+        if let Some(running_turn) = self.running_turn.as_ref() {
+            running_turn.tools.contains_key(UpdateTitleTool::NAME)
+        } else {
+            self.enabled_tools(cx).contains_key(UpdateTitleTool::NAME)
+        }
     }
 
     pub fn summary(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<SharedString>>> {
@@ -2150,6 +2828,11 @@ impl Thread {
     }
 
     pub fn generate_title(&mut self, cx: &mut Context<Self>) {
+        if !self.can_generate_title(cx) {
+            return;
+        }
+
+        self.title_generation_failed = false;
         let Some(model) = self.summarization_model.clone() else {
             return;
         };
@@ -2197,15 +2880,27 @@ impl Thread {
                 anyhow::Ok(())
             };
 
-            if generate.await.context("failed to generate title").is_ok() {
-                _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
-            }
-            _ = this.update(cx, |this, _| this.pending_title_generation = None);
+            let succeeded = generate
+                .await
+                .context("failed to generate thread title")
+                .log_err()
+                .is_some();
+            _ = this.update(cx, |this, cx| {
+                this.pending_title_generation = None;
+                if succeeded {
+                    this.set_title(title.into(), cx);
+                } else {
+                    this.title_generation_failed = true;
+                    cx.emit(TitleUpdated);
+                    cx.notify();
+                }
+            });
         }));
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
         self.pending_title_generation = None;
+        self.title_generation_failed = false;
         if Some(&title) != self.title.as_ref() {
             self.title = Some(title);
             cx.emit(TitleUpdated);
@@ -2222,7 +2917,7 @@ impl Thread {
         self.messages
             .iter()
             .rev()
-            .find_map(|message| match message {
+            .find_map(|message| match &**message {
                 Message::User(user_message) => Some(user_message),
                 Message::Agent(_) => None,
                 Message::Resume => None,
@@ -2254,14 +2949,16 @@ impl Thread {
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name.clone(),
                         is_error: true,
-                        content: LanguageModelToolResultContent::Text(TOOL_CANCELED_MESSAGE.into()),
+                        content: vec![LanguageModelToolResultContent::Text(
+                            TOOL_CANCELED_MESSAGE.into(),
+                        )],
                         output: None,
                     },
                 );
             }
         }
 
-        self.messages.push(Message::Agent(message));
+        self.messages.push(Arc::new(Message::Agent(message)));
         self.updated_at = Utc::now();
         self.clear_summary();
         cx.notify()
@@ -2272,7 +2969,16 @@ impl Thread {
         completion_intent: CompletionIntent,
         cx: &App,
     ) -> Result<LanguageModelRequest> {
-        let model = self.model().context("No language model configured")?;
+        let completion_intent =
+            if self.is_subagent() && completion_intent == CompletionIntent::UserPrompt {
+                CompletionIntent::Subagent
+            } else {
+                completion_intent
+            };
+
+        let model = self
+            .model()
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
                 .iter()
@@ -2282,6 +2988,7 @@ impl Thread {
                         name: tool_name.to_string(),
                         description: tool.description().to_string(),
                         input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
+                        use_input_streaming: tool.supports_input_streaming(),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -2312,18 +3019,21 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
+            speed: self.speed(),
         };
 
         log::debug!("Completion request built successfully");
         Ok(request)
     }
 
-    fn enabled_tools(
-        &self,
-        profile: &AgentProfileSettings,
-        model: &Arc<dyn LanguageModel>,
-        cx: &App,
-    ) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+    fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+        let Some(model) = self.model.as_ref() else {
+            return BTreeMap::new();
+        };
+        let Some(profile) = AgentSettings::get_global(cx).profiles.get(&self.profile_id) else {
+            return BTreeMap::new();
+        };
         fn truncate(tool_name: &SharedString) -> SharedString {
             if tool_name.len() > MAX_TOOL_NAME_LENGTH {
                 let mut truncated = tool_name.to_string();
@@ -2334,33 +3044,25 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool = false;
-
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == "streaming_edit_file" {
-                    "edit_file"
-                } else {
-                    tool_name.as_ref()
-                };
-
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(profile_tool_name)
+                    && profile.is_tool_enabled(tool_name)
                 {
-                    match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        ("streaming_edit_file", false) | ("edit_file", true) => None,
-                        ("streaming_edit_file", true) => {
-                            // Expose streaming tool as "edit_file"
-                            Some((SharedString::from("edit_file"), tool.clone()))
-                        }
-                        _ => Some((truncate(tool_name), tool.clone())),
-                    }
+                    Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
                 }
+            })
+            .filter(|(tool_name, _)| match tool_name.as_ref() {
+                RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
+                FindReferencesTool::NAME
+                | GetCodeActionsTool::NAME
+                | ApplyCodeActionTool::NAME
+                | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+                _ => true,
             })
             .collect::<BTreeMap<_, _>>();
 
@@ -2380,13 +3082,14 @@ impl Thread {
         }
 
         // When there are duplicate tool names, disambiguate by prefixing them
-        // with the server ID. In the rare case there isn't enough space for the
-        // disambiguated tool name, keep only the last tool with this name.
+        // with the server ID (converted to snake_case for API compatibility).
+        // In the rare case there isn't enough space for the disambiguated tool
+        // name, keep only the last tool with this name.
         for (server_id, tool_name, tool) in context_server_tools {
             if duplicate_tool_names.contains(&tool_name) {
                 let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
                 if available >= 2 {
-                    let mut disambiguated = server_id.0.to_string();
+                    let mut disambiguated = server_id.0.to_snake_case();
                     disambiguated.truncate(available - 1);
                     disambiguated.push('_');
                     disambiguated.push_str(&tool_name);
@@ -2400,6 +3103,13 @@ impl Thread {
         }
 
         tools
+    }
+
+    fn refresh_turn_tools(&mut self, cx: &App) {
+        let tools = self.enabled_tools(cx);
+        if let Some(turn) = self.running_turn.as_mut() {
+            turn.tools = tools;
+        }
     }
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
@@ -2417,75 +3127,50 @@ impl Thread {
         self.tools.contains_key(name)
     }
 
-    pub fn registered_tool_names(&self) -> Vec<SharedString> {
-        self.tools.keys().cloned().collect()
-    }
-
-    pub fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
+    pub(crate) fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
         self.running_subagents.push(subagent);
     }
 
-    pub fn unregister_running_subagent(&mut self, subagent: &WeakEntity<Thread>) {
-        self.running_subagents
-            .retain(|s| s.entity_id() != subagent.entity_id());
+    pub(crate) fn unregister_running_subagent(
+        &mut self,
+        subagent_session_id: &acp::SessionId,
+        cx: &App,
+    ) {
+        self.running_subagents.retain(|s| {
+            s.upgrade()
+                .map_or(false, |s| s.read(cx).id() != subagent_session_id)
+        });
     }
 
-    pub fn running_subagent_count(&self) -> usize {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn running_subagent_ids(&self, cx: &App) -> Vec<acp::SessionId> {
         self.running_subagents
             .iter()
-            .filter(|s| s.upgrade().is_some())
-            .count()
+            .filter_map(|s| s.upgrade().map(|s| s.read(cx).id().clone()))
+            .collect()
     }
 
     pub fn is_subagent(&self) -> bool {
         self.subagent_context.is_some()
     }
 
+    pub fn parent_thread_id(&self) -> Option<acp::SessionId> {
+        self.subagent_context
+            .as_ref()
+            .map(|c| c.parent_thread_id.clone())
+    }
+
     pub fn depth(&self) -> u8 {
         self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_subagent_context(&mut self, context: SubagentContext) {
+        self.subagent_context = Some(context);
+    }
+
     pub fn is_turn_complete(&self) -> bool {
         self.running_turn.is_none()
-    }
-
-    pub fn submit_user_message(
-        &mut self,
-        content: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let content = content.into();
-        self.messages.push(Message::User(UserMessage {
-            id: UserMessageId::new(),
-            content: vec![UserMessageContent::Text(content)],
-        }));
-        cx.notify();
-        self.send_existing(cx)
-    }
-
-    pub fn interrupt_for_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.context_low_prompt.clone();
-        self.cancel(cx).detach();
-        self.submit_user_message(prompt, cx)
-    }
-
-    pub fn request_final_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.summary_prompt.clone();
-        self.submit_user_message(prompt, cx)
     }
 
     fn build_request_messages(
@@ -2498,10 +3183,14 @@ impl Thread {
             self.messages.len()
         );
 
+        let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
+            date: Local::now().format("%Y-%m-%d").to_string(),
+            user_agents_md,
+            sandboxing: crate::sandboxing::sandboxing_enabled(cx),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -2533,11 +3222,16 @@ impl Thread {
             if ix > 0 {
                 markdown.push('\n');
             }
+            match &**message {
+                Message::User(_) => markdown.push_str("## User\n\n"),
+                Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
+                Message::Resume => {}
+            }
             markdown.push_str(&message.to_markdown());
         }
 
         if let Some(message) = self.pending_message.as_ref() {
-            markdown.push('\n');
+            markdown.push_str("\n## Assistant\n\n");
             markdown.push_str(&message.to_markdown());
         }
 
@@ -2625,10 +3319,12 @@ impl Thread {
             | ApiEndpointNotFound { .. }
             | PromptTooLarge { .. } => None,
             // These errors might be transient, so retry them
-            SerializeRequest { .. } | BuildRequestBody { .. } => Some(RetryStrategy::Fixed {
-                delay: BASE_RETRY_DELAY,
-                max_attempts: 1,
-            }),
+            SerializeRequest { .. } | BuildRequestBody { .. } | StreamEndedUnexpectedly { .. } => {
+                Some(RetryStrategy::Fixed {
+                    delay: BASE_RETRY_DELAY,
+                    max_attempts: 1,
+                })
+            }
             // Retry all other 4xx and 5xx errors once.
             HttpResponseError { status_code, .. }
                 if status_code.is_client_error() || status_code.is_server_error() =>
@@ -2651,6 +3347,13 @@ impl Thread {
     }
 }
 
+fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
+    usage
+        .input_tokens
+        .saturating_add(usage.cache_creation_input_tokens)
+        .saturating_add(usage.cache_read_input_tokens)
+}
+
 struct RunningTurn {
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -2659,11 +3362,15 @@ struct RunningTurn {
     /// The current event stream for the running turn. Used to report a final
     /// cancellation event if we cancel the turn.
     event_stream: ThreadEventStream,
-    /// The tools that were enabled for this turn.
+    /// The tools that are enabled for the current iteration of the turn.
+    /// Refreshed at the start of each iteration via `refresh_turn_tools`.
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     /// Sender to signal tool cancellation. When cancel is called, this is
     /// set to true so all tools can detect user-initiated cancellation.
     cancellation_tx: watch::Sender<bool>,
+    /// Senders for tools that support input streaming and have already been
+    /// started but are still receiving input from the LLM.
+    streaming_tool_inputs: HashMap<LanguageModelToolUseId, ToolInputSender>,
 }
 
 impl RunningTurn {
@@ -2683,6 +3390,137 @@ pub struct TitleUpdated;
 
 impl EventEmitter<TitleUpdated> for Thread {}
 
+/// A channel-based wrapper that delivers tool input to a running tool.
+///
+/// For non-streaming tools, created via `ToolInput::ready()` so `.recv()` resolves immediately.
+/// For streaming tools, partial JSON snapshots arrive via `.recv_partial()` as the LLM streams
+/// them, followed by the final complete input available through `.recv()`.
+pub struct ToolInput<T> {
+    rx: mpsc::UnboundedReceiver<ToolInputPayload<serde_json::Value>>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T: DeserializeOwned> ToolInput<T> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn resolved(input: impl Serialize) -> Self {
+        let value = serde_json::to_value(input).expect("failed to serialize tool input");
+        Self::ready(value)
+    }
+
+    pub fn ready(value: serde_json::Value) -> Self {
+        let (tx, rx) = mpsc::unbounded();
+        tx.unbounded_send(ToolInputPayload::Full(value)).ok();
+        Self {
+            rx,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn invalid_json(error_message: String) -> Self {
+        let (tx, rx) = mpsc::unbounded();
+        tx.unbounded_send(ToolInputPayload::InvalidJson { error_message })
+            .ok();
+        Self {
+            rx,
+            _phantom: PhantomData,
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test() -> (ToolInputSender, Self) {
+        let (sender, input) = ToolInputSender::channel();
+        (sender, input.cast())
+    }
+
+    /// Wait for the final deserialized input, ignoring all partial updates.
+    /// Non-streaming tools can use this to wait until the whole input is available.
+    pub async fn recv(mut self) -> Result<T> {
+        while let Ok(value) = self.next().await {
+            match value {
+                ToolInputPayload::Full(value) => return Ok(value),
+                ToolInputPayload::Partial(_) => {}
+                ToolInputPayload::InvalidJson { error_message } => {
+                    return Err(anyhow!(error_message));
+                }
+            }
+        }
+        Err(anyhow!("tool input was not fully received"))
+    }
+
+    pub async fn next(&mut self) -> Result<ToolInputPayload<T>> {
+        let value = self
+            .rx
+            .next()
+            .await
+            .ok_or_else(|| anyhow!("tool input was not fully received"))?;
+
+        Ok(match value {
+            ToolInputPayload::Partial(payload) => ToolInputPayload::Partial(payload),
+            ToolInputPayload::Full(payload) => {
+                ToolInputPayload::Full(serde_json::from_value(payload)?)
+            }
+            ToolInputPayload::InvalidJson { error_message } => {
+                ToolInputPayload::InvalidJson { error_message }
+            }
+        })
+    }
+
+    fn cast<U: DeserializeOwned>(self) -> ToolInput<U> {
+        ToolInput {
+            rx: self.rx,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+pub enum ToolInputPayload<T> {
+    Partial(serde_json::Value),
+    Full(T),
+    InvalidJson { error_message: String },
+}
+
+pub struct ToolInputSender {
+    has_received_final: bool,
+    tx: mpsc::UnboundedSender<ToolInputPayload<serde_json::Value>>,
+}
+
+impl ToolInputSender {
+    pub(crate) fn channel() -> (Self, ToolInput<serde_json::Value>) {
+        let (tx, rx) = mpsc::unbounded();
+        let sender = Self {
+            tx,
+            has_received_final: false,
+        };
+        let input = ToolInput {
+            rx,
+            _phantom: PhantomData,
+        };
+        (sender, input)
+    }
+
+    pub(crate) fn has_received_final(&self) -> bool {
+        self.has_received_final
+    }
+
+    pub fn send_partial(&mut self, payload: serde_json::Value) {
+        self.tx
+            .unbounded_send(ToolInputPayload::Partial(payload))
+            .ok();
+    }
+
+    pub fn send_full(&mut self, payload: serde_json::Value) {
+        self.has_received_final = true;
+        self.tx.unbounded_send(ToolInputPayload::Full(payload)).ok();
+    }
+
+    pub fn send_invalid_json(&mut self, error_message: String) {
+        self.has_received_final = true;
+        self.tx
+            .unbounded_send(ToolInputPayload::InvalidJson { error_message })
+            .ok();
+    }
+}
+
 pub trait AgentTool
 where
     Self: 'static + Sized,
@@ -2690,7 +3528,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name() -> &'static str;
+    const NAME: &'static str;
 
     fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -2716,6 +3554,11 @@ where
         language_model::tool_schema::root_schema_for::<Self::Input>(format)
     }
 
+    /// Returns whether the tool supports streaming of tool use parameters.
+    fn supports_input_streaming() -> bool {
+        false
+    }
+
     /// Some tools rely on a provider for the underlying billing or other reasons.
     /// Allow the tool to check if they are compatible, or should be filtered out.
     fn supports_provider(_provider: &LanguageModelProviderId) -> bool {
@@ -2723,12 +3566,18 @@ where
     }
 
     /// Runs the tool with the provided input.
+    ///
+    /// Returns `Result<Self::Output, Self::Output>` rather than `Result<Self::Output, anyhow::Error>`
+    /// because tool errors are sent back to the model as tool results. This means error output must
+    /// be structured and readable by the agent — not an arbitrary `anyhow::Error`. Returning the
+    /// same `Output` type for both success and failure lets tools provide structured data while
+    /// still signaling whether the invocation succeeded or failed.
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>>;
+    ) -> Task<Result<Self::Output, Self::Output>>;
 
     /// Emits events for a previous execution of the tool.
     fn replay(
@@ -2744,22 +3593,27 @@ where
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
     }
-
-    /// Create a new instance of this tool bound to a different thread.
-    /// This is used when creating subagents, so that tools like EditFileTool
-    /// that hold a thread reference will use the subagent's thread instead
-    /// of the parent's thread.
-    /// Returns None if the tool doesn't need rebinding (most tools).
-    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        None
-    }
 }
 
 pub struct Erased<T>(T);
 
 pub struct AgentToolOutput {
-    pub llm_output: LanguageModelToolResultContent,
+    pub llm_output: Vec<LanguageModelToolResultContent>,
     pub raw_output: serde_json::Value,
+}
+
+impl From<anyhow::Error> for AgentToolOutput {
+    fn from(error: anyhow::Error) -> Self {
+        let llm_output = vec![error.into()];
+        let raw_output = serde_json::to_value(&llm_output).unwrap_or_else(|e| {
+            log::error!("Failed to serialize tool output: {e}");
+            serde_json::Value::Null
+        });
+        Self {
+            raw_output,
+            llm_output,
+        }
+    }
 }
 
 pub trait AnyAgentTool {
@@ -2768,15 +3622,19 @@ pub trait AnyAgentTool {
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
+    fn supports_input_streaming(&self) -> bool {
+        false
+    }
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
+    /// See [`AgentTool::run`] for why this returns `Result<AgentToolOutput, AgentToolOutput>`.
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: ToolInput<serde_json::Value>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<AgentToolOutput>>;
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>>;
     fn replay(
         &self,
         input: serde_json::Value,
@@ -2784,14 +3642,6 @@ pub trait AnyAgentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()>;
-    /// Create a new instance of this tool bound to a different thread.
-    /// This is used when creating subagents, so that tools like EditFileTool
-    /// that hold a thread reference will use the subagent's thread instead
-    /// of the parent's thread.
-    /// Returns None if the tool doesn't need rebinding (most tools).
-    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        None
-    }
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -2799,15 +3649,19 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        T::name().into()
+        T::NAME.into()
     }
 
     fn description(&self) -> SharedString {
         T::description()
     }
 
-    fn kind(&self) -> agent_client_protocol::ToolKind {
+    fn kind(&self) -> acp::ToolKind {
         T::kind()
+    }
+
+    fn supports_input_streaming(&self) -> bool {
+        T::supports_input_streaming()
     }
 
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
@@ -2827,20 +3681,33 @@ where
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: ToolInput<serde_json::Value>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<AgentToolOutput>> {
-        cx.spawn(async move |cx| {
-            let input = serde_json::from_value(input)?;
-            let output = cx
-                .update(|cx| self.0.clone().run(input, event_stream, cx))
-                .await?;
-            let raw_output = serde_json::to_value(&output)?;
-            Ok(AgentToolOutput {
-                llm_output: output.into(),
-                raw_output,
-            })
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
+        let tool_input: ToolInput<T::Input> = input.cast();
+        let task = self.0.clone().run(tool_input, event_stream, cx);
+        cx.spawn(async move |_cx| match task.await {
+            Ok(output) => {
+                let raw_output = serde_json::to_value(&output).unwrap_or_else(|e| {
+                    log::error!("Failed to serialize tool output: {e}");
+                    serde_json::Value::Null
+                });
+                Ok(AgentToolOutput {
+                    raw_output,
+                    llm_output: vec![output.into()],
+                })
+            }
+            Err(error_output) => {
+                let raw_output = serde_json::to_value(&error_output).unwrap_or_else(|e| {
+                    log::error!("Failed to serialize tool error output: {e}");
+                    serde_json::Value::Null
+                });
+                Err(AgentToolOutput {
+                    llm_output: vec![error_output.into()],
+                    raw_output,
+                })
+            }
         })
     }
 
@@ -2854,10 +3721,6 @@ where
         let input = serde_json::from_value(input)?;
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
-    }
-
-    fn rebind_thread(&self, new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        self.0.rebind_thread(new_thread)
     }
 }
 
@@ -2919,12 +3782,19 @@ impl ThreadEventStream {
         &self,
         tool_use_id: &LanguageModelToolUseId,
         fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
     ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields).into(),
+                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields)
+                    .meta(meta)
+                    .into(),
             )))
             .ok();
+    }
+
+    fn send_plan(&self, plan: acp::Plan) {
+        self.0.unbounded_send(Ok(ThreadEvent::Plan(plan))).ok();
     }
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
@@ -3030,7 +3900,16 @@ impl ToolCallEventStream {
 
     pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
         self.stream
-            .update_tool_call_fields(&self.tool_use_id, fields);
+            .update_tool_call_fields(&self.tool_use_id, fields, None);
+    }
+
+    pub fn update_fields_with_meta(
+        &self,
+        fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
+    ) {
+        self.stream
+            .update_tool_call_fields(&self.tool_use_id, fields, meta);
     }
 
     pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
@@ -3046,26 +3925,24 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn update_subagent_thread(&self, thread: Entity<acp_thread::AcpThread>) {
+    pub fn subagent_spawned(&self, id: acp::SessionId) {
         self.stream
             .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp_thread::ToolCallUpdateSubagentThread {
-                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
-                    thread,
-                }
-                .into(),
-            )))
+            .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
+    }
+
+    pub fn update_plan(&self, plan: acp::Plan) {
+        self.stream.send_plan(plan);
     }
 
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
-    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    /// They only support `default` (allow/deny/confirm) per tool.
     ///
     /// Uses the dropdown authorization flow with two granularities:
-    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default = "allow"` or "deny"
     /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
@@ -3074,212 +3951,385 @@ impl ToolCallEventStream {
         display_name: String,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let settings = agent_settings::AgentSettings::get_global(cx);
+        let title = title.into();
+        let options = acp_thread::PermissionOptions::Dropdown(vec![
+            acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(format!("always_allow_mcp:{tool_id}")),
+                    format!("Always for {display_name} MCP tool"),
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(format!("always_deny_mcp:{tool_id}")),
+                    format!("Always for {display_name} MCP tool"),
+                    acp::PermissionOptionKind::RejectAlways,
+                ),
+                sub_patterns: vec![],
+            },
+            acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("allow"),
+                    "Only this time",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("deny"),
+                    "Only this time",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+                sub_patterns: vec![],
+            },
+        ]);
 
-        let decision = decide_permission_from_settings(&tool_id, "", &settings);
+        // MCP tools are gated only by tool id (no per-input pattern
+        // matching), so we pass a single empty input value just to satisfy
+        // `decide_permission_from_settings`' signature.
+        let check_settings: Box<dyn Fn(&App) -> ToolPermissionDecision> =
+            Box::new(move |cx: &App| {
+                let settings = agent_settings::AgentSettings::get_global(cx);
+                decide_permission_from_settings(&tool_id, &[String::new()], settings)
+            });
 
-        match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
-            ToolPermissionDecision::Deny(reason) => return Task::ready(Err(anyhow!(reason))),
-            ToolPermissionDecision::Confirm => {}
-        }
-
-        let (response_tx, response_rx) = oneshot::channel();
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                ToolCallAuthorization {
-                    tool_call: acp::ToolCallUpdate::new(
-                        self.tool_use_id.to_string(),
-                        acp::ToolCallUpdateFields::new().title(title.into()),
-                    ),
-                    options: acp_thread::PermissionOptions::Dropdown(vec![
-                        acp_thread::PermissionOptionChoice {
-                            allow: acp::PermissionOption::new(
-                                acp::PermissionOptionId::new(format!(
-                                    "always_allow_mcp:{}",
-                                    tool_id
-                                )),
-                                format!("Always for {} MCP tool", display_name),
-                                acp::PermissionOptionKind::AllowAlways,
-                            ),
-                            deny: acp::PermissionOption::new(
-                                acp::PermissionOptionId::new(format!(
-                                    "always_deny_mcp:{}",
-                                    tool_id
-                                )),
-                                format!("Always for {} MCP tool", display_name),
-                                acp::PermissionOptionKind::RejectAlways,
-                            ),
-                        },
-                        acp_thread::PermissionOptionChoice {
-                            allow: acp::PermissionOption::new(
-                                acp::PermissionOptionId::new("allow"),
-                                "Only this time",
-                                acp::PermissionOptionKind::AllowOnce,
-                            ),
-                            deny: acp::PermissionOption::new(
-                                acp::PermissionOptionId::new("deny"),
-                                "Only this time",
-                                acp::PermissionOptionKind::RejectOnce,
-                            ),
-                        },
-                    ]),
-                    response: response_tx,
-                    context: None,
-                },
-            )))
-            .ok();
-
-        let fs = self.fs.clone();
-        cx.spawn(async move |cx| {
-            let response_str = response_rx.await?.0.to_string();
-
-            if response_str == format!("always_allow_mcp:{}", tool_id) {
-                if let Some(fs) = fs.clone() {
-                    cx.update(|cx| {
-                        update_settings_file(fs, cx, move |settings, _| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
-                        });
-                    });
-                }
-                return Ok(());
-            }
-            if response_str == format!("always_deny_mcp:{}", tool_id) {
-                if let Some(fs) = fs.clone() {
-                    cx.update(|cx| {
-                        update_settings_file(fs, cx, move |settings, _| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
-                        });
-                    });
-                }
-                return Err(anyhow!("Permission to run tool denied by user"));
-            }
-
-            if response_str == "allow" {
-                return Ok(());
-            }
-
-            Err(anyhow!("Permission to run tool denied by user"))
-        })
+        self.run_authorization_loop(title, options, None, Some(check_settings), cx)
     }
 
+    /// Gate a tool call on user permission, driven by the agent's
+    /// tool-permission settings.
+    ///
+    /// Evaluates the current settings up-front: returns `Ok(())` immediately
+    /// if the tool is already allowed, an error if it is denied, and
+    /// otherwise prompts the user for a decision. While a prompt is pending,
+    /// a subscription to `SettingsStore` watches for changes (for example,
+    /// when the user clicks "Always for …" on a sibling tool call and the
+    /// new rule becomes globally visible). When settings change, the current
+    /// prompt is dismissed and the decision is re-evaluated. This closes the
+    /// gap where an "Always for …" decision on one pending tool call would
+    /// not propagate to other pending tool calls in the same turn or in
+    /// subagent turns.
+    ///
+    /// For authorizations that must always prompt regardless of settings
+    /// (e.g. symlink-escape confirmations, sensitive settings-file edits),
+    /// use [`Self::prompt`] instead.
     pub fn authorize(
         &self,
         title: impl Into<String>,
         context: ToolPermissionContext,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        use settings::ToolPermissionMode;
-
+        let title = title.into();
         let options = context.build_permission_options();
 
-        let (response_tx, response_rx) = oneshot::channel();
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                ToolCallAuthorization {
-                    tool_call: acp::ToolCallUpdate::new(
-                        self.tool_use_id.to_string(),
-                        acp::ToolCallUpdateFields::new().title(title.into()),
-                    ),
-                    options,
-                    response: response_tx,
-                    context: Some(context),
-                },
-            )))
-            .ok();
+        let tool_name = context.tool_name.clone();
+        let input_values = context.input_values.clone();
+        let check_settings: Box<dyn Fn(&App) -> ToolPermissionDecision> =
+            Box::new(move |cx: &App| {
+                decide_permission_from_settings(
+                    &tool_name,
+                    &input_values,
+                    agent_settings::AgentSettings::get_global(cx),
+                )
+            });
+
+        self.run_authorization_loop(title, options, Some(context), Some(check_settings), cx)
+    }
+
+    /// Like [`Self::authorize`], but always prompts the user without
+    /// consulting settings. Use this for authorizations that must be
+    /// confirmed even when the user has configured `always_allow` rules —
+    /// for example, symlink-escape confirmations or edits that target
+    /// sensitive settings files.
+    pub fn authorize_always_prompt(
+        &self,
+        title: impl Into<String>,
+        context: ToolPermissionContext,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let title = title.into();
+        let options = context.build_permission_options();
+        self.run_authorization_loop(title, options, Some(context), None, cx)
+    }
+
+    /// Prompts the user to choose between an explicit set of actions and
+    /// returns the chosen `option_id`.
+    ///
+    /// Unlike [`Self::authorize`] / [`Self::authorize_always_prompt`], this
+    /// does not interpret the user's choice as a permission grant — callers
+    /// are responsible for handling each `option_id` explicitly. Use this
+    /// when a tool needs the user to pick between several side-effecting
+    /// actions (for example, "Save" vs "Discard" for a dirty buffer).
+    pub fn prompt_for_decision(
+        &self,
+        title: Option<String>,
+        message: Option<String>,
+        options: Vec<acp::PermissionOption>,
+        cx: &mut App,
+    ) -> Task<Result<acp::PermissionOptionId>> {
+        let options = acp_thread::PermissionOptions::Flat(options);
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
+        cx.spawn(async move |_cx| {
+            let mut fields = acp::ToolCallUpdateFields::new();
+            if let Some(title) = title {
+                fields = fields.title(title);
+            }
+            if let Some(message) = message {
+                fields = fields.content(vec![acp::ToolCallContent::from(message)]);
+            }
+
+            let (response_tx, response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCallUpdate::new(tool_use_id.to_string(), fields),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::ActionChoice,
+                    },
+                )))
+            {
+                log::error!("Failed to send tool call decision prompt: {error}");
+                return Err(anyhow!("Failed to send tool call decision prompt: {error}"));
+            }
+
+            let outcome = response_rx
+                .await
+                .map_err(|_| anyhow!("authorization channel closed"))?;
+            Ok(outcome.option_id)
+        })
+    }
+
+    /// Prompts the user for authorization.
+    ///
+    /// When `check_settings` is `Some`, this gate is settings-driven: the
+    /// settings are evaluated up-front (an Allow or Deny result resolves the
+    /// task immediately without prompting), and while a prompt is pending a
+    /// `SettingsStore` subscription watches for changes. A subsequent Allow
+    /// or Deny dismisses the prompt UI and resolves the task without user
+    /// interaction.
+    ///
+    /// When `check_settings` is `None`, the user is always prompted and
+    /// settings changes are ignored. This suits prompts that aren't
+    /// settings-driven (e.g. symlink-escape confirmations).
+    fn run_authorization_loop(
+        &self,
+        title: String,
+        options: acp_thread::PermissionOptions,
+        context: Option<ToolPermissionContext>,
+        check_settings: Option<Box<dyn Fn(&App) -> ToolPermissionDecision>>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        // Short-circuit when current settings yield a definitive answer.
+        if let Some(check) = check_settings.as_ref() {
+            match check(cx) {
+                ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+                ToolPermissionDecision::Deny(reason) => {
+                    return Task::ready(Err(anyhow!(reason)));
+                }
+                ToolPermissionDecision::Confirm => {}
+            }
+        }
 
         let fs = self.fs.clone();
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
         cx.spawn(async move |cx| {
-            let response_str = response_rx.await?.0.to_string();
-
-            // Handle "always allow tool" - e.g., "always_allow:terminal"
-            if let Some(tool) = response_str.strip_prefix("always_allow:") {
-                if let Some(fs) = fs.clone() {
-                    let tool = tool.to_string();
-                    cx.update(|cx| {
-                        update_settings_file(fs, cx, move |settings, _| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Allow);
-                        });
-                    });
-                }
-                return Ok(());
+            let (response_tx, mut response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCallUpdate::new(
+                            tool_use_id.to_string(),
+                            acp::ToolCallUpdateFields::new().title(title),
+                        ),
+                        options,
+                        response: response_tx,
+                        context,
+                        kind: acp_thread::AuthorizationKind::PermissionGrant,
+                    },
+                )))
+            {
+                log::error!("Failed to send tool call authorization: {error}");
+                return Err(anyhow!("Failed to send tool call authorization: {error}"));
             }
 
-            // Handle "always deny tool" - e.g., "always_deny:terminal"
-            if let Some(tool) = response_str.strip_prefix("always_deny:") {
-                if let Some(fs) = fs.clone() {
-                    let tool = tool.to_string();
-                    cx.update(|cx| {
-                        update_settings_file(fs, cx, move |settings, _| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Deny);
-                        });
-                    });
-                }
-                return Err(anyhow!("Permission to run tool denied by user"));
-            }
+            let Some(check_settings) = check_settings else {
+                let outcome = response_rx
+                    .await
+                    .map_err(|_| anyhow!("authorization channel closed"))?;
 
-            // Handle "always allow pattern" - e.g., "always_allow_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_allow_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
-                    if let Some(fs) = fs.clone() {
-                        cx.update(|cx| {
-                            update_settings_file(fs, cx, move |settings, _| {
-                                settings
-                                    .agent
-                                    .get_or_insert_default()
-                                    .add_tool_allow_pattern(&pattern_tool_name, pattern);
-                            });
-                        });
+                return Self::persist_permission_outcome(&outcome, fs, cx);
+            };
+
+            let (mut settings_tx, mut settings_rx) = watch::channel(());
+            let _settings_subscription = cx.update(|cx| {
+                cx.observe_global::<SettingsStore>(move |_cx| {
+                    settings_tx.send(()).ok();
+                })
+            });
+
+            // Race the user's response against settings changes. On each
+            // settings change, re-evaluate `check_settings`: if it now
+            // yields a definitive Allow or Deny, resolve the prompt
+            // without user interaction. Otherwise keep waiting on the
+            // same prompt.
+            loop {
+                let settings_changed = async {
+                    if settings_rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                };
+                futures::select_biased! {
+                    outcome = (&mut response_rx).fuse() => {
+                        let outcome = outcome
+                            .map_err(|_| anyhow!("authorization channel closed"))?;
+                        return Self::persist_permission_outcome(&outcome, fs.clone(), cx);
+                    }
+                    _ = settings_changed.fuse() => {
+                        // On auto-resolve, we dismiss the prompt UI by
+                        // replacing the tool call's `WaitingForConfirmation`
+                        // status with `InProgress` (or `Failed`). Dropping
+                        // `response_rx` closes the `oneshot` held by the
+                        // UI, so any late click by the user is a no-op.
+                        match cx.update(|cx| check_settings(cx)) {
+                            ToolPermissionDecision::Allow => {
+                                drop(response_rx);
+                                stream.update_tool_call_fields(
+                                    &tool_use_id,
+                                    acp::ToolCallUpdateFields::new()
+                                        .status(acp::ToolCallStatus::InProgress),
+                                    None,
+                                );
+                                return Ok(());
+                            }
+                            ToolPermissionDecision::Deny(reason) => {
+                                drop(response_rx);
+                                stream.update_tool_call_fields(
+                                    &tool_use_id,
+                                    acp::ToolCallUpdateFields::new()
+                                        .status(acp::ToolCallStatus::Failed),
+                                    None,
+                                );
+                                return Err(anyhow!(reason));
+                            }
+                            ToolPermissionDecision::Confirm => continue,
+                        }
                     }
                 }
-                return Ok(());
             }
-
-            // Handle "always deny pattern" - e.g., "always_deny_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_deny_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
-                    if let Some(fs) = fs.clone() {
-                        cx.update(|cx| {
-                            update_settings_file(fs, cx, move |settings, _| {
-                                settings
-                                    .agent
-                                    .get_or_insert_default()
-                                    .add_tool_deny_pattern(&pattern_tool_name, pattern);
-                            });
-                        });
-                    }
-                }
-                return Err(anyhow!("Permission to run tool denied by user"));
-            }
-
-            // Handle simple "allow" (allow once)
-            if response_str == "allow" {
-                return Ok(());
-            }
-
-            // Handle simple "deny" (deny once)
-            Err(anyhow!("Permission to run tool denied by user"))
         })
+    }
+
+    /// Interprets a `SelectedPermissionOutcome` and persists any settings changes.
+    /// Returns `true` if the tool call should be allowed, `false` if denied.
+    fn persist_permission_outcome(
+        outcome: &acp_thread::SelectedPermissionOutcome,
+        fs: Option<Arc<dyn Fs>>,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let option_id = outcome.option_id.0.as_ref();
+        let err = || Err(anyhow!("Permission to run tool denied by user"));
+
+        let always_permission = option_id
+            .strip_prefix("always_allow:")
+            .map(|tool| (tool, ToolPermissionMode::Allow))
+            .or_else(|| {
+                option_id
+                    .strip_prefix("always_deny:")
+                    .map(|tool| (tool, ToolPermissionMode::Deny))
+            })
+            .or_else(|| {
+                option_id
+                    .strip_prefix("always_allow_mcp:")
+                    .map(|tool| (tool, ToolPermissionMode::Allow))
+            })
+            .or_else(|| {
+                option_id
+                    .strip_prefix("always_deny_mcp:")
+                    .map(|tool| (tool, ToolPermissionMode::Deny))
+            });
+
+        if let Some((tool, mode)) = always_permission {
+            let params = outcome.params.as_ref();
+            Self::persist_always_permission(tool, mode, params, fs, cx);
+            return if mode == ToolPermissionMode::Allow {
+                Ok(())
+            } else {
+                err()
+            };
+        }
+
+        // Handle simple "allow" / "deny" (once, no persistence)
+        if option_id == "allow" || option_id == "deny" {
+            debug_assert!(
+                outcome.params.is_none(),
+                "unexpected params for once-only permission"
+            );
+            return if option_id == "allow" { Ok(()) } else { err() };
+        }
+
+        debug_assert!(false, "unexpected permission option_id: {option_id}");
+
+        err()
+    }
+
+    /// Persists an "always allow" or "always deny" permission, using sub_patterns
+    /// from params when present.
+    fn persist_always_permission(
+        tool: &str,
+        mode: ToolPermissionMode,
+        params: Option<&acp_thread::SelectedPermissionParams>,
+        fs: Option<Arc<dyn Fs>>,
+        cx: &AsyncApp,
+    ) {
+        let Some(fs) = fs else {
+            return;
+        };
+
+        match params {
+            Some(acp_thread::SelectedPermissionParams::Terminal {
+                patterns: sub_patterns,
+            }) => {
+                debug_assert!(
+                    !sub_patterns.is_empty(),
+                    "empty sub_patterns for tool {tool} — callers should pass None instead"
+                );
+                let tool = tool.to_string();
+                let sub_patterns = sub_patterns.clone();
+                cx.update(|cx| {
+                    update_settings_file(fs, cx, move |settings, _| {
+                        let agent = settings.agent.get_or_insert_default();
+                        for pattern in sub_patterns {
+                            match mode {
+                                ToolPermissionMode::Allow => {
+                                    agent.add_tool_allow_pattern(&tool, pattern);
+                                }
+                                ToolPermissionMode::Deny => {
+                                    agent.add_tool_deny_pattern(&tool, pattern);
+                                }
+                                // If there's no matching pattern this will
+                                // default to confirm, so falling through is
+                                // fine here.
+                                ToolPermissionMode::Confirm => (),
+                            }
+                        }
+                    });
+                });
+            }
+            None => {
+                let tool = tool.to_string();
+                cx.update(|cx| {
+                    update_settings_file(fs, cx, move |settings, _| {
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_tool_default_permission(&tool, mode);
+                    });
+                });
+            }
+        }
     }
 }
 
@@ -3332,6 +4382,15 @@ impl ToolCallEventStreamReceiver {
             panic!("Expected terminal but got: {:?}", event);
         }
     }
+
+    pub async fn expect_plan(&mut self) -> acp::Plan {
+        let event = self.0.next().await;
+        if let Some(Ok(ThreadEvent::Plan(plan))) = event {
+            plan
+        } else {
+            panic!("Expected plan but got: {:?}", event);
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -3356,6 +4415,12 @@ impl From<&str> for UserMessageContent {
     }
 }
 
+impl From<String> for UserMessageContent {
+    fn from(text: String) -> Self {
+        Self::Text(text)
+    }
+}
+
 impl UserMessageContent {
     pub fn from_content_block(value: acp::ContentBlock, path_style: PathStyle) -> Self {
         match value {
@@ -3369,7 +4434,7 @@ impl UserMessageContent {
                 match MentionUri::parse(&resource_link.uri, path_style) {
                     Ok(uri) => Self::Mention {
                         uri,
-                        content: String::new(),
+                        content: SharedString::default(),
                     },
                     Err(err) => {
                         log::error!("Failed to parse mention link: {}", err);
@@ -3382,7 +4447,7 @@ impl UserMessageContent {
                     match MentionUri::parse(&resource.uri, path_style) {
                         Ok(uri) => Self::Mention {
                             uri,
-                            content: resource.text,
+                            content: resource.text.into(),
                         },
                         Err(err) => {
                             log::error!("Failed to parse mention link: {}", err);
@@ -3432,6 +4497,582 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        size: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use language_model::LanguageModelToolUseId;
+    use language_model::fake_provider::FakeLanguageModel;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let templates = Templates::new();
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        cx.update(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+
+            let thread = cx.new(|cx| {
+                Thread::new(
+                    project,
+                    project_context,
+                    context_server_registry,
+                    templates,
+                    None,
+                    cx,
+                )
+            });
+
+            let (event_tx, _event_rx) = mpsc::unbounded();
+            let event_stream = ThreadEventStream(event_tx);
+
+            (thread, event_stream)
+        })
+    }
+
+    fn setup_parent_with_subagents(
+        cx: &mut TestAppContext,
+        parent: &Entity<Thread>,
+        count: usize,
+    ) -> Vec<Entity<Thread>> {
+        cx.update(|cx| {
+            let mut subagents = Vec::new();
+            for _ in 0..count {
+                let subagent = cx.new(|cx| Thread::new_subagent(parent, cx));
+                parent.update(cx, |thread, _cx| {
+                    thread.register_running_subagent(subagent.downgrade());
+                });
+                subagents.push(subagent);
+            }
+            subagents
+        })
+    }
+
+    struct ReplayImageTool;
+
+    impl AgentTool for ReplayImageTool {
+        type Input = ();
+        type Output = String;
+
+        const NAME: &'static str = "registered_image_tool";
+
+        fn kind() -> acp::ToolKind {
+            acp::ToolKind::Other
+        }
+
+        fn initial_title(
+            &self,
+            _input: Result<Self::Input, serde_json::Value>,
+            _cx: &mut App,
+        ) -> SharedString {
+            "Registered Image Tool".into()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            _input: ToolInput<Self::Input>,
+            _event_stream: ToolCallEventStream,
+            _cx: &mut App,
+        ) -> Task<Result<Self::Output, Self::Output>> {
+            Task::ready(Ok(String::new()))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_replay_tool_call_replays_image_content(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let registered_tool_use_id = LanguageModelToolUseId::from("registered_tool_id");
+        let missing_tool_use_id = LanguageModelToolUseId::from("missing_tool_id");
+        let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        let image = LanguageModelImage {
+            source: image_data.into(),
+        };
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.add_tool(ReplayImageTool);
+
+                let registered_tool_use = LanguageModelToolUse {
+                    id: registered_tool_use_id.clone(),
+                    name: ReplayImageTool::NAME.into(),
+                    raw_input: "null".to_string(),
+                    input: json!(null),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+                let missing_tool_use = LanguageModelToolUse {
+                    id: missing_tool_use_id.clone(),
+                    name: "missing_image_tool".into(),
+                    raw_input: "{}".to_string(),
+                    input: json!({}),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+
+                let mut tool_results = IndexMap::default();
+                tool_results.insert(
+                    registered_tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: registered_tool_use_id.clone(),
+                        tool_name: ReplayImageTool::NAME.into(),
+                        is_error: false,
+                        content: vec![
+                            LanguageModelToolResultContent::Text("before".into()),
+                            LanguageModelToolResultContent::Image(image.clone()),
+                            LanguageModelToolResultContent::Text("after".into()),
+                        ],
+                        output: Some(json!("raw output")),
+                    },
+                );
+                tool_results.insert(
+                    missing_tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: missing_tool_use_id.clone(),
+                        tool_name: "missing_image_tool".into(),
+                        is_error: false,
+                        content: vec![LanguageModelToolResultContent::Image(image.clone())],
+                        output: Some(json!("raw output")),
+                    },
+                );
+
+                thread.messages.push(Arc::new(Message::Agent(AgentMessage {
+                    content: vec![
+                        AgentMessageContent::ToolUse(registered_tool_use),
+                        AgentMessageContent::ToolUse(missing_tool_use),
+                    ],
+                    tool_results,
+                    reasoning_details: None,
+                })));
+
+                thread.replay(cx)
+            })
+        });
+
+        let mut tool_use_ids_with_image_content = HashSet::default();
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
+                event
+                && let Some(content) = &update.fields.content
+                && content.iter().any(|content| {
+                    matches!(
+                        content,
+                        acp::ToolCallContent::Content(acp::Content {
+                            content: acp::ContentBlock::Image(_),
+                            ..
+                        })
+                    )
+                })
+            {
+                tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+            }
+        }
+
+        assert!(tool_use_ids_with_image_content.contains(&registered_tool_use_id.to_string()));
+        assert!(tool_use_ids_with_image_content.contains(&missing_tool_use_id.to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_update_title_tool_replay_does_not_reenter_thread(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let tool_use_id = LanguageModelToolUseId::from("title_tool_id");
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
+                push_completed_update_title_tool_call(thread, tool_use_id.clone());
+
+                thread.replay(cx)
+            })
+        });
+
+        let mut saw_tool_call_title = false;
+        let mut saw_replayed_title_update = false;
+        let mut saw_completed_update = false;
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            match event {
+                ThreadEvent::ToolCall(tool_call)
+                    if tool_call.tool_call_id.to_string() == tool_use_id.to_string()
+                        && tool_call.title == "Update title: Replayed title" =>
+                {
+                    saw_tool_call_title = true;
+                }
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                    if update.tool_call_id.to_string() == tool_use_id.to_string() =>
+                {
+                    if update.fields.title == Some("Update title: Replayed title".to_string()) {
+                        saw_replayed_title_update = true;
+                    }
+                    if update.fields.status == Some(acp::ToolCallStatus::Completed) {
+                        saw_completed_update = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_tool_call_title);
+        assert!(saw_replayed_title_update);
+        assert!(saw_completed_update);
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_update_title_tool_replay_title_when_tool_not_registered(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let tool_use_id = LanguageModelToolUseId::from("title_tool_id");
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                push_completed_update_title_tool_call(thread, tool_use_id.clone());
+                thread.replay(cx)
+            })
+        });
+
+        let mut saw_tool_call_title = false;
+        let mut saw_replayed_title_update = false;
+        let mut saw_completed_update = false;
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            match event {
+                ThreadEvent::ToolCall(tool_call)
+                    if tool_call.tool_call_id.to_string() == tool_use_id.to_string()
+                        && tool_call.title == "Update title: Replayed title" =>
+                {
+                    saw_tool_call_title = true;
+                }
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                    if update.tool_call_id.to_string() == tool_use_id.to_string() =>
+                {
+                    if update.fields.title == Some("Update title: Replayed title".to_string()) {
+                        saw_replayed_title_update = true;
+                    }
+                    if update.fields.status == Some(acp::ToolCallStatus::Completed) {
+                        saw_completed_update = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_tool_call_title);
+        assert!(saw_replayed_title_update);
+        assert!(saw_completed_update);
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title(), None);
+        });
+    }
+
+    fn push_completed_update_title_tool_call(
+        thread: &mut Thread,
+        tool_use_id: LanguageModelToolUseId,
+    ) {
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: UpdateTitleTool::NAME.into(),
+            raw_input: json!({ "title": "Replayed title" }).to_string(),
+            input: json!({ "title": "Replayed title" }),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let mut tool_results = IndexMap::default();
+        tool_results.insert(
+            tool_use_id.clone(),
+            LanguageModelToolResult {
+                tool_use_id,
+                tool_name: UpdateTitleTool::NAME.into(),
+                is_error: false,
+                content: vec![LanguageModelToolResultContent::Text(
+                    "Session title updated".into(),
+                )],
+                output: Some(json!("Session title updated")),
+            },
+        );
+
+        thread.messages.push(Arc::new(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::ToolUse(tool_use)],
+            tool_results,
+            reasoning_details: None,
+        })));
+    }
+
+    #[gpui::test]
+    async fn test_set_model_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        let new_model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "test-provider",
+            "new-model",
+            "New Model",
+            false,
+        ));
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_model(new_model, cx);
+            });
+
+            for subagent in &subagents {
+                let subagent_model_id = subagent.read(cx).model().unwrap().id();
+                assert_eq!(
+                    subagent_model_id.0.as_ref(),
+                    "new-model",
+                    "Subagent model should match parent model after set_model"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_summarization_model_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        let summary_model: Arc<dyn LanguageModel> =
+            Arc::new(FakeLanguageModel::with_id_and_thinking(
+                "test-provider",
+                "summary-model",
+                "Summary Model",
+                false,
+            ));
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(summary_model), cx);
+            });
+
+            for subagent in &subagents {
+                let subagent_summary_id = subagent.read(cx).summarization_model().unwrap().id();
+                assert_eq!(
+                    subagent_summary_id.0.as_ref(),
+                    "summary-model",
+                    "Subagent summarization model should match parent after set_summarization_model"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_thinking_enabled_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(true, cx);
+            });
+
+            for subagent in &subagents {
+                assert!(
+                    subagent.read(cx).thinking_enabled(),
+                    "Subagent thinking should be enabled after parent enables it"
+                );
+            }
+
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(false, cx);
+            });
+
+            for subagent in &subagents {
+                assert!(
+                    !subagent.read(cx).thinking_enabled(),
+                    "Subagent thinking should be disabled after parent disables it"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_thinking_effort_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).thinking_effort().map(|s| s.as_str()),
+                    Some("high"),
+                    "Subagent thinking effort should match parent"
+                );
+            }
+
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_effort(None, cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).thinking_effort(),
+                    None,
+                    "Subagent thinking effort should be None after parent clears it"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_subagent_inherits_settings_at_creation(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_speed(Speed::Fast, cx);
+                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_profile(AgentProfileId("custom-profile".into()), cx);
+            });
+        });
+
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+
+        cx.update(|cx| {
+            let sub = subagents[0].read(cx);
+            assert_eq!(sub.speed(), Some(Speed::Fast));
+            assert!(sub.thinking_enabled());
+            assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
+            assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_speed_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_speed(Speed::Fast, cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).speed(),
+                    Some(Speed::Fast),
+                    "Subagent speed should match parent after set_speed"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dropped_subagent_does_not_panic(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+
+        // Drop the subagent so the WeakEntity can no longer be upgraded
+        drop(subagents);
+
+        // Should not panic even though the subagent was dropped
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_thinking_enabled(true, cx);
+                thread.set_speed(Speed::Fast, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_handle_tool_use_json_parse_error_adds_tool_use_to_content(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, event_stream) = setup_thread_for_test(cx).await;
+
+        let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
+        let tool_name: Arc<str> = Arc::from("test_tool");
+        let raw_input: Arc<str> = Arc::from("{invalid json");
+        let json_parse_error = "expected value at line 1 column 1".to_string();
+
+        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
+
+        let result = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    // Call the function under test
+                    thread
+                        .handle_tool_use_json_parse_error_event(
+                            tool_use_id.clone(),
+                            tool_name.clone(),
+                            raw_input.clone(),
+                            json_parse_error,
+                            &event_stream,
+                            cancellation_rx,
+                            cx,
+                        )
+                        .unwrap()
+                })
+            })
+            .await;
+
+        // Verify the result is an error
+        assert!(result.is_error);
+        assert_eq!(result.tool_use_id, tool_use_id);
+        assert_eq!(result.tool_name, tool_name);
+        assert!(matches!(
+            result.content.as_slice(),
+            [LanguageModelToolResultContent::Text(_)]
+        ));
+
+        thread.update(cx, |thread, _cx| {
+            // Verify the tool use was added to the message content
+            {
+                let last_message = thread.pending_message();
+                assert_eq!(
+                    last_message.content.len(),
+                    1,
+                    "Should have one tool_use in content"
+                );
+
+                match &last_message.content[0] {
+                    AgentMessageContent::ToolUse(tool_use) => {
+                        assert_eq!(tool_use.id, tool_use_id);
+                        assert_eq!(tool_use.name, tool_name);
+                        assert_eq!(tool_use.raw_input, raw_input.to_string());
+                        assert!(tool_use.is_input_complete);
+                        // Should fall back to empty object for invalid JSON
+                        assert_eq!(tool_use.input, json!({}));
+                    }
+                    _ => panic!("Expected ToolUse content"),
+                }
+            }
+
+            // Insert the tool result (simulating what the caller does)
+            thread
+                .pending_message()
+                .tool_results
+                .insert(result.tool_use_id.clone(), result);
+
+            // Verify the tool result was added
+            let last_message = thread.pending_message();
+            assert_eq!(
+                last_message.tool_results.len(),
+                1,
+                "Should have one tool_result"
+            );
+            assert!(last_message.tool_results.contains_key(&tool_use_id));
+        })
     }
 }

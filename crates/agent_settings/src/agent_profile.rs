@@ -117,11 +117,10 @@ impl AgentProfileSettings {
     }
 
     pub fn is_context_server_tool_enabled(&self, server_id: &str, tool_name: &str) -> bool {
-        self.enable_all_context_servers
-            || self
-                .context_servers
-                .get(server_id)
-                .is_some_and(|preset| preset.tools.get(tool_name) == Some(&true))
+        self.context_servers
+            .get(server_id)
+            .and_then(|preset| preset.tools.get(tool_name).copied())
+            .unwrap_or(self.enable_all_context_servers)
     }
 
     pub fn save_to_settings(
@@ -198,5 +197,54 @@ impl From<settings::ContextServerPresetContent> for ContextServerPreset {
         Self {
             tools: content.tools,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(
+        enable_all_context_servers: bool,
+        context_servers: IndexMap<Arc<str>, ContextServerPreset>,
+    ) -> AgentProfileSettings {
+        AgentProfileSettings {
+            name: "test".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers,
+            context_servers,
+            default_model: None,
+        }
+    }
+
+    fn preset(tools: &[(&str, bool)]) -> ContextServerPreset {
+        ContextServerPreset {
+            tools: tools
+                .iter()
+                .map(|(name, enabled)| (Arc::from(*name), *enabled))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn explicit_false_disables_tool_when_enable_all_is_true() {
+        let mut servers = IndexMap::default();
+        servers.insert(Arc::from("server"), preset(&[("disabled_tool", false)]));
+        let profile = profile(true, servers);
+
+        assert!(!profile.is_context_server_tool_enabled("server", "disabled_tool"));
+        assert!(profile.is_context_server_tool_enabled("server", "other_tool"));
+        assert!(profile.is_context_server_tool_enabled("other_server", "any_tool"));
+    }
+
+    #[test]
+    fn explicit_true_enables_tool_when_enable_all_is_false() {
+        let mut servers = IndexMap::default();
+        servers.insert(Arc::from("server"), preset(&[("enabled_tool", true)]));
+        let profile = profile(false, servers);
+
+        assert!(profile.is_context_server_tool_enabled("server", "enabled_tool"));
+        assert!(!profile.is_context_server_tool_enabled("server", "other_tool"));
+        assert!(!profile.is_context_server_tool_enabled("other_server", "any_tool"));
     }
 }

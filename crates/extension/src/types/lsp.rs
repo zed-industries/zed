@@ -61,6 +61,7 @@ pub enum InsertTextFormat {
 pub struct Symbol {
     pub kind: SymbolKind,
     pub name: String,
+    pub container_name: Option<String>,
 }
 
 /// The kind of an LSP symbol.

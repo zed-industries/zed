@@ -26,7 +26,6 @@ impl ActionCompletionProvider {
 impl CompletionProvider for ActionCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<language::Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
@@ -107,6 +106,7 @@ impl CompletionProvider for ActionCompletionProvider {
                         snippet_deduplication_key: None,
                         insert_text_mode: None,
                         confirm: None,
+                        group: None,
                     }
                 })
                 .collect();

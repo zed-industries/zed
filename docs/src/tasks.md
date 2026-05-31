@@ -1,3 +1,8 @@
+---
+title: Tasks - Run Commands in Zed
+description: Run and rerun shell commands from Zed with task definitions. Supports variables, templates, and language-specific tasks.
+---
+
 # Tasks
 
 Zed supports ways to spawn (and rerun) commands using its integrated [terminal](./terminal.md) to output the results. These commands can read a limited subset of Zed state (such as a path to the file currently being edited or selected text).
@@ -45,16 +50,21 @@ Zed supports ways to spawn (and rerun) commands using its integrated [terminal](
     // Whether to show the task line in the output of the spawned task, defaults to `true`.
     "show_summary": true,
     // Whether to show the command line in the output of the spawned task, defaults to `true`.
-    "show_command": true
+    "show_command": true,
+    // Which edited buffers to save before running the task:
+    // * `all` — save all edited buffers
+    // * `current` — save currently active buffer only
+    // * `none` — don't save any buffers
+    "save": "none"
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   }
 ]
 ```
 
-There are two actions that drive the workflow of using tasks: `task: spawn` and `task: rerun`.
-`task: spawn` opens a modal with all available tasks in the current file.
-`task: rerun` reruns the most recently spawned task. You can also rerun tasks from the task modal.
+There are two actions that drive the workflow of using tasks: {#action task::Spawn} and {#action task::Rerun}.
+{#action task::Spawn} opens a modal with all available tasks in the current file.
+{#action task::Rerun} reruns the most recently spawned task. You can also rerun tasks from the task modal.
 
 By default, rerunning tasks reuses the same terminal (due to the `"use_new_terminal": false` default) but waits for the previous task to finish before starting (due to the `"allow_concurrent_runs": false` default).
 
@@ -64,8 +74,8 @@ Keep `"use_new_terminal": false` and set `"allow_concurrent_runs": true` to allo
 
 Tasks can be defined:
 
-- in the global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/zed/tasks.json`. You can edit them by using the `zed: open tasks` action.
-- in the worktree-specific (local) `.zed/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using the `zed: open project tasks` action.
+- in the global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/zed/tasks.json`. You can edit them by using the {#action zed::OpenTasks} action.
+- in the worktree-specific (local) `.zed/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using the {#action zed::OpenProjectTasks} action.
 - on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sessions.
 - by language extension.
 
@@ -84,12 +94,14 @@ These variables allow you to pull information from the current editor and use it
 - `ZED_STEM`: stem (filename without extension) of the currently opened file (e.g. `main`)
 - `ZED_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`)
 - `ZED_SELECTED_TEXT`: currently selected text
+- `ZED_LANGUAGE`: language of the currently opened buffer (e.g. `Rust`, `Python`, `Shell Script`)
 - `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
+- `ZED_MAIN_GIT_WORKTREE`: absolute path to the main git worktree's working directory. For normal checkouts this equals `ZED_WORKTREE_ROOT`; for linked git worktrees this is the original repository's working directory.
 - `ZED_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $ZED_FILE source file.
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
 
-```json [settings]
+```json [tasks]
 {
   "label": "echo current file's path",
   "command": "echo $ZED_FILE"
@@ -106,7 +118,7 @@ When working with paths containing spaces or other special characters, please en
 
 For example, instead of this (which will fail if the path has a space):
 
-```json [settings]
+```json [tasks]
 {
   "label": "stat current file",
   "command": "stat $ZED_FILE"
@@ -115,7 +127,7 @@ For example, instead of this (which will fail if the path has a space):
 
 Provide the following:
 
-```json [settings]
+```json [tasks]
 {
   "label": "stat current file",
   "command": "stat",
@@ -125,7 +137,7 @@ Provide the following:
 
 Or explicitly include escaped quotes like so:
 
-```json [settings]
+```json [tasks]
 {
   "label": "stat current file",
   "command": "stat \"$ZED_FILE\""
@@ -137,7 +149,7 @@ Or explicitly include escaped quotes like so:
 Task definitions with variables which are not present at the moment the task list is determined are filtered out.
 For example, the following task will appear in the spawn modal only if there is a text selection:
 
-```json [settings]
+```json [tasks]
 {
   "label": "selected text",
   "command": "echo \"$ZED_SELECTED_TEXT\""
@@ -146,7 +158,7 @@ For example, the following task will appear in the spawn modal only if there is 
 
 Set default values to such variables to have such tasks always displayed:
 
-```json [settings]
+```json [tasks]
 {
   "label": "selected text with default",
   "command": "echo \"${ZED_SELECTED_TEXT:no text selected}\""
@@ -155,16 +167,16 @@ Set default values to such variables to have such tasks always displayed:
 
 ## Oneshot tasks
 
-The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
+The same task modal opened via {#action task::Spawn} supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
 
-The task modal persists these ad-hoc commands for the duration of the session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
+The task modal persists these ad-hoc commands for the duration of the session, {#action task::Rerun} will also rerun such tasks if they were the last ones spawned.
 
 You can also adjust the currently selected task in a modal (`tab` is the default key binding). Doing so will put its command into a prompt that can then be edited & spawned as a oneshot task.
 
 ### Ephemeral tasks
 
-You can use the `cmd` modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't have a high rank in the task modal).
-The intended use of ephemeral tasks is to stay in the flow with continuous `task: rerun` usage.
+You can use the `cmd` modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with {#action task::Rerun} and they won't have a high rank in the task modal).
+The intended use of ephemeral tasks is to stay in the flow with continuous {#action task::Rerun} usage.
 
 ### More task rerun control
 
@@ -218,6 +230,88 @@ This could be useful for launching a terminal application that you want to use i
 }
 ```
 
+## Hooks
+
+In addition to being spawned manually, tasks can be configured to run automatically in response to certain Zed events by adding a hook to the `hooks` field on a task template. A task with a matching hook will be resolved and spawned when that event fires.
+
+The following hooks are currently supported:
+
+- `create_worktree` — runs after Zed creates a new linked Git worktree, either directly through the CLI or from the [worktree picker](./git.md#git-worktrees). The task is spawned with `ZED_WORKTREE_ROOT` pointing at the newly created worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository's working directory, which makes these hooks well-suited to copying untracked files (such as `.env` files) or running per-worktree setup commands.
+
+Hook tasks are resolved from the same global and worktree-local `tasks.json` files as manually spawned tasks, and multiple tasks may register for the same hook; they all run when the hook fires. A hook task still benefits from the usual task configuration fields — `cwd`, `env`, `reveal`, `hide`, and so on — so you can control how much of the terminal UI is shown while it runs.
+
+```json [tasks]
+[
+  {
+    "label": "copy .env into new worktree",
+    "command": "cp",
+    "args": ["$ZED_MAIN_GIT_WORKTREE/.env", "$ZED_WORKTREE_ROOT/.env"],
+    "hooks": ["create_worktree"],
+    "reveal": "no_focus",
+    "hide": "on_success"
+  }
+]
+```
+
+Tasks that define `hooks` are still available from the task modal like any other task, so the same template can be reused for manual runs.
+
+## Custom Git Commands
+
+The Git Graph supports running custom Git command tasks from the commit context menu.
+To add a command, define a task in your global `tasks.json` file with the `git-command` tag (worktree-local tasks are not supported yet).
+When shown from a commit's context menu, the task is resolved against the selected commit and repository, and runs from the selected repository root by default.
+
+Git Graph command tasks support the Git-specific task variables below.
+These variables are provided only when resolving Git Graph command tasks.
+Other task variables, such as `ZED_FILE`, `ZED_SELECTED_TEXT`, `ZED_WORKTREE_ROOT`, and `ZED_MAIN_GIT_WORKTREE`, are not provided to Git Graph command tasks unless they use default values.
+
+- `ZED_GIT_SHA`: full SHA of the selected commit.
+- `ZED_GIT_SHA_SHORT`: short SHA of the selected commit.
+- `ZED_GIT_REPOSITORY_NAME`: name of the selected Git repository.
+- `ZED_GIT_REPOSITORY_PATH`: absolute path to the selected Git repository's working directory.
+
+For example:
+
+```json [tasks]
+[
+  {
+    "label": "Branches containing commit: $ZED_GIT_SHA_SHORT",
+    "command": "git",
+    "args": ["branch", "-a", "--contains", "$ZED_GIT_SHA"],
+    "tags": ["git-command"]
+  }
+]
+```
+
+## VS Code Task Format
+
+When importing VS Code tasks from `.vscode/tasks.json`, you can omit the `label` field. Zed automatically generates labels based on the task type:
+
+- **npm tasks**: `npm: <script>` (e.g., `npm: start`)
+- **gulp tasks**: `gulp: <task>` (e.g., `gulp: build`)
+- **shell tasks**: Uses the `command` string directly (e.g., `echo hello`), or `shell` if the command is empty
+- **Tasks without type**: `Untitled Task`
+
+Example task file with auto-generated labels:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "start"
+    },
+    {
+      "type": "shell",
+      "command": "cargo build --release"
+    }
+  ]
+}
+```
+
+These tasks appear in the task picker as "npm: start" and "cargo build --release". You can override the generated label by providing an explicit `label` field.
+
 ## Binding runnable tags to task templates
 
 Zed supports overriding the default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
@@ -228,7 +322,7 @@ Zed supports overriding the default action for inline runnable indicators via wo
 
 To tag a task, add the runnable tag name to the `tags` field on the task template:
 
-```json [settings]
+```json [tasks]
 {
   "label": "echo current file's path",
   "command": "echo $ZED_FILE",
@@ -240,4 +334,49 @@ In doing so, you can change which task is shown in the runnables indicator.
 
 ## Keybindings to run tasks bound to runnables
 
-When you have a task definition that is bound to the runnable, you can quickly run it using [Code Actions](https://zed.dev/docs/configuring-languages?#code-actions) that you can trigger either via `editor: Toggle Code Actions` command or by the `cmd-.`/`ctrl-.` shortcut. Your task will be the first in the dropdown. The task will run immediately if there are no additional Code Actions for this line.
+When you have a task definition that is bound to the runnable, you can quickly run it using [Code Actions](https://zed.dev/docs/configuring-languages?#code-actions) that you can trigger either via {#action editor::ToggleCodeActions} command or by the `cmd-.`/`ctrl-.` shortcut. Your task will be the first in the dropdown. The task will run immediately if there are no additional Code Actions for this line.
+
+## Running Bash Scripts
+
+You can run bash scripts directly from Zed. When you open a `.sh` or `.bash` file, Zed automatically detects the script as runnable and makes it available in the task picker.
+
+To run a bash script:
+
+1. Open the command palette with {#kb command_palette::Toggle}
+2. Search for "task" and select **task: spawn**
+3. Select the script from the list
+
+Bash scripts are tagged with `bash-script`, allowing you to filter or reference them in task configurations.
+
+If you need to pass arguments or customize the execution environment, add a task configuration in your `.zed/tasks.json`:
+
+```json
+[
+  {
+    "label": "run my-script.sh with args",
+    "command": "./my-script.sh",
+    "args": ["--verbose", "--output=results.txt"],
+    "tags": ["bash-script"]
+  }
+]
+```
+
+## Shell Initialization
+
+When Zed runs a task, it launches the command in a login shell. This ensures your shell's initialization files (`.bash_profile`, `.zshrc`, etc.) are sourced before the task executes.
+
+This behavior gives tasks access to the same environment variables, aliases, and PATH modifications you've configured in your shell profile. If a task fails to find a command that works in your terminal, verify your shell configuration files are properly set up.
+
+To override the shell used for tasks, configure the `terminal.shell` setting:
+
+```json
+{
+  "terminal": {
+    "shell": {
+      "program": "/bin/zsh"
+    }
+  }
+}
+```
+
+See [Terminal configuration](./terminal.md) for complete shell options.

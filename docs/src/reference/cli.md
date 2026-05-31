@@ -1,10 +1,15 @@
+---
+title: CLI Reference
+description: "Reference for Zed's command-line interface (CLI), including opening files and directories, integrating with tools, and controlling Zed from scripts."
+---
+
 # CLI Reference
 
-Zed includes a command-line interface (CLI) for opening files and directories, integrating with other tools, and controlling Zed from scripts.
+Use Zed's command-line interface (CLI) to open files and directories, integrate with other tools, and control Zed from scripts.
 
 ## Installation
 
-**macOS:** Run the `cli: install` command from the command palette ({#kb command_palette::Toggle}) to install the `zed` CLI to `/usr/local/bin/zed`.
+**macOS:** Run the {#action cli::InstallCliBinary} command from the command palette ({#kb command_palette::Toggle}) to install the `zed` CLI to `/usr/local/bin/zed`.
 
 **Linux:** The CLI is included with Zed packages. The binary name may vary by distribution (commonly `zed` or `zeditor`).
 
@@ -66,7 +71,7 @@ zed -n ~/projects/myproject
 
 ### `-a`, `--add`
 
-Add paths to the currently focused workspace instead of opening a new window:
+Add paths to the currently focused workspace instead of opening a new window. When multiple workspace windows are open, files open in the focused window:
 
 ```sh
 zed -a newfile.txt
@@ -79,6 +84,8 @@ Reuse an existing window, replacing its current workspace with the new paths:
 ```sh
 zed -r ~/projects/different-project
 ```
+
+By default (without `-n`, `-a`, or `-r`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
 
 ### `--diff <OLD_PATH> <NEW_PATH>`
 
@@ -149,11 +156,15 @@ This creates a temporary file with the stdin content and opens it in Zed.
 
 ## URL Handling
 
-The CLI can open `zed://`, `http://`, and `https://` URLs:
+The CLI can open `zed://`, `file://`, and `ssh://` URLs:
 
 ```sh
 zed zed://settings
-zed https://github.com/zed-industries/zed
+zed file:///Users/whatever/.zshrc
+zed ssh://me@example.com/abs/path
+zed ssh://me@example.com:/abs/path
+zed ssh://me@example.com/~/project
+zed ssh://me@example.com:~/project
 ```
 
 ## Using Zed as Your Default Editor

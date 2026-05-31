@@ -1,5 +1,9 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use anyhow::Context;
 use collections::{BTreeMap, HashMap};
 use gpui::Rgba;
 use schemars::JsonSchema;
@@ -10,7 +14,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, FontFamilyName, ParseStatus,
-    ProjectTerminalSettingsContent, RootUserSettings, SlashCommandSettings, fallible_options,
+    ProjectTerminalSettingsContent, RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -74,22 +78,18 @@ pub struct ProjectSettingsContent {
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: Option<DirenvSettings>,
 
-    /// Settings for slash commands.
-    pub slash_commands: Option<SlashCommandSettings>,
-
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
+
+    /// Whether to disable all AI features in Zed.
+    ///
+    /// Default: false
+    pub disable_ai: Option<SaturatingBool>,
 }
 
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or null, the root directory name
-    /// will be displayed.
-    ///
-    /// Default: null
-    pub project_name: Option<String>,
-
     /// Whether to prevent this project from being shared in public channels.
     ///
     /// Default: false
@@ -200,6 +200,11 @@ pub struct GlobalLspSettingsContent {
     ///
     /// Default: `true`
     pub button: Option<bool>,
+    /// The maximum amount of time to wait for responses from language servers, in seconds.
+    /// A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed).
+    ///
+    /// Default: `120`
+    pub request_timeout: Option<u64>,
     /// Settings for language server notifications
     pub notifications: Option<LspNotificationSettingsContent>,
     /// Rules for rendering LSP semantic tokens.
@@ -223,6 +228,26 @@ pub struct SemanticTokenRules {
     pub rules: Vec<SemanticTokenRule>,
 }
 
+impl SemanticTokenRules {
+    pub const FILE_NAME: &'static str = "semantic_token_rules.json";
+
+    pub fn load(file_path: &Path) -> anyhow::Result<Self> {
+        let rules_content = std::fs::read(file_path).with_context(|| {
+            anyhow::anyhow!(
+                "Could not read semantic token rules from {}",
+                file_path.display()
+            )
+        })?;
+
+        serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content).with_context(|| {
+            anyhow::anyhow!(
+                "Failed to parse semantic token rules from {}",
+                file_path.display()
+            )
+        })
+    }
+}
+
 impl crate::merge_from::MergeFrom for SemanticTokenRules {
     fn merge_from(&mut self, other: &Self) {
         self.rules.splice(0..0, other.rules.iter().cloned());
@@ -243,6 +268,18 @@ pub struct SemanticTokenRule {
     pub strikethrough: Option<SemanticTokenColorOverride>,
     pub font_weight: Option<SemanticTokenFontWeight>,
     pub font_style: Option<SemanticTokenFontStyle>,
+}
+
+impl SemanticTokenRule {
+    pub fn no_style_defined(&self) -> bool {
+        self.style.is_empty()
+            && self.foreground_color.is_none()
+            && self.background_color.is_none()
+            && self.underline.is_none()
+            && self.strikethrough.is_none()
+            && self.font_weight.is_none()
+            && self.font_style.is_none()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
@@ -351,6 +388,10 @@ pub enum ContextServerSettingsContent {
         headers: HashMap<String, String>,
         /// Timeout for tool calls in seconds. Defaults to global context_server_timeout if not specified.
         timeout: Option<u64>,
+        /// Pre-registered OAuth client credentials for authorization servers that
+        /// require out-of-band client registration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<OAuthClientSettings>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -390,6 +431,20 @@ impl ContextServerSettingsContent {
             } => *remote_enabled = enabled,
         }
     }
+}
+
+/// Pre-registered OAuth client credentials for MCP servers that don't support
+/// Dynamic Client Registration.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
+pub struct OAuthClientSettings {
+    /// The OAuth client ID obtained from out-of-band registration with the
+    /// authorization server.
+    pub client_id: String,
+    /// The OAuth client secret, if this is a confidential client. For security,
+    /// prefer providing this interactively; we will prompt and store it in
+    /// the system keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 #[with_fallible_options]
@@ -463,6 +518,31 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Whether to show the stage and restore buttons on diff hunks.
+    ///
+    /// Default: true
+    pub show_stage_restore_buttons: Option<bool>,
+    /// Directory where git worktrees are created, relative to the repository
+    /// working directory.
+    ///
+    /// When the resolved directory is outside the project root, the
+    /// project's directory name is automatically appended so that
+    /// sibling repos don't collide. For example, with the default
+    /// `"../worktrees"` and a project at `~/code/zed`, worktrees are
+    /// created under `~/code/worktrees/zed/`.
+    ///
+    /// When the resolved directory is inside the project root, no
+    /// extra component is added (it's already project-scoped).
+    ///
+    /// Examples:
+    /// - `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+    /// - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
+    /// - `"my-worktrees"` — `<project>/my-worktrees/`
+    ///
+    /// Trailing slashes are ignored.
+    ///
+    /// Default: ../worktrees
+    pub worktree_directory: Option<String>,
 }
 
 #[with_fallible_options]

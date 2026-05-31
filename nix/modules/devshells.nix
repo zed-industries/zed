@@ -15,26 +15,54 @@
         (zed-editor.overrideAttrs (attrs: {
           passthru.env = attrs.env;
         })).env; # exfil `env`; it's not in drvAttrs
+
+      # Musl cross-compiler for building remote_server
+      muslCross = pkgs.pkgsCross.musl64;
+
+      # Cargo build timings wrapper script
+      wrappedCargo = pkgs.writeShellApplication {
+        name = "cargo";
+        runtimeInputs = [ pkgs.nodejs ];
+        text =
+          let
+            pathToCargoScript = ./. + "/../../script/cargo";
+          in
+          ''
+            NIX_WRAPPER=1 CARGO=${rustToolchain}/bin/cargo ${pathToCargoScript} "$@"
+          '';
+      };
     in
     {
       devShells.default = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
         name = "zed-editor-dev";
         inputsFrom = [ zed-editor ];
 
-        packages = with pkgs; [
-          rustToolchain # cargo, rustc, and rust-toolchain.toml components included
-          cargo-nextest
-          cargo-hakari
-          cargo-machete
-          cargo-zigbuild
-          # TODO: package protobuf-language-server for editing zed.proto
-          # TODO: add other tools used in our scripts
+        packages =
+          with pkgs;
+          [
+            wrappedCargo # must be first, to shadow the `cargo` provided by `rustToolchain`
+            rustToolchain # cargo, rustc, and rust-toolchain.toml components included
+            cargo-nextest
+            cargo-hakari
+            cargo-machete
+            cargo-zigbuild
+            # TODO: package protobuf-language-server for editing zed.proto
+            # TODO: add other tools used in our scripts
 
-          # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
-          # we'll just put it on `$PATH`:
-          nodejs_22
-          zig
-        ];
+            # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
+            # we'll just put it on `$PATH`:
+            nodejs_22
+            zig
+
+            # A11y testing infra
+            gobject-introspection
+            at-spi2-core
+            (python3.withPackages (ps: [
+              ps.pyatspi
+              ps.pygobject3
+            ]))
+          ]
+          ++ lib.optionals stdenv.hostPlatform.isLinux [ accerciser ];
 
         env =
           (removeAttrs baseEnv [
@@ -54,6 +82,8 @@
             };
             PROTOC = "${pkgs.protobuf}/bin/protoc";
             ZED_ZSTD_MUSL_LIB = "${pkgs.pkgsCross.musl64.pkgsStatic.zstd.out}/lib";
+            # For aws-lc-sys musl cross-compilation
+            CC_x86_64_unknown_linux_musl = "${muslCross.stdenv.cc}/bin/x86_64-unknown-linux-musl-gcc";
           };
       };
     };

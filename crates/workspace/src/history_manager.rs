@@ -1,18 +1,20 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
+use fs::Fs;
 use gpui::{AppContext, Entity, Global, MenuItem};
 use smallvec::SmallVec;
 use ui::{App, Context};
 use util::{ResultExt, paths::PathExt};
 
 use crate::{
-    NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId, path_list::PathList,
+    NewWindow, SerializedWorkspaceLocation, WorkspaceId, path_list::PathList,
+    persistence::WorkspaceDb,
 };
 
-pub fn init(cx: &mut App) {
+pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
     HistoryManager::set_global(manager.clone(), cx);
-    HistoryManager::init(manager, cx);
+    HistoryManager::init(manager, fs, cx);
 }
 
 pub struct HistoryManager {
@@ -38,17 +40,21 @@ impl HistoryManager {
         }
     }
 
-    fn init(this: Entity<HistoryManager>, cx: &App) {
+    fn init(this: Entity<HistoryManager>, fs: Arc<dyn Fs>, cx: &App) {
+        let db = WorkspaceDb::global(cx);
         cx.spawn(async move |cx| {
-            let recent_folders = WORKSPACE_DB
-                .recent_workspaces_on_disk()
+            let recent_folders = db
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .unwrap_or_default()
                 .into_iter()
                 .rev()
-                .filter_map(|(id, location, paths)| {
-                    if matches!(location, SerializedWorkspaceLocation::Local) {
-                        Some(HistoryManagerEntry::new(id, &paths))
+                .filter_map(|workspace| {
+                    if matches!(workspace.location, SerializedWorkspaceLocation::Local) {
+                        Some(HistoryManagerEntry::new(
+                            workspace.workspace_id,
+                            &workspace.paths,
+                        ))
                     } else {
                         None
                     }
@@ -101,6 +107,7 @@ impl HistoryManager {
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
         let user_removed = cx.update_jump_list(menus, entries);
+        let db = WorkspaceDb::global(cx);
         cx.spawn(async move |this, cx| {
             let user_removed = user_removed.await;
             if user_removed.is_empty() {
@@ -118,7 +125,7 @@ impl HistoryManager {
                 }
             }) {
                 for id in deleted_ids.iter() {
-                    WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
+                    db.delete_workspace_by_id(*id).await.log_err();
                 }
             }
         })

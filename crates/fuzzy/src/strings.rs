@@ -1,6 +1,9 @@
-use crate::{CharBag, matcher};
+use crate::{
+    CharBag,
+    char_bag::simple_lowercase,
+    matcher::{MatchCandidate, Matcher},
+};
 use gpui::BackgroundExecutor;
-use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use std::{
     borrow::Borrow,
     cmp::{self, Ordering},
@@ -23,6 +26,16 @@ impl StringMatchCandidate {
             string: string.into(),
             char_bag: string.into(),
         }
+    }
+}
+
+impl MatchCandidate for &StringMatchCandidate {
+    fn has_chars(&self, bag: CharBag) -> bool {
+        self.char_bag.is_superset(bag)
+    }
+
+    fn candidate_chars(&self) -> impl Iterator<Item = char> {
+        self.string.chars()
     }
 }
 
@@ -129,91 +142,57 @@ where
             .collect();
     }
 
-    let config = nucleo::Config::DEFAULT;
-    // Note: penalize_length is not used in nucleo implementation
-    let _ = penalize_length; // Suppress unused variable warning
-    let mut matchers = matcher::get_matchers(executor.num_cpus().min(candidates.len()), config);
+    let lowercase_query = query.chars().map(simple_lowercase).collect::<Vec<_>>();
+    let query = query.chars().collect::<Vec<_>>();
 
-    // Check if the user is typing a negation
-    let pattern_string = if let Some(stripped) = query.strip_prefix('!') {
-        // User typed "!", we want negated substring: "!'text"
-        format!("!'{}", stripped)
-    } else {
-        // Normal substring matching: "'text"
-        format!("'{}", query)
-    };
+    let lowercase_query = &lowercase_query;
+    let query = &query;
+    let query_char_bag = CharBag::from(&lowercase_query[..]);
 
-    let pattern = Pattern::parse(
-        &pattern_string,
-        if smart_case {
-            CaseMatching::Smart
-        } else {
-            CaseMatching::Ignore
-        },
-        Normalization::Smart,
-    );
-
-    let segment_size = candidates.len().div_ceil(matchers.len());
-    let mut segment_results = (0..matchers.len())
-        .map(|_| Vec::<StringMatch>::with_capacity(max_results.min(candidates.len())))
+    let num_cpus = executor.num_cpus().min(candidates.len());
+    let segment_size = candidates.len().div_ceil(num_cpus);
+    let mut segment_results = (0..num_cpus)
+        .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
     executor
         .scoped(|scope| {
-            for (segment_idx, (results, matcher)) in segment_results
-                .iter_mut()
-                .zip(matchers.iter_mut())
-                .enumerate()
-            {
+            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
                 let cancel_flag = &cancel_flag;
-                let pattern = pattern.clone();
                 scope.spawn(async move {
                     let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
                     let segment_end = cmp::min(segment_start + segment_size, candidates.len());
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        penalize_length,
+                    );
 
-                    for candidate in &candidates[segment_start..segment_end] {
-                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                            break;
-                        }
-                        let candidate = candidate.borrow();
-                        let mut indices = Vec::new();
-                        let mut buf = Vec::new();
-                        if let Some(score) = pattern.indices(
-                            nucleo::Utf32Str::new(&candidate.string, &mut buf),
-                            matcher,
-                            &mut indices,
-                        ) {
-                            // Convert char indices to byte indices
-                            let positions: Vec<_> = candidate
-                                .string
-                                .char_indices()
-                                .enumerate()
-                                .filter_map(|(char_offset, (byte_offset, _))| {
-                                    indices
-                                        .contains(&(char_offset as u32))
-                                        .then_some(byte_offset)
-                                })
-                                .collect();
-
-                            results.push(StringMatch {
-                                candidate_id: candidate.id,
-                                score: score as f64,
-                                positions,
-                                string: candidate.string.clone(),
-                            });
-                        }
-                    }
+                    matcher.match_candidates(
+                        &[],
+                        &[],
+                        candidates[segment_start..segment_end]
+                            .iter()
+                            .map(|c| c.borrow()),
+                        results,
+                        cancel_flag,
+                        |candidate: &&StringMatchCandidate, score, positions| StringMatch {
+                            candidate_id: candidate.id,
+                            score,
+                            positions: positions.clone(),
+                            string: candidate.string.to_string(),
+                        },
+                    );
                 });
             }
         })
         .await;
 
     if cancel_flag.load(atomic::Ordering::Acquire) {
-        matcher::return_matchers(matchers);
         return Vec::new();
     }
-
-    matcher::return_matchers(matchers);
 
     let mut results = segment_results.concat();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
