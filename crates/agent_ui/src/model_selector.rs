@@ -22,8 +22,7 @@ use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
 use crate::ui::{
-    HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
-    documentation_aside_side,
+    ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, documentation_aside_side,
 };
 
 pub type ModelSelector = Picker<ModelPickerDelegate>;
@@ -55,7 +54,7 @@ pub struct ModelPickerDelegate {
     filtered_entries: Vec<ModelPickerEntry>,
     models: Option<AgentModelList>,
     selected_index: usize,
-    selected_description: Option<(usize, SharedString, bool)>,
+    selected_description: Option<(usize, SharedString)>,
     selected_model: Option<AgentModelInfo>,
     favorites: HashSet<acp::ModelId>,
     _refresh_models_task: Task<()>,
@@ -182,6 +181,9 @@ impl ModelPickerDelegate {
 
         let next_model = favorite_models[next_index].clone();
 
+        self.agent_server
+            .set_default_model(Some(next_model.id.clone()), self.fs.clone(), cx);
+
         self.selector
             .select_model(next_model.id.clone(), cx)
             .detach_and_log_err(cx);
@@ -277,20 +279,8 @@ impl PickerDelegate for ModelPickerDelegate {
         if let Some(ModelPickerEntry::Model(model_info, _)) =
             self.filtered_entries.get(self.selected_index)
         {
-            if window.modifiers().secondary() {
-                let default_model = self.agent_server.default_model(cx);
-                let is_default = default_model.as_ref() == Some(&model_info.id);
-
-                self.agent_server.set_default_model(
-                    if is_default {
-                        None
-                    } else {
-                        Some(model_info.id.clone())
-                    },
-                    self.fs.clone(),
-                    cx,
-                );
-            }
+            self.agent_server
+                .set_default_model(Some(model_info.id.clone()), self.fs.clone(), cx);
 
             self.selector
                 .select_model(model_info.id.clone(), cx)
@@ -322,8 +312,6 @@ impl PickerDelegate for ModelPickerDelegate {
             }
             ModelPickerEntry::Model(model_info, is_favorite) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
-                let default_model = self.agent_server.default_model(cx);
-                let is_default = default_model.as_ref() == Some(&model_info.id);
 
                 let is_favorite = *is_favorite;
                 let handle_action_click = {
@@ -350,8 +338,8 @@ impl PickerDelegate for ModelPickerDelegate {
                             this.on_hover(cx.listener(move |menu, hovered, _, cx| {
                                 if *hovered {
                                     menu.delegate.selected_description =
-                                        Some((ix, description.clone(), is_default));
-                                } else if matches!(menu.delegate.selected_description, Some((id, _, _)) if id == ix) {
+                                        Some((ix, description.clone()));
+                                } else if matches!(menu.delegate.selected_description, Some((id, _)) if id == ix) {
                                     menu.delegate.selected_description = None;
                                 }
                                 cx.notify();
@@ -382,29 +370,20 @@ impl PickerDelegate for ModelPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<ui::DocumentationAside> {
-        self.selected_description
-            .as_ref()
-            .map(|(_, description, is_default)| {
-                let description = description.clone();
-                let is_default = *is_default;
+        self.selected_description.as_ref().map(|(_, description)| {
+            let description = description.clone();
 
-                let side = documentation_aside_side(cx);
+            let side = documentation_aside_side(cx);
 
-                DocumentationAside::new(
-                    side,
-                    Rc::new(move |_| {
-                        v_flex()
-                            .gap_1()
-                            .child(Label::new(description.clone()))
-                            .child(HoldForDefault::new(is_default))
-                            .into_any_element()
-                    }),
-                )
-            })
+            DocumentationAside::new(
+                side,
+                Rc::new(move |_| Label::new(description.clone()).into_any_element()),
+            )
+        })
     }
 
     fn documentation_aside_index(&self) -> Option<usize> {
-        self.selected_description.as_ref().map(|(ix, _, _)| *ix)
+        self.selected_description.as_ref().map(|(ix, _)| *ix)
     }
 
     fn render_footer(
@@ -530,7 +509,12 @@ async fn fuzzy_search(
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    use acp_thread::AgentConnection;
+    use fs::FakeFs;
+    use gpui::{App, Entity, TestAppContext, VisualTestContext};
+    use parking_lot::Mutex;
+    use project::{AgentId, Project};
+    use std::{any::Any, cell::RefCell};
 
     use super::*;
 
@@ -606,6 +590,138 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[gpui::test]
+    fn confirming_model_saves_selected_model_as_default(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let agent_server = Rc::new(TestAgentServer::default());
+        let model_selector = Rc::new(TestModelSelector::new());
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        let window_handle = cx.add_window({
+            let agent_server = agent_server.clone();
+            let model_selector = model_selector.clone();
+            move |window, cx| {
+                let selector: Rc<dyn AgentModelSelector> = model_selector.clone();
+                let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+                acp_model_selector(selector, agent_server, fs, cx.focus_handle(), window, cx)
+            }
+        });
+        cx.run_until_parked();
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                picker.delegate.set_selected_index(1, window, cx);
+                picker.delegate.confirm(false, window, cx);
+            })
+            .unwrap();
+
+        assert_eq!(
+            agent_server.saved_defaults.lock().as_slice(),
+            &[Some(acp::ModelId::new("manual"))]
+        );
+        assert_eq!(
+            model_selector.selected_models.borrow().as_slice(),
+            &[acp::ModelId::new("manual")]
+        );
+    }
+
+    #[derive(Default)]
+    struct TestAgentServer {
+        saved_defaults: Arc<Mutex<Vec<Option<acp::ModelId>>>>,
+    }
+
+    impl AgentServer for TestAgentServer {
+        fn logo(&self) -> IconName {
+            IconName::ZedAssistant
+        }
+
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("test-agent")
+        }
+
+        fn connect(
+            &self,
+            _delegate: agent_servers::AgentServerDelegate,
+            _project: Entity<Project>,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<Rc<dyn AgentConnection>>> {
+            Task::ready(Err(anyhow::anyhow!("test agent server cannot connect")))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+
+        fn set_default_model(
+            &self,
+            model_id: Option<acp::ModelId>,
+            _fs: Arc<dyn Fs>,
+            _cx: &mut App,
+        ) {
+            self.saved_defaults.lock().push(model_id);
+        }
+    }
+
+    struct TestModelSelector {
+        models: Vec<AgentModelInfo>,
+        selected_model: RefCell<AgentModelInfo>,
+        selected_models: RefCell<Vec<acp::ModelId>>,
+    }
+
+    impl TestModelSelector {
+        fn new() -> Self {
+            let models = vec![
+                AgentModelInfo {
+                    id: acp::ModelId::new("auto"),
+                    name: "Auto".into(),
+                    description: None,
+                    icon: None,
+                    is_latest: false,
+                    cost: None,
+                },
+                AgentModelInfo {
+                    id: acp::ModelId::new("manual"),
+                    name: "Manual".into(),
+                    description: None,
+                    icon: None,
+                    is_latest: false,
+                    cost: None,
+                },
+            ];
+
+            Self {
+                selected_model: RefCell::new(models[0].clone()),
+                models,
+                selected_models: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AgentModelSelector for TestModelSelector {
+        fn list_models(&self, _cx: &mut App) -> Task<Result<AgentModelList>> {
+            Task::ready(Ok(AgentModelList::Flat(self.models.clone())))
+        }
+
+        fn select_model(&self, model_id: acp::ModelId, _cx: &mut App) -> Task<Result<()>> {
+            self.selected_models.borrow_mut().push(model_id.clone());
+            if let Some(model) = self.models.iter().find(|model| model.id == model_id) {
+                *self.selected_model.borrow_mut() = model.clone();
+            }
+            Task::ready(Ok(()))
+        }
+
+        fn selected_model(&self, _cx: &mut App) -> Task<Result<AgentModelInfo>> {
+            Task::ready(Ok(self.selected_model.borrow().clone()))
+        }
     }
 
     fn get_entry_labels(entries: &[ModelPickerEntry]) -> Vec<&str> {

@@ -4,6 +4,7 @@ mod prediction_score;
 mod reversal;
 mod summary;
 mod tokenize;
+#[cfg(feature = "tree-sitter")]
 mod tree_sitter;
 
 pub use kept_rate::AnnotatedToken;
@@ -30,4 +31,5 @@ pub use prediction_score::{
 };
 pub use reversal::compute_prediction_reversal_ratio_from_history;
 pub use summary::{PredictionSummaryInput, QaSummaryData, SummaryJson, compute_summary};
+#[cfg(feature = "tree-sitter")]
 pub use tree_sitter::count_tree_sitter_errors;

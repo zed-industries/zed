@@ -303,8 +303,18 @@ mod test {
         assert_eq!(to_esc_str(&home, &app_cursor, false), Some("\x1bOH".into()));
         assert_eq!(to_esc_str(&end, &app_cursor, false), Some("\x1bOF".into()));
 
+        let shift_up = Keystroke::parse("shift-up").unwrap();
+        let shift_down = Keystroke::parse("shift-down").unwrap();
         let shift_home = Keystroke::parse("shift-home").unwrap();
         let shift_end = Keystroke::parse("shift-end").unwrap();
+        assert_eq!(
+            to_esc_str(&shift_up, &none, false),
+            Some("\x1b[1;2A".into())
+        );
+        assert_eq!(
+            to_esc_str(&shift_down, &none, false),
+            Some("\x1b[1;2B".into())
+        );
         assert_eq!(
             to_esc_str(&shift_home, &none, false),
             Some("\x1b[1;2H".into())

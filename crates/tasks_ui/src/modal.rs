@@ -734,11 +734,14 @@ mod tests {
     use std::{path::PathBuf, sync::Arc};
 
     use editor::{Editor, SelectionEffects};
-    use gpui::{TestAppContext, VisualTestContext};
-    use language::{Language, LanguageConfig, LanguageMatcher, Point};
+    use gpui::{App, Entity, Task, TestAppContext, VisualTestContext};
+    use language::{
+        Buffer, ContextProvider, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+        LanguageServerName, Point,
+    };
     use project::{ContextProviderWithTasks, FakeFs, Project};
     use serde_json::json;
-    use task::TaskTemplates;
+    use task::{TaskTemplate, TaskTemplates};
     use util::path;
     use workspace::{CloseInactiveTabsAndPanes, MultiWorkspace, OpenOptions, OpenVisible};
 
@@ -1034,6 +1037,80 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_empty_lsp_task_response_keeps_language_tasks_in_modal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "main.test": "test" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Test".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["test".to_string()],
+                        ..LanguageMatcher::default()
+                    },
+                    ..LanguageConfig::default()
+                },
+                None,
+            )
+            .with_context_provider(Some(Arc::new(
+                ContextProviderWithLspTaskSource::new(ContextProviderWithTasks::new(
+                    TaskTemplates(vec![TaskTemplate {
+                        label: "Run language task".to_string(),
+                        command: "echo".to_string(),
+                        args: vec!["language task".to_string()],
+                        ..TaskTemplate::default()
+                    }]),
+                )),
+            ))),
+        ));
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Test",
+            FakeLspAdapter {
+                name: TEST_LSP_NAME,
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let _item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/dir/main.test")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        let fake_server = fake_servers
+            .try_recv()
+            .expect("fake LSP server should have started");
+        use project::lsp_store::lsp_ext_command::Runnables;
+        fake_server
+            .set_request_handler::<Runnables, _, _>(move |_, _| async move { Ok(Vec::new()) });
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["Run language task"],
+            "An empty LSP task response should not suppress language tasks in the modal"
+        );
+    }
+
+    #[gpui::test]
     async fn test_language_task_filtering(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -1236,6 +1313,32 @@ mod tests {
             "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
             same TS spawn history should be restored"
         );
+    }
+
+    const TEST_LSP_NAME: &str = "test-lsp";
+
+    struct ContextProviderWithLspTaskSource {
+        tasks: ContextProviderWithTasks,
+    }
+
+    impl ContextProviderWithLspTaskSource {
+        fn new(tasks: ContextProviderWithTasks) -> Self {
+            Self { tasks }
+        }
+    }
+
+    impl ContextProvider for ContextProviderWithLspTaskSource {
+        fn associated_tasks(
+            &self,
+            buffer: Option<Entity<Buffer>>,
+            cx: &App,
+        ) -> Task<Option<TaskTemplates>> {
+            self.tasks.associated_tasks(buffer, cx)
+        }
+
+        fn lsp_task_source(&self) -> Option<LanguageServerName> {
+            Some(LanguageServerName::new_static(TEST_LSP_NAME))
+        }
     }
 
     fn emulate_task_schedule(

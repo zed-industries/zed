@@ -656,6 +656,8 @@ By default, models from all subscription types are shown. Optionally, you can hi
 }
 ```
 
+**Note:** Zed only bundles configuration for long-term OpenCode Free models! Free models that are only available for a limited time are not included in Zed. To use such models, create a Custom Model using the configuration settings published on [the OpenCode website](https://opencode.ai/docs/zen#pricing) and on [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
+
 #### Custom Models {#opencode-custom-models}
 
 The Zed agent comes pre-configured with OpenCode models. If you wish to use newer models or models with custom endpoints, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
