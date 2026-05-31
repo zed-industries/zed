@@ -525,6 +525,10 @@ impl Editor {
             refresh_linked_ranges(this, window, cx);
             this.refresh_edit_prediction(true, false, window, cx);
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
+
+            if text.as_ref() == "\n" {
+                this.finalize_last_transaction(cx);
+            }
         });
     }
 
