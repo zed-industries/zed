@@ -5,6 +5,8 @@ use crate::{
     },
     ssh_config::parse_ssh_config_hosts,
 };
+mod filter;
+
 use dev_container::{
     DevContainerConfig, DevContainerContext, find_devcontainer_configs,
     start_dev_container_with_config,
@@ -12,8 +14,6 @@ use dev_container::{
 use editor::{Editor, EditorEvent};
 use extension_host::ExtensionStore;
 use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
-mod filter;
-
 use filter::{FilterData, FilteredServer};
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
@@ -1517,6 +1517,7 @@ impl RemoteServerProjects {
     ) -> impl IntoElement {
         let remote_server = visible.server;
         let connection = remote_server.connection().into_owned();
+        let shared_connection = Rc::new(connection.clone());
         let host_positions = visible.host_positions.to_vec();
 
         let (main_label, aux_label, is_wsl) = match &connection {
@@ -1586,6 +1587,7 @@ impl RemoteServerProjects {
                             v_flex().gap_0p5().child(self.render_remote_project(
                                 index,
                                 remote_server,
+                                shared_connection.clone(),
                                 pix,
                                 p,
                                 window,
@@ -1717,6 +1719,7 @@ impl RemoteServerProjects {
         &mut self,
         server_ix: ServerIndex,
         server: &RemoteEntry,
+        connection: Rc<Connection>,
         ix: usize,
         visible: &VisibleProject<'_>,
         window: &mut Window,
@@ -1725,7 +1728,6 @@ impl RemoteServerProjects {
         let entry = visible.entry;
         let create_new_window = self.create_new_window;
         let is_from_zed = server.is_from_zed();
-        let connection_for_callback = server.connection().into_owned();
         let element_id_base = SharedString::from(format!(
             "remote-project-{}",
             match server_ix {
@@ -1738,7 +1740,6 @@ impl RemoteServerProjects {
 
         let callback = Rc::new({
             let project = entry.project.clone();
-            let connection = connection_for_callback;
             move |remote_server_projects: &mut Self,
                   secondary_confirm: bool,
                   window: &mut Window,
@@ -1751,7 +1752,7 @@ impl RemoteServerProjects {
                     return;
                 };
                 let project = project.clone();
-                let server = connection.clone();
+                let server = connection.as_ref().clone();
                 cx.emit(DismissEvent);
 
                 let replace_window = match (create_new_window, secondary_confirm) {
