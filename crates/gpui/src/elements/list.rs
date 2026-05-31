@@ -694,6 +694,16 @@ impl ListState {
         self.0.borrow_mut().scrollbar_drag_start_height.take();
     }
 
+    /// Returns `true` if the scrollbar is currently being dragged.
+    ///
+    /// This is set between [`scrollbar_drag_started`](Self::scrollbar_drag_started)
+    /// and [`scrollbar_drag_ended`](Self::scrollbar_drag_ended) calls. Useful for
+    /// consumers that need to distinguish scrollbar drags from wheel/trackpad scrolls,
+    /// e.g. to suppress auto-scroll behavior during manual positioning.
+    pub fn is_scrollbar_dragging(&self) -> bool {
+        self.0.borrow().scrollbar_drag_start_height.is_some()
+    }
+
     /// Set the offset from the scrollbar
     pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
         self.0.borrow_mut().set_offset_from_scrollbar(point);
@@ -706,7 +716,10 @@ impl ListState {
         point(Pixels::ZERO, state.max_scroll_offset())
     }
 
-    /// Returns the current scroll offset adjusted for the scrollbar
+    /// Returns the current scroll offset adjusted for the scrollbar.
+    ///
+    /// The returned offset has a negative `y` component representing
+    /// how far the content has scrolled.
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = &self.0.borrow();
 
@@ -719,11 +732,7 @@ impl ListState {
         let mut cursor = state.items.cursor::<ListItemSummary>(());
         let summary: ListItemSummary =
             cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right);
-        let content_height = state.items.summary().height;
-        let drag_offset =
-            // if dragging the scrollbar, we want to offset the point if the height changed
-            content_height - state.scrollbar_drag_start_height.unwrap_or(content_height);
-        let offset = summary.height + logical_scroll_top.offset_in_item - drag_offset;
+        let offset = summary.height + logical_scroll_top.offset_in_item;
 
         Point::new(px(0.), -offset)
     }
@@ -731,6 +740,44 @@ impl ListState {
     /// Return the bounds of the viewport in pixels.
     pub fn viewport_bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
+    }
+
+    /// Returns whether the item is entirely above the viewport, or `None` if
+    /// the list has not measured enough layout to know.
+    pub fn item_is_above_viewport(&self, ix: usize) -> Option<bool> {
+        let viewport_bounds = self.viewport_bounds();
+        if viewport_bounds.size.height == px(0.0) {
+            return None;
+        }
+
+        let scroll_top = self.logical_scroll_top();
+        if ix < scroll_top.item_ix {
+            // Rows before the logical scroll top have no item bounds, but
+            // their position relative to the viewport is known from scroll state.
+            return Some(true);
+        }
+
+        let item_bounds = self.bounds_for_item(ix)?;
+        Some(item_bounds.bottom() <= viewport_bounds.top())
+    }
+
+    /// Returns whether the item is entirely below the viewport, or `None` if
+    /// the list has not measured enough layout to know.
+    pub fn item_is_below_viewport(&self, ix: usize) -> Option<bool> {
+        let viewport_bounds = self.viewport_bounds();
+        if viewport_bounds.size.height == px(0.0) {
+            return None;
+        }
+
+        let scroll_top = self.logical_scroll_top();
+        if ix < scroll_top.item_ix {
+            // Rows before the logical scroll top have no item bounds, but
+            // their position relative to the viewport is known from scroll state.
+            return Some(false);
+        }
+
+        let item_bounds = self.bounds_for_item(ix)?;
+        Some(item_bounds.top() >= viewport_bounds.bottom())
     }
 }
 
@@ -1202,12 +1249,27 @@ impl StateInner {
         let height = bounds.size.height;
 
         let padding = self.last_padding.unwrap_or_default();
-        let content_height = self.items.summary().height;
+        // Scrollbar drag positions are computed from the content height
+        // captured at drag start, so map them back using the same height.
+        let content_height = self
+            .scrollbar_drag_start_height
+            .unwrap_or_else(|| self.items.summary().height);
         let scroll_max = (content_height + padding.top + padding.bottom - height).max(px(0.));
-        let drag_offset =
-            // if dragging the scrollbar, we want to offset the point if the height changed
-            content_height - self.scrollbar_drag_start_height.unwrap_or(content_height);
-        let new_scroll_top = (point.y - drag_offset).abs().max(px(0.)).min(scroll_max);
+        let new_scroll_top = (-point.y).max(px(0.)).min(scroll_max);
+
+        // If content grew during the drag, the frozen bottom is below the
+        // live bottom. Treat dragging to the frozen end as resuming tail follow.
+        let dragged_to_end =
+            scroll_max > px(0.) && new_scroll_top >= (scroll_max - px(1.0)).max(px(0.));
+        if dragged_to_end && matches!(self.follow_state, FollowState::Tail { .. }) {
+            self.follow_state = FollowState::Tail { is_following: true };
+            let item_count = self.items.summary().count;
+            self.logical_scroll_top = Some(ListOffset {
+                item_ix: item_count,
+                offset_in_item: px(0.),
+            });
+            return;
+        }
 
         self.follow_state.stop_following();
 
@@ -1620,6 +1682,114 @@ mod test {
         assert_eq!(offset.offset_in_item, px(0.));
     }
 
+    struct TestListView(ListState);
+    impl Render for TestListView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            list(self.0.clone(), |_, _, _| {
+                div().h(px(20.)).w_full().into_any()
+            })
+            .w_full()
+            .h_full()
+        }
+    }
+
+    #[gpui::test]
+    fn test_item_viewport_queries_return_none_before_layout(_cx: &mut TestAppContext) {
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+
+        assert_eq!(state.item_is_above_viewport(0), None);
+        assert_eq!(state.item_is_below_viewport(0), None);
+    }
+
+    #[gpui::test]
+    fn test_item_viewport_queries_before_logical_scroll_top(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+
+        assert_eq!(state.item_is_above_viewport(1), Some(true));
+        assert_eq!(state.item_is_below_viewport(1), Some(false));
+    }
+
+    #[gpui::test]
+    fn test_item_viewport_queries_measured_item_inside_viewport(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+
+        assert_eq!(state.item_is_above_viewport(2), Some(false));
+        assert_eq!(state.item_is_below_viewport(2), Some(false));
+    }
+
+    #[gpui::test]
+    fn test_item_viewport_queries_measured_item_above_viewport(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(20.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+
+        assert_eq!(state.item_is_above_viewport(2), Some(true));
+        assert_eq!(state.item_is_below_viewport(2), Some(false));
+    }
+
+    #[gpui::test]
+    fn test_item_viewport_queries_measured_item_below_viewport(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+
+        assert_eq!(state.item_is_above_viewport(3), Some(false));
+        assert_eq!(state.item_is_below_viewport(3), Some(true));
+    }
+
+    #[gpui::test]
+    fn test_item_viewport_queries_after_scroll_to_end_before_layout(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+
+        state.scroll_to_end();
+
+        assert_eq!(state.logical_scroll_top().item_ix, state.item_count());
+        assert_eq!(state.item_is_above_viewport(0), Some(true));
+        assert_eq!(state.item_is_below_viewport(0), Some(false));
+    }
+
     #[gpui::test]
     fn test_measure_all_after_width_change(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
@@ -1913,8 +2083,7 @@ mod test {
         assert!(state.is_following_tail());
 
         // Simulate the scrollbar moving the viewport to the middle.
-        // `set_offset_from_scrollbar` accepts a positive distance from the start.
-        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
 
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 3);
@@ -1930,6 +2099,71 @@ mod test {
             view.into_any_element()
         });
 
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 3);
+        assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_drag_with_growing_content(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let last_item_height = Rc::new(Cell::new(50usize));
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView {
+            state: ListState,
+            last_item_height: Rc<Cell<usize>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let last_item_height = self.last_item_height.clone();
+                list(self.state.clone(), move |index, _, _| {
+                    let height = if index == 9 {
+                        last_item_height.get()
+                    } else {
+                        50
+                    };
+                    div().h(px(height as f32)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                last_item_height: last_item_height.clone(),
+            })
+        });
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        state.scrollbar_drag_started();
+
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
+        let scrollbar_offset_before_growth = state.scroll_px_offset_for_scrollbar();
+
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 3);
+        assert_eq!(offset.offset_in_item, px(0.));
+
+        last_item_height.set(550);
+        state.remeasure_items(9..10);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        assert_eq!(state.max_offset_for_scrollbar().y, px(300.));
+        assert_eq!(
+            state.scroll_px_offset_for_scrollbar(),
+            scrollbar_offset_before_growth
+        );
+
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 3);
         assert_eq!(offset.offset_in_item, px(0.));
@@ -2172,18 +2406,67 @@ mod test {
         assert!(state.is_following_tail());
 
         // Drag the scrollbar up to the middle — follow_tail should suspend.
-        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
         assert!(!state.is_following_tail());
 
         // Drag the scrollbar back to the bottom — follow_tail should re-engage
         // on the next paint.
-        state.set_offset_from_scrollbar(point(px(0.), px(300.)));
+        state.set_offset_from_scrollbar(point(px(0.), px(-300.)));
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.into_any_element()
         });
         assert!(
             state.is_following_tail(),
             "follow_tail should re-engage after scrolling back to the bottom via the scrollbar"
+        );
+    }
+
+    #[gpui::test]
+    fn test_follow_tail_reengages_after_scrollbar_drag_to_bottom_while_growing(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        state.set_follow_mode(FollowMode::Tail);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert!(state.is_following_tail());
+
+        state.scrollbar_drag_started();
+
+        state.splice(10..10, 10);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        state.set_offset_from_scrollbar(point(px(0.), px(-300.)));
+        state.scrollbar_drag_ended();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+
+        assert!(
+            state.is_following_tail(),
+            "follow_tail should re-engage when the user drags the scrollbar to \
+             the bottom of its track, even when content has grown during the drag \
+             (so frozen_bottom < live_bottom)"
         );
     }
 }

@@ -13,7 +13,7 @@ path = "src/acp_thread.rs"
 doctest = false
 
 [features]
-test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot", "dep:image"]
+test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot"]
 
 [dependencies]
 action_log.workspace = true
@@ -35,10 +35,10 @@ language_model.workspace = true
 log.workspace = true
 markdown.workspace = true
 parking_lot = { workspace = true, optional = true }
-image = { workspace = true, optional = true }
+image.workspace = true
 portable-pty.workspace = true
 project.workspace = true
-prompt_store.workspace = true
+sandbox.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

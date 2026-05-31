@@ -23,13 +23,21 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying edits to an existing file.
 ///
-/// Before using this tool, use the `read_file` tool to understand the file's contents and context
+/// Before using this tool, use the `read_file` tool to understand the file's contents and context.
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
+///
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+///
+/// `read_file` prefixes each line of its output with a line number right-aligned in a
+/// 6-character field followed by a single tab, then the line's actual content. When you
+/// derive `old_text` or `new_text` from that output, strip this prefix and keep only what
+/// comes after the tab, preserving the original indentation (tabs and spaces) exactly.
+/// Never include any part of the line number prefix in `old_text` or `new_text`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -43,6 +51,10 @@ pub struct EditFileToolInput {
     ///
     /// <example>
     /// `frontend/db.js`
+    /// </example>
+    ///
+    /// <example>
+    /// To edit a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
     /// </example>
     pub path: PathBuf,
 
@@ -253,6 +265,7 @@ impl AgentTool for EditFileTool {
             run_session(
                 self.process_streaming_edits(&mut input, &event_stream, cx)
                     .await,
+                &event_stream,
                 cx,
             )
             .await
@@ -458,6 +471,63 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_global_skill_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.insert_tree(&skill_dir, json!({ "SKILL.md": "old content\n" }))
+            .await;
+        let (edit_tool, _project, _action_log, fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md");
+        let skill_file = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: input_path,
+                    edits: vec![Edit {
+                        old_text: "old content".into(),
+                        new_text: "new content".into(),
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        event_rx.expect_update_fields().await;
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new content\n");
+        assert_eq!(fs.load(&skill_file).await.unwrap(), "new content\n");
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_failed_match(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello world"})).await;
@@ -483,6 +553,69 @@ mod tests {
         assert!(
             error.contains("Could not find matching text"),
             "Expected error containing 'Could not find matching text' but got: {error}"
+        );
+    }
+
+    /// When the edit fails after a session is created but before any edits are
+    /// actually applied (e.g., the first `old_text` doesn't match), the empty
+    /// diff placeholder in the UI should be replaced with the error message.
+    #[gpui::test]
+    async fn test_streaming_edit_surfaces_error_when_no_edits_applied(cx: &mut TestAppContext) {
+        async fn find_first_text_content_in_events(
+            receiver: &mut crate::ToolCallEventStreamReceiver,
+        ) -> Option<String> {
+            use futures::StreamExt as _;
+            while let Some(event) = receiver.next().await {
+                let Ok(crate::ThreadEvent::ToolCallUpdate(
+                    acp_thread::ToolCallUpdate::UpdateFields(update),
+                )) = event
+                else {
+                    continue;
+                };
+                let Some(content) = update.fields.content else {
+                    continue;
+                };
+                for item in content {
+                    if let acp::ToolCallContent::Content(c) = item
+                        && let acp::ContentBlock::Text(text) = c.content
+                    {
+                        return Some(text.text);
+                    }
+                }
+            }
+            None
+        }
+
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "hello world"})).await;
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/file.txt".into(),
+                    edits: vec![Edit {
+                        old_text: "nonexistent text that is not in the file".into(),
+                        new_text: "replacement".into(),
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let EditFileToolOutput::Error { error, diff, .. } = task.await.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            diff.is_empty(),
+            "sanity check: no edits should have been applied",
+        );
+
+        let content_text = find_first_text_content_in_events(&mut receiver).await;
+        assert_eq!(
+            content_text.as_deref(),
+            Some(error.as_str()),
+            "expected the failure message to be surfaced as tool call content",
         );
     }
 
@@ -1168,6 +1301,208 @@ mod tests {
         assert_eq!(
             event.tool_call.fields.title,
             Some("Edit `/etc/hosts`".into())
+        );
+
+        // 5.5: .agents/skills is a sensitive path — still prompts. The
+        // sensitive-path classifier runs regardless of the default mode, so
+        // it doesn't matter that we're now in Confirm mode — we're checking
+        // that the path is recognized and gets the "(agent skills)" tag.
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from("root/.agents/skills/my-skill/SKILL.md"),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("Edit `root/.agents/skills/my-skill/SKILL.md` (agent skills)".into())
+        );
+
+        // 5.6: The global .agents/skills directory is sensitive — still prompts
+        let global_skill_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| edit_tool.authorize(&global_skill_path, &stream_tx, cx));
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)"))
+        );
+    }
+
+    /// `.agents/foo/../skills/SKILL.md` would slip past the raw
+    /// `is_agents_skills_path` check (the components `.agents` and
+    /// `skills` aren't consecutive once `..` sits between them), but it
+    /// canonicalizes to a path inside `.agents/skills/`, so it has to
+    /// still prompt with the agent-skills tag.
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_dotdot_skills_bypass(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".agents": {
+                    "foo": {},
+                    "skills": { "my-skill": { "SKILL.md": "target" } },
+                },
+            }),
+        )
+        .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/.agents/foo/../skills/my-skill/SKILL.md")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)")),
+            "`..` traversal into .agents/skills must still prompt: {:?}",
+            event.tool_call.fields.title,
+        );
+    }
+
+    /// `.zed/foo/../../safe.json` similarly sidesteps the consecutive-
+    /// component scan for `.zed/`, so the canonical-path recheck has to
+    /// catch it. (We escape *out* of `.zed/` here and back in via `..`,
+    /// just to confirm the recheck doesn't naively trust the raw scan.)
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_dotdot_settings_bypass(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".zed": { "foo": {}, "settings.json": "{}" },
+            }),
+        )
+        .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/.zed/foo/../settings.json")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(local settings)")),
+            "`..` traversal into .zed must still prompt: {:?}",
+            event.tool_call.fields.title,
+        );
+    }
+
+    /// An intra-project symlink like `safe -> .zed` keeps a path's
+    /// raw components clean of `.zed`, and `resolve_project_path`
+    /// (correctly) doesn't flag the symlink as an escape because the
+    /// target stays inside the worktree. The canonical-path recheck is
+    /// the only thing standing between the agent and a silent settings
+    /// rewrite, so verify it fires.
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_intra_project_symlink_bypass(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".zed": { "settings.json": "{}" },
+            }),
+        )
+        .await;
+        fs.insert_symlink(path!("/root/safe"), PathBuf::from(".zed"))
+            .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/safe/settings.json")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(local settings)")),
+            "Intra-project symlink to .zed must still prompt: {:?}",
+            event.tool_call.fields.title,
+        );
+    }
+
+    /// Same as the previous test but for the agent-skills sensitive
+    /// path, via an intra-project symlink `safe -> .agents/skills`.
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_intra_project_symlink_skills_bypass(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".agents": {
+                    "skills": { "my-skill": { "SKILL.md": "target" } },
+                },
+            }),
+        )
+        .await;
+        fs.insert_symlink(path!("/root/safe"), PathBuf::from(".agents/skills"))
+            .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/safe/my-skill/SKILL.md")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)")),
+            "Intra-project symlink to .agents/skills must still prompt: {:?}",
+            event.tool_call.fields.title,
         );
     }
 
@@ -2273,7 +2608,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        let changed =
+            action_log.read_with(cx, |log, cx| log.changed_buffers(cx).collect::<Vec<_>>());
         assert!(
             !changed.is_empty(),
             "action_log.changed_buffers() should be non-empty after streaming edit,
