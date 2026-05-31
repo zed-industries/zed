@@ -289,10 +289,6 @@ See  `crates/agent_ui/src/ui/agent_notification.rs`.
 - change `command palette: toggle` to sort by recency instead of hit count
 - remove `GlobalCommandPaletteInterceptor` usage which contains Vim things like `:delete, :edit, :help, :join, :quit, :sort, :write, :xit, :yank` because I do not use them. Apparently, this removes the ability to jump to a line via `:144`. I still removed this behavior because it is hard to sort those dynamic actions by recency in combination with the other real editor action commands.
 
-## Project Panel
-
-- renaming a file uses a vim compatible editor and starts in vim normal mode
-
 ## `keymap.json` changes
 
 - add a JSON boolean key `highest_precedence` to the keymap dictionaries for tricky keybindings which otherwise require rewriting many other keybinding blocks
