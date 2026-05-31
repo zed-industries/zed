@@ -239,7 +239,6 @@ timeout 15s bash -c 'cat README.md | target/debug/cli --zed target/debug/zed --s
 - allow AI edit predictions in the following places:
   - Zed's `settings.json`
   - Zed's `keymap.json`
-  - buffers without files like ones from `workspace: new file`
 
 ### Restored AI agent text threads via `editor::NewTextThreadInEditor` action
 
