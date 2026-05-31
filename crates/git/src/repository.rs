@@ -1304,7 +1304,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 let path_str = path.as_unix_str().to_string();
-                let output = new_smol_command(git_binary_path)
+                let output = new_command(git_binary_path)
                     .current_dir(&working_directory)
                     .args([
                         "--no-optional-locks",
