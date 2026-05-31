@@ -813,7 +813,7 @@ impl ProjectPanel {
                 folded_directory_drag_target: None,
                 drag_target_entry: None,
                 marked_entries: Default::default(),
-                compare_selection: Option<SelectedEntry>,
+                compare_selection: Default::default(),
                 selection: None,
                 context_menu: None,
                 filename_editor,
@@ -1113,10 +1113,16 @@ impl ProjectPanel {
                                     .action("Compare Marked Files", Box::new(CompareMarkedFiles))
                             })
                             .when(!compare_selection, |menu| {
-                                menu.action("Compare: Select for Compare", Box::new(SelectForCompare))
+                                menu.action(
+                                    "Compare: Select for Compare",
+                                    Box::new(SelectForCompare),
+                                )
                             })
                             .when(compare_selection, |menu| {
-                                menu.action("Compare: Compare With Selected", Box::new(CompareWithSelected))
+                                menu.action(
+                                    "Compare: Compare With Selected",
+                                    Box::new(CompareWithSelected),
+                                )
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
@@ -3486,13 +3492,11 @@ impl ProjectPanel {
         }
     }
 
-    fn entry_paths_to_diff<I>(
+    fn entry_paths_to_diff(
         &self,
-        entries: I,
+        entries: impl IntoIterator<Item = SelectedEntry>,
         cx: &Context<Self>,
     ) -> Option<(PathBuf, PathBuf)>
-    where
-        I: IntoIterator<Item = SelectedEntry>,
     {
         let project = self.project.read(cx);
         let mut selections_abs_path = entries
@@ -3513,10 +3517,7 @@ impl ProjectPanel {
         Some((previous_to_last, last_path))
     }
 
-    fn file_abs_paths_to_diff(
-        &self,
-        cx: &Context<Self>,
-    ) -> Option<(PathBuf, PathBuf)> {
+    fn file_abs_paths_to_diff(&self, cx: &Context<Self>) -> Option<(PathBuf, PathBuf)> {
         self.entry_paths_to_diff(self.marked_entries.iter().copied(), cx)
     }
 
@@ -3545,9 +3546,7 @@ impl ProjectPanel {
             return;
         };
 
-        if let Some((file1, file2)) =
-            self.entry_paths_to_diff([first, second], cx)
-        {
+        if let Some((file1, file2)) = self.entry_paths_to_diff([first, second], cx) {
             self.open_diff(file1, file2, window, cx);
         }
     }
