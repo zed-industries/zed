@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::{cmp, sync::Arc};
+use std::{any::Any, cmp, sync::Arc};
 
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
@@ -284,6 +284,17 @@ impl PickerDelegate for OutlineViewDelegate {
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
         self.set_selected_index(ix, true, cx);
+    }
+
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
+        Some(Box::new(self.matches.get(ix)?.candidate_id))
+    }
+
+    fn index_for_match_stable_id(&self, match_id: &dyn Any) -> Option<usize> {
+        let candidate_id = match_id.downcast_ref::<usize>()?;
+        self.matches
+            .iter()
+            .position(|outline_match| outline_match.candidate_id == *candidate_id)
     }
 
     fn update_matches(
@@ -905,6 +916,77 @@ mod tests {
         assert_ne!(
             selected_id, last_scored_id,
             "Selection should not default to the last scored match"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_outline_preserves_manual_selection_after_query_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc! {"
+                    fn selected() {}
+                    fn selected_id() {}
+                    fn selected_name() {}
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let outline_view = open_outline_view(&workspace, cx);
+        outline_view.update_in(cx, |outline_view, window, cx| {
+            outline_view.update_matches("selected".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(menu::SelectNext);
+        let manually_selected_candidate_id = outline_view.read_with(cx, |outline_view, _| {
+            let delegate = &outline_view.delegate;
+            delegate.matches[delegate.selected_match_index].candidate_id
+        });
+
+        outline_view.update_in(cx, |outline_view, window, cx| {
+            outline_view.update_matches("selecte".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let selected_candidate_id = outline_view.read_with(cx, |outline_view, _| {
+            let delegate = &outline_view.delegate;
+            delegate.matches[delegate.selected_match_index].candidate_id
+        });
+        assert_eq!(
+            selected_candidate_id, manually_selected_candidate_id,
+            "Manual outline selection should be preserved when it still matches the edited query"
         );
     }
 

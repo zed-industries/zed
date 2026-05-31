@@ -14,7 +14,8 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
+    any::Any, cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc,
+    time::Duration,
 };
 use theme_settings::ThemeSettings;
 use ui::{
@@ -82,6 +83,7 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    manually_selected_match_stable_id: Option<Box<dyn Any>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -107,6 +109,16 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     );
+
+    /// Returns a stable identity for the match at the given index.
+    fn match_stable_id(&self, _ix: usize) -> Option<Box<dyn Any>> {
+        None
+    }
+
+    /// Finds the current index of a match previously identified by `match_stable_id`.
+    fn index_for_match_stable_id(&self, _match_id: &dyn Any) -> Option<usize> {
+        None
+    }
 
     /// Called before the picker handles `SelectPrevious` or `SelectNext`. Return `Some(query)` to
     /// set a new query and prevent the default selection behavior.
@@ -351,6 +363,7 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
+            manually_selected_match_stable_id: None,
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -422,9 +435,32 @@ impl<D: PickerDelegate> Picker<D> {
     /// If some effect is bound to `selected_index_changed`, it will be executed.
     pub fn set_selected_index(
         &mut self,
+        ix: usize,
+        fallback_direction: Option<Direction>,
+        scroll_to_index: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_selected_index_impl(ix, fallback_direction, scroll_to_index, false, window, cx);
+    }
+
+    fn set_selected_index_manually(
+        &mut self,
+        ix: usize,
+        fallback_direction: Option<Direction>,
+        scroll_to_index: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_selected_index_impl(ix, fallback_direction, scroll_to_index, true, window, cx);
+    }
+
+    fn set_selected_index_impl(
+        &mut self,
         mut ix: usize,
         fallback_direction: Option<Direction>,
         scroll_to_index: bool,
+        remember_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -467,6 +503,10 @@ impl<D: PickerDelegate> Picker<D> {
         let current_index = self.delegate.selected_index();
 
         if previous_index != current_index {
+            if remember_selection {
+                self.manually_selected_match_stable_id =
+                    self.delegate.match_stable_id(current_index);
+            }
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
             }
@@ -494,7 +534,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.set_selected_index(ix, Some(Direction::Down), true, window, cx);
+            self.set_selected_index_manually(ix, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -521,7 +561,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.set_selected_index(ix, Some(Direction::Up), true, window, cx);
+            self.set_selected_index_manually(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -538,7 +578,7 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(0, Some(Direction::Down), true, window, cx);
+            self.set_selected_index_manually(0, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -546,7 +586,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(count - 1, Some(Direction::Up), true, window, cx);
+            self.set_selected_index_manually(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -555,7 +595,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.set_selected_index(new_index, Some(Direction::Down), true, window, cx);
+        self.set_selected_index_manually(new_index, Some(Direction::Down), true, window, cx);
         cx.notify();
     }
 
@@ -631,14 +671,14 @@ impl<D: PickerDelegate> Picker<D> {
         if !self.delegate.can_select(ix, window, cx) {
             return;
         }
-        self.set_selected_index(ix, None, false, window, cx);
+        self.set_selected_index_manually(ix, None, false, window, cx);
         self.do_confirm(secondary, window, cx)
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(&update_query, window, cx);
-            self.set_selected_index(0, Some(Direction::Down), false, window, cx);
+            self.set_selected_index_manually(0, Some(Direction::Down), false, window, cx);
         } else {
             self.delegate.confirm(secondary, window, cx)
         }
@@ -703,6 +743,9 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if query.is_empty() {
+            self.manually_selected_match_stable_id = None;
+        }
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
         self.matches_updated(scroll_behavior, window, cx);
@@ -737,6 +780,8 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_manually_selected_match(window, cx);
+
         let match_count = self.delegate.match_count();
         match &mut self.element_container {
             ElementContainer::List(state) => match scroll_behavior {
@@ -764,6 +809,21 @@ impl<D: PickerDelegate> Picker<D> {
             self.do_confirm(secondary, window, cx);
         }
         cx.notify();
+    }
+
+    fn restore_manually_selected_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self
+            .manually_selected_match_stable_id
+            .as_ref()
+            .and_then(|match_id| self.delegate.index_for_match_stable_id(match_id.as_ref()))
+        else {
+            self.manually_selected_match_stable_id = None;
+            return;
+        };
+
+        if index != self.delegate.selected_index() {
+            self.set_selected_index_impl(index, None, false, false, window, cx);
+        }
     }
 
     pub fn query(&self, cx: &App) -> String {
@@ -838,7 +898,7 @@ impl<D: PickerDelegate> Picker<D> {
             .when(self.delegate.select_on_hover(), |this| {
                 this.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                     if *hovered {
-                        this.set_selected_index(ix, None, false, window, cx);
+                        this.set_selected_index_manually(ix, None, false, window, cx);
                         cx.notify();
                     }
                 }))
@@ -1000,12 +1060,204 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct FilteringItem {
+        id: &'static str,
+        label: &'static str,
+    }
+
+    struct FilteringDelegate {
+        items: Vec<FilteringItem>,
+        matches: Vec<usize>,
+        selected_index: usize,
+        use_match_ids: bool,
+    }
+
+    impl FilteringDelegate {
+        fn new(use_match_ids: bool) -> Self {
+            Self {
+                items: vec![
+                    FilteringItem {
+                        id: "selected",
+                        label: "selected",
+                    },
+                    FilteringItem {
+                        id: "selected_id",
+                        label: "selected_id",
+                    },
+                    FilteringItem {
+                        id: "selected_name",
+                        label: "selected_name",
+                    },
+                ],
+                matches: Vec::new(),
+                selected_index: 0,
+                use_match_ids,
+            }
+        }
+
+        fn selected_item_id(&self) -> Option<&'static str> {
+            self.matches
+                .get(self.selected_index)
+                .and_then(|item_index| self.items.get(*item_index))
+                .map(|item| item.id)
+        }
+    }
+
+    impl PickerDelegate for FilteringDelegate {
+        type ListItem = ui::ListItem;
+
+        fn match_count(&self) -> usize {
+            self.matches.len()
+        }
+
+        fn selected_index(&self) -> usize {
+            self.selected_index
+        }
+
+        fn set_selected_index(
+            &mut self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.selected_index = ix;
+        }
+
+        fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
+            if !self.use_match_ids {
+                return None;
+            }
+
+            Some(Box::new(self.items.get(*self.matches.get(ix)?)?.id))
+        }
+
+        fn index_for_match_stable_id(&self, match_id: &dyn Any) -> Option<usize> {
+            let match_id = match_id.downcast_ref::<&'static str>()?;
+            self.matches.iter().position(|item_index| {
+                self.items
+                    .get(*item_index)
+                    .is_some_and(|item| item.id == *match_id)
+            })
+        }
+
+        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+            "Test".into()
+        }
+
+        fn update_matches(
+            &mut self,
+            query: String,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Task<()> {
+            self.matches = self
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| {
+                    (query.is_empty() || item.label.contains(&query)).then_some(index)
+                })
+                .collect();
+            self.selected_index = 0;
+            Task::ready(())
+        }
+
+        fn confirm(
+            &mut self,
+            _secondary: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+        }
+
+        fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+        fn render_match(
+            &self,
+            ix: usize,
+            selected: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Option<Self::ListItem> {
+            let item = self.items.get(*self.matches.get(ix)?)?;
+            Some(
+                ui::ListItem::new(ix)
+                    .inset(true)
+                    .toggle_state(selected)
+                    .child(ui::Label::new(item.label)),
+            )
+        }
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stable_match_id_preserves_manual_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(FilteringDelegate::new(true), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index_manually(1, None, true, window, cx);
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.update_matches("selecte".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_item_id(), Some("selected_id"));
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.update_matches("".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_item_id(), Some("selected"));
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index_manually(1, None, true, window, cx);
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.update_matches("name".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_item_id(), Some("selected_name"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_picker_without_stable_match_id_keeps_selection_reset_behavior(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(FilteringDelegate::new(false), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index_manually(1, None, true, window, cx);
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.update_matches("selecte".to_string(), window, cx);
+        });
+        cx.run_until_parked();
+
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_item_id(), Some("selected"));
         });
     }
 
