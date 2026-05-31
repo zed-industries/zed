@@ -399,7 +399,7 @@ impl LspInstaller for TyLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -420,7 +420,7 @@ impl LspInstaller for TyLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -744,7 +744,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -755,7 +755,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -786,7 +786,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -795,13 +795,8 @@ impl LspInstaller for PyrightLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::SERVER_PATH);
-            let latest_version = latest_version.to_string();
-
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
+                .await?;
 
             let env = delegate.shell_env().await;
             Ok(LanguageServerBinary {
@@ -1910,7 +1905,7 @@ impl LspInstaller for PyLspAdapter {
     type BinaryVersion = ();
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -1959,7 +1954,7 @@ impl LspInstaller for PyLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<()> {
@@ -2209,7 +2204,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -2220,7 +2215,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -2252,7 +2247,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -2261,13 +2256,8 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::SERVER_PATH);
-            let latest_version = latest_version.to_string();
-
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
+                .await?;
 
             let env = delegate.shell_env().await;
             Ok(LanguageServerBinary {
@@ -2548,7 +2538,7 @@ impl LspInstaller for RuffLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -2578,7 +2568,7 @@ impl LspInstaller for RuffLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {

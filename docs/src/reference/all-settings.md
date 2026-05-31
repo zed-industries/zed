@@ -2098,6 +2098,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 ```json [settings]
 {
   "diagnostics": {
+    "button": true,
     "include_warnings": true,
     "inline": {
       "enabled": false
@@ -2105,6 +2106,11 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   }
 }
 ```
+
+**Options**
+
+- `button`: Whether to show the project diagnostics button in the status bar
+- `include_warnings`: Whether to show warnings or not by default
 
 ### Inline Diagnostics
 
@@ -3003,6 +3009,16 @@ Configuration for various AI model providers including API URLs and authenticati
 2. `background`: Draw a background behind the color text.
 3. `border`: Draw a border around the color text.
 4. `none`: Do not query and render document colors.
+
+## LSP Document Links
+
+- Description: Whether to query and display LSP `textDocument/documentLink` links in the editor
+- Setting: `lsp_document_links`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ## Max Tabs
 

@@ -1,6 +1,6 @@
 use super::tool_permissions::{
     authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    sensitive_settings_kind,
+    resolve_global_skill_descendant_path, resolves_to_global_skills_dir, sensitive_settings_kind,
 };
 use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -20,6 +20,8 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 /// Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.
+///
+/// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
     /// The path of the file or directory to delete.
@@ -95,6 +97,16 @@ impl AgentTool for DeletePathTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
+            if resolves_to_global_skills_dir(Path::new(&path), fs.as_ref()).await {
+                return Err(
+                    "Cannot delete the global agent skills directory itself. Delete a skill directory or file beneath it instead."
+                        .to_string(),
+                );
+            }
+
+            let global_skill_path =
+                resolve_global_skill_descendant_path(Path::new(&path), fs.as_ref()).await;
+
             let symlink_escape_target = project.read_with(cx, |project, cx| {
                 detect_symlink_escape(project, &path, &canonical_roots, cx)
                     .map(|(_, target)| target)
@@ -145,6 +157,38 @@ impl AgentTool for DeletePathTool {
 
             if let Some(authorize) = authorize {
                 authorize.await.map_err(|e| e.to_string())?;
+            }
+
+            if let Some(global_skill_path) = global_skill_path {
+                let metadata = fs
+                    .metadata(&global_skill_path)
+                    .await
+                    .map_err(|e| format!("Deleting {path}: {e}"))?
+                    .ok_or_else(|| format!("Deleting {path}: path not found"))?;
+
+                futures::select! {
+                    result = async {
+                        if metadata.is_dir {
+                            fs.remove_dir(
+                                &global_skill_path,
+                                fs::RemoveOptions {
+                                    recursive: true,
+                                    ..fs::RemoveOptions::default()
+                                },
+                            )
+                            .await
+                        } else {
+                            fs.remove_file(&global_skill_path, fs::RemoveOptions::default()).await
+                        }
+                    }.fuse() => {
+                        result.map_err(|e| format!("Deleting {path}: {e}"))?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Delete cancelled by user".to_string());
+                    }
+                }
+
+                return Ok(format!("Deleted {path}"));
             }
 
             let (project_path, worktree_snapshot) = project.read_with(cx, |project, cx| {
@@ -246,6 +290,145 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_delete_path_global_skill_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let skills_dir = agent_skills::global_skills_dir();
+        let skill_dir = skills_dir.join("my-skill");
+        fs.insert_tree(&skill_dir, json!({ "SKILL.md": "content" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .to_string_lossy()
+            .into_owned();
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(DeletePathToolInput { path: input_path }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task.await;
+        assert!(result.is_ok(), "should delete after approval: {result:?}");
+        assert!(fs.is_dir(&skills_dir).await);
+        assert!(!fs.is_dir(&skill_dir).await);
+    }
+
+    #[gpui::test]
+    async fn test_delete_path_global_skill_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let skill_file = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("notes.md");
+        fs.create_dir(skill_file.parent().unwrap()).await.unwrap();
+        fs.insert_file(&skill_file, b"notes".to_vec()).await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("references")
+            .join("notes.md")
+            .to_string_lossy()
+            .into_owned();
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(DeletePathToolInput { path: input_path }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task.await;
+        assert!(result.is_ok(), "should delete after approval: {result:?}");
+        assert!(!fs.is_file(&skill_file).await);
+    }
+
+    #[gpui::test]
+    async fn test_delete_path_rejects_global_skills_root(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(DeletePathTool::new(project, action_log));
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .to_string_lossy()
+            .into_owned();
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(DeletePathToolInput { path: input_path }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(result.is_err(), "should reject deleting skills root");
+        assert!(fs.is_dir(&skills_dir).await);
+        assert!(
+            !matches!(
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "Deleting the skills root should fail before requesting authorization",
+        );
     }
 
     #[gpui::test]

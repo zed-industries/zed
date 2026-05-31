@@ -230,6 +230,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    /// Whether to query and display LSP `textDocument/documentLink` links in the editor.
+    ///
+    /// Default: true
+    pub lsp_document_links: Option<bool>,
     /// When to show the scrollbar in the completion menu.
     /// This setting can take four values:
     ///
