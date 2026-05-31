@@ -718,7 +718,7 @@ impl Editor {
 
                 if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
                     // manually select word at selection
-                    if ["string_content", "inline"].contains(&node.kind()) {
+                    if ["string_content", "inline", "code_span"].contains(&node.kind()) {
                         let (word_range, _) = buffer.surrounding_word(old_range.start, None);
                         // ignore if word is already selected
                         if !word_range.is_empty() && old_range != word_range {
@@ -739,8 +739,42 @@ impl Editor {
                 }
 
                 let mut new_range = old_range.clone();
-                while let Some((node, range)) = buffer.syntax_ancestor(new_range.clone()) {
-                    new_range = range;
+                while let Some((node, node_range)) = buffer.syntax_ancestor(new_range.clone()) {
+                    if node.kind() == "code_span" {
+                        if let (Some(start_child), Some(end_child)) = (
+                            node.child(0),
+                            node.child(node.child_count().saturating_sub(1) as u32),
+                        ) {
+                            if start_child.id() != end_child.id() {
+                                let start_byte = start_child.end_byte();
+                                let end_byte = end_child.start_byte();
+                                if start_byte < end_byte {
+                                    let node_start_byte = node.start_byte();
+                                    let node_start = node_range.start.0;
+                                    let content_start = MultiBufferOffset(
+                                        node_start + (start_byte - node_start_byte) as usize,
+                                    );
+                                    let content_end = MultiBufferOffset(
+                                        node_start + (end_byte - node_start_byte) as usize,
+                                    );
+                                    let content_range = content_start..content_end;
+                                    let current_length = (new_range.end.0 as isize
+                                        - new_range.start.0 as isize)
+                                        .unsigned_abs();
+                                    let content_length = (content_end.0 as isize
+                                        - content_start.0 as isize)
+                                        .unsigned_abs();
+
+                                    if content_length > current_length {
+                                        new_range = content_range;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    new_range = node_range;
                     if !node.is_named() {
                         continue;
                     }
