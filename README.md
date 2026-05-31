@@ -239,7 +239,15 @@ timeout 15s bash -c 'cat README.md | target/debug/cli --zed target/debug/zed --s
   - Zed's `settings.json`
   - Zed's `keymap.json`
   - buffers without files like ones from `workspace: new file`
-  - AI agent text threads
+
+### Restored AI agent text threads via `editor::NewTextThreadInEditor` action
+
+https://github.com/zed-industries/zed/pull/52757 removed the AI agent text threads which I often used, so I just brought them back.
+But not in the agent dock, but as standalone editor tabs, which I find more useful because I can have multiple open at the same time.
+
+Note that the keyboard context in the text threads is called `ContextEditor` for binding keybindings.
+
+AI edit predictions also work in those buffers.
 
 ### Agent UI changes
 
@@ -273,7 +281,6 @@ These are missing in latest `dima` branch (I had them implemented at same point)
 - show command output for `acp::ToolKind::Execute` always below the `Run Command` view in a plain text view to preserve newlines
   - I added `prepare_execute_tool_output_from_qwen()` to strip trailing and leading information for cleaner output
 - allow `New From Summary` for ACP agents, instead of only for Zed Agent
-- add `editor::NewTextThreadInEditor` action to create a new AI text thread as a standalone editor tab
   - add `agent::SendMessage` action to trigger sending the current message in a text thread editor, otherwise you can't send messages from the text thread editor tab via keyboad
 
 #### Agent OS Notifications
