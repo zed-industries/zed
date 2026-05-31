@@ -178,95 +178,11 @@ pub struct ReadFileToolInput {
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
-    #[serde(default, deserialize_with = "deserialize_line_number")]
+    #[serde(default)]
     pub start_line: Option<u32>,
     /// Optional line number to end reading on (1-based index, inclusive)
-    #[serde(default, deserialize_with = "deserialize_line_number")]
+    #[serde(default)]
     pub end_line: Option<u32>,
-}
-
-/// Custom deserializer that accepts both numbers and strings for line numbers.
-/// Some LLM providers (e.g., Qwen) send line numbers as strings instead of numbers.
-fn deserialize_line_number<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{self, Visitor};
-    use std::fmt;
-
-    struct LineNumberVisitor;
-
-    impl<'de> Visitor<'de> for LineNumberVisitor {
-        type Value = Option<u32>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a number or a string representing a line number")
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            deserializer.deserialize_any(LineNumberInnerVisitor)
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-    }
-
-    struct LineNumberInnerVisitor;
-
-    impl<'de> Visitor<'de> for LineNumberInnerVisitor {
-        type Value = Option<u32>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a number or a string representing a line number")
-        }
-
-        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Some(value as u32))
-        }
-
-        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            if value >= 0 {
-                Ok(Some(value as u32))
-            } else {
-                Err(E::custom(format!(
-                    "line number cannot be negative: {}",
-                    value
-                )))
-            }
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            value
-                .parse::<u32>()
-                .map(Some)
-                .map_err(|_| E::custom(format!("invalid line number string: {}", value)))
-        }
-    }
-
-    deserializer.deserialize_option(LineNumberVisitor)
 }
 
 pub struct ReadFileTool {

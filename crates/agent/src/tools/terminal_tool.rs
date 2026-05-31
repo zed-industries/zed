@@ -19,87 +19,6 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
-/// Custom deserializer that accepts both numbers and strings for the timeout milliseconds.
-/// Some LLM providers (e.g., Qwen) send this value as a string instead of a number.
-fn deserialize_timeout<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{self, Visitor};
-    use std::fmt;
-
-    struct TimeoutVisitor;
-
-    impl<'de> Visitor<'de> for TimeoutVisitor {
-        type Value = Option<u64>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a number or a string representing a timeout in milliseconds")
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            deserializer.deserialize_any(TimeoutInnerVisitor)
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-    }
-
-    struct TimeoutInnerVisitor;
-
-    impl<'de> Visitor<'de> for TimeoutInnerVisitor {
-        type Value = Option<u64>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a number or a string representing a timeout in milliseconds")
-        }
-
-        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Some(value))
-        }
-
-        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            if value >= 0 {
-                Ok(Some(value as u64))
-            } else {
-                Err(E::custom(format!("timeout cannot be negative: {}", value)))
-            }
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            value
-                .parse::<u64>()
-                .map(Some)
-                .map_err(|_| E::custom(format!("invalid timeout string: {}", value)))
-        }
-    }
-
-    deserializer.deserialize_option(TimeoutVisitor)
-}
-
 /// Executes a shell one-liner and returns the combined output.
 ///
 /// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
@@ -130,7 +49,6 @@ pub struct TerminalToolInput {
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
-    #[serde(default, deserialize_with = "deserialize_timeout")]
     pub timeout_ms: Option<u64>,
     /// Request network access for this command.
     ///
