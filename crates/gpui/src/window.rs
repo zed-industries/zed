@@ -4509,6 +4509,7 @@ impl Window {
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
+                            external_paths: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -4540,6 +4541,10 @@ impl Window {
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },
+            PlatformInput::DragSessionEnded => {
+                cx.stop_active_drag(self);
+                PlatformInput::DragSessionEnded
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
