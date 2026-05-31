@@ -1265,3 +1265,144 @@ impl Editor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EPSILON: ScrollOffset = 0.000_001;
+
+    fn animating_scroll(
+        start_position: gpui::Point<ScrollOffset>,
+        target_position: gpui::Point<ScrollOffset>,
+        start_time: Instant,
+    ) -> ScrollAnimation {
+        ScrollAnimation::Animating {
+            position: start_position,
+            start_position,
+            target_position,
+            start_time,
+            duration: SCROLL_ANIMATION_DURATION,
+        }
+    }
+
+    fn assert_point_near(actual: gpui::Point<ScrollOffset>, expected: gpui::Point<ScrollOffset>) {
+        assert!(
+            (actual.x - expected.x).abs() <= EPSILON,
+            "actual x {} did not match expected x {}",
+            actual.x,
+            expected.x
+        );
+        assert!(
+            (actual.y - expected.y).abs() <= EPSILON,
+            "actual y {} did not match expected y {}",
+            actual.y,
+            expected.y
+        );
+    }
+
+    #[test]
+    fn scroll_animation_advances_to_expected_positions_per_frame() {
+        let start_time = Instant::now();
+        let start_position = point(0., 0.);
+        let target_position = point(90., 45.);
+        let mut animation = animating_scroll(start_position, target_position, start_time);
+
+        for elapsed_millis in [0, 16, 32, 48, 64, 80, 96, 112, 125, 160] {
+            let elapsed = Duration::from_millis(elapsed_millis);
+            animation.advance_at(start_time + elapsed);
+
+            let progress = ScrollAnimationProgress(
+                (elapsed.as_secs_f32() / SCROLL_ANIMATION_DURATION.as_secs_f32()).min(1.0),
+            );
+            let expected_position = if progress.is_finished() {
+                target_position
+            } else {
+                point(
+                    ScrollAnimation::interpolate(start_position.x, target_position.x, progress),
+                    ScrollAnimation::interpolate(start_position.y, target_position.y, progress),
+                )
+            };
+
+            assert_point_near(animation.position(), expected_position);
+            assert_eq!(animation.is_finished(), progress.is_finished());
+        }
+    }
+
+    #[test]
+    fn scroll_animation_restarts_from_current_position_and_can_start_again_after_completion() {
+        let start_time = Instant::now();
+        let mut animation = animating_scroll(point(0., 0.), point(0., 100.), start_time);
+
+        let restart_time = start_time + Duration::from_millis(25);
+        animation.advance_at(restart_time);
+        let restart_position = animation.position();
+        animation.restart_at(point(0., 200.), restart_time);
+
+        let ScrollAnimation::Animating {
+            position,
+            start_position,
+            target_position,
+            start_time: animation_start_time,
+            duration,
+        } = animation
+        else {
+            panic!("expected restarted scroll animation");
+        };
+        assert_point_near(position, restart_position);
+        assert_point_near(start_position, restart_position);
+        assert_eq!(target_position, point(0., 200.));
+        assert_eq!(animation_start_time, restart_time);
+        assert!(duration <= SCROLL_ANIMATION_DURATION);
+        assert!(duration.as_secs_f64() >= SCROLL_ANIMATION_DURATION.as_secs_f64() / 8.0);
+
+        animation.advance_at(restart_time + SCROLL_ANIMATION_DURATION);
+        assert!(animation.is_finished());
+        assert_point_near(animation.position(), point(0., 200.));
+
+        let second_start_time = restart_time + SCROLL_ANIMATION_DURATION;
+        animation.restart_at(point(0., 75.), second_start_time);
+        let ScrollAnimation::Animating {
+            start_position,
+            target_position,
+            duration,
+            ..
+        } = animation
+        else {
+            panic!("expected second scroll animation");
+        };
+        assert_point_near(start_position, point(0., 200.));
+        assert_eq!(target_position, point(0., 75.));
+        assert_eq!(duration, SCROLL_ANIMATION_DURATION);
+
+        animation.advance_at(second_start_time + SCROLL_ANIMATION_DURATION);
+        assert!(animation.is_finished());
+        assert_point_near(animation.position(), point(0., 75.));
+    }
+
+    #[test]
+    fn scroll_animation_resets_duration_when_direction_reverses() {
+        let start_time = Instant::now();
+        let mut animation = animating_scroll(point(0., 0.), point(0., 120.), start_time);
+
+        let restart_time = start_time + Duration::from_millis(50);
+        animation.advance_at(restart_time);
+        let position_before_restart = animation.position();
+        animation.restart_at(point(0., -40.), restart_time);
+
+        let ScrollAnimation::Animating { duration, .. } = animation else {
+            panic!("expected reversed scroll animation");
+        };
+        assert_eq!(duration, SCROLL_ANIMATION_DURATION);
+
+        animation.advance_at(restart_time + Duration::from_millis(16));
+        assert!(
+            animation.position().y < position_before_restart.y,
+            "expected animation to move back toward the reversed target"
+        );
+
+        animation.advance_at(restart_time + SCROLL_ANIMATION_DURATION);
+        assert!(animation.is_finished());
+        assert_point_near(animation.position(), point(0., -40.));
+    }
+}
