@@ -222,6 +222,24 @@
     },
   },
   {
+    "context": "ContextEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-i": "assistant::Assist",
+      "ctrl-s": "workspace::Save",
+      "ctrl-shift-,": "assistant::InsertIntoEditor",
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline",
+      "ctrl-k c": "assistant::CopyCode",
+      "ctrl-g": "search::SelectNextMatch",
+      "ctrl-shift-g": "search::SelectPreviousMatch",
+      "ctrl-k l": "agent::OpenRulesLibrary",
+      "ctrl-shift-v": "agent::PasteRaw",
+    },
+  },
+  {
     "context": "AgentPanel",
     "use_key_equivalents": true,
     "bindings": {
@@ -871,7 +889,7 @@
     },
   },
   {
-    "context": "!AcpThread > Editor && mode == full",
+    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",

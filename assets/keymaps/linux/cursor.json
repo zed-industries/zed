@@ -33,7 +33,7 @@
     },
   },
   {
-    "context": "AgentPanel || (MessageEditor > Editor)",
+    "context": "AgentPanel || ContextEditor || (MessageEditor > Editor)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-i": "workspace::ToggleRightDock",
