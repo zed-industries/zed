@@ -1,4 +1,5 @@
 use super::*;
+use project::project_settings::GoToDiagnosticSeverity;
 
 pub trait DiagnosticRenderer {
     fn render_group(
@@ -120,6 +121,30 @@ impl Editor {
             .filter(|entry| !entry.diagnostic.is_unnecessary)
     }
 
+    fn prioritized_diagnostics_around_cursor<'a>(
+        buffer: &'a MultiBufferSnapshot,
+        cursor: MultiBufferOffset,
+        severity: GoToDiagnosticSeverityFilter,
+    ) -> (
+        Vec<DiagnosticEntryRef<'a, MultiBufferOffset>>,
+        Vec<DiagnosticEntryRef<'a, MultiBufferOffset>>,
+    ) {
+        let errors_only = GoToDiagnosticSeverityFilter::Only(GoToDiagnosticSeverity::Error);
+        let before_errors: Vec<_> =
+            Self::diagnostics_before_cursor(buffer, cursor, errors_only).collect();
+        let after_errors: Vec<_> =
+            Self::diagnostics_after_cursor(buffer, cursor, errors_only).collect();
+
+        if !before_errors.is_empty() || !after_errors.is_empty() {
+            return (before_errors, after_errors);
+        }
+
+        (
+            Self::diagnostics_before_cursor(buffer, cursor, severity).collect(),
+            Self::diagnostics_after_cursor(buffer, cursor, severity).collect(),
+        )
+    }
+
     /// Attempts to expand the diagnostic at the current cursor position,
     /// updating the cursor position to the diagnostic's start point.
     ///
@@ -138,8 +163,8 @@ impl Editor {
             .selections
             .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
 
-        let before = Self::diagnostics_before_cursor(&buffer, selection.start, severity);
-        let after = Self::diagnostics_after_cursor(&buffer, selection.start, severity);
+        let (before, after) =
+            Self::prioritized_diagnostics_around_cursor(&buffer, selection.start, severity);
         let active_group_id = match &self.active_diagnostics {
             ActiveDiagnostic::Group(group) => Some(group.group_id),
             _ => None,
@@ -148,7 +173,7 @@ impl Editor {
         let mut cursor_on_active = false;
         let mut target = None;
 
-        for diagnostic in after.chain(before) {
+        for diagnostic in after.into_iter().chain(before.into_iter()) {
             let contains_cursor = diagnostic.range.contains(&selection.start)
                 || diagnostic.range.end == selection.head();
 
@@ -210,13 +235,12 @@ impl Editor {
             active_group_id = Some(active_group.group_id);
         }
 
-        let before = Self::diagnostics_before_cursor(&buffer, selection.start, severity);
-        let after = Self::diagnostics_after_cursor(&buffer, selection.start, severity);
+        let (before, after) =
+            Self::prioritized_diagnostics_around_cursor(&buffer, selection.start, severity);
 
         let mut found: Option<DiagnosticEntryRef<MultiBufferOffset>> = None;
         if direction == Direction::Prev {
-            'outer: for prev_diagnostics in [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
-            {
+            'outer: for prev_diagnostics in [before, after] {
                 for diagnostic in prev_diagnostics.into_iter().rev() {
                     if diagnostic.range.start != selection.start
                         || active_group_id
@@ -228,7 +252,7 @@ impl Editor {
                 }
             }
         } else {
-            for diagnostic in after.chain(before) {
+            for diagnostic in after.into_iter().chain(before.into_iter()) {
                 if diagnostic.range.start != selection.start
                     || active_group_id.is_some_and(|active| diagnostic.diagnostic.group_id > active)
                 {
