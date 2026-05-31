@@ -271,7 +271,6 @@ The last big `main` UI upgrade introduced the `Threads Sidebar` which allows mul
 - always allow all edits, otherwise it kept asking for "Allow All Edits" every single time a new ACP thread is started which is just annoying. Note that it still asks for tool permissions
 - fix: ACP sessions with session modes (e.g. Claude Code's brave/bypassPermissions mode) now respect the `always_allow_tool_actions` setting — previously `respect_always_allow_setting` was set to `false` when `session_modes` existed, causing tool permission prompts even with brave mode enabled
 - show command output for `acp::ToolKind::Execute` always below the `Run Command` view in a plain text view to preserve newlines
-  - I added `prepare_execute_tool_output_from_qwen()` to strip trailing and leading information for cleaner output
 - allow `New From Summary` for ACP agents, instead of only for Zed Agent
   - add `agent::SendMessage` action to trigger sending the current message in a text thread editor, otherwise you can't send messages from the text thread editor tab via keyboad
 - agent OS notifications improvements. See `crates/agent_ui/src/ui/agent_notification.rs`
