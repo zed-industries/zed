@@ -1187,16 +1187,11 @@ impl ProjectPanel {
                                             Box::new(git::RestoreFile { skip_prompt: false }),
                                         )
                                     })
-                                    .submenu("Git", |menu, _, _| {
-                                        menu.action(
-                                            "Add to .gitignore",
-                                            Box::new(git::AddToGitignore),
-                                        )
-                                        .action(
-                                            "Add to .git/info/exclude",
-                                            Box::new(git::AddToGitInfoExclude),
-                                        )
-                                    })
+                                    .action("Add to .gitignore", Box::new(git::AddToGitignore))
+                                    .action(
+                                        "Add to .git/info/exclude",
+                                        Box::new(git::AddToGitInfoExclude),
+                                    )
                                     .when(has_history, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
                                     })

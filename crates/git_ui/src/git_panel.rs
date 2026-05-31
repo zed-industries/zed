@@ -5985,18 +5985,17 @@ impl GitPanel {
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
-                .submenu("Git", move |menu, _, _| {
-                    menu.action_disabled_when(
-                        !is_created,
-                        "Add to .gitignore",
-                        git::AddToGitignore.boxed_clone(),
-                    )
-                    .action_disabled_when(
-                        !is_created,
-                        "Add to .git/info/exclude",
-                        git::AddToGitInfoExclude.boxed_clone(),
-                    )
-                })
+                .separator()
+                .action_disabled_when(
+                    !is_created,
+                    "Add to .gitignore",
+                    git::AddToGitignore.boxed_clone(),
+                )
+                .action_disabled_when(
+                    !is_created,
+                    "Add to .git/info/exclude",
+                    git::AddToGitInfoExclude.boxed_clone(),
+                )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
                 .action("Open Diff (File)", menu::SecondaryConfirm.boxed_clone())
