@@ -79,39 +79,48 @@ fn outline_for_editor(
     cx: &mut App,
 ) -> Option<Task<Vec<OutlineItem<Anchor>>>> {
     let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-    let buffer_snapshot = multibuffer.as_singleton()?;
-    let buffer_id = buffer_snapshot.remote_id();
-    let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
+    if let Some(buffer_snapshot) = multibuffer.as_singleton() {
+        let buffer_id = buffer_snapshot.remote_id();
+        let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
 
-    Some(cx.background_executor().spawn(async move {
-        task.await
-            .into_iter()
-            .filter_map(|item| {
-                Some(OutlineItem {
-                    depth: item.depth,
-                    range: multibuffer.anchor_in_buffer(item.range.start)?
-                        ..multibuffer.anchor_in_buffer(item.range.end)?,
-                    source_range_for_text: multibuffer
-                        .anchor_in_buffer(item.source_range_for_text.start)?
-                        ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
-                    text: item.text,
-                    highlight_ranges: item.highlight_ranges,
-                    name_ranges: item.name_ranges,
-                    body_range: item.body_range.and_then(|r| {
-                        Some(
-                            multibuffer.anchor_in_buffer(r.start)?
-                                ..multibuffer.anchor_in_buffer(r.end)?,
-                        )
-                    }),
-                    annotation_range: item.annotation_range.and_then(|r| {
-                        Some(
-                            multibuffer.anchor_in_buffer(r.start)?
-                                ..multibuffer.anchor_in_buffer(r.end)?,
-                        )
-                    }),
+        return Some(cx.background_executor().spawn(async move {
+            task.await
+                .into_iter()
+                .filter_map(|item| {
+                    Some(OutlineItem {
+                        depth: item.depth,
+                        range: multibuffer.anchor_in_buffer(item.range.start)?
+                            ..multibuffer.anchor_in_buffer(item.range.end)?,
+                        source_range_for_text: multibuffer
+                            .anchor_in_buffer(item.source_range_for_text.start)?
+                            ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
+                        text: item.text,
+                        highlight_ranges: item.highlight_ranges,
+                        name_ranges: item.name_ranges,
+                        body_range: item.body_range.and_then(|r| {
+                            Some(
+                                multibuffer.anchor_in_buffer(r.start)?
+                                    ..multibuffer.anchor_in_buffer(r.end)?,
+                            )
+                        }),
+                        annotation_range: item.annotation_range.and_then(|r| {
+                            Some(
+                                multibuffer.anchor_in_buffer(r.start)?
+                                    ..multibuffer.anchor_in_buffer(r.end)?,
+                            )
+                        }),
+                    })
                 })
-            })
-            .collect()
+                .collect()
+        }));
+    }
+
+    let syntax = cx.theme().syntax().clone();
+    Some(cx.background_executor().spawn(async move {
+        multibuffer
+            .outline(Some(&syntax))
+            .map(|outline| outline.items)
+            .unwrap_or_default()
     }))
 }
 
@@ -462,6 +471,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use editor::test::editor_test_context::EditorTestContext;
     use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;

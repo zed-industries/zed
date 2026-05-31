@@ -6303,33 +6303,112 @@ impl MultiBufferSnapshot {
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        let buffer_snapshot = self.as_singleton()?;
-        let excerpt = self.excerpts.first()?;
-        let path_key_index = excerpt.path_key_index;
-        let outline = buffer_snapshot.outline(theme);
-        Some(Outline::new(
-            outline
-                .items
-                .into_iter()
-                .map(|item| OutlineItem {
-                    depth: item.depth,
-                    range: Anchor::range_in_buffer(path_key_index, item.range),
-                    source_range_for_text: Anchor::range_in_buffer(
-                        path_key_index,
-                        item.source_range_for_text,
-                    ),
-                    text: item.text,
-                    highlight_ranges: item.highlight_ranges,
-                    name_ranges: item.name_ranges,
-                    body_range: item
-                        .body_range
-                        .map(|body_range| Anchor::range_in_buffer(path_key_index, body_range)),
-                    annotation_range: item.annotation_range.map(|annotation_range| {
-                        Anchor::range_in_buffer(path_key_index, annotation_range)
-                    }),
-                })
-                .collect(),
-        ))
+        if let Some(buffer_snapshot) = self.as_singleton() {
+            let excerpt = self.excerpts.first()?;
+            let path_key_index = excerpt.path_key_index;
+            let outline = buffer_snapshot.outline(theme);
+            return Some(Outline::new(
+                outline
+                    .items
+                    .into_iter()
+                    .map(|item| OutlineItem {
+                        depth: item.depth,
+                        range: Anchor::range_in_buffer(path_key_index, item.range),
+                        source_range_for_text: Anchor::range_in_buffer(
+                            path_key_index,
+                            item.source_range_for_text,
+                        ),
+                        text: item.text,
+                        highlight_ranges: item.highlight_ranges,
+                        name_ranges: item.name_ranges,
+                        body_range: item
+                            .body_range
+                            .map(|body_range| Anchor::range_in_buffer(path_key_index, body_range)),
+                        annotation_range: item.annotation_range.map(|annotation_range| {
+                            Anchor::range_in_buffer(path_key_index, annotation_range)
+                        }),
+                    })
+                    .collect(),
+            ));
+        }
+
+        let mut items = Vec::new();
+        let mut current_buffer_id = None;
+        let mut current_range_start = None;
+        let mut current_range_end = None;
+        let mut current_text = None;
+
+        let push_current_item = |
+            items: &mut Vec<OutlineItem<Anchor>>,
+            range_start: Option<Anchor>,
+            range_end: Option<Anchor>,
+            text: Option<String>,
+        | {
+            if let (Some(range_start), Some(range_end), Some(text)) = (range_start, range_end, text) {
+                let text_len = text.len();
+                items.push(OutlineItem {
+                    depth: 0,
+                    range: range_start..range_end,
+                    source_range_for_text: range_start..range_end,
+                    text,
+                    highlight_ranges: Vec::new(),
+                    name_ranges: vec![0..text_len],
+                    body_range: None,
+                    annotation_range: None,
+                });
+            }
+        };
+
+        for excerpt in self.excerpts() {
+            let buffer_id = excerpt.context.start.buffer_id;
+            if Some(buffer_id) != current_buffer_id {
+                push_current_item(
+                    &mut items,
+                    current_range_start.take(),
+                    current_range_end.take(),
+                    current_text.take(),
+                );
+
+                let Some(buffer_snapshot) = self.buffer_for_id(buffer_id) else {
+                    current_buffer_id = None;
+                    continue;
+                };
+                let Some(range) = self.anchor_range_in_buffer(excerpt.context.clone()) else {
+                    current_buffer_id = None;
+                    continue;
+                };
+
+                current_buffer_id = Some(buffer_id);
+                current_range_start = Some(range.start);
+                current_range_end = Some(range.end);
+                current_text = Some(
+                    buffer_snapshot
+                        .file()
+                        .map(|file| file.path().as_unix_str().to_string())
+                        .unwrap_or_else(|| "Untitled".to_string()),
+                );
+            } else if let Some(range) = self.anchor_range_in_buffer(excerpt.context.clone()) {
+                current_range_end = Some(range.end);
+            } else {
+                current_buffer_id = None;
+                current_range_start = None;
+                current_range_end = None;
+                current_text = None;
+            }
+        }
+
+        push_current_item(
+            &mut items,
+            current_range_start,
+            current_range_end,
+            current_text,
+        );
+
+        if items.is_empty() {
+            None
+        } else {
+            Some(Outline::new(items))
+        }
     }
 
     pub fn symbols_containing<T: ToOffset>(
