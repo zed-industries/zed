@@ -2667,8 +2667,7 @@ fn matching(
                 // Attempt to find the smallest enclosing bracket range that also contains
                 // the offset, which only happens if the cursor is currently in a bracket.
                 buffer_offset.is_some_and(|buffer_offset| {
-                    opening_range.contains(&buffer_offset)
-                        || closing_range.contains(&buffer_offset)
+                    opening_range.contains(&buffer_offset) || closing_range.contains(&buffer_offset)
                 })
             } else {
                 true
@@ -3410,7 +3409,9 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::{Editor, EditorMode, Inlay, MultiBuffer, test::editor_test_context::EditorTestContext};
+    use editor::{
+        Editor, EditorMode, Inlay, MultiBuffer, test::editor_test_context::EditorTestContext,
+    };
     use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
@@ -3564,8 +3565,14 @@ mod test {
         let (editor, cx) = cx.add_window_view(|window, cx| {
             let multi_buffer = MultiBuffer::build_multi(
                 [
-                    ("fn a() {\n    let x = 1;\n}\n", vec![Point::row_range(0..3)]),
-                    ("fn b() {\n    let y = 2;\n}\n", vec![Point::row_range(0..3)]),
+                    (
+                        "fn a() {\n    let x = 1;\n}\n",
+                        vec![Point::row_range(0..3)],
+                    ),
+                    (
+                        "fn b() {\n    let y = 2;\n}\n",
+                        vec![Point::row_range(0..3)],
+                    ),
                 ],
                 cx,
             );
