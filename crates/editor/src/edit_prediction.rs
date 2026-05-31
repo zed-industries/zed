@@ -480,18 +480,42 @@ impl Editor {
                         if let Some(text) = insertion {
                             let text_to_insert = match granularity {
                                 EditPredictionGranularity::Word => {
-                                    let mut partial = text
-                                        .chars()
-                                        .by_ref()
-                                        .take_while(|c| c.is_alphabetic())
-                                        .collect::<String>();
-                                    if partial.is_empty() {
-                                        partial = text
-                                            .chars()
-                                            .by_ref()
-                                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
-                                            .collect::<String>();
+                                    let mut characters = text.chars().peekable();
+                                    let mut partial = String::new();
+
+                                    while let Some(character) = characters.peek() {
+                                        if character.is_whitespace() {
+                                            partial.push(*character);
+                                            characters.next();
+                                        } else {
+                                            break;
+                                        }
                                     }
+
+                                    if let Some(character) = characters.peek() {
+                                        if character.is_alphabetic() {
+                                            while let Some(character) = characters.peek() {
+                                                if character.is_alphabetic() {
+                                                    partial.push(*character);
+                                                    characters.next();
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                        } else {
+                                            while let Some(character) = characters.peek() {
+                                                if character.is_whitespace()
+                                                    || !character.is_alphabetic()
+                                                {
+                                                    partial.push(*character);
+                                                    characters.next();
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     partial
                                 }
                                 EditPredictionGranularity::Line => {
