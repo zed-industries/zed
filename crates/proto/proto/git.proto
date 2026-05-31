@@ -132,6 +132,7 @@ message UpdateRepository {
   optional string repository_dir_abs_path = 19;
   optional string common_dir_abs_path = 20;
   optional string branch_list_error = 21;
+  bool merge_in_progress = 22;
 }
 
 message RemoveRepository {
@@ -445,6 +446,44 @@ message Pull {
   optional string branch_name = 5;
   uint64 askpass_id = 6;
   bool rebase = 7;
+}
+
+message GitMerge {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string source = 4;
+  FastForwardMode fast_forward = 5;
+  bool squash = 6;
+  // false means Git should create a merge commit when needed, matching MergeOptions::default().
+  bool no_commit = 7;
+  optional string message = 8;
+
+  enum FastForwardMode {
+    DEFAULT = 0;
+    ONLY = 1;
+    NEVER = 2;
+  }
+}
+
+message GitMergeResponse {
+  Outcome outcome = 1;
+  string stdout = 2;
+  string stderr = 3;
+
+  enum Outcome {
+    SUCCESS = 0;
+    FAST_FORWARD = 1;
+    UP_TO_DATE = 2;
+    CONFLICTS = 3;
+    FAILED = 4;
+  }
+}
+
+message GitMergeAbort {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
 }
 
 message RemoteMessageResponse {

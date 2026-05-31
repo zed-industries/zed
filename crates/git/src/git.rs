@@ -80,6 +80,8 @@ actions!(
         Pull,
         /// Pulls changes from the remote repository with rebase.
         PullRebase,
+        /// Aborts an in-progress merge.
+        MergeAbort,
         /// Fetches changes from the remote repository.
         Fetch,
         /// Fetches changes from a specific remote.
@@ -112,6 +114,18 @@ actions!(
         CopyBranchName,
     ]
 );
+
+/// Merges a branch into the current branch.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = git)]
+#[serde(deny_unknown_fields)]
+pub struct Merge {
+    /// The branch to merge into the current branch.
+    ///
+    /// Default: prompt for the branch via the branch picker.
+    #[serde(default)]
+    pub branch: Option<String>,
+}
 
 /// Renames a git branch.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]

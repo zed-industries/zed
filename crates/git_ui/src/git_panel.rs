@@ -25,8 +25,9 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-    ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus, get_git_committer,
+    GitCommitTemplate, GitCommitter, LogOrder, LogSource, MergeOptions, MergeOutcome, MergeOutput,
+    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -177,6 +178,7 @@ struct GitMenuState {
     has_new_changes: bool,
     sort_by_path: bool,
     has_stash_items: bool,
+    merge_in_progress: bool,
     tree_view: bool,
 }
 
@@ -207,6 +209,11 @@ fn git_panel_context_menu(
             )
             .action_disabled_when(!state.has_stash_items, "Stash Pop", StashPop.boxed_clone())
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
+            .separator()
+            .action("Merge…", git::Merge::default().boxed_clone())
+            .when(state.merge_in_progress, |this| {
+                this.action("Abort Merge", git::MergeAbort.boxed_clone())
+            })
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
@@ -3078,6 +3085,59 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    pub(crate) fn merge(&mut self, source: SharedString, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        telemetry::event!("Git Merged");
+        let options = MergeOptions::default();
+
+        cx.spawn(async move |this, cx| {
+            let merge = repo.update(cx, |repo, cx| repo.merge(source.clone(), options, cx));
+            let result = merge.await?;
+
+            this.update(cx, |this, cx| match result {
+                Ok(output) => this.show_merge_outcome(&source, output, cx),
+                Err(error) => {
+                    log::error!("Error while merging {:?}", error);
+                    this.show_error_toast("merge", error, cx);
+                }
+            })
+            .ok();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub(crate) fn merge_abort(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        if !self.merge_in_progress(cx) {
+            return;
+        }
+
+        telemetry::event!("Git Merge Aborted");
+        cx.spawn(async move |this, cx| {
+            let abort = repo.update(cx, |repo, cx| repo.merge_abort(cx));
+            let result = abort.await?;
+
+            this.update(cx, |this, cx| match result {
+                Ok(()) => this.show_merge_aborted_toast(cx),
+                Err(error) => {
+                    log::error!("Error while aborting merge {:?}", error);
+                    this.show_error_toast("merge --abort", error, cx);
+                }
+            })
+            .ok();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub(crate) fn push(
         &mut self,
         force_push: bool,
@@ -3963,6 +4023,12 @@ impl GitPanel {
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
 
+    fn merge_in_progress(&self, cx: &App) -> bool {
+        self.active_repository
+            .as_ref()
+            .is_some_and(|repo| repo.read(cx).merge.is_merge_in_progress())
+    }
+
     fn show_error_toast(&self, action: impl Into<SharedString>, e: anyhow::Error, cx: &mut App) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -4132,6 +4198,98 @@ impl GitPanel {
         });
     }
 
+    fn show_merge_outcome(
+        &mut self,
+        source: &SharedString,
+        output: MergeOutput,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let current_branch = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch.clone())
+            .map(|branch| branch.name().to_owned())
+            .unwrap_or_else(|| "HEAD".to_string());
+        let source = source.clone();
+
+        workspace.update(cx, |workspace, cx| {
+            let workspace_weak = cx.weak_entity();
+            let output_for_log = output.clone();
+            let toast = match output.outcome {
+                MergeOutcome::Success => icon_status_toast(
+                    format!("Merged {source} into {current_branch}"),
+                    IconName::GitBranch,
+                    Color::Muted,
+                    cx,
+                ),
+                MergeOutcome::FastForward => icon_status_toast(
+                    format!("Fast-forwarded {current_branch} to {source}"),
+                    IconName::GitBranch,
+                    Color::Muted,
+                    cx,
+                ),
+                MergeOutcome::UpToDate => icon_status_toast(
+                    format!("Already up to date with {source}"),
+                    IconName::Check,
+                    Color::Muted,
+                    cx,
+                ),
+                MergeOutcome::Conflicts => StatusToast::new(
+                    "Merge has conflicts. Resolve them in the Project Diff.",
+                    cx,
+                    |this, _cx| {
+                        this.icon(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                        .action("View Conflicts", move |window, cx| {
+                            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+                        })
+                        .dismiss_button(true)
+                    },
+                ),
+                MergeOutcome::Failed => {
+                    StatusToast::new("git merge failed", cx, move |this, _cx| {
+                        let output = output_for_log.clone();
+                        this.icon(
+                            Icon::new(IconName::XCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .action("View Log", move |window, cx| {
+                            let output =
+                                format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    open_output("merge", workspace, &output, window, cx)
+                                })
+                                .ok();
+                        })
+                        .dismiss_button(true)
+                    })
+                }
+            };
+            workspace.toggle_status_toast(toast, cx)
+        });
+    }
+
+    fn show_merge_aborted_toast(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let status_toast =
+                icon_status_toast("Merge aborted", IconName::GitBranch, Color::Muted, cx);
+            workspace.toggle_status_toast(status_toast, cx)
+        });
+    }
+
     pub fn can_commit(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
     }
@@ -4206,13 +4364,14 @@ impl GitPanel {
         path + file_name + depth * 2
     }
 
-    fn render_ellipsis_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
+    fn render_ellipsis_menu(&self, id: impl Into<ElementId>, cx: &App) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
+        let merge_in_progress = self.merge_in_progress(cx);
 
         PopoverMenu::new(id.into())
             .trigger(
@@ -4229,6 +4388,7 @@ impl GitPanel {
                         has_new_changes,
                         sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
                         has_stash_items,
+                        merge_in_progress,
                         tree_view: GitPanelSettings::get_global(cx).tree_view,
                     },
                     window,
@@ -4505,59 +4665,96 @@ impl GitPanel {
             } else {
                 ("Stage All", StageAll.boxed_clone(), true, "git add --all")
             };
+        let merge_in_progress = self.merge_in_progress(cx);
 
         Some(
-            h_flex()
-                .h(Tab::container_height(cx))
+            v_flex()
                 .w_full()
-                .px_1()
                 .flex_none()
-                .justify_between()
-                .child(
-                    Button::new("changes", "View Diff")
-                        .label_size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .start_icon(
-                            Icon::new(IconName::Diff)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .tooltip(Tooltip::for_action_title_in(
-                            "View Diff",
-                            &Diff,
-                            &self.focus_handle,
-                        ))
-                        .on_click(|_, _, cx| {
-                            cx.defer(|cx| {
-                                cx.dispatch_action(&Diff);
-                            })
-                        }),
-                )
+                .when(merge_in_progress, |this| {
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .px_2()
+                            .py_1()
+                            .gap_2()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().status().warning_border)
+                            .bg(cx.theme().status().warning_background.opacity(0.5))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(Label::new("Merge in progress").size(LabelSize::Small)),
+                            )
+                            .child(
+                                Button::new("abort_merge", "Abort Merge")
+                                    .label_size(LabelSize::Small)
+                                    .on_click(|_, _, cx| {
+                                        cx.defer(|cx| {
+                                            cx.dispatch_action(&git::MergeAbort);
+                                        })
+                                    }),
+                            ),
+                    )
+                })
                 .child(
                     h_flex()
-                        .gap_1()
-                        .child(self.render_ellipsis_menu("overflow_menu"))
+                        .h(Tab::container_height(cx))
+                        .w_full()
+                        .px_1()
+                        .justify_between()
                         .child(
-                            Button::new("stage_unstage_all", text)
+                            Button::new("changes", "View Diff")
                                 .label_size(LabelSize::Small)
-                                .layer(ElevationIndex::ModalSurface)
-                                .style(ButtonStyle::Filled)
+                                .color(Color::Muted)
+                                .start_icon(
+                                    Icon::new(IconName::Diff)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .tooltip(Tooltip::for_action_title_in(
-                                    tooltip,
-                                    action.as_ref(),
+                                    "View Diff",
+                                    &Diff,
                                     &self.focus_handle,
                                 ))
-                                .disabled(self.entry_count == 0)
-                                .on_click({
-                                    let git_panel = cx.weak_entity();
-                                    move |_, _, cx| {
-                                        git_panel
-                                            .update(cx, |git_panel, cx| {
-                                                git_panel.change_all_files_stage(stage, cx);
-                                            })
-                                            .ok();
-                                    }
+                                .on_click(|_, _, cx| {
+                                    cx.defer(|cx| {
+                                        cx.dispatch_action(&Diff);
+                                    })
                                 }),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(self.render_ellipsis_menu("overflow_menu", cx))
+                                .child(
+                                    Button::new("stage_unstage_all", text)
+                                        .label_size(LabelSize::Small)
+                                        .layer(ElevationIndex::ModalSurface)
+                                        .style(ButtonStyle::Filled)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            tooltip,
+                                            action.as_ref(),
+                                            &self.focus_handle,
+                                        ))
+                                        .disabled(self.entry_count == 0)
+                                        .on_click({
+                                            let git_panel = cx.weak_entity();
+                                            move |_, _, cx| {
+                                                git_panel
+                                                    .update(cx, |git_panel, cx| {
+                                                        git_panel.change_all_files_stage(stage, cx);
+                                                    })
+                                                    .ok();
+                                            }
+                                        }),
+                                ),
                         ),
                 ),
         )
@@ -5953,6 +6150,7 @@ impl GitPanel {
                 has_new_changes: self.new_count > 0,
                 sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
                 has_stash_items: self.stash_entries.entries.len() > 0,
+                merge_in_progress: self.merge_in_progress(cx),
                 tree_view: GitPanelSettings::get_global(cx).tree_view,
             },
             window,
@@ -6643,6 +6841,9 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_pop))
+                    .on_action(cx.listener(|this, _: &git::MergeAbort, _window, cx| {
+                        this.merge_abort(cx);
+                    }))
             })
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::expand_selected_entry))
@@ -7395,6 +7596,18 @@ impl ansi::Handler for GitOutputHandler {
         self.output
             .extend(std::iter::repeat_n('\t', count as usize));
     }
+}
+
+fn icon_status_toast(
+    message: impl Into<SharedString>,
+    icon: IconName,
+    color: Color,
+    cx: &mut App,
+) -> Entity<StatusToast> {
+    StatusToast::new(message.into(), cx, move |this, _cx| {
+        this.icon(Icon::new(icon).size(IconSize::Small).color(color))
+            .dismiss_button(true)
+    })
 }
 
 pub(crate) fn show_error_toast(

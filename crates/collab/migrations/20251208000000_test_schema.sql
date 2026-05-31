@@ -303,6 +303,7 @@ CREATE TABLE public.project_repositories (
     scan_id bigint NOT NULL,
     is_deleted boolean NOT NULL,
     current_merge_conflicts character varying,
+    merge_in_progress boolean DEFAULT false NOT NULL,
     branch_summary character varying,
     head_commit_details character varying,
     merge_message character varying,

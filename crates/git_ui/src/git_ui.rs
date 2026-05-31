@@ -22,6 +22,7 @@ use gpui::{
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
+use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::prelude::*;
 use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
@@ -211,6 +212,31 @@ pub fn init(cx: &mut App) {
                 });
             });
         }
+        workspace.register_action(|workspace, action: &git::Merge, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+
+            if let Some(branch) = action.branch.clone() {
+                panel.update(cx, |panel, cx| {
+                    panel.merge(branch.into(), cx);
+                });
+                return;
+            }
+
+            let panel = panel.downgrade();
+            let repository = workspace.project().read(cx).active_repository(cx);
+            let on_select = Arc::new(move |branch: git::repository::Branch, cx: &mut App| {
+                let source: SharedString = branch.name().to_owned().into();
+                panel.update(cx, |panel, cx| panel.merge(source, cx)).ok();
+            });
+            branch_picker::select_modal(workspace, repository, None, on_select, window, cx);
+        });
+        workspace.register_action(|workspace, _: &git::MergeAbort, _window, cx| {
+            if let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) {
+                panel.update(cx, |panel, cx| panel.merge_abort(cx));
+            }
+        });
         workspace.register_action(|workspace, action: &git::StashAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;

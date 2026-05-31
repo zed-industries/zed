@@ -122,6 +122,29 @@ pub fn select_popover(
     })
 }
 
+pub fn select_modal(
+    workspace: &mut Workspace,
+    repository: Option<Entity<Repository>>,
+    selected_branch: Option<SharedString>,
+    on_select: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace_handle = workspace.weak_handle();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        BranchList::new_select(
+            workspace_handle,
+            repository,
+            BranchListStyle::Modal,
+            rems(34.),
+            selected_branch,
+            on_select,
+            window,
+            cx,
+        )
+    });
+}
+
 pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut App)>;
 
 pub fn create_embedded(

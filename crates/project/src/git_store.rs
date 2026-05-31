@@ -35,10 +35,11 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions, GitCommitTemplate,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
+        CommitOptions, CreateWorktreeTarget, DiffType, FastForwardMode, FetchOptions,
+        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
+        LogOrder, LogSource, MergeOptions, MergeOutcome, MergeOutput, PushOptions, Remote,
+        RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree, delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -289,6 +290,13 @@ pub struct RepositoryId(pub u64);
 pub struct MergeDetails {
     pub merge_heads_by_conflicted_path: TreeMap<RepoPath, Vec<Option<SharedString>>>,
     pub message: Option<SharedString>,
+    merge_in_progress: bool,
+}
+
+impl MergeDetails {
+    pub fn is_merge_in_progress(&self) -> bool {
+        self.merge_in_progress
+    }
 }
 
 #[derive(Clone)]
@@ -659,6 +667,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_git_init);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
+        client.add_entity_request_handler(Self::handle_merge);
+        client.add_entity_request_handler(Self::handle_merge_abort);
         client.add_entity_request_handler(Self::handle_fetch);
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
@@ -2352,6 +2362,47 @@ impl GitStore {
             stdout: remote_message.stdout,
             stderr: remote_message.stderr,
         })
+    }
+
+    async fn handle_merge(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitMerge>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitMergeResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let payload = envelope.payload;
+        let options = merge_options_from_proto(&payload);
+        let source = payload.source.into();
+
+        let output = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.merge(source, options, cx)
+            })
+            .await??;
+
+        Ok(proto::GitMergeResponse {
+            outcome: merge_outcome_to_proto(output.outcome) as i32,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    }
+
+    async fn handle_merge_abort(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitMergeAbort>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.merge_abort(cx)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_stage(
@@ -4157,6 +4208,55 @@ fn make_remote_delegate(
     })
 }
 
+fn merge_outcome_to_proto(outcome: MergeOutcome) -> proto::git_merge_response::Outcome {
+    use proto::git_merge_response::Outcome;
+
+    match outcome {
+        MergeOutcome::Success => Outcome::Success,
+        MergeOutcome::FastForward => Outcome::FastForward,
+        MergeOutcome::UpToDate => Outcome::UpToDate,
+        MergeOutcome::Conflicts => Outcome::Conflicts,
+        MergeOutcome::Failed => Outcome::Failed,
+    }
+}
+
+fn merge_outcome_from_proto(outcome: i32) -> MergeOutcome {
+    match proto::git_merge_response::Outcome::from_i32(outcome) {
+        Some(proto::git_merge_response::Outcome::Success) => MergeOutcome::Success,
+        Some(proto::git_merge_response::Outcome::FastForward) => MergeOutcome::FastForward,
+        Some(proto::git_merge_response::Outcome::UpToDate) => MergeOutcome::UpToDate,
+        Some(proto::git_merge_response::Outcome::Conflicts) => MergeOutcome::Conflicts,
+        Some(proto::git_merge_response::Outcome::Failed) | None => MergeOutcome::Failed,
+    }
+}
+
+fn merge_options_from_proto(payload: &proto::GitMerge) -> MergeOptions {
+    MergeOptions {
+        fast_forward: merge_options_ff_from_proto(payload.fast_forward()),
+        squash: payload.squash,
+        commit: !payload.no_commit,
+        message: payload.message.clone(),
+    }
+}
+
+fn merge_options_ff_to_proto(mode: FastForwardMode) -> proto::git_merge::FastForwardMode {
+    use proto::git_merge::FastForwardMode as ProtoFastForwardMode;
+
+    match mode {
+        FastForwardMode::Default => ProtoFastForwardMode::Default,
+        FastForwardMode::Only => ProtoFastForwardMode::Only,
+        FastForwardMode::Never => ProtoFastForwardMode::Never,
+    }
+}
+
+fn merge_options_ff_from_proto(mode: proto::git_merge::FastForwardMode) -> FastForwardMode {
+    match mode {
+        proto::git_merge::FastForwardMode::Default => FastForwardMode::Default,
+        proto::git_merge::FastForwardMode::Only => FastForwardMode::Only,
+        proto::git_merge::FastForwardMode::Never => FastForwardMode::Never,
+    }
+}
+
 impl RepositoryId {
     pub fn to_proto(self) -> u64 {
         self.0
@@ -4226,6 +4326,7 @@ impl RepositorySnapshot {
                 .map(|(repo_path, _)| repo_path.to_proto())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
+            merge_in_progress: self.merge.merge_in_progress,
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
@@ -4313,6 +4414,7 @@ impl RepositorySnapshot {
                 .map(|(path, _)| path.to_proto())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
+            merge_in_progress: self.merge.merge_in_progress,
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
@@ -4493,7 +4595,9 @@ impl MergeDetails {
             .map(|opt| opt.map(SharedString::from))
             .collect::<Vec<_>>();
 
-        let mut conflicts_changed = false;
+        let merge_in_progress = merge_heads_include_merge_head(&heads);
+        let mut conflicts_changed = self.merge_in_progress != merge_in_progress;
+        self.merge_in_progress = merge_in_progress;
 
         // Record the merge state for newly conflicted paths
         for path in &current_conflicted_paths {
@@ -4518,6 +4622,10 @@ impl MergeDetails {
 
         conflicts_changed
     }
+}
+
+fn merge_heads_include_merge_head(heads: &[Option<SharedString>]) -> bool {
+    heads.first().is_some_and(Option::is_some)
 }
 
 impl Repository {
@@ -6751,6 +6859,80 @@ impl Repository {
         )
     }
 
+    pub fn merge(
+        &mut self,
+        source: SharedString,
+        options: MergeOptions,
+        _cx: &mut App,
+    ) -> oneshot::Receiver<Result<MergeOutput>> {
+        let id = self.id;
+
+        self.send_job(
+            "merge",
+            Some(format!("git merge {}", source).into()),
+            move |git_repo, _cx| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState {
+                        backend,
+                        environment,
+                        ..
+                    }) => {
+                        backend
+                            .merge(source.to_string(), options, environment.clone())
+                            .await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        let response = client
+                            .request(proto::GitMerge {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                source: source.to_string(),
+                                fast_forward: merge_options_ff_to_proto(options.fast_forward)
+                                    as i32,
+                                squash: options.squash,
+                                no_commit: !options.commit,
+                                message: options.message.clone(),
+                            })
+                            .await?;
+
+                        Ok(MergeOutput {
+                            outcome: merge_outcome_from_proto(response.outcome),
+                            stdout: response.stdout,
+                            stderr: response.stderr,
+                        })
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn merge_abort(&mut self, _cx: &mut App) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+
+        self.send_job(
+            "merge_abort",
+            Some("git merge --abort".into()),
+            move |git_repo, _cx| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState {
+                        backend,
+                        environment,
+                        ..
+                    }) => backend.merge_abort(environment.clone()).await,
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitMergeAbort {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                            })
+                            .await?;
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     fn spawn_set_index_text_job(
         &mut self,
         path: RepoPath,
@@ -7737,18 +7919,20 @@ impl Repository {
             self.snapshot.branch_list_error = new_branch_list_error;
         }
 
-        // We don't store any merge head state for downstream projects; the upstream
-        // will track it and we will just get the updated conflicts
+        // Downstream projects keep conflict paths for conflict views, but use the
+        // semantic flag from upstream instead of local merge head internals.
         let new_merge_heads = TreeMap::from_ordered_entries(
             update
                 .current_merge_conflicts
                 .into_iter()
                 .filter_map(|path| Some((RepoPath::from_proto(&path).ok()?, vec![]))),
         );
-        let conflicts_changed =
-            self.snapshot.merge.merge_heads_by_conflicted_path != new_merge_heads;
+        let conflicts_changed = self.snapshot.merge.merge_heads_by_conflicted_path
+            != new_merge_heads
+            || self.snapshot.merge.merge_in_progress != update.merge_in_progress;
         self.snapshot.merge.merge_heads_by_conflicted_path = new_merge_heads;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
+        self.snapshot.merge.merge_in_progress = update.merge_in_progress;
         let new_stash_entries = GitStash {
             entries: update
                 .stash_entries
@@ -8927,6 +9111,25 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_merge_heads_include_only_merge_head() {
+        assert!(merge_heads_include_merge_head(&[
+            Some("feature".into()),
+            None,
+            None,
+            None,
+            None,
+        ]));
+        assert!(!merge_heads_include_merge_head(&[
+            None,
+            None,
+            Some("feature".into()),
+            None,
+            None,
+        ]));
+        assert!(!merge_heads_include_merge_head(&[]));
     }
 
     #[test]

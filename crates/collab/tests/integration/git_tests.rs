@@ -8,8 +8,11 @@ use client::RECEIVE_TIMEOUT;
 use collections::HashMap;
 use git::{
     Oid,
-    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree as GitWorktree},
-    status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
+    repository::{
+        CommitData, InitialGraphCommitData, MergeOptions, MergeOutcome, RepoPath,
+        Worktree as GitWorktree, repo_path,
+    },
+    status::{DiffStat, FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
 };
 use git_graph::GitGraph;
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
@@ -643,6 +646,91 @@ async fn test_remote_git_head_sha(
     let remote_head_sha = remote_head_sha.await.unwrap();
 
     assert_eq!(remote_head_sha.unwrap(), local_head_sha);
+}
+
+#[gpui::test]
+async fn test_remote_git_merge_round_trip(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    executor.run_until_parked();
+
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
+    let clean_merge = cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            repository.merge("feature".into(), MergeOptions::default(), cx)
+        })
+    });
+    executor.run_until_parked();
+    let clean_merge = clean_merge.await.unwrap().unwrap();
+    assert_eq!(clean_merge.outcome, MergeOutcome::Success);
+
+    client_a.fs().set_unmerged_paths_for_repo(
+        path!("/project/.git").as_ref(),
+        &[(
+            repo_path("file.txt"),
+            UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Updated,
+            },
+        )],
+    );
+
+    let conflicted_merge = cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            repository.merge("conflicting".into(), MergeOptions::default(), cx)
+        })
+    });
+    executor.run_until_parked();
+    let conflicted_merge = conflicted_merge.await.unwrap().unwrap();
+    assert_eq!(conflicted_merge.outcome, MergeOutcome::Conflicts);
+    executor.run_until_parked();
+
+    cx_b.update(|cx| {
+        assert!(repo_b.read(cx).merge.is_merge_in_progress());
+    });
+
+    let abort = cx_b.update(|cx| repo_b.update(cx, |repository, cx| repository.merge_abort(cx)));
+    executor.run_until_parked();
+    abort.await.unwrap().unwrap();
+    executor.run_until_parked();
+
+    cx_b.update(|cx| {
+        assert!(!repo_b.read(cx).merge.is_merge_in_progress());
+    });
+
+    let clean_merge = cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            repository.merge("feature".into(), MergeOptions::default(), cx)
+        })
+    });
+    executor.run_until_parked();
+    let clean_merge = clean_merge.await.unwrap().unwrap();
+    assert_eq!(clean_merge.outcome, MergeOutcome::Success);
 }
 
 #[gpui::test]
