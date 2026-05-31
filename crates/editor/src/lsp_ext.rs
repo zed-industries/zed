@@ -164,10 +164,12 @@ pub fn lsp_tasks(
                             },
                         ));
                     }
-                    lsp_tasks
-                        .entry(source_kind)
-                        .or_insert_with(Vec::new)
-                        .append(&mut new_lsp_tasks);
+                    if !new_lsp_tasks.is_empty() {
+                        lsp_tasks
+                            .entry(source_kind)
+                            .or_insert_with(Vec::new)
+                            .append(&mut new_lsp_tasks);
+                    }
                 }
             }
             lsp_tasks.into_iter().collect()
