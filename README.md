@@ -360,7 +360,7 @@ From https://github.com/zed-industries/zed/pull/43733
 
 ## DeepL integration
 
-There is this new actoin:  `zed::DeeplTranslate` which translates the current selection or the current line. It needs the `DEEPL_API_KEY` environment variable to be set. Bind like this:
+There is this new action:  `zed::DeeplTranslate` which translates the current selection or the current line. It needs the `DEEPL_API_KEY` environment variable to be set. Bind like this:
 
 ```json
 "space c g": [
