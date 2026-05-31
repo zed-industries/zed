@@ -96,6 +96,16 @@ impl FeatureFlagStore {
         self.staff
     }
 
+    /// Whether feature flag overrides from settings should be honored.
+    ///
+    /// Overrides are a staff-only affordance, so non-staff users in release
+    /// builds can't flip flags through `settings.json` or the settings UI.
+    /// Debug builds are always treated as staff, and `ZED_DISABLE_STAFF`
+    /// forces the user to be treated as non-staff for testing.
+    pub fn overrides_enabled(&self) -> bool {
+        (cfg!(debug_assertions) || self.staff) && !*ZED_DISABLE_STAFF
+    }
+
     pub fn server_flags_received(&self) -> bool {
         self.server_flags_received
     }
@@ -158,8 +168,12 @@ impl FeatureFlagStore {
             return Some(T::Value::on_variant());
         }
 
-        if let Some(override_key) = FeatureFlagsSettings::get_global(cx).overrides.get(T::NAME) {
-            return variant_from_key::<T::Value>(override_key);
+        // Only apply overrides when they are specifically enabled.
+        if self.overrides_enabled() {
+            if let Some(override_key) = FeatureFlagsSettings::get_global(cx).overrides.get(T::NAME)
+            {
+                return variant_from_key::<T::Value>(override_key);
+            }
         }
 
         // Staff default: resolve to the enabled variant.
@@ -194,15 +208,18 @@ impl FeatureFlagStore {
             return on_variant_key;
         }
 
-        if let Some(requested) = FeatureFlagsSettings::get_global(cx)
-            .overrides
-            .get(descriptor.name)
-        {
-            if let Some(variant) = (descriptor.variants)()
-                .into_iter()
-                .find(|v| v.override_key == requested.as_str())
+        // Only apply overrides when they are specifically enabled.
+        if self.overrides_enabled() {
+            if let Some(requested) = FeatureFlagsSettings::get_global(cx)
+                .overrides
+                .get(descriptor.name)
             {
-                return variant.override_key;
+                if let Some(variant) = (descriptor.variants)()
+                    .into_iter()
+                    .find(|v| v.override_key == requested.as_str())
+                {
+                    return variant.override_key;
+                }
             }
         }
 

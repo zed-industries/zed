@@ -12,7 +12,10 @@ use notifications::status_toast::StatusToast;
 use persistence::ComponentPreviewDb;
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
-use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Scrollbars, Tooltip,
+    WithScrollbar, prelude::*,
+};
 use ui_input::InputField;
 use workspace::AppState;
 use workspace::{
@@ -197,10 +200,7 @@ impl ComponentPreview {
             .filter(|component| {
                 let component_name = component.name().to_lowercase();
                 let scope_name = component.scope().to_string().to_lowercase();
-                let description = component
-                    .description()
-                    .map(|d| d.to_lowercase())
-                    .unwrap_or_default();
+                let description = component.description().to_lowercase();
 
                 component_name.contains(&filter)
                     || scope_name.contains(&filter)
@@ -231,7 +231,7 @@ impl ComponentPreview {
             // let full_component_name = component.name();
             let scopeless_name = component.scopeless_name();
             let scope_name = component.scope().to_string();
-            let description = component.description().unwrap_or_default();
+            let description = component.description();
 
             let lowercase_scopeless = scopeless_name.to_lowercase();
             let lowercase_scope = scope_name.to_lowercase();
@@ -445,45 +445,40 @@ impl ComponentPreview {
         let description = component.description();
 
         // Build the content container
-        let mut preview_container = v_flex().py_2().child(
-            v_flex()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_sm()
-                .w_full()
-                .gap_4()
-                .py_4()
-                .px_6()
-                .flex_none()
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .text_xl()
-                                .child(div().child(name))
-                                .when(!matches!(scope, ComponentScope::None), |this| {
-                                    this.child(div().opacity(0.5).child(format!("({})", scope)))
-                                }),
-                        )
-                        .when_some(description, |this, description| {
-                            this.child(
+        v_flex()
+            .py_2()
+            .child(
+                v_flex()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_sm()
+                    .w_full()
+                    .gap_4()
+                    .py_4()
+                    .px_6()
+                    .flex_none()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                h_flex().gap_1().text_xl().child(div().child(name)).when(
+                                    scope != ComponentScope::None,
+                                    |this| {
+                                        this.child(div().opacity(0.5).child(format!("({})", scope)))
+                                    },
+                                ),
+                            )
+                            .child(
                                 div()
                                     .text_ui_sm(cx)
                                     .text_color(cx.theme().colors().text_muted)
                                     .max_w(px(600.0))
                                     .child(description),
-                            )
-                        }),
-                ),
-        );
-
-        if let Some(preview) = component.preview() {
-            preview_container = preview_container.children(preview(window, cx));
-        }
-
-        preview_container.into_any_element()
+                            ),
+                    ),
+            )
+            .child((component.preview())(window, cx))
+            .into_any_element()
     }
 
     fn render_all_components(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -593,6 +588,7 @@ impl Render for ComponentPreview {
         }
         let sidebar_entries = self.scope_ordered_entries();
         let active_page = self.active_page.clone();
+        let background_color = cx.theme().colors().editor_background;
 
         h_flex()
             .id("component-preview")
@@ -601,37 +597,45 @@ impl Render for ComponentPreview {
             .overflow_hidden()
             .size_full()
             .track_focus(&self.focus_handle)
-            .bg(cx.theme().colors().editor_background)
+            .bg(background_color)
             .child(
                 v_flex()
                     .h_full()
                     .border_r_1()
                     .border_color(cx.theme().colors().border)
                     .child(
-                        gpui::uniform_list(
-                            "component-nav",
-                            sidebar_entries.len(),
-                            cx.processor(move |this, range: Range<usize>, _window, cx| {
-                                range
-                                    .filter_map(|ix| {
-                                        if ix < sidebar_entries.len() {
-                                            Some(this.render_sidebar_entry(
-                                                ix,
-                                                &sidebar_entries[ix],
-                                                cx,
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect()
-                            }),
-                        )
-                        .track_scroll(&self.nav_scroll_handle)
-                        .p_2p5()
-                        .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
-                        .h_full()
-                        .flex_1(),
+                        div()
+                            .size_full()
+                            .child(
+                                gpui::uniform_list(
+                                    "component-nav",
+                                    sidebar_entries.len(),
+                                    cx.processor(move |this, range: Range<usize>, _window, cx| {
+                                        range
+                                            .filter(|ix| ix < &sidebar_entries.len())
+                                            .map(|ix| {
+                                                this.render_sidebar_entry(
+                                                    ix,
+                                                    &sidebar_entries[ix],
+                                                    cx,
+                                                )
+                                            })
+                                            .collect()
+                                    }),
+                                )
+                                .track_scroll(&self.nav_scroll_handle)
+                                .p_2p5()
+                                .w(px(231.)) // Matches perfectly with the size of the "Component Preview" tab, if that's the first one in the pane
+                                .h_full()
+                                .flex_1(),
+                            )
+                            .custom_scrollbars(
+                                Scrollbars::new(ui::ScrollAxes::Vertical)
+                                    .with_track_along(ui::ScrollAxes::Vertical, background_color)
+                                    .tracked_scroll_handle(&self.nav_scroll_handle),
+                                window,
+                                cx,
+                            ),
                     )
                     .child(
                         div()
@@ -961,23 +965,10 @@ impl ComponentPreviewPage {
                             .children(self.render_component_status(cx)),
                     ),
             )
-            .when_some(self.component.description(), |this, description| {
-                this.child(Label::new(description).size(LabelSize::Small))
-            })
+            .child(Label::new(self.component.description()).size(LabelSize::Small))
     }
 
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let content = if let Some(preview) = self.component.preview() {
-            // Fall back to component preview
-            preview(window, cx).unwrap_or_else(|| {
-                div()
-                    .child("Failed to load preview. This path should be unreachable")
-                    .into_any_element()
-            })
-        } else {
-            div().child("No preview available").into_any_element()
-        };
-
         v_flex()
             .id(("component-preview", self.reset_key))
             .size_full()
@@ -985,7 +976,7 @@ impl ComponentPreviewPage {
             .px_12()
             .py_6()
             .bg(cx.theme().colors().editor_background)
-            .child(content)
+            .child((self.component.preview())(window, cx))
     }
 }
 

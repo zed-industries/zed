@@ -1,10 +1,12 @@
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use editor::MultiBuffer;
-use gpui::TestDispatcher;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use editor::{MultiBuffer, display_map::*};
+use gpui::{AppContext as _, HighlightStyle, Hsla, TestDispatcher, font, px};
 use itertools::Itertools;
 use multi_buffer::MultiBufferOffset;
+use project::project_settings::DiagnosticSeverity;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use std::num::NonZeroU32;
+use settings::SettingsStore;
+use std::{num::NonZeroU32, time::Duration};
 use text::Bias;
 use util::RandomCharIter;
 
@@ -101,5 +103,112 @@ fn to_fold_point_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, to_tab_point_benchmark, to_fold_point_benchmark);
+fn create_highlight_endpoints_benchmark(c: &mut Criterion) {
+    const LINE_COUNT: usize = 20_000;
+    const LINE_VIEW_PORT_COUNT: usize = 100;
+    const HIGHLIGHTS_PER_LINE: usize = 4;
+
+    let dispatcher = TestDispatcher::new(1);
+    let mut cx = gpui::TestAppContext::build(dispatcher, None);
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        editor::init(cx);
+    });
+
+    let mut text = String::new();
+    let mut highlight_ranges = Vec::with_capacity(LINE_COUNT * HIGHLIGHTS_PER_LINE);
+    for line in 0..LINE_COUNT {
+        text.push_str("fn item_");
+        text.push_str(&format!("{line:05}"));
+        text.push_str("() { ");
+
+        let start = text.len();
+        text.push_str("alpha_highlight");
+        highlight_ranges.push(MultiBufferOffset(start)..MultiBufferOffset(text.len()));
+
+        text.push_str(" + ");
+        let start = text.len();
+        text.push_str("beta_highlight");
+        highlight_ranges.push(MultiBufferOffset(start)..MultiBufferOffset(text.len()));
+
+        text.push_str(" + ");
+        let start = text.len();
+        text.push_str("gamma_highlight");
+        highlight_ranges.push(MultiBufferOffset(start)..MultiBufferOffset(text.len()));
+
+        text.push_str(" + ");
+        let start = text.len();
+        text.push_str("delta_highlight");
+        highlight_ranges.push(MultiBufferOffset(start)..MultiBufferOffset(text.len()));
+
+        text.push_str("; }\n");
+    }
+
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let buffer_snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
+    let highlight_ranges = highlight_ranges
+        .into_iter()
+        .map(|range| {
+            buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_before(range.end)
+        })
+        .collect();
+
+    let map = cx.new(|cx| {
+        DisplayMap::new(
+            buffer,
+            font("Courier"),
+            px(16.0),
+            None,
+            1,
+            1,
+            FoldPlaceholder::default(),
+            DiagnosticSeverity::Warning,
+            cx,
+        )
+    });
+    cx.update(|cx| {
+        map.update(cx, |map, cx| {
+            map.highlight_text(
+                HighlightKey::Editor,
+                highlight_ranges,
+                HighlightStyle {
+                    color: Some(Hsla::blue()),
+                    ..Default::default()
+                },
+                false,
+                cx,
+            );
+        });
+    });
+    let snapshot = cx.update(|cx| map.update(cx, |map, cx| map.snapshot(cx)));
+
+    let mut group = c.benchmark_group("Create highlight endpoints");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(10));
+    group.bench_with_input(
+        BenchmarkId::new("text_highlights", LINE_VIEW_PORT_COUNT),
+        &snapshot,
+        |bench, snapshot| {
+            bench.iter(|| {
+                black_box(snapshot.chunks(
+                    DisplayRow(400)..DisplayRow(400 + LINE_VIEW_PORT_COUNT as u32),
+                    language::LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    Default::default(),
+                ));
+            });
+        },
+    );
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    to_tab_point_benchmark,
+    to_fold_point_benchmark,
+    create_highlight_endpoints_benchmark
+);
 criterion_main!(benches);

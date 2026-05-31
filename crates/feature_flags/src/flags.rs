@@ -35,6 +35,18 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
+pub struct HandoffFeatureFlag;
+
+impl FeatureFlag for HandoffFeatureFlag {
+    const NAME: &'static str = "handoff";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(HandoffFeatureFlag);
+
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -135,3 +147,18 @@ impl FeatureFlag for AutoWatchFeatureFlag {
     type Value = PresenceFlag;
 }
 register_feature_flag!(AutoWatchFeatureFlag);
+
+/// Wraps agent-run terminal commands in an OS-level sandbox where supported
+/// (currently macOS Seatbelt only). When off, terminal commands run with the
+/// agent's full ambient permissions, as they always have.
+pub struct SandboxingFeatureFlag;
+
+impl FeatureFlag for SandboxingFeatureFlag {
+    const NAME: &'static str = "sandboxing";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(SandboxingFeatureFlag);

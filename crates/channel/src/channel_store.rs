@@ -143,7 +143,7 @@ pub enum ChannelEvent {
 
 impl EventEmitter<ChannelEvent> for ChannelStore {}
 
-enum OpenEntityHandle<E> {
+enum OpenEntityHandle<E: 'static> {
     Open(WeakEntity<E>),
     Loading(Shared<Task<Result<Entity<E>, Arc<anyhow::Error>>>>),
 }
