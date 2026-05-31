@@ -280,6 +280,7 @@ The last big `main` UI upgrade introduced the `Threads Sidebar` which allows mul
 
 ## Command palette
 
+- a scrollbar is now shown in the modal
 - does not search individual character matches anymore, like when you enter `bsp`, it would show `editor: backspace` before. I do not like that behavior, so I removed that
 - change `command palette: toggle` to sort by recency instead of hit count
 - remove `GlobalCommandPaletteInterceptor` usage which contains Vim things like `:delete, :edit, :help, :join, :quit, :sort, :write, :xit, :yank` because I do not use them. Apparently, this removes the ability to jump to a line via `:144`. I still removed this behavior because it is hard to sort those dynamic actions by recency in combination with the other real editor action commands.
@@ -378,7 +379,6 @@ Then bind the action like this:
 
 - use larger font size (`LabelSize::Default`) for the line/column and selection info in the bottom bar and use `text_accent` for it when a selection is active
 - lower status bar height, see `impl Render for StatusBar`
-- add scrollbar to `outline::Toggle`, `file_finder::Toggle` and `command_palette::Toggle` (why is it not shown in the first place?)
 - lower `toolbar.rs` height to save space, same in `breadcrumbs.rs` (here no padding is set). This applies for terminals, as well
 - lower `DEFAULT_TOAST_DURATION` from 10 to 5 seconds
 
@@ -391,6 +391,7 @@ See `crates/workspace/src/confirmation_dialog.rs`. The dismiss action is current
 
 ### Scrollbar
 
+- shown in `outline::Toggle`, `file_finder::Toggle` and `command_palette::Toggle` (why is it not shown in the first place?)
 - hide horizontal scrollbar when soft wrap is enabled
 - adjust scrollbar UI to look rounded and more native to macOS (idea is from this fork: https://github.com/notnotjake/zed) and make it not as big
 

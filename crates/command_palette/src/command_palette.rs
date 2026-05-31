@@ -7,16 +7,11 @@ use std::{
     time::Duration,
 };
 
-use client::parse_zed_link;
-use command_palette_hooks::{
-    CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
-    GlobalCommandPaletteInterceptor,
-};
+use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter};
 
-use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, Task, TaskExt, WeakEntity, Window,
+    ParentElement, Render, Styled, Task, TaskExt, UniformListScrollHandle, WeakEntity, Window,
 };
 use persistence::CommandPaletteDB;
 use picker::Direction;
@@ -24,9 +19,8 @@ use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
-use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::{OpenZedUrl, command_palette::Toggle};
+use zed_actions::command_palette::Toggle;
 
 pub fn init(cx: &mut App) {
     command_palette_hooks::init(cx);
@@ -124,8 +118,11 @@ impl CommandPalette {
             previous_focus_handle,
         );
 
+        let scroll_handle = UniformListScrollHandle::new();
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx);
+            let picker = Picker::uniform_list(delegate, window, cx)
+                .track_scroll(scroll_handle.clone())
+                .show_scrollbar(true);
             picker.set_query(query, window, cx);
             picker
         });
@@ -155,18 +152,23 @@ impl Render for CommandPalette {
     }
 }
 
+pub struct CommandMatch {
+    pub candidate_id: usize,
+    pub name: String,
+    pub positions: Vec<usize>,
+}
+
 pub struct CommandPaletteDelegate {
     latest_query: String,
     command_palette: WeakEntity<CommandPalette>,
-    workspace: WeakEntity<Workspace>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
-    matches: Vec<StringMatch>,
+    matches: Vec<CommandMatch>,
     selected_ix: usize,
     previous_focus_handle: FocusHandle,
     updating_matches: Option<(
         Task<()>,
-        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>, CommandInterceptResult)>,
+        postage::dispatch::Receiver<(Vec<Command>, Vec<CommandMatch>, CommandInterceptResult)>,
     )>,
     query_history: QueryHistory,
 }
@@ -273,13 +275,12 @@ impl Clone for Command {
 impl CommandPaletteDelegate {
     fn new(
         command_palette: WeakEntity<CommandPalette>,
-        workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         commands: Vec<Command>,
         previous_focus_handle: FocusHandle,
     ) -> Self {
         Self {
             command_palette,
-            workspace,
             all_commands: commands.clone(),
             matches: vec![],
             commands,
@@ -295,7 +296,7 @@ impl CommandPaletteDelegate {
         &mut self,
         query: String,
         mut commands: Vec<Command>,
-        mut matches: Vec<StringMatch>,
+        mut matches: Vec<CommandMatch>,
         intercept_result: CommandInterceptResult,
         _: &mut Context<Picker<Self>>,
     ) {
@@ -320,11 +321,10 @@ impl CommandPaletteDelegate {
                 name: string.clone(),
                 action,
             });
-            new_matches.push(StringMatch {
+            new_matches.push(CommandMatch {
                 candidate_id: commands.len() - 1,
-                string: string.into(),
+                name: string,
                 positions,
-                score: 0.0,
             })
         }
         if !intercept_result.exclusive {
@@ -339,14 +339,11 @@ impl CommandPaletteDelegate {
         }
     }
 
-    /// Hit count for each command in the palette.
-    /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
-    /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
-    fn hit_counts(&self, cx: &App) -> HashMap<String, u16> {
+    fn last_invocation_times(&self, cx: &App) -> HashMap<String, time::OffsetDateTime> {
         if let Ok(commands) = CommandPaletteDB::global(cx).list_commands_used() {
             commands
                 .into_iter()
-                .map(|command| (command.command_name, command.invocations))
+                .map(|command| (command.command_name, command.last_invoked))
                 .collect()
         } else {
             HashMap::new()
@@ -444,67 +441,72 @@ impl PickerDelegate for CommandPaletteDelegate {
             query = alias.as_ref().to_owned();
         }
 
-        let workspace = self.workspace.clone();
-
-        let intercept_task = GlobalCommandPaletteInterceptor::intercept(&query, workspace, cx);
-
         let (mut tx, mut rx) = postage::dispatch::channel(1);
 
         let query_str = query.as_str();
-        let is_zed_link = parse_zed_link(query_str, cx).is_some();
 
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
-            let hit_counts = self.hit_counts(cx);
-            let executor = cx.background_executor().clone();
+            let last_invocation_times = self.last_invocation_times(cx);
             let query = normalize_action_query(query_str);
-            let query_for_link = query_str.to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
-                        Reverse(hit_counts.get(&action.name).cloned()),
+                        Reverse(last_invocation_times.get(&action.name).cloned()),
                         action.name.clone(),
                     )
                 });
 
-                let candidates = commands
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
-                    .collect::<Vec<_>>();
-
-                let matches = fuzzy_nucleo::match_strings_async(
-                    &candidates,
-                    &query,
-                    fuzzy_nucleo::Case::Smart,
-                    fuzzy_nucleo::LengthPenalty::On,
-                    10000,
-                    &Default::default(),
-                    executor,
-                )
-                .await;
-
-                let intercept_result = if is_zed_link {
-                    CommandInterceptResult {
-                        results: vec![CommandInterceptItem {
-                            action: OpenZedUrl {
-                                url: query_for_link.clone(),
-                            }
-                            .boxed_clone(),
-                            string: query_for_link,
-                            positions: vec![],
-                        }],
-                        exclusive: false,
-                    }
-                } else if let Some(task) = intercept_task {
-                    task.await
+                let matches = if query.trim().is_empty() {
+                    commands
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, command)| CommandMatch {
+                            candidate_id: ix,
+                            name: command.name.clone(),
+                            positions: Vec::new(),
+                        })
+                        .collect()
                 } else {
-                    CommandInterceptResult::default()
+                    let words: Vec<String> =
+                        query.split_whitespace().map(|word| word.to_lowercase()).collect();
+                    let mut results = Vec::new();
+
+                    for (ix, command) in commands.iter().enumerate() {
+                        let candidate_lower = command.name.to_lowercase();
+                        let mut positions = Vec::new();
+                        let mut matches_all_words = true;
+
+                        for word in &words {
+                            if candidate_lower.contains(word) {
+                                for (start, matched_word) in candidate_lower.match_indices(word) {
+                                    positions.extend(start..(start + matched_word.len()));
+                                }
+                            } else {
+                                matches_all_words = false;
+                                break;
+                            }
+                        }
+
+                        if matches_all_words {
+                            positions.sort_unstable();
+                            positions.dedup();
+                            results.push(CommandMatch {
+                                candidate_id: ix,
+                                name: command.name.clone(),
+                                positions,
+                            });
+                        }
+                    }
+
+                    results
                 };
 
-                tx.send((commands, matches, intercept_result))
-                    .await
-                    .log_err();
+                let intercept_result = CommandInterceptResult::default();
+
+                if tx.send((commands, matches, intercept_result)).await.is_err() {
+                    return;
+                }
             }
         });
 
@@ -889,7 +891,7 @@ mod tests {
         cx.simulate_input("bcksp");
 
         palette.read_with(cx, |palette, _| {
-            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
+            assert_eq!(palette.delegate.matches[0].name, "editor: backspace");
         });
 
         cx.simulate_keystrokes("enter");
@@ -981,7 +983,7 @@ mod tests {
 
         cx.simulate_input("Editor::    Backspace");
         palette.read_with(cx, |palette, _| {
-            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
+            assert_eq!(palette.delegate.matches[0].name, "editor: backspace");
         });
     }
 
