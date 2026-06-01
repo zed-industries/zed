@@ -550,6 +550,17 @@ pub fn is_binary_content(content: &[u8]) -> bool {
     content[..check_len].contains(&0)
 }
 
+fn decode_commit_blob_text(content: &[u8]) -> Option<String> {
+    if is_binary_content(content) {
+        return None;
+    }
+
+    Some(
+        String::from_utf8_lossy(content.strip_prefix(b"\xef\xbb\xbf").unwrap_or(content))
+            .to_string(),
+    )
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
     pub name: SharedString,
@@ -1383,12 +1394,8 @@ impl GitRepository for RealGitRepository {
 
                 let mut old_text = None;
                 let mut new_text = None;
-                let mut is_binary = is_binary_content(&text_bytes);
-                let text = if is_binary {
-                    String::new()
-                } else {
-                    String::from_utf8_lossy(&text_bytes).to_string()
-                };
+                let text = decode_commit_blob_text(&text_bytes);
+                let mut is_binary = text.is_none();
 
                 match status_code {
                     StatusCode::Modified => {
@@ -1400,17 +1407,18 @@ impl GitRepository for RealGitRepository {
                         let mut parent_bytes = vec![0; len];
                         stdout.read_exact(&mut parent_bytes).await?;
                         stdout.read_exact(&mut newline).await?;
-                        is_binary = is_binary || is_binary_content(&parent_bytes);
-                        if is_binary {
+                        let parent_text = decode_commit_blob_text(&parent_bytes);
+                        is_binary = text.is_none() || parent_text.is_none();
+                        if let (Some(parent_text), Some(text)) = (parent_text, text) {
+                            old_text = Some(parent_text);
+                            new_text = Some(text);
+                        } else {
                             old_text = Some(String::new());
                             new_text = Some(String::new());
-                        } else {
-                            old_text = Some(String::from_utf8_lossy(&parent_bytes).to_string());
-                            new_text = Some(text);
                         }
                     }
-                    StatusCode::Added => new_text = Some(text),
-                    StatusCode::Deleted => old_text = Some(text),
+                    StatusCode::Added => new_text = Some(text.unwrap_or_default()),
+                    StatusCode::Deleted => old_text = Some(text.unwrap_or_default()),
                     _ => continue,
                 }
 
@@ -3724,6 +3732,33 @@ mod tests {
         }
     }
 
+    fn commit_file_for_test(repository: &git2::Repository, path: &str, message: &str) -> git2::Oid {
+        let mut index = repository.index().unwrap();
+        index.add_path(Path::new(path)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repository.find_tree(tree_id).unwrap();
+        let signature = git2::Signature::now("Zed", "hi@zed.dev").unwrap();
+        let parent_commits = repository
+            .head()
+            .ok()
+            .and_then(|head| head.target())
+            .map(|head_id| vec![repository.find_commit(head_id).unwrap()])
+            .unwrap_or_default();
+        let parents = parent_commits.iter().collect::<Vec<_>>();
+
+        repository
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                message,
+                &tree,
+                &parents,
+            )
+            .unwrap()
+    }
+
     #[test]
     fn test_initial_graph_commit_data_tag_names() {
         let commit = InitialGraphCommitData {
@@ -3885,6 +3920,80 @@ mod tests {
             stdout.trim(),
             "false",
             "log.showSignature should be disabled for untrusted repos"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_strips_utf8_bom_from_text_blobs(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repository_directory = tempfile::tempdir().unwrap();
+        let git2_repository = git2::Repository::init(repository_directory.path()).unwrap();
+        let file_path = repository_directory.path().join("bom.txt");
+        let repository = RealGitRepository::new(
+            &repository_directory.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(&file_path, b"\xef\xbb\xbfinitial text\n")
+            .await
+            .unwrap();
+        let initial_commit = commit_file_for_test(&git2_repository, "bom.txt", "Initial commit");
+
+        smol::fs::write(&file_path, b"\xef\xbb\xbfmodified text\n")
+            .await
+            .unwrap();
+        let modified_commit = commit_file_for_test(&git2_repository, "bom.txt", "Modify file");
+
+        let added_commit = repository
+            .load_commit(initial_commit.to_string(), cx.to_async())
+            .await
+            .unwrap();
+        let added_file = added_commit
+            .files
+            .iter()
+            .find(|file| file.path == repo_path("bom.txt"))
+            .unwrap();
+        assert!(!added_file.is_binary);
+        assert_eq!(added_file.old_text, None);
+        assert_eq!(added_file.new_text.as_deref(), Some("initial text\n"));
+        assert!(
+            !added_file
+                .new_text
+                .as_deref()
+                .unwrap()
+                .starts_with('\u{feff}')
+        );
+
+        let modified_commit = repository
+            .load_commit(modified_commit.to_string(), cx.to_async())
+            .await
+            .unwrap();
+        let modified_file = modified_commit
+            .files
+            .iter()
+            .find(|file| file.path == repo_path("bom.txt"))
+            .unwrap();
+        assert!(!modified_file.is_binary);
+        assert_eq!(modified_file.old_text.as_deref(), Some("initial text\n"));
+        assert_eq!(modified_file.new_text.as_deref(), Some("modified text\n"));
+        assert!(
+            !modified_file
+                .old_text
+                .as_deref()
+                .unwrap()
+                .starts_with('\u{feff}')
+        );
+        assert!(
+            !modified_file
+                .new_text
+                .as_deref()
+                .unwrap()
+                .starts_with('\u{feff}')
         );
     }
 
