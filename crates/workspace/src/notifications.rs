@@ -935,40 +935,51 @@ pub mod simple_message_notification {
             };
 
             let main_content = (self.build_content)(window, cx);
-            let content_row = h_flex()
+            // Mirrors the icon-alignment pattern used by `ui::Callout`: wrap the icon in a
+            // box that matches the surrounding line height and center it, so the icon
+            // visually aligns with the first line of text instead of being top-anchored.
+            let line_height = window.line_height();
+            let body = h_flex()
                 .gap_2()
                 .items_start()
                 .when_some(
                     self.content_icon.zip(self.content_icon_color),
                     |el, (icon, color)| {
-                        el.child(Icon::new(icon).size(IconSize::Small).color(color))
+                        el.child(
+                            h_flex()
+                                .h(line_height)
+                                .justify_center()
+                                .child(Icon::new(icon).size(IconSize::Small).color(color)),
+                        )
                     },
                 )
                 .child(
-                    div()
+                    v_flex()
                         .flex_1()
                         .min_w_0()
+                        .gap_1()
                         .child(
                             div()
-                                .id("message-notification-content")
-                                .max_h(vh(0.6, window))
-                                .overflow_y_scroll()
-                                .track_scroll(&self.scroll_handle.clone())
-                                .child(main_content),
+                                .child(
+                                    div()
+                                        .id("message-notification-content")
+                                        .max_h(vh(0.6, window))
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.scroll_handle.clone())
+                                        .child(main_content),
+                                )
+                                .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                         )
-                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                        .when_some(self.secondary_content.clone(), |el, secondary| {
+                            // Sits in the same indent column as the primary message and uses
+                            // `Small` so it still reads as a body line rather than a caption.
+                            el.child(
+                                Label::new(secondary)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
                 );
-
-            let body = v_flex().gap_1().child(content_row).when_some(
-                self.secondary_content.clone(),
-                |el, secondary| {
-                    el.child(
-                        Label::new(secondary)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                },
-            );
 
             let copy_text = self.copy_text.clone();
             let header_actions = h_flex()
@@ -1179,6 +1190,91 @@ pub mod simple_message_notification {
                     .show_close_button(false)
             });
 
+            // --- Workspace errors ---
+            // These showcase common shapes of [`WorkspaceError`]. They are intentionally
+            // [`ErrorSeverity::Critical`] so they never auto-dismiss in the preview, which
+            // would otherwise make them disappear mid-inspection.
+
+            struct BasicError;
+            impl WorkspaceError for BasicError {
+                fn primary_message(&self) -> SharedString {
+                    "Failed to save the file.".into()
+                }
+                fn primary_action(&self) -> ErrorAction {
+                    ErrorAction::dismiss()
+                }
+                fn severity(&self) -> ErrorSeverity {
+                    ErrorSeverity::Critical
+                }
+            }
+
+            struct LanguageServerError;
+            impl WorkspaceError for LanguageServerError {
+                fn primary_message(&self) -> SharedString {
+                    "Couldn't reach the language server.".into()
+                }
+                fn secondary_message(&self) -> Option<SharedString> {
+                    Some(
+                        "Make sure the server is installed and your network connection is working."
+                            .into(),
+                    )
+                }
+                fn primary_action(&self) -> ErrorAction {
+                    ErrorAction::dismiss()
+                }
+                fn severity(&self) -> ErrorSeverity {
+                    ErrorSeverity::Critical
+                }
+            }
+
+            // Mirrors the shape of [`super::super::PortalError`]: a critical error with a
+            // documentation link as its primary action.
+            struct PortalSetupError;
+            impl WorkspaceError for PortalSetupError {
+                fn primary_message(&self) -> SharedString {
+                    "Linux desktop portal initialization failed.".into()
+                }
+                fn secondary_message(&self) -> Option<SharedString> {
+                    Some("Zed needs an xdg-desktop-portal implementation to open files.".into())
+                }
+                fn severity(&self) -> ErrorSeverity {
+                    ErrorSeverity::Critical
+                }
+                fn primary_action(&self) -> ErrorAction {
+                    ErrorAction::link(
+                        "See Docs",
+                        "https://zed.dev/docs/linux#i-cant-open-any-files",
+                    )
+                }
+            }
+
+            // Has both a primary action (link) and a secondary action (dismiss), so the
+            // preview exercises the full button row.
+            struct UpdateRequiredError;
+            impl WorkspaceError for UpdateRequiredError {
+                fn primary_message(&self) -> SharedString {
+                    "An update is required to continue using Zed AI.".into()
+                }
+                fn severity(&self) -> ErrorSeverity {
+                    ErrorSeverity::Critical
+                }
+                fn primary_action(&self) -> ErrorAction {
+                    ErrorAction::link("Update Zed", "https://zed.dev/releases")
+                }
+                fn secondary_action(&self) -> Option<ErrorAction> {
+                    Some(ErrorAction::dismiss())
+                }
+            }
+
+            let basic_error =
+                cx.new(|cx| MessageNotification::from_workspace_error(BasicError, cx));
+            let detailed_error =
+                cx.new(|cx| MessageNotification::from_workspace_error(LanguageServerError, cx));
+            let docs_error =
+                cx.new(|cx| MessageNotification::from_workspace_error(PortalSetupError, cx));
+            let update_error =
+                cx.new(|cx| MessageNotification::from_workspace_error(UpdateRequiredError, cx));
+
             let container = || div().w(px(440.));
 
             v_flex()
@@ -1223,6 +1319,27 @@ pub mod simple_message_notification {
                             single_example(
                                 "No Close",
                                 container().child(no_close).into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Workspace Errors",
+                        vec![
+                            single_example(
+                                "Basic",
+                                container().child(basic_error).into_any_element(),
+                            ),
+                            single_example(
+                                "With Secondary Message",
+                                container().child(detailed_error).into_any_element(),
+                            ),
+                            single_example(
+                                "With Documentation Link",
+                                container().child(docs_error).into_any_element(),
+                            ),
+                            single_example(
+                                "With Primary + Secondary Action",
+                                container().child(update_error).into_any_element(),
                             ),
                         ],
                     ),
