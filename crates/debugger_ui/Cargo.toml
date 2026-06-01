@@ -74,7 +74,6 @@ ui.workspace = true
 ui_input.workspace = true
 unindent = { workspace = true, optional = true }
 util.workspace = true
-vte.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

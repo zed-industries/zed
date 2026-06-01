@@ -7,10 +7,11 @@ mod terminal_types;
 
 pub(crate) use terminal_types::TerminalSelectionSide;
 pub use terminal_types::{
-    HoveredWord, IndexedCell, RenderableCells, SelectionPhase, TerminalCell, TerminalColor,
-    TerminalContent, TerminalCursor, TerminalCursorShape, TerminalHyperlink, TerminalModes,
-    TerminalNamedColor, TerminalPoint, TerminalRange, TerminalRgb, TerminalSearch,
-    TerminalSelectionRange, is_app_chosen_exact_color, is_default_background_color,
+    HoveredWord, IndexedCell, ParsedAnsiText, RenderableCells, SelectionPhase, TerminalAnsiSpans,
+    TerminalCell, TerminalColor, TerminalContent, TerminalCursor, TerminalCursorShape,
+    TerminalHyperlink, TerminalModes, TerminalNamedColor, TerminalPoint, TerminalRange,
+    TerminalRgb, TerminalSearch, TerminalSelectionRange, is_app_chosen_exact_color,
+    is_default_background_color, parse_ansi_text, strip_ansi_text,
 };
 
 use alacritty_terminal::event::Notify;

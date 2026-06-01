@@ -78,7 +78,6 @@ use ui::{
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
-use vte::ansi;
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Item, Workspace,
@@ -7357,10 +7356,7 @@ pub(crate) fn open_output(
 ) {
     let operation = operation.into();
 
-    let mut handler = GitOutputHandler::default();
-    let mut processor = ansi::Processor::<ansi::StdSyncHandler>::default();
-    processor.advance(&mut handler, output.as_bytes());
-    let plain_text = handler.output;
+    let plain_text = terminal::strip_ansi_text(output.as_bytes());
 
     let buffer = cx.new(|cx| Buffer::local(plain_text.as_str(), cx));
     buffer.update(cx, |buffer, cx| {
@@ -7376,32 +7372,6 @@ pub(crate) fn open_output(
     });
 
     workspace.add_item_to_center(Box::new(editor), window, cx);
-}
-
-#[derive(Default)]
-struct GitOutputHandler {
-    output: String,
-    line_start: usize,
-}
-
-impl ansi::Handler for GitOutputHandler {
-    fn input(&mut self, c: char) {
-        self.output.push(c);
-    }
-
-    fn linefeed(&mut self) {
-        self.output.push('\n');
-        self.line_start = self.output.len();
-    }
-
-    fn carriage_return(&mut self) {
-        self.output.truncate(self.line_start);
-    }
-
-    fn put_tab(&mut self, count: u16) {
-        self.output
-            .extend(std::iter::repeat_n('\t', count as usize));
-    }
 }
 
 pub(crate) fn show_error_toast(
@@ -8968,10 +8938,7 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            let mut handler = GitOutputHandler::default();
-            let mut processor = ansi::Processor::<ansi::StdSyncHandler>::default();
-            processor.advance(&mut handler, input.as_bytes());
-            assert_eq!(handler.output, expected);
+            assert_eq!(terminal::strip_ansi_text(input.as_bytes()), expected);
         }
     }
 

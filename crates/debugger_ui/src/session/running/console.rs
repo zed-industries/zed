@@ -28,7 +28,6 @@ use theme::Theme;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
-use vte::ansi;
 
 actions!(
     console,
@@ -175,31 +174,14 @@ impl Console {
 
                         for event in &events {
                             scratch.clear();
-                            let mut ansi_handler = ConsoleHandler::default();
-                            let mut ansi_processor =
-                                ansi::Processor::<ansi::StdSyncHandler>::default();
-
                             let trimmed_output = event.output.trim_end();
                             scratch.push_str(trimmed_output);
                             scratch.push('\n');
-                            ansi_processor.advance(&mut ansi_handler, scratch.as_bytes());
-                            let output = std::mem::take(&mut ansi_handler.output);
+                            let parsed_output = terminal::parse_ansi_text(scratch.as_bytes());
+                            let output = parsed_output.text;
                             to_insert.extend(output.chars());
-                            let mut spans = std::mem::take(&mut ansi_handler.spans);
-                            let mut background_spans =
-                                std::mem::take(&mut ansi_handler.background_spans);
-                            if ansi_handler.current_range_start < output.len() {
-                                spans.push((
-                                    ansi_handler.current_range_start..output.len(),
-                                    ansi_handler.current_color,
-                                ));
-                            }
-                            if ansi_handler.current_background_range_start < output.len() {
-                                background_spans.push((
-                                    ansi_handler.current_background_range_start..output.len(),
-                                    ansi_handler.current_background_color,
-                                ));
-                            }
+                            let mut spans = parsed_output.foreground_spans;
+                            let mut background_spans = parsed_output.background_spans;
 
                             for (range, _) in spans.iter_mut() {
                                 let start_offset = len + range.start;
@@ -802,73 +784,7 @@ impl ConsoleQueryBarCompletionProvider {
     }
 }
 
-#[derive(Default)]
-struct ConsoleHandler {
-    output: String,
-    spans: Vec<(Range<usize>, Option<ansi::Color>)>,
-    background_spans: Vec<(Range<usize>, Option<ansi::Color>)>,
-    current_range_start: usize,
-    current_background_range_start: usize,
-    current_color: Option<ansi::Color>,
-    current_background_color: Option<ansi::Color>,
-    pos: usize,
-}
-
-impl ConsoleHandler {
-    fn break_span(&mut self, color: Option<ansi::Color>) {
-        self.spans.push((
-            self.current_range_start..self.output.len(),
-            self.current_color,
-        ));
-        self.current_color = color;
-        self.current_range_start = self.pos;
-    }
-
-    fn break_background_span(&mut self, color: Option<ansi::Color>) {
-        self.background_spans.push((
-            self.current_background_range_start..self.output.len(),
-            self.current_background_color,
-        ));
-        self.current_background_color = color;
-        self.current_background_range_start = self.pos;
-    }
-}
-
-impl ansi::Handler for ConsoleHandler {
-    fn input(&mut self, c: char) {
-        self.output.push(c);
-        self.pos += c.len_utf8();
-    }
-
-    fn linefeed(&mut self) {
-        self.output.push('\n');
-        self.pos += 1;
-    }
-
-    fn put_tab(&mut self, count: u16) {
-        self.output
-            .extend(std::iter::repeat('\t').take(count as usize));
-        self.pos += count as usize;
-    }
-
-    fn terminal_attribute(&mut self, attr: ansi::Attr) {
-        match attr {
-            ansi::Attr::Foreground(color) => {
-                self.break_span(Some(color));
-            }
-            ansi::Attr::Background(color) => {
-                self.break_background_span(Some(color));
-            }
-            ansi::Attr::Reset => {
-                self.break_span(None);
-                self.break_background_span(None);
-            }
-            _ => {}
-        }
-    }
-}
-
-fn background_color_fetcher(color: ansi::Color) -> impl Fn(&Theme) -> Hsla {
+fn background_color_fetcher(color: terminal::TerminalColor) -> impl Fn(&Theme) -> Hsla {
     move |theme| {
         if terminal::is_default_background_color(color) {
             theme.colors().terminal_background
@@ -934,8 +850,9 @@ mod tests {
             theme.styles.colors.terminal_background = gpui::red();
             theme.styles.colors.terminal_ansi_background = gpui::blue();
 
-            let color =
-                background_color_fetcher(ansi::Color::Named(ansi::NamedColor::Background))(&theme);
+            let color = background_color_fetcher(terminal::TerminalColor::Named(
+                terminal::TerminalNamedColor::Background,
+            ))(&theme);
 
             assert_eq!(color, gpui::red());
         });
