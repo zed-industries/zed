@@ -17,6 +17,82 @@ use std::{
 use task::Shell;
 use util::get_default_system_shell_preferring_bash;
 
+/// Request to run a terminal command inside an OS-level sandbox.
+///
+/// Passed to [`super::AcpThread::create_terminal`]. The actual sandboxing
+/// mechanism is platform-specific (today: macOS Seatbelt; nothing on other
+/// platforms — the wrap is silently a no-op there), so callers describe the
+/// *intent* with plain data here rather than constructing platform-specific
+/// types directly.
+///
+/// All-zero defaults are the fully-sandboxed run. Setting `allow_network` /
+/// `allow_fs_write` requests a relaxation; the caller is responsible for
+/// having obtained user approval before reaching this point.
+#[derive(Clone, Debug, Default)]
+pub struct SandboxWrap {
+    /// Directory subtrees the sandbox should allow writes to. Pass the
+    /// project's worktree paths (and any per-command scratch directory)
+    /// here — *not* the command's working directory, which is model-
+    /// controlled and would let the model widen its own writable scope.
+    pub writable_paths: Vec<PathBuf>,
+    /// Allow outbound network access for this command.
+    pub allow_network: bool,
+    /// Allow unrestricted filesystem writes (ignores `writable_paths`).
+    pub allow_fs_write: bool,
+}
+
+/// Opaque RAII handle the sandbox implementation hands back to keep its
+/// per-command resources (e.g. an on-disk Seatbelt config file) alive for
+/// the duration of the spawned command. `Terminal` holds it in a field
+/// whose only job is to drop with the entity.
+pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
+
+/// Apply a [`SandboxWrap`] to a `(program, args)` pair, substituting the
+/// platform's sandbox-launcher invocation in place of the original. The
+/// returned `SandboxConfigHandle` (when `Some`) must be kept alive for the
+/// duration of the spawned command — dropping it deletes any on-disk
+/// config the launcher reads at startup.
+///
+/// On non-macOS hosts this is a no-op: the inputs pass through unchanged
+/// and the returned handle is `None`. (We don't yet have a sandbox
+/// integration for other platforms.)
+pub(crate) fn apply_sandbox_wrap(
+    program: String,
+    args: Vec<String>,
+    sandbox_wrap: Option<SandboxWrap>,
+) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
+    let Some(sandbox_wrap) = sandbox_wrap else {
+        return Ok((program, args, None));
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        let writable: Vec<&std::path::Path> = sandbox_wrap
+            .writable_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
+        let permissions = sandbox::macos_seatbelt::SandboxPermissions {
+            allow_network: sandbox_wrap.allow_network,
+            allow_fs_write: sandbox_wrap.allow_fs_write,
+        };
+        let (new_program, new_args, config_file) =
+            sandbox::macos_seatbelt::wrap_invocation(&program, &args, &writable, permissions)?;
+        Ok((
+            new_program,
+            new_args,
+            Some(Box::new(config_file) as SandboxConfigHandle),
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // No sandbox integration available; ignore the wrap request and
+        // let the command run with the agent's ambient permissions.
+        let _ = sandbox_wrap;
+        Ok((program, args, None))
+    }
+}
+
 pub struct Terminal {
     id: acp::TerminalId,
     command: Entity<Markdown>,
@@ -30,6 +106,10 @@ pub struct Terminal {
     /// (e.g., clicking the Stop button). This is set before kill() is called
     /// so that code awaiting wait_for_exit() can check it deterministically.
     user_stopped: Arc<AtomicBool>,
+    /// RAII handle kept alive for the duration of the sandboxed command.
+    /// `None` when the command isn't sandboxed (the common case for
+    /// terminals not created by the agent).
+    _sandbox_config: Option<SandboxConfigHandle>,
 }
 
 pub struct TerminalOutput {
@@ -48,11 +128,13 @@ impl Terminal {
         output_byte_limit: Option<usize>,
         terminal: Entity<terminal::Terminal>,
         language_registry: Arc<LanguageRegistry>,
+        sandbox_config: Option<SandboxConfigHandle>,
         cx: &mut Context<Self>,
     ) -> Self {
         let command_task = terminal.read(cx).wait_for_completed_task(cx);
         Self {
             id,
+            _sandbox_config: sandbox_config,
             command: cx.new(|cx| {
                 Markdown::new(
                     format!("```\n{}\n```", command_label).into(),

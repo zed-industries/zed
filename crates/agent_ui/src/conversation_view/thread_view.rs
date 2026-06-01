@@ -8,7 +8,8 @@ use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry};
-use agent::{SkillLoadingError, SkillLoadingErrorsUpdated, UserAgentsMd};
+use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
+use agent_settings::UserAgentsMd;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
@@ -16,13 +17,18 @@ use feature_flags::AcpBetaFeatureFlag;
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
 
+use db::kvp::KeyValueStore;
 use gpui::List;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
-use language_model::{LanguageModelEffortLevel, Speed};
+use language_model::{
+    FastModeConfirmation, LanguageModelEffortLevel, LanguageModelId, LanguageModelProviderId,
+    LanguageModelRegistry, Speed,
+};
 use settings::update_settings_file;
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
+use workspace::notifications::NotificationId;
 
 use super::*;
 
@@ -597,6 +603,7 @@ pub struct ThreadView {
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
     /// Cloned from the parent `ConversationView` so the cache is shared and the
@@ -676,7 +683,6 @@ impl ThreadView {
         project: WeakEntity<Project>,
         code_span_resolver: AgentCodeSpanResolver,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
         window: &mut Window,
@@ -696,7 +702,6 @@ impl ThreadView {
                 workspace.clone(),
                 project.clone(),
                 thread_store,
-                prompt_store,
                 session_capabilities.clone(),
                 agent_id.clone(),
                 &placeholder,
@@ -910,6 +915,7 @@ impl ThreadView {
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
+            fast_mode_menu_handle: PopoverMenuHandle::default(),
             project,
             code_span_resolver,
             show_external_source_prompt_warning,
@@ -2310,7 +2316,7 @@ impl ThreadView {
         let thread = &self.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
-        let has_changes = action_log.read(cx).changed_buffers(cx).len() > 0;
+        let has_changes = action_log.read(cx).changed_buffers(cx).next().is_some();
 
         action_log
             .update(cx, |action_log, cx| {
@@ -2580,7 +2586,7 @@ impl ThreadView {
         let thread = self.thread.read(cx);
         let action_log = thread.action_log();
         let telemetry = ActionLogTelemetry::from(thread);
-        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
@@ -2686,7 +2692,7 @@ impl ThreadView {
         &self,
         action_log: &Entity<ActionLog>,
         telemetry: ActionLogTelemetry,
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: &[(Entity<Buffer>, Entity<BufferDiff>)],
         pending_edits: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -3039,15 +3045,6 @@ impl ThreadView {
         )
     }
 
-    /// Returns true when the entry has been measured and sits entirely below
-    /// the current viewport.
-    fn entry_is_below_viewport(&self, entry_ix: usize) -> bool {
-        let viewport_bounds = self.list_state.viewport_bounds();
-        self.list_state
-            .bounds_for_item(entry_ix)
-            .is_some_and(|entry_bounds| entry_bounds.top() >= viewport_bounds.bottom())
-    }
-
     pub(crate) fn render_main_agent_awaiting_permission(
         &self,
         window: &Window,
@@ -3065,9 +3062,13 @@ impl ThreadView {
         let thread = self.thread.read(cx);
         let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
 
-        if !self.entry_is_below_viewport(entry_ix) {
+        let scroll_icon = if self.list_state.item_is_above_viewport(entry_ix)? {
+            IconName::ArrowUp
+        } else if self.list_state.item_is_below_viewport(entry_ix)? {
+            IconName::ArrowDown
+        } else {
             return None;
-        }
+        };
 
         let focus_handle = self.focus_handle(cx);
 
@@ -3110,7 +3111,7 @@ impl ThreadView {
                 Button::new("main-agent-permission-scroll-to", "Scroll")
                     .label_size(LabelSize::Small)
                     .end_icon(
-                        Icon::new(IconName::ArrowDown)
+                        Icon::new(scroll_icon)
                             .size(IconSize::XSmall)
                             .color(Color::Default),
                     )
@@ -3433,7 +3434,7 @@ impl ThreadView {
 
     fn render_edits_summary(
         &self,
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: &[(Entity<Buffer>, Entity<BufferDiff>)],
         expanded: bool,
         pending_edits: bool,
         cx: &Context<Self>,
@@ -3478,7 +3479,7 @@ impl ThreadView {
                                 ),
                             )
                         } else {
-                            let stats = DiffStats::all_files(changed_buffers, cx);
+                            let stats = DiffStats::all_files(changed_buffers.iter().cloned(), cx);
                             let dot_divider = || {
                                 Label::new("•")
                                     .size(LabelSize::XSmall)
@@ -4197,31 +4198,137 @@ impl ThreadView {
         }
 
         let thread = self.as_native_thread(cx)?.read(cx);
+        let is_fast = matches!(thread.speed(), Some(Speed::Fast));
 
-        let (tooltip_label, color, icon) = if matches!(thread.speed(), Some(Speed::Fast)) {
-            ("Disable Fast Mode", Color::Accent, IconName::FastForward)
+        let model_identity = thread
+            .model()
+            .map(|model| (model.provider_id(), model.id()));
+
+        let (tooltip_label, color, icon, new_speed) = if is_fast {
+            (
+                "Disable Fast Mode",
+                Color::Accent,
+                IconName::FastForward,
+                Speed::Standard,
+            )
         } else {
             (
                 "Enable Fast Mode",
                 Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
                 IconName::FastForwardOff,
+                Speed::Fast,
             )
         };
 
         let focus_handle = self.message_editor.focus_handle(cx);
 
+        let pending_confirmation = (!is_fast)
+            .then(|| self.pending_fast_mode_confirmation(cx))
+            .flatten();
+
+        let icon_button = IconButton::new("fast-mode", icon)
+            .icon_size(IconSize::Small)
+            .icon_color(color);
+
+        if let Some((provider_id, model_id, confirmation)) = pending_confirmation {
+            let weak_self = cx.entity().downgrade();
+            let tooltip_focus = focus_handle;
+
+            return Some(
+                PopoverMenu::new("fast-mode-warning")
+                    .with_handle(self.fast_mode_menu_handle.clone())
+                    .trigger_with_tooltip(icon_button, move |_, cx| {
+                        Tooltip::for_action_in(tooltip_label, &ToggleFastMode, &tooltip_focus, cx)
+                    })
+                    .menu(move |window, cx| {
+                        let weak_self = weak_self.clone();
+                        let confirmation = confirmation.clone();
+                        let provider_id = provider_id.clone();
+                        let model_id = model_id.clone();
+
+                        Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                            let message = confirmation.message.clone();
+                            menu.custom_row(move |_window, _cx| {
+                                div()
+                                    .max_w_72()
+                                    .child(Label::new(confirmation.title.clone()))
+                                    .child(Label::new(message.clone()).color(Color::Muted))
+                                    .into_any_element()
+                            })
+                            .separator()
+                            .item(ContextMenuEntry::new("Enable Now").handler({
+                                let weak_self = weak_self.clone();
+                                move |_window, cx| {
+                                    weak_self
+                                        .update(cx, |this, cx| {
+                                            this.apply_fast_mode_speed(Speed::Fast, cx);
+                                        })
+                                        .log_err();
+                                }
+                            }))
+                            .item(
+                                ContextMenuEntry::new("Enable and Don't Show Again").handler({
+                                    let weak_self = weak_self.clone();
+                                    let provider_id = provider_id.clone();
+                                    let model_id = model_id;
+                                    move |_window, cx| {
+                                        weak_self
+                                            .update(cx, |this, cx| {
+                                                this.apply_fast_mode_speed(Speed::Fast, cx);
+                                            })
+                                            .log_err();
+                                        set_fast_mode_warning_dismissed(
+                                            &provider_id,
+                                            &model_id,
+                                            cx,
+                                        );
+                                    }
+                                }),
+                            )
+                        }))
+                    })
+                    .offset(gpui::Point {
+                        x: px(0.0),
+                        y: px(-2.0),
+                    })
+                    .anchor(gpui::Anchor::BottomLeft)
+                    .into_any_element(),
+            );
+        }
+
+        let _ = model_identity;
+
         Some(
-            IconButton::new("fast-mode", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(color)
+            icon_button
                 .tooltip(move |_, cx| {
                     Tooltip::for_action_in(tooltip_label, &ToggleFastMode, &focus_handle, cx)
                 })
                 .on_click(cx.listener(move |this, _, _window, cx| {
-                    this.toggle_fast_mode(cx);
+                    this.apply_fast_mode_speed(new_speed, cx);
                 }))
                 .into_any_element(),
         )
+    }
+
+    fn pending_fast_mode_confirmation(
+        &self,
+        cx: &App,
+    ) -> Option<(
+        LanguageModelProviderId,
+        LanguageModelId,
+        FastModeConfirmation,
+    )> {
+        let thread = self.as_native_thread(cx)?.read(cx);
+        let model = thread.model()?;
+        let provider_id = model.provider_id();
+        let model_id = model.id();
+        let confirmation = LanguageModelRegistry::read_global(cx)
+            .provider(&provider_id)
+            .and_then(|provider| provider.fast_mode_confirmation(cx))?;
+        if fast_mode_warning_dismissed(&provider_id, &model_id, cx) {
+            return None;
+        }
+        Some((provider_id, model_id, confirmation))
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -8391,7 +8498,7 @@ impl ThreadView {
             .map(|thread| thread.read(cx).session_id().clone());
         let action_log = thread.as_ref().map(|thread| thread.read(cx).action_log());
         let changed_buffers = action_log
-            .map(|log| log.read(cx).changed_buffers(cx))
+            .map(|log| log.read(cx).changed_buffers(cx).collect::<Vec<_>>())
             .unwrap_or_default();
 
         let is_pending_tool_call = thread_view
@@ -8404,7 +8511,7 @@ impl ThreadView {
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
         let files_changed = changed_buffers.len();
-        let diff_stats = DiffStats::all_files(&changed_buffers, cx);
+        let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
         let is_running = matches!(
             tool_call.status,
@@ -9350,17 +9457,15 @@ impl ThreadView {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| "one folder".to_string());
 
-        let description = format!(
-            "This agent only operates on \"{}\". Other folders in this workspace are not accessible to it.",
-            active_dir
-        );
-
         Some(
             Callout::new()
                 .severity(Severity::Warning)
                 .icon(IconName::Warning)
-                .title("External Agents currently don't support multi-root workspaces")
-                .description(description)
+                .title("This agent doesn't currently support multi-root workspaces")
+                .description(format!(
+                    "It currently only operates by default on \"{}\".",
+                    active_dir
+                ))
                 .border_position(ui::BorderPosition::Bottom)
                 .dismiss_action(
                     IconButton::new("dismiss-multi-root-callout", IconName::Close)
@@ -9495,18 +9600,34 @@ impl ThreadView {
         });
     }
 
-    fn toggle_fast_mode(&mut self, cx: &mut Context<Self>) {
+    fn toggle_fast_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.fast_mode_available(cx) {
             return;
         }
+
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let current_speed = thread.read(cx).speed().unwrap_or_default();
+        let new_speed = current_speed.toggle();
+
+        if new_speed == Speed::Fast && self.pending_fast_mode_confirmation(cx).is_some() {
+            let menu_handle = self.fast_mode_menu_handle.clone();
+            window.defer(cx, move |window, cx| {
+                menu_handle.toggle(window, cx);
+            });
+            return;
+        }
+
+        self.apply_fast_mode_speed(new_speed, cx);
+    }
+
+    fn apply_fast_mode_speed(&mut self, new_speed: Speed, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
         thread.update(cx, |thread, cx| {
-            let new_speed = thread
-                .speed()
-                .map(|speed| speed.toggle())
-                .unwrap_or(Speed::Fast);
             thread.set_speed(new_speed, cx);
 
             let favorite_key = thread
@@ -9652,8 +9773,8 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::scroll_output_to_bottom))
             .on_action(cx.listener(Self::scroll_output_to_previous_message))
             .on_action(cx.listener(Self::scroll_output_to_next_message))
-            .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {
-                this.toggle_fast_mode(cx);
+            .on_action(cx.listener(|this, _: &ToggleFastMode, window, cx| {
+                this.toggle_fast_mode(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
@@ -9886,17 +10007,6 @@ pub(crate) fn open_link(
                     });
                 }
             }
-            MentionUri::Rule { id, .. } => {
-                let PromptId::User { uuid } = id else {
-                    return;
-                };
-                window.dispatch_action(
-                    Box::new(OpenRulesLibrary {
-                        prompt_to_select: Some(uuid.0),
-                    }),
-                    cx,
-                )
-            }
             MentionUri::Fetch { url } => {
                 cx.open_url(url.as_str());
             }
@@ -9923,4 +10033,53 @@ pub(crate) fn open_link(
     } else {
         cx.open_url(&url);
     }
+}
+
+const FAST_MODE_WARNING_NAMESPACE: &str = "fast-mode-warning-dismissed";
+
+fn fast_mode_warning_id(
+    provider_id: &LanguageModelProviderId,
+    model_id: &LanguageModelId,
+) -> String {
+    format!("{}:{}", provider_id.0, model_id.0)
+}
+
+fn fast_mode_warning_dismissed(
+    provider_id: &LanguageModelProviderId,
+    model_id: &LanguageModelId,
+    cx: &App,
+) -> bool {
+    KeyValueStore::global(cx)
+        .scoped(FAST_MODE_WARNING_NAMESPACE)
+        .read(&fast_mode_warning_id(provider_id, model_id))
+        .log_err()
+        .flatten()
+        .is_some()
+}
+
+fn set_fast_mode_warning_dismissed(
+    provider_id: &LanguageModelProviderId,
+    model_id: &LanguageModelId,
+    cx: &mut App,
+) {
+    let key = fast_mode_warning_id(provider_id, model_id);
+    let kvp = KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        kvp.scoped(FAST_MODE_WARNING_NAMESPACE)
+            .write(key, "1".to_string())
+            .await
+            .log_err();
+    })
+    .detach();
+}
+
+pub(crate) fn reset_fast_mode_warnings(cx: &mut App) {
+    let kvp = KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        kvp.scoped(FAST_MODE_WARNING_NAMESPACE)
+            .delete_all()
+            .await
+            .log_err();
+    })
+    .detach();
 }

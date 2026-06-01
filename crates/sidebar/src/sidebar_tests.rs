@@ -595,7 +595,7 @@ fn visible_entries_as_strings(
                         }
                     }
                     ListEntry::Terminal(terminal) => {
-                        let title = &terminal.metadata.title;
+                        let title = terminal.metadata.display_title();
                         let worktree = format_linked_worktree_chips(&terminal.worktrees);
                         format!("  {title}{worktree}{selected}")
                     }
@@ -1089,7 +1089,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_active: true,
                 has_threads: true,
             },
-            ListEntry::Thread(ThreadEntry {
+            ListEntry::Thread(Arc::new(ThreadEntry {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-1"))),
@@ -1114,9 +1114,9 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
-            }),
+            })),
             // Active thread with Running status
-            ListEntry::Thread(ThreadEntry {
+            ListEntry::Thread(Arc::new(ThreadEntry {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-2"))),
@@ -1141,9 +1141,9 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
-            }),
+            })),
             // Active thread with Error status
-            ListEntry::Thread(ThreadEntry {
+            ListEntry::Thread(Arc::new(ThreadEntry {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-3"))),
@@ -1168,10 +1168,10 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
-            }),
+            })),
             // Thread with WaitingForConfirmation status, not active
             // remote_connection: None,
-            ListEntry::Thread(ThreadEntry {
+            ListEntry::Thread(Arc::new(ThreadEntry {
                 metadata: ThreadMetadata {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-4"))),
@@ -1196,10 +1196,10 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
-            }),
+            })),
             // Background thread that completed (should show notification)
             // remote_connection: None,
-            ListEntry::Thread(ThreadEntry {
+            ListEntry::Thread(Arc::new(ThreadEntry {
                 metadata: ThreadMetadata {
                     thread_id: notified_thread_id,
                     session_id: Some(acp::SessionId::new(Arc::from("t-5"))),
@@ -1224,7 +1224,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
-            }),
+            })),
             // Collapsed project header
             ListEntry::ProjectHeader {
                 key: ProjectGroupKey::new(None, collapsed_path.clone()),
@@ -1712,7 +1712,7 @@ async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAp
         );
         assert!(
             sidebar.contents.entries.iter().any(|entry| {
-                matches!(entry, ListEntry::Terminal(terminal) if terminal.metadata.terminal_id == terminal_id && terminal.metadata.title.as_ref() == "Dev Server")
+                matches!(entry, ListEntry::Terminal(terminal) if terminal.metadata.terminal_id == terminal_id && terminal.metadata.display_title().as_ref() == "Dev Server")
             }),
             "expected the inserted terminal to appear in sidebar contents",
         );
@@ -1722,7 +1722,12 @@ async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAp
         let metadata = store
             .entry(terminal_id)
             .expect("terminal metadata should be persisted");
-        assert_eq!(metadata.title.as_ref(), "Dev Server");
+        assert_eq!(metadata.title.as_ref(), "");
+        assert_eq!(
+            metadata.custom_title.as_ref().map(|title| title.as_ref()),
+            Some("Dev Server")
+        );
+        assert_eq!(metadata.display_title().as_ref(), "Dev Server");
         assert!(
             metadata
                 .folder_paths()

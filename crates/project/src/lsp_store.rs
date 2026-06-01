@@ -5659,7 +5659,7 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!(
+                    log::debug!(
                         "Skipping executeCommand for {}, not listed in language server capabilities",
                         command.command
                     );
@@ -8437,26 +8437,21 @@ impl LspStore {
     }
 
     fn maintain_workspace_config(
-        external_refresh_requests: watch::Receiver<()>,
+        mut external_refresh_requests: watch::Receiver<()>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
-        let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
-
-        let settings_observation = cx.observe_global::<SettingsStore>(move |_, _| {
-            *settings_changed_tx.borrow_mut() = ();
-        });
-
-        let mut joint_future =
-            futures::stream::select(settings_changed_rx, external_refresh_requests);
         // Multiple things can happen when a workspace environment (selected toolchain + settings) change:
         // - We might shut down a language server if it's no longer enabled for a given language (and there are no buffers using it otherwise).
         // - We might also shut it down when the workspace configuration of all of the users of a given language server converges onto that of the other.
         // - In the same vein, we might also decide to start a new language server if the workspace configuration *diverges* from the other.
         // - In the easiest case (where we're not wrangling the lifetime of a language server anyhow), if none of the roots of a single language server diverge in their configuration,
         // but it is still different to what we had before, we're gonna send out a workspace configuration update.
+        //
+        // Settings-store changes reach this loop via `on_settings_changed` -> `request_workspace_config_refresh`,
+        // which writes to `external_refresh_requests`. Observing `SettingsStore` here as well would cause every
+        // settings change to drive the loop twice and emit duplicate `workspace/didChangeConfiguration` notifications.
         cx.spawn(async move |this, cx| {
-            while let Some(()) = joint_future.next().await {
+            while let Some(()) = external_refresh_requests.next().await {
                 this.update(cx, |this, cx| {
                     this.refresh_server_tree(cx);
                 })
@@ -8465,7 +8460,6 @@ impl LspStore {
                 Self::refresh_workspace_configurations(&this, cx).await;
             }
 
-            drop(settings_observation);
             anyhow::Ok(())
         })
     }
@@ -9914,6 +9908,15 @@ impl LspStore {
 
                 proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(_) => {
                     lsp_store.disk_based_diagnostics_finished(language_server_id, cx)
+                }
+
+                proto::update_language_server::Variant::Removed(_) => {
+                    lsp_store
+                        .language_server_statuses
+                        .remove(&language_server_id);
+                    lsp_store.cleanup_lsp_data(language_server_id);
+                    cx.emit(LspStoreEvent::LanguageServerRemoved(language_server_id));
+                    cx.notify();
                 }
 
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)

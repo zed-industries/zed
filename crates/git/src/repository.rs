@@ -1672,7 +1672,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let repo = repo.lock();
                 let remote = repo.find_remote(&name).ok()?;
-                remote.url().map(|url| url.to_string())
+                remote.url().ok().map(|url| url.to_string())
             })
             .boxed()
     }
@@ -2902,6 +2902,10 @@ impl GitRepository for RealGitRepository {
                     if git.run(&["rev-parse", &default_branch]).await.is_ok() {
                         return Ok(Some(default_branch.into()));
                     }
+                }
+
+                if git.run(&["rev-parse", "main"]).await.is_ok() {
+                    return Ok(Some("main".into()));
                 }
 
                 if git.run(&["rev-parse", "master"]).await.is_ok() {

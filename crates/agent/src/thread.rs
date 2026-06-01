@@ -4,11 +4,11 @@ use crate::{
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, UserAgentsMd, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use agent_settings::UserAgentsMd;
 use feature_flags::{
     FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
     UpdateTitleToolFeatureFlag,
@@ -51,16 +51,16 @@ use serde::{Deserialize, Serialize};
 use settings::{
     LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
 };
+use std::fmt::Write;
 use std::{
     collections::BTreeMap,
     marker::PhantomData,
     ops::RangeInclusive,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
-use std::{fmt::Write, path::PathBuf};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
@@ -315,17 +315,6 @@ impl UserMessage {
                         }
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::Rule { .. } => {
-                            write!(
-                                &mut rules_context,
-                                "\n{}",
-                                MarkdownCodeBlock {
-                                    tag: "",
-                                    text: content
-                                }
-                            )
-                            .ok();
                         }
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
@@ -668,8 +657,10 @@ pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
+        extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 
@@ -1005,6 +996,7 @@ pub struct Thread {
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
     inherits_parent_model_settings: bool,
+    sandboxed_terminal_temp_dir: Option<PathBuf>,
 }
 
 impl Thread {
@@ -1131,6 +1123,7 @@ impl Thread {
             ui_scroll_position: None,
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
+            sandboxed_terminal_temp_dir: None,
         }
     }
 
@@ -1172,6 +1165,30 @@ impl Thread {
 
     pub fn id(&self) -> &acp::SessionId {
         &self.id
+    }
+
+    pub(crate) fn sandboxed_terminal_temp_dir(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<PathBuf> {
+        if let Some(temp_dir) = &self.sandboxed_terminal_temp_dir {
+            std::fs::create_dir_all(temp_dir).with_context(|| {
+                format!(
+                    "failed to recreate sandboxed terminal temp directory {}",
+                    temp_dir.display()
+                )
+            })?;
+            return Ok(temp_dir.clone());
+        }
+
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-agent-terminal-")
+            .tempdir()
+            .context("failed to create sandboxed terminal temp directory")?;
+        let temp_dir = temp_dir.keep();
+        self.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
+        cx.notify();
+        Ok(temp_dir)
     }
 
     /// Returns true if this thread was imported from a shared thread.
@@ -1449,6 +1466,7 @@ impl Thread {
             }),
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
+            sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
         }
     }
 
@@ -1479,6 +1497,7 @@ impl Thread {
                     offset_in_item: lo.offset_in_item.as_f32(),
                 }
             }),
+            sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
         };
 
         cx.background_spawn(async move {
@@ -3171,6 +3190,7 @@ impl Thread {
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
+            sandboxing: crate::sandboxing::sandboxing_enabled(cx),
         }
         .render(&self.templates)
         .context("failed to build system prompt")

@@ -2019,7 +2019,8 @@ impl Render for KeymapEditor {
                                         context.add("BufferSearchBar");
                                         context
                                     })
-                                    .size_full()
+                                    .flex_1()
+                                    .min_w_0()
                                     .h_8()
                                     .pl_2()
                                     .pr_1()
@@ -2032,7 +2033,7 @@ impl Render for KeymapEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .min_w_96()
+                                    .flex_none()
                                     .items_center()
                                     .child(
                                         IconButton::new(
