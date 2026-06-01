@@ -625,6 +625,20 @@ pub struct OpenTerminal {
     pub local: bool,
 }
 
+/// Opens the given path in the current workspace.
+///
+/// By default, replaces the current project root with `path`.
+/// If `add` is true, appends `path` as an additional worktree instead.
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct OpenPath {
+    pub path: PathBuf,
+    /// If true, adds the path as an extra worktree instead of replacing the project root.
+    #[serde(default)]
+    pub add: bool,
+}
+
 #[derive(
     Clone,
     Copy,
@@ -3880,6 +3894,60 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn open_path_action(
+        &mut self,
+        action: &OpenPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let raw = action.path.to_string_lossy();
+        let expanded = if let Some(stripped) = raw.strip_prefix("~") {
+            match dirs::home_dir() {
+                Some(home) => {
+                    let stripped = stripped.strip_prefix(std::path::MAIN_SEPARATOR).unwrap_or(stripped);
+                    home.join(stripped)
+                }
+                None => action.path.clone(),
+            }
+        } else {
+            action.path.clone()
+        };
+
+        if action.add {
+            let task = self.open_paths(
+                vec![expanded],
+                OpenOptions {
+                    visible: Some(OpenVisible::All),
+                    ..Default::default()
+                },
+                None,
+                window,
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                for result in task.await.into_iter().flatten() {
+                    result.log_err();
+                }
+            })
+            .detach();
+            return;
+        }
+
+        let Some(multi_workspace) = self
+            .multi_workspace()
+            .and_then(|weak| weak.upgrade())
+            .or_else(|| window.root::<MultiWorkspace>().flatten())
+        else {
+            return;
+        };
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace
+                .open_project(vec![expanded], OpenMode::Activate, window, cx)
+                .detach_and_log_err(cx);
+        });
     }
 
     pub fn project_path_for_path(
@@ -7272,6 +7340,7 @@ impl Workspace {
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
+            .on_action(cx.listener(Self::open_path_action))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
