@@ -1159,6 +1159,7 @@ impl Operator {
     pub fn is_waiting(&self, mode: Mode) -> bool {
         match self {
             Operator::AddSurrounds { target } => target.is_some() || mode.is_visual(),
+            Operator::ToggleBlockComments => mode.is_visual(),
             Operator::FindForward { .. }
             | Operator::Mark
             | Operator::Jump { .. }
@@ -1194,7 +1195,6 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
-            | Operator::ToggleBlockComments
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,

@@ -32,6 +32,32 @@ async fn setup_rust_context(cx: &mut TestAppContext) -> EditorTestContext {
     cx
 }
 
+async fn setup_python_context(cx: &mut TestAppContext) -> EditorTestContext {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let python_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Python".into(),
+            block_comment: Some(BlockCommentConfig {
+                start: "\"\"\"".into(),
+                prefix: "".into(),
+                end: "\"\"\"".into(),
+                tab_size: 0,
+            }),
+            ..Default::default()
+        },
+        None,
+    ));
+
+    cx.language_registry().add(python_language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(python_language), cx);
+    });
+
+    cx
+}
+
 #[gpui::test]
 async fn test_toggle_block_comments(cx: &mut TestAppContext) {
     let mut cx = setup_rust_context(cx).await;
@@ -277,6 +303,119 @@ async fn test_toggle_block_comments_unicode_in_selection(cx: &mut TestAppContext
     });
 
     cx.assert_editor_state("«√√√ˇ»");
+}
+
+#[gpui::test]
+async fn test_toggle_block_comments_line_mode_roundtrip_for_symmetric_markers(
+    cx: &mut TestAppContext,
+) {
+    let mut cx = setup_python_context(cx).await;
+
+    cx.set_state(indoc! {"
+        from PIL import Image
+        import sys
+
+        «img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])ˇ»
+    "});
+    cx.update_editor(|editor, _window, _cx| {
+        editor.selections.set_line_mode(true);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        from PIL import Image
+        import sys
+
+        «\"\"\"
+        img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])
+        \"\"\"ˇ»
+    "});
+
+    cx.update_editor(|editor, _window, _cx| {
+        editor.selections.set_line_mode(true);
+    });
+    cx.set_state(indoc! {"
+        from PIL import Image
+        import sys
+
+        «\"\"\"
+        img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])
+        \"\"\"ˇ»
+    "});
+    cx.update_editor(|editor, _window, _cx| {
+        editor.selections.set_line_mode(true);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        from PIL import Image
+        import sys
+
+        «img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])ˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_block_comments_line_mode_multiple_cursors_roundtrip(cx: &mut TestAppContext) {
+    let mut cx = setup_python_context(cx).await;
+
+    cx.set_state(indoc! {"
+        «img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])ˇ»
+
+        print(size)
+
+        «other = Image.open(sys.argv[3])
+        value = int(sys.argv[4])ˇ»
+    "});
+    cx.update_editor(|editor, _window, _cx| {
+        editor.selections.set_line_mode(true);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «\"\"\"
+        img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])
+        \"\"\"ˇ»
+
+        print(size)
+
+        «\"\"\"
+        other = Image.open(sys.argv[3])
+        value = int(sys.argv[4])
+        \"\"\"ˇ»
+    "});
+
+    cx.update_editor(|editor, _window, _cx| {
+        editor.selections.set_line_mode(true);
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])ˇ»
+
+        print(size)
+
+        «other = Image.open(sys.argv[3])
+        value = int(sys.argv[4])ˇ»
+    "});
 }
 
 #[gpui::test]

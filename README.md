@@ -171,6 +171,7 @@ You modify the emojis in your `settings.json` like this in the root setting obje
 - patch `clip_at_line_end()` in `crates/editor/src/display_map.rs` as a no-op when no editor selections are there, to have an always enabled `virtualedit=onemore` mode
   - this also allows mouse clicking beyond the end of the line where no characters are, to select the newline character in vim mode
 - fix bug that when in vim visual line mode and cursor is on right newline character, that the line below is incorrectly copied on `editor::Copy`. This mostly happens in my own Zed config because I mixing `editor` and `vim` actions to ensure that I can move cursor on the right newline character, and usually not in proper Zed keybindings.
+- make block comments in vim visual line mode insert on their own lines before and after the selected lines, for both `vim::ToggleBlockComments` and `editor::ToggleBlockComments`, so the markers no longer split code like `if` or `size`
 
 ## Network
 

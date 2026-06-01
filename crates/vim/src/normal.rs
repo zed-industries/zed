@@ -1029,7 +1029,7 @@ impl Vim {
         }
     }
 
-    fn toggle_block_comments(
+    pub(crate) fn toggle_block_comments(
         &mut self,
         _: &ToggleBlockComments,
         window: &mut Window,
@@ -1042,17 +1042,55 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 if is_visual_line {
-                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.move_with(&mut |map, selection| {
-                            let start_row = selection.start.to_point(map).row;
-                            let end_row = selection.end.to_point(map).row;
-                            let end_col = map.buffer_snapshot().line_len(MultiBufferRow(end_row));
-                            selection.start = Point::new(start_row, 0).to_display_point(map);
-                            selection.end = Point::new(end_row, end_col).to_display_point(map);
-                        });
-                    });
+                    let mut edits = {
+                        let display_map = editor.display_snapshot(cx);
+                        let snapshot = editor.buffer().read(cx).read(cx);
+                        let mut edits = Vec::new();
+
+                        for selection in editor.selections.all_display(&display_map) {
+                            let start_point = selection.start.to_point(&display_map);
+                            let end_point = selection.end.to_point(&display_map);
+                            let Some(language) = snapshot.language_scope_at(start_point) else {
+                                continue;
+                            };
+                            let Some(block_comment) = language.block_comment() else {
+                                continue;
+                            };
+
+                            let line_start = Point::new(start_point.row, 0);
+                            let line_end =
+                                if end_point.column == 0 && start_point.row < end_point.row {
+                                    end_point
+                                } else {
+                                    Point::new(
+                                        end_point.row,
+                                        snapshot.line_len(MultiBufferRow(end_point.row)),
+                                    )
+                                };
+
+                            edits.push((
+                                line_start..line_start,
+                                Arc::<str>::from(format!("{}\n", block_comment.start)),
+                            ));
+                            edits.push((
+                                line_end..line_end,
+                                if line_end.column == 0 && line_end < snapshot.max_point() {
+                                    Arc::<str>::from(format!("{}\n", block_comment.end))
+                                } else {
+                                    Arc::<str>::from(format!("\n{}", block_comment.end))
+                                },
+                            ));
+                        }
+
+                        edits
+                    };
+                    edits.sort_by_key(|(range, _)| range.start);
+                    if !edits.is_empty() {
+                        editor.edit(edits, cx);
+                    }
+                } else {
+                    editor.toggle_block_comments(&Default::default(), window, cx);
                 }
-                editor.toggle_block_comments(&Default::default(), window, cx);
                 vim.restore_selection_cursors(editor, window, cx, original_positions);
             });
         });

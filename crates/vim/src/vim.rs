@@ -912,7 +912,11 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &PushToggleBlockComments, window, cx| {
-                    vim.push_operator(Operator::ToggleBlockComments, window, cx)
+                    if vim.mode.is_visual() {
+                        vim.toggle_block_comments(&Default::default(), window, cx)
+                    } else {
+                        vim.push_operator(Operator::ToggleBlockComments, window, cx)
+                    }
                 },
             );
 

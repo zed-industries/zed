@@ -8,7 +8,7 @@ use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
     AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
-    actions::{DeleteLine, WrapSelectionsInTag},
+    actions::{DeleteLine, ToggleBlockComments as EditorToggleBlockComments, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
     display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
@@ -1945,11 +1945,60 @@ async fn test_toggle_block_comments(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("shift-v j g b");
     cx.assert_state(
         indoc! {"
-        /* ˇone
-        two */
+        /* 
+        ˇone
+        two
+         */
         three
         "},
         Mode::Normal,
+    );
+
+    // works for the editor action in visual line mode too
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        four
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("shift-v j j");
+    cx.dispatch_action(EditorToggleBlockComments);
+    assert_eq!(
+        cx.buffer_text(),
+        indoc! {"
+        /* 
+        one
+        two
+        three
+         */
+        four
+        "}
+    );
+
+    // works for the vim action in visual line mode too
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        four
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("shift-v j j g b");
+    assert_eq!(
+        cx.buffer_text(),
+        indoc! {"
+        /* 
+        one
+        two
+        three
+         */
+        four
+        "}
     );
 
     // works in visual mode and restores the cursor to the selection start
@@ -2017,6 +2066,83 @@ async fn test_toggle_block_comments(cx: &mut gpui::TestAppContext) {
         three
         ˇ"},
         Mode::Normal,
+    );
+}
+
+#[gpui::test]
+async fn test_toggle_block_comments_with_symmetric_markers_in_visual_line_mode(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            block_comment: Some(language::BlockCommentConfig {
+                start: "\"\"\"".into(),
+                prefix: "".into(),
+                end: "\"\"\"".into(),
+                tab_size: 1,
+            }),
+            ..Default::default()
+        },
+        None,
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(
+        indoc! {"
+        from PIL import Image
+        import sys
+
+        ˇimg = Image.open(sys.argv[1])
+        size = int(sys.argv[2])
+        print(size)
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("shift-v j");
+
+    cx.dispatch_action(EditorToggleBlockComments);
+    assert_eq!(
+        cx.buffer_text(),
+        indoc! {r#"
+        from PIL import Image
+        import sys
+
+        """
+        img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])
+        """
+        print(size)
+        "#}
+    );
+
+    cx.dispatch_action(EditorToggleBlockComments);
+    assert_eq!(
+        cx.buffer_text(),
+        indoc! {"
+        from PIL import Image
+        import sys
+
+        img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])
+        print(size)
+        "}
+    );
+
+    cx.dispatch_action(EditorToggleBlockComments);
+    assert_eq!(
+        cx.buffer_text(),
+        indoc! {r#"
+        from PIL import Image
+        import sys
+
+        """
+        img = Image.open(sys.argv[1])
+        size = int(sys.argv[2])
+        """
+        print(size)
+        "#}
     );
 }
 
