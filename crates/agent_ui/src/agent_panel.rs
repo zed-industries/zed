@@ -1745,10 +1745,6 @@ impl AgentPanel {
     /// If the active view already holds this thread — because the user's
     /// last-active thread was the new-draft itself — we reuse that
     /// ConversationView instead of building a second one.
-    ///
-    /// If the draft has no persisted prompt content, there's nothing
-    /// worth restoring, so we drop the stale metadata (and any empty
-    /// prompt-store entry) and return without creating a view.
     fn restore_new_draft(
         &mut self,
         thread_id: ThreadId,
@@ -1780,30 +1776,16 @@ impl AgentPanel {
             return;
         };
 
-        let has_draft_content = crate::draft_prompt_store::read(thread_id, cx);
-
-        let has_persisted_draft_content = has_draft_content
-            .as_ref()
-            .is_some_and(|blocks| !blocks.is_empty());
-
-        if !has_persisted_draft_content {
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.delete(thread_id, cx);
-            });
-            // `read` may have returned an empty (but present) prompt entry;
-            // delete it too so we don't leak an orphaned kvp record.
-            crate::draft_prompt_store::delete(thread_id, cx).detach_and_log_err(cx);
-            return;
-        }
-
         let agent = if self.project.read(cx).is_via_collab() {
             Agent::NativeAgent
         } else {
             Agent::from(metadata.agent_id.clone())
         };
-        let initial_content = has_draft_content.map(|blocks| AgentInitialContent::ContentBlock {
-            blocks,
-            auto_submit: false,
+        let initial_content = crate::draft_prompt_store::read(thread_id, cx).map(|blocks| {
+            AgentInitialContent::ContentBlock {
+                blocks,
+                auto_submit: false,
+            }
         });
         let thread = self.create_agent_thread_with_server(
             agent,
