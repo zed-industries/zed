@@ -100,7 +100,7 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
             thread::sleep(Duration::from_millis(200));
             loop {
                 thread::sleep(monitor_interval);
-                // TODO(yara) the telemetry should not include still running tasks while the 
+                // TODO(yara) the telemetry should not include still running tasks while the
                 // reports being logged should.
                 let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let action_stats = profiler::take_action_stats();
