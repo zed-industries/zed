@@ -48,7 +48,7 @@ Zed Business consolidates your team's costs. Seat licenses and AI usage for all 
 
 ### Billing dashboard {#dashboard}
 
-Owners and admins can access billing information at [dashboard.zed.dev](https://dashboard.zed.dev). The dashboard shows the plan you're currently on and offers jumping off points to update billing details, such as the billing name and address, as well as payment information. You can also access your invoices history, accessible through the Orb billing portal.
+Owners and admins can access billing information at [dashboard.zed.dev](https://dashboard.zed.dev). The dashboard shows the plan you're currently on and offers jumping off points to update billing details, such as the billing name and address, as well as payment information. You can also access your invoice history, accessible through the Orb billing portal.
 
 ### AI usage {#ai-usage}
 
