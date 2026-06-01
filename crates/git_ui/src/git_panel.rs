@@ -2644,6 +2644,7 @@ impl GitPanel {
         prompt: &str,
         user_agents_md: Option<&str>,
         rules_content: Option<&str>,
+        instructions: Option<&str>,
         subject: &str,
         diff_text: &str,
     ) -> String {
@@ -2663,6 +2664,14 @@ impl GitPanel {
             None => String::new(),
         };
 
+        let instructions_section = match instructions {
+            Some(instructions) if !instructions.trim().is_empty() => format!(
+                "\n\nThe user has provided the following instructions for writing commit messages that you should follow:\n\
+                <commit_message_instructions>\n{instructions}\n</commit_message_instructions>\n"
+            ),
+            _ => String::new(),
+        };
+
         let subject_section = if subject.trim().is_empty() {
             String::new()
         } else {
@@ -2670,7 +2679,7 @@ impl GitPanel {
         };
 
         format!(
-            "{prompt}{user_agents_md_section}{rules_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
         )
     }
 
@@ -2701,6 +2710,9 @@ impl GitPanel {
         });
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let instructions = AgentSettings::get_global(cx)
+            .commit_message_instructions
+            .clone();
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
@@ -2762,6 +2774,7 @@ impl GitPanel {
                     &prompt,
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
+                    instructions.as_deref(),
                     &subject,
                     &diff_text,
                 );
@@ -8721,18 +8734,36 @@ mod tests {
             "Write a commit message.",
             Some("Use terse commit messages."),
             Some("Use the git_ui prefix."),
+            Some("Follow the configured commit message format."),
             "Update generated message",
             "diff --git a/file b/file",
         );
 
         assert!(prompt.contains("Use terse commit messages."));
         assert!(prompt.contains("Use the git_ui prefix."));
+        assert!(prompt.contains("Follow the configured commit message format."));
         assert!(prompt.contains("Update generated message"));
         assert!(prompt.contains("diff --git a/file b/file"));
 
         let user_agents_md_index = prompt.find("<rules>").unwrap();
         let project_rules_index = prompt.find("<project_rules>").unwrap();
+        let instructions_index = prompt.find("<commit_message_instructions>").unwrap();
         assert!(user_agents_md_index < project_rules_index);
+        assert!(project_rules_index < instructions_index);
+    }
+
+    #[test]
+    fn test_commit_message_prompt_omits_blank_instructions() {
+        let prompt = GitPanel::build_commit_message_prompt(
+            "Write a commit message.",
+            None,
+            None,
+            Some("   \n  "),
+            "",
+            "diff --git a/file b/file",
+        );
+
+        assert!(!prompt.contains("<commit_message_instructions>"));
     }
 
     #[gpui::test]
