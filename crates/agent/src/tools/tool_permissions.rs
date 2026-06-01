@@ -132,13 +132,19 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     // skills tree (and so different but equivalent path representations
     // match). The lexical check above intentionally runs first, so a
     // symlinked `~/.agents/skills` root can't broaden the allowlist to every
-    // path under the symlink target. A symlinked immediate skill directory is
+    // path under the symlink target. A linked immediate skill directory is
     // allowed separately, but only for paths that stay under that skill target.
     let canonical_path = fs.canonicalize(&normalized_path).await.ok()?;
     let canonical_skills_dir = canonical_global_skills_dir(fs).await?;
 
     if canonical_path.starts_with(&canonical_skills_dir)
-        || is_in_symlinked_global_skill_dir(&normalized_path, &canonical_path, fs).await
+        || is_in_linked_global_skill_dir(
+            &normalized_path,
+            &canonical_path,
+            &canonical_skills_dir,
+            fs,
+        )
+        .await
     {
         Some(canonical_path)
     } else {
@@ -146,7 +152,12 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     }
 }
 
-async fn is_in_symlinked_global_skill_dir(path: &Path, canonical_path: &Path, fs: &dyn Fs) -> bool {
+async fn is_in_linked_global_skill_dir(
+    path: &Path,
+    canonical_path: &Path,
+    canonical_skills_dir: &Path,
+    fs: &dyn Fs,
+) -> bool {
     let skills_dir = normalize_path(&agent_skills::global_skills_dir());
     let Ok(relative_path) = path.strip_prefix(&skills_dir) else {
         return false;
@@ -156,15 +167,12 @@ async fn is_in_symlinked_global_skill_dir(path: &Path, canonical_path: &Path, fs
     };
 
     let skill_dir = skills_dir.join(skill_dir_name);
-    let Ok(Some(metadata)) = fs.metadata(&skill_dir).await else {
+    let Ok(canonical_skill_dir) = fs.canonicalize(&skill_dir).await else {
         return false;
     };
-    metadata.is_symlink
-        && metadata.is_dir
-        && fs
-            .canonicalize(&skill_dir)
-            .await
-            .is_ok_and(|canonical_skill_dir| canonical_path.starts_with(canonical_skill_dir))
+
+    !canonical_skill_dir.starts_with(canonical_skills_dir)
+        && canonical_path.starts_with(&canonical_skill_dir)
         && fs
             .is_file(&skill_dir.join(agent_skills::SKILL_FILE_NAME))
             .await
