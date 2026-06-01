@@ -15,11 +15,17 @@ use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{
-    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+    ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
+use zed_actions::agent::ToggleModelSelector;
 
 use crate::ui::documentation_aside_side;
+use crate::{
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
+    ToggleThinkingEffortMenu,
+};
 
 const PICKER_THRESHOLD: usize = 5;
 
@@ -372,7 +378,7 @@ impl Render for ConfigOptionSelector {
         let option_name = option.name.clone();
         let option_description: Option<SharedString> = option.description.map(Into::into);
 
-        let tooltip = Tooltip::element(move |_window, _cx| {
+        let tooltip = Tooltip::element(move |_window, cx| {
             let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
             if let Some(desc) = option_description.as_ref() {
                 content = content.child(
@@ -380,6 +386,56 @@ impl Render for ConfigOptionSelector {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 );
+            }
+
+            let action_tooltip_container = |label: &str, keybinding: KeyBinding| {
+                h_flex()
+                    .pt_1()
+                    .gap_2()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(Label::new(label))
+                    .child(keybinding)
+            };
+
+            if let Some(category) = &option.category {
+                match category {
+                    acp::SessionConfigOptionCategory::Mode => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Mode",
+                                KeyBinding::for_action(&ToggleProfileSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Through Modes",
+                                KeyBinding::for_action(&CycleModeSelector, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::Model => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Model",
+                                KeyBinding::for_action(&ToggleModelSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Favorite Model",
+                                KeyBinding::for_action(&CycleFavoriteModels, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::ThoughtLevel => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Thinking Effort",
+                                KeyBinding::for_action(&ToggleThinkingEffortMenu, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Thinking Effort",
+                                KeyBinding::for_action(&CycleThinkingEffort, cx),
+                            ));
+                    }
+                    _ => {}
+                }
             }
             content.into_any()
         });
