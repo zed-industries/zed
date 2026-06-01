@@ -224,7 +224,13 @@ impl Component for InputField {
         ComponentScope::Input
     }
 
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A single-line text field used for search inputs, \
+        form fields, and similar inputs, supporting labels, placeholders, \
+        leading icons, and masked content."
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
         let input_small =
             cx.new(|cx| InputField::new(window, cx, "placeholder").label("Small Label"));
 
@@ -234,20 +240,18 @@ impl Component for InputField {
                 .label_size(LabelSize::Default)
         });
 
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group(vec![
-                    single_example(
-                        "Small Label (Default)",
-                        div().child(input_small).into_any_element(),
-                    ),
-                    single_example(
-                        "Regular Label",
-                        div().child(input_regular).into_any_element(),
-                    ),
-                ])])
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .children(vec![example_group(vec![
+                single_example(
+                    "Small Label (Default)",
+                    div().child(input_small).into_any_element(),
+                ),
+                single_example(
+                    "Regular Label",
+                    div().child(input_regular).into_any_element(),
+                ),
+            ])])
+            .into_any_element()
     }
 }

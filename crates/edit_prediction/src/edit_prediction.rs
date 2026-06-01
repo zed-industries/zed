@@ -38,9 +38,9 @@ use gpui::{
 };
 use heapless::Vec as ArrayVec;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, EditPredictionsMode, EditPreview,
-    File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset, ToPoint,
-    language_settings::all_language_settings,
+    Anchor, Buffer, BufferEditSource, BufferSnapshot, EditPredictionPromptFormat,
+    EditPredictionsMode, EditPreview, File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset,
+    ToPoint, language_settings::all_language_settings,
 };
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
@@ -324,6 +324,7 @@ struct ProjectState {
     recent_paths: VecDeque<ProjectPath>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
+    last_edit_source: Option<BufferEditSource>,
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
@@ -1212,6 +1213,7 @@ impl EditPredictionStore {
                 debug_tx: None,
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
+                last_edit_source: None,
                 cancelled_predictions: HashSet::default(),
                 pending_predictions: ArrayVec::new(),
                 next_pending_prediction_id: 0,
@@ -1315,6 +1317,9 @@ impl EditPredictionStore {
         }
         // TODO [zeta2] init with recent paths
         match event {
+            project::Event::BufferEdited { source } => {
+                self.get_or_init_project(&project, cx).last_edit_source = Some(*source);
+            }
             project::Event::ActiveEntryChanged(Some(active_entry_id)) => {
                 let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
                     return;
@@ -1332,6 +1337,15 @@ impl EditPredictionStore {
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
+                if self
+                    .projects
+                    .get(&project.entity_id())
+                    .and_then(|project_state| project_state.last_edit_source)
+                    == Some(BufferEditSource::Agent)
+                {
+                    return;
+                }
+
                 if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
                     self.refresh_prediction_from_diagnostics(
                         project,
@@ -1391,11 +1405,17 @@ impl EditPredictionStore {
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
                             move |this, buffer, event, cx| {
-                                if let language::BufferEvent::Edited { is_local } = event
+                                if let language::BufferEvent::Edited { source } = event
                                     && let Some(project) = project.upgrade()
                                 {
+                                    let project_state = this.get_or_init_project(&project, cx);
+                                    project_state.last_edit_source = Some(*source);
                                     this.report_changes_for_buffer(
-                                        &buffer, &project, false, *is_local, cx,
+                                        &buffer,
+                                        &project,
+                                        false,
+                                        source.is_local(),
+                                        cx,
                                     );
                                 }
                             }
@@ -2530,6 +2550,15 @@ impl EditPredictionStore {
         allow_jump: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let is_cloud_zeta = matches!(self.edit_prediction_model, EditPredictionModel::Zeta)
+            && !matches!(
+                all_language_settings(None, cx).edit_predictions.provider,
+                EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
+            );
+        if is_cloud_zeta && !self.client.cloud_client().has_credentials() {
+            return Task::ready(Ok(None));
+        }
+
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);
@@ -2551,11 +2580,24 @@ impl EditPredictionStore {
             EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
         };
 
-        let is_open_source = snapshot
-            .file()
-            .map_or(false, |file| self.is_file_open_source(&project, file, cx))
-            && events.iter().all(|event| event.in_open_source_repo())
-            && related_files.iter().all(|file| file.in_open_source_repo);
+        let buffer_id = active_buffer.read(cx).remote_id();
+        let repo_url = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+
+        let is_staff_zed_repo = cx.is_staff()
+            && repo_url
+                .as_ref()
+                .is_some_and(|url| is_zed_industries_repo(url));
+        let is_open_source = is_staff_zed_repo
+            || (snapshot
+                .file()
+                .map_or(false, |file| self.is_file_open_source(&project, file, cx))
+                && events.iter().all(|event| event.in_open_source_repo())
+                && related_files.iter().all(|file| file.in_open_source_repo));
 
         let can_collect_data = !cfg!(test)
             && is_open_source
@@ -2594,7 +2636,7 @@ impl EditPredictionStore {
                         )
                     });
 
-                zeta::request_prediction_with_zeta(self, inputs, capture_events, cx)
+                zeta::request_prediction_with_zeta(self, inputs, capture_events, repo_url, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Mercury => {
@@ -3285,4 +3327,12 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn is_zed_industries_repo(url: &str) -> bool {
+    url.strip_prefix("https://github.com/zed-industries/")
+        .or_else(|| url.strip_prefix("http://github.com/zed-industries/"))
+        .or_else(|| url.strip_prefix("git@github.com:zed-industries/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/zed-industries/"))
+        .is_some_and(|repo| !repo.is_empty())
 }

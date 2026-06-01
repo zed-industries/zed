@@ -53,6 +53,7 @@ pub fn request_prediction_with_zeta(
         Vec<crate::StoredEvent>,
         Task<Result<collections::HashMap<Arc<Path>, Entity<BufferDiff>>>>,
     )>,
+    repo_url: Option<String>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let settings = &all_language_settings(None, cx).edit_predictions;
@@ -73,17 +74,7 @@ pub fn request_prediction_with_zeta(
 
     let excerpt_path = buffer_path_with_id_fallback(snapshot.file(), &snapshot.text, cx);
 
-    let repo_url = if can_collect_data {
-        let buffer_id = buffer.read(cx).remote_id();
-        project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .repository_and_path_for_buffer_id(buffer_id, cx)
-            .and_then(|(repo, _)| repo.read(cx).default_remote_url())
-    } else {
-        None
-    };
+    let repo_url = repo_url.filter(|_| can_collect_data);
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store

@@ -19,6 +19,7 @@ pub mod code_context_menus;
 mod code_lens;
 pub mod display_map;
 mod document_colors;
+mod document_links;
 mod document_symbols;
 mod editor_settings;
 mod element;
@@ -26,7 +27,7 @@ mod fold;
 mod folding_ranges;
 mod git;
 mod highlight_matching_bracket;
-mod hover_links;
+pub mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
 mod inlays;
@@ -140,6 +141,7 @@ use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
 use document_colors::LspColorData;
+use document_links::LspDocumentLinks;
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionDiscardReason,
     EditPredictionGranularity, SuggestionDisplayType,
@@ -1114,6 +1116,7 @@ pub struct Editor {
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
     refresh_document_symbols_task: Shared<Task<()>>,
+    lsp_document_links: LspDocumentLinks,
     lsp_document_symbols: HashMap<BufferId, Vec<OutlineItem<text::Anchor>>>,
     refresh_outline_symbols_at_cursor_at_cursor_task: Task<()>,
     outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
@@ -2322,6 +2325,7 @@ impl Editor {
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
             refresh_document_symbols_task: Task::ready(()).shared(),
+            lsp_document_links: LspDocumentLinks::new(cx),
             lsp_document_symbols: HashMap::default(),
             refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
             outline_symbols_at_cursor: None,
@@ -2648,16 +2652,6 @@ impl Editor {
                     .and_then(|file| file.as_local().map(|file| file.abs_path(cx)))
             }
         })
-    }
-
-    /// Returns the project path for the editor's buffer, if any buffer is
-    /// opened in the editor.
-    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.read(cx).project_path(cx)
-        } else {
-            None
-        }
     }
 
     pub fn selection_menu_enabled(&self, cx: &App) -> bool {
@@ -9237,7 +9231,7 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 edited_buffer,
-                is_local,
+                source,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
@@ -9248,7 +9242,7 @@ impl Editor {
                 self.refresh_matching_bracket_highlights(&snapshot, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
                 self.refresh_sticky_headers(&snapshot, cx);
-                if *is_local && self.has_active_edit_prediction() {
+                if source.is_local() && self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
 
@@ -9329,6 +9323,8 @@ impl Editor {
                     self.registered_buffers.remove(buffer_id);
                     self.clear_runnables(Some(*buffer_id));
                     self.semantic_token_state.invalidate_buffer(buffer_id);
+                    self.lsp_document_symbols.remove(buffer_id);
+                    self.lsp_document_links.per_buffer.remove(buffer_id);
                     self.display_map.update(cx, |display_map, cx| {
                         display_map.invalidate_semantic_highlights(*buffer_id);
                         display_map.clear_lsp_folding_ranges(*buffer_id, cx);
@@ -9550,6 +9546,17 @@ impl Editor {
             let was_inline = self.code_lens.is_some();
             if code_lens_inline != was_inline {
                 self.toggle_code_lens(code_lens_inline, window, cx);
+            }
+
+            let lsp_document_links_enabled = EditorSettings::get_global(cx).lsp_document_links;
+            if lsp_document_links_enabled != self.lsp_document_links.enabled {
+                self.lsp_document_links.enabled = lsp_document_links_enabled;
+                if lsp_document_links_enabled {
+                    self.refresh_document_links(None, cx);
+                } else {
+                    self.lsp_document_links.per_buffer.clear();
+                    self.lsp_document_links.refresh_task = Task::ready(());
+                }
             }
 
             self.refresh_inlay_hints(
@@ -10482,6 +10489,7 @@ impl Editor {
         }
         self.refresh_semantic_tokens(for_buffer, None, cx);
         self.refresh_document_colors(for_buffer, window, cx);
+        self.refresh_document_links(for_buffer, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
         self.refresh_code_lenses(for_buffer, window, cx);
         self.refresh_document_symbols(for_buffer, cx);
@@ -10660,6 +10668,7 @@ impl Editor {
         self.colorize_brackets(false, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         self.resolve_visible_code_lenses(cx);
+
         if !self.buffer().read(cx).is_singleton() || self.needs_initial_data_update {
             self.needs_initial_data_update = false;
             self.update_lsp_data(None, window, cx);

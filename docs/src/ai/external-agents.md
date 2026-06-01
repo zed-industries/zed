@@ -237,7 +237,7 @@ It's also possible to customize environment variables for registry-installed age
 
 ## Debugging Agents
 
-When using external agents in Zed, you can access the debug view via with {#action dev::OpenAcpLogs} from the Command Palette.
+When using external agents in Zed, you can access the debug view via {#action dev::OpenAcpLogs} from the Command Palette.
 This lets you see the messages being sent and received between Zed and the agent.
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
