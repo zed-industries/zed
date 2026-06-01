@@ -1675,7 +1675,6 @@ mod tests {
                     cx.background_executor(),
                     PathStyle::local(),
                 )
-                .unwrap()
                 .subscribe(cx)
             })
         });

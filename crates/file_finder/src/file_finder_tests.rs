@@ -3923,6 +3923,189 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_open_without_dismiss_keeps_finder_open(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "file1.txt": "content1",
+                    "file2.txt": "content2",
+                    "file3.txt": "content3",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("file");
+    cx.run_until_parked();
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.matches.len() >= 3,
+            "Expected at least 3 matches for 'file', got {}",
+            picker.delegate.matches.len()
+        );
+    });
+
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    // Finder must still be visible after opening a file without dismiss.
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_some(),
+            "File finder should remain open after OpenWithoutDismiss"
+        );
+    });
+
+    // Exactly one file was opened in the pane.
+    cx.read(|cx| {
+        let items: Vec<_> = workspace.read(cx).active_pane().read(cx).items().collect();
+        assert_eq!(items.len(), 1, "One file should be open in the pane");
+    });
+
+    // The search query and results are preserved so the user can continue browsing.
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.matches.len() >= 3,
+            "Search results should remain unchanged after OpenWithoutDismiss"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_open_without_dismiss_opens_multiple_files(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "alpha.txt": "alpha",
+                    "beta.txt": "beta",
+                    "gamma.txt": "gamma",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (_picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("a");
+    cx.run_until_parked();
+
+    // Open the first match and stay in the finder.
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_some(),
+            "Finder should remain open after first OpenWithoutDismiss"
+        );
+    });
+    cx.read(|cx| {
+        let pane = workspace.read(cx).active_pane().read(cx);
+        assert_eq!(
+            pane.items().count(),
+            1,
+            "One file open after first OpenWithoutDismiss"
+        );
+    });
+
+    // Navigate to the next result and open it too.
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_some(),
+            "Finder should remain open after second OpenWithoutDismiss"
+        );
+    });
+    cx.read(|cx| {
+        let pane = workspace.read(cx).active_pane().read(cx);
+        assert_eq!(
+            pane.items().count(),
+            2,
+            "Two files open after second OpenWithoutDismiss"
+        );
+        // The second opened file should now be the active tab.
+        let active_index = pane.active_item_index();
+        assert_eq!(active_index, 1, "Second file should be the active tab");
+    });
+}
+
+#[gpui::test]
+async fn test_open_without_dismiss_then_confirm_closes_finder(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "first.txt": "first",
+                    "second.txt": "second",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("t");
+    cx.run_until_parked();
+    picker.update(cx, |picker, _| {
+        assert!(picker.delegate.matches.len() >= 2);
+    });
+
+    // Open first file, keep finder open.
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(workspace.active_modal::<FileFinder>(cx).is_some());
+    });
+
+    // Navigate to the next match and confirm normally — this should close the finder.
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_none(),
+            "Finder should be closed after regular Confirm"
+        );
+    });
+
+    // Two files were opened in total, with the confirmed one now active.
+    cx.read(|cx| {
+        let pane = workspace.read(cx).active_pane().read(cx);
+        assert_eq!(pane.items().count(), 2, "Two files should be open total");
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        let title = active_editor.read(cx).title(cx);
+        assert!(
+            title == "second.txt" || title == "first.txt",
+            "Active editor should be one of the opened files, got: {title}"
+        );
+    });
+}
+
 async fn open_close_queried_buffer(
     input: &str,
     expected_matches: usize,
