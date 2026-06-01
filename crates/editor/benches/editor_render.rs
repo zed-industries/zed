@@ -66,3 +66,6 @@ fn init_context(cx: &mut BenchAppContext) {
         editor::init(cx);
     });
 }
+
+gpui::bench_group!(benches, editor_input_with_1000_cursors);
+gpui::bench_main!(benches);

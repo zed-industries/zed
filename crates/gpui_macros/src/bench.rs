@@ -24,7 +24,6 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
 
     let outer_fn_name = inner_fn.sig.ident.clone();
     let inner_fn_name = format_ident!("__gpui_bench_{}", outer_fn_name);
-    let criterion_group_name = format_ident!("__gpui_bench_group_{}", outer_fn_name);
     inner_fn.sig.ident = inner_fn_name.clone();
 
     TokenStream::from(quote! {
@@ -38,8 +37,6 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
             });
         }
 
-        criterion::criterion_group!(#criterion_group_name, #outer_fn_name);
-        criterion::criterion_main!(#criterion_group_name);
     })
 }
 
