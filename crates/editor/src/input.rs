@@ -648,9 +648,9 @@ impl Editor {
                                 let row_start =
                                     buffer.point_to_offset(Point::new(start_point.row, 0));
                                 let tab_size = buffer.language_settings_at(start, cx).tab_size;
-                                existing_indent.len = existing_indent.len.saturating_sub(
-                                    outdent_len_for_indent(existing_indent, tab_size),
-                                );
+                                existing_indent.len = existing_indent
+                                    .len
+                                    .saturating_sub(existing_indent.outdent_len(tab_size));
                                 let mut new_text = String::new();
                                 new_text.extend(existing_indent.chars());
                                 new_text.push_str(continuation);
