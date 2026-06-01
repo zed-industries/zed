@@ -139,8 +139,7 @@ impl PlatformDispatcher for TestDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        self.scheduler
-            .schedule_foreground(self.session_id, runnable);
+        self.scheduler.schedule_local(self.session_id, runnable);
     }
 
     fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
