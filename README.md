@@ -316,7 +316,7 @@ It displays no footer and abbreviates paths to tildes.
 
 ## Buffer Search
 
-- never prefill the buffer search input field with the word under the cursor
+- never prefill the buffer search input field with the word under the cursor (except when in vim visual mode, then it takes selection)
 
 ## Hint jumping functionality
 
