@@ -13,9 +13,10 @@ pub mod pane_group;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+pub mod path_link;
 mod persistence;
 pub mod searchable;
-mod security_modal;
+pub mod security_modal;
 pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
@@ -63,8 +64,8 @@ use gpui::{
     Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
-    WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds, WindowHandle,
+    WindowId, WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -84,15 +85,15 @@ pub use pane_group::{
     ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
     SplitDirection,
 };
-use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
-    WorkspaceDb, delete_unloaded_items,
+    RecentWorkspace, WorkspaceDb, delete_unloaded_items,
     model::{
         DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
     },
-    read_serialized_multi_workspaces, resolve_worktree_workspaces,
+    read_serialized_multi_workspaces,
 };
+use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
@@ -118,7 +119,7 @@ use sqlez::{
     statement::Statement,
 };
 use status_bar::StatusBar;
-pub use status_bar::StatusItemView;
+pub use status_bar::{HideStatusItem, StatusItemView, add_hide_button_entry};
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -152,8 +153,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, FocusFollowsMouse, RestoreOnStartupBehavior,
-    StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
+    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -670,7 +671,11 @@ fn prompt_and_open_paths(
     create_new_window: bool,
     cx: &mut App,
 ) {
-    if let Some(workspace_window) = local_workspace_windows(cx).into_iter().next() {
+    if let Some(workspace_window) =
+        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
+            .into_iter()
+            .next()
+    {
         workspace_window
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
@@ -1290,11 +1295,17 @@ pub enum Event {
     WorktreeCreationChanged,
 }
 
+/// Controls which types of items should be made visible in the project panel
+/// when opened.
 #[derive(Debug, Clone)]
 pub enum OpenVisible {
+    /// Make all opened items visible (both files and directories).
     All,
+    /// Don't make any opened items visible.
     None,
+    /// Only make opened files visible, not directories.
     OnlyFiles,
+    /// Only make opened directories visible, not files.
     OnlyDirectories,
 }
 
@@ -1363,6 +1374,7 @@ pub struct Workspace {
     project: Entity<Project>,
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
+    auto_watch: AutoWatch,
     window_edited: bool,
     last_window_title: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
@@ -1413,6 +1425,19 @@ pub struct FollowerState {
     dock_pane: Option<Entity<Pane>>,
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, FollowerView>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoWatch {
+    Off,
+    Active { watched_peer: Option<PeerId> },
+    Paused,
+}
+
+impl AutoWatch {
+    pub fn enabled(&self) -> bool {
+        matches!(self, AutoWatch::Active { .. } | AutoWatch::Paused)
+    }
 }
 
 struct FollowerView {
@@ -1793,6 +1818,7 @@ impl Workspace {
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
+            auto_watch: AutoWatch::Off,
             dispatching_keystrokes: Default::default(),
             window_edited: false,
             last_window_title: None,
@@ -2089,13 +2115,22 @@ impl Workspace {
                 })
                 .log_err();
 
-            if open_mode == OpenMode::NewWindow {
+            if open_mode == OpenMode::NewWindow || open_mode == OpenMode::Activate {
                 window
                     .update(cx, |_, window, _cx| {
                         window.activate_window();
                     })
                     .log_err();
             }
+
+            // Auto-show the security modal if the project has restricted worktrees
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_worktree_trust_security_modal(false, window, cx);
+                    });
+                })
+                .log_err();
 
             Ok(OpenResult {
                 window,
@@ -3290,9 +3325,30 @@ impl Workspace {
                 }
             }
 
+            // Hot-exit silently writes dirty buffers to the DB; only allow it
+            // if the workspace will be reachable again, either via session
+            // restore or by reopening its folder paths. Otherwise prompt, so
+            // we don't orphan the buffers.
+            let allow_hot_exit_serialization = close_intent == CloseIntent::Quit
+                || save_last_workspace
+                || this
+                    .read_with(cx, |workspace, cx| {
+                        workspace
+                            .project
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .next()
+                            .is_some()
+                    })
+                    .unwrap_or(false);
             let save_result = this
                 .update_in(cx, |this, window, cx| {
-                    this.save_all_internal(SaveIntent::Close, window, cx)
+                    this.save_all_internal(
+                        SaveIntent::Close,
+                        allow_hot_exit_serialization,
+                        window,
+                        cx,
+                    )
                 })?
                 .await;
 
@@ -3313,6 +3369,7 @@ impl Workspace {
     fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all_internal(
             action.save_intent.unwrap_or(SaveIntent::SaveAll),
+            true,
             window,
             cx,
         )
@@ -3410,12 +3467,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        self.save_all_internal(SaveIntent::Close, window, cx)
+        self.save_all_internal(SaveIntent::Close, true, window, cx)
     }
 
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
+        allow_hot_exit_serialization: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
@@ -3442,23 +3500,27 @@ impl Workspace {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let mut serialize_tasks = Vec::new();
                 let mut remaining_dirty_items = Vec::new();
-                workspace.update_in(cx, |workspace, window, cx| {
-                    for (pane, item) in dirty_items {
-                        if let Some(task) = item
-                            .to_serializable_item_handle(cx)
-                            .and_then(|handle| handle.serialize(workspace, true, window, cx))
-                        {
-                            serialize_tasks.push((pane, item, task));
-                        } else {
+                if allow_hot_exit_serialization {
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        for (pane, item) in dirty_items {
+                            if let Some(task) = item
+                                .to_serializable_item_handle(cx)
+                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                            {
+                                serialize_tasks.push((pane, item, task));
+                            } else {
+                                remaining_dirty_items.push((pane, item));
+                            }
+                        }
+                    })?;
+
+                    for (pane, item, task) in serialize_tasks {
+                        if task.await.log_err().is_none() {
                             remaining_dirty_items.push((pane, item));
                         }
                     }
-                })?;
-
-                for (pane, item, task) in serialize_tasks {
-                    if task.await.log_err().is_none() {
-                        remaining_dirty_items.push((pane, item));
-                    }
+                } else {
+                    remaining_dirty_items = dirty_items;
                 }
 
                 if !remaining_dirty_items.is_empty() {
@@ -3610,8 +3672,23 @@ impl Workspace {
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
-                    let (_worktree, project_path) = project_path?;
-                    if fs.is_dir(&abs_path).await {
+                    let (worktree, project_path) = project_path?;
+                    let (entry_is_directory, worktree_is_local) =
+                        worktree.read_with(cx, |worktree, _| {
+                            let entry = if project_path.path.as_unix_str().is_empty() {
+                                worktree.root_entry()
+                            } else {
+                                worktree.entry_for_path(&project_path.path)
+                            };
+                            (entry.map(|entry| entry.is_dir()), worktree.is_local())
+                        });
+                    let is_directory = match entry_is_directory {
+                        Some(is_directory) => is_directory,
+                        None if worktree_is_local => fs.is_dir(&abs_path).await,
+                        None => false,
+                    };
+
+                    if is_directory {
                         // Opening a directory should not race to update the active entry.
                         // We'll select/reveal a deterministic final entry after all paths finish opening.
                         None
@@ -4783,6 +4860,93 @@ impl Workspace {
         }
     }
 
+    pub fn auto_watch_state(&self) -> &AutoWatch {
+        &self.auto_watch
+    }
+
+    fn next_watched_peer(&self, cx: &App) -> Option<PeerId> {
+        self.active_call()
+            .and_then(|call| call.peer_ids_with_video_tracks(cx).first().copied())
+    }
+
+    pub fn toggle_auto_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.auto_watch.enabled() {
+            self.auto_watch = AutoWatch::Off;
+            cx.notify();
+            return;
+        }
+
+        let active_pane = self.active_pane.clone();
+        self.unfollow_in_pane(&active_pane, window, cx);
+
+        let local_is_sharing = self
+            .active_call()
+            .map_or(false, |call| call.is_sharing_screen(cx));
+
+        if local_is_sharing {
+            self.auto_watch = AutoWatch::Paused;
+        } else {
+            let watched_peer = self.next_watched_peer(cx);
+            self.auto_watch = AutoWatch::Active { watched_peer };
+
+            if let Some(peer_id) = watched_peer {
+                self.open_shared_screen(peer_id, window, cx);
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn handle_auto_watch_video_tracks_changed(
+        &mut self,
+        peer_id: PeerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let AutoWatch::Active { watched_peer } = self.auto_watch else {
+            return;
+        };
+
+        let peer_is_sharing = self.active_call().map_or(false, |call| {
+            call.peer_ids_with_video_tracks(cx).contains(&peer_id)
+        });
+        let should_watch_peer = peer_is_sharing && watched_peer.is_none();
+        let watched_peer_stopped_sharing = watched_peer == Some(peer_id) && !peer_is_sharing;
+
+        if should_watch_peer || watched_peer_stopped_sharing {
+            let next_watched_peer = if should_watch_peer {
+                Some(peer_id)
+            } else {
+                self.next_watched_peer(cx)
+            };
+
+            self.auto_watch = AutoWatch::Active {
+                watched_peer: next_watched_peer,
+            };
+
+            if let Some(next_watched_peer) = next_watched_peer {
+                self.open_shared_screen(next_watched_peer, window, cx);
+            }
+        }
+    }
+
+    fn handle_auto_watch_local_share_stopped(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let AutoWatch::Paused = self.auto_watch else {
+            return;
+        };
+
+        let watched_peer = self.next_watched_peer(cx);
+        self.auto_watch = AutoWatch::Active { watched_peer };
+
+        if let Some(peer_id) = watched_peer {
+            self.open_shared_screen(peer_id, window, cx);
+        }
+    }
+
     pub fn activate_item(
         &mut self,
         item: &dyn ItemHandle,
@@ -5613,6 +5777,7 @@ impl Workspace {
             .insert(pane.downgrade(), leader_id);
         self.unfollow(leader_id, window, cx);
         self.unfollow_in_pane(&pane, window, cx);
+        self.auto_watch = AutoWatch::Off;
         self.follower_states.insert(
             leader_id,
             FollowerState {
@@ -5746,10 +5911,18 @@ impl Workspace {
             // if they are active in another project, follow there.
             if let Some(project_id) = other_project_id {
                 let app_state = self.app_state.clone();
-                crate::join_in_room_project(project_id, remote_participant.user.id, app_state, cx)
-                    .detach_and_prompt_err("Failed to join project", window, cx, |error, _, _| {
-                        Some(format!("{error:#}"))
-                    });
+                crate::join_in_room_project(
+                    project_id,
+                    remote_participant.user.legacy_id,
+                    app_state,
+                    cx,
+                )
+                .detach_and_prompt_err(
+                    "Failed to join project",
+                    window,
+                    cx,
+                    |error, _, _| Some(format!("{error:#}")),
+                );
             }
         }
 
@@ -5800,7 +5973,7 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(
+    pub(crate) fn active_item_path_changed(
         &mut self,
         focus_changed: bool,
         window: &mut Window,
@@ -6512,9 +6685,27 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            ActiveCallEvent::ParticipantLocationChanged { participant_id }
-            | ActiveCallEvent::RemoteVideoTracksChanged { participant_id } => {
+            ActiveCallEvent::ParticipantLocationChanged { participant_id } => {
                 self.leader_updated(participant_id, window, cx);
+            }
+            ActiveCallEvent::RemoteVideoTracksChanged { participant_id } => {
+                self.leader_updated(participant_id, window, cx);
+                self.handle_auto_watch_video_tracks_changed(*participant_id, window, cx);
+            }
+            ActiveCallEvent::LocalScreenShareStarted => {
+                if let AutoWatch::Active { .. } = self.auto_watch {
+                    self.auto_watch = AutoWatch::Paused;
+                    cx.notify();
+                }
+            }
+            ActiveCallEvent::LocalScreenShareStopped => {
+                self.handle_auto_watch_local_share_stopped(window, cx);
+            }
+            ActiveCallEvent::RoomLeft => {
+                if self.auto_watch.enabled() {
+                    self.auto_watch = AutoWatch::Off;
+                    cx.notify();
+                }
             }
         }
     }
@@ -6618,14 +6809,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let removing_active_pane = self.active_pane() == pane;
         self.panes.retain(|p| p != pane);
         if let Some(focus_on) = focus_on {
+            if removing_active_pane {
+                self.set_active_pane(focus_on, window, cx);
+            }
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
-        } else if self.active_pane() == pane {
+        } else if removing_active_pane {
             let fallback_pane = self.panes.last().unwrap().clone();
-            if self.has_active_modal(window, cx) {
-                self.set_active_pane(&fallback_pane, window, cx);
-            } else {
+            self.set_active_pane(&fallback_pane, window, cx);
+            if !self.has_active_modal(window, cx) {
                 fallback_pane.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
             }
         }
@@ -6743,11 +6937,13 @@ impl Workspace {
                 let center_group = build_serialized_pane_group(&self.center.root, window, cx);
                 let docks = build_serialized_docks(self, window, cx);
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
+                let identity_paths_hint = self.project_group_key(cx).path_list().clone();
 
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
                     location,
                     paths,
+                    identity_paths: Some(identity_paths_hint),
                     center_group,
                     window_bounds,
                     display: Default::default(),
@@ -7636,6 +7832,12 @@ impl Workspace {
                         .and_then(|state| state.size)
                         .unwrap_or_else(|| panel.default_size(window, cx));
                     container = container.w(size);
+                    // Allow the fixed-width dock to shrink when there isn't
+                    // enough space (e.g. when the sidebar is open). The
+                    // stored size is preserved so the dock expands back
+                    // when space becomes available.
+                    let style = container.style();
+                    style.flex_shrink = Some(1.0);
                 }
                 if let Some(min) = min_size {
                     container = container.min_w(min);
@@ -7849,13 +8051,10 @@ impl Workspace {
                 });
             }
         } else {
-            let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-                .map(|trusted_worktrees| {
-                    trusted_worktrees
-                        .read(cx)
-                        .has_restricted_worktrees(&self.project().read(cx).worktree_store(), cx)
-                })
-                .unwrap_or(false);
+            let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
+                &self.project().read(cx).worktree_store(),
+                cx,
+            );
             if has_restricted_worktrees {
                 let project = self.project().read(cx);
                 let remote_host = project
@@ -7879,6 +8078,7 @@ pub trait AnyActiveCall {
     fn unshare_project(&self, _: Entity<Project>, _: &mut App) -> Result<()>;
     fn remote_participant_for_peer_id(&self, _: PeerId, _: &App) -> Option<RemoteCollaborator>;
     fn is_sharing_project(&self, _: &App) -> bool;
+    fn is_sharing_screen(&self, _: &App) -> bool;
     fn has_remote_participants(&self, _: &App) -> bool;
     fn local_participant_is_guest(&self, _: &App) -> bool;
     fn client(&self, _: &App) -> Arc<Client>;
@@ -7908,6 +8108,7 @@ pub trait AnyActiveCall {
         _: &mut Window,
         _: &mut App,
     ) -> Option<Entity<SharedScreen>>;
+    fn peer_ids_with_video_tracks(&self, _: &App) -> Vec<PeerId>;
 }
 
 #[derive(Clone)]
@@ -7961,6 +8162,9 @@ pub struct RemoteCollaborator {
 pub enum ActiveCallEvent {
     ParticipantLocationChanged { participant_id: PeerId },
     RemoteVideoTracksChanged { participant_id: PeerId },
+    LocalScreenShareStarted,
+    LocalScreenShareStopped,
+    RoomLeft,
 }
 
 fn leader_border_for_pane(
@@ -8829,7 +9033,7 @@ pub async fn last_opened_workspace_location(
         .await
         .log_err()
         .flatten()
-        .map(|(id, location, paths, _timestamp)| (id, location, paths))
+        .map(|workspace| (workspace.workspace_id, workspace.location, workspace.paths))
 }
 
 pub async fn last_session_workspace_locations(
@@ -8950,7 +9154,7 @@ pub async fn apply_restored_multiworkspace_state(
                     && let Some(common_dir) =
                         project::discover_root_repo_common_dir(path, fs.as_ref()).await
                 {
-                    let main_path = common_dir.parent().unwrap_or(&common_dir);
+                    let main_path = project::repo_identity_path(&common_dir);
                     resolved_paths.push(main_path.to_path_buf());
                 } else {
                     resolved_paths.push(path.to_path_buf());
@@ -9306,7 +9510,7 @@ pub async fn get_any_active_multi_workspace(
     activate_any_workspace_window(&mut cx).context("could not open zed")
 }
 
-fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {
+pub fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {
     cx.update(|cx| {
         if let Some(workspace_window) = cx
             .active_window()
@@ -9325,10 +9529,6 @@ fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Multi
         }
         None
     })
-}
-
-pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<MultiWorkspace>> {
-    workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
 }
 
 pub fn workspace_windows_for_location(
@@ -10458,6 +10658,7 @@ pub fn client_side_decorations(
                                 },
                                 blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
                                 spread_radius: px(0.),
+                                inset: false,
                                 offset: point(px(0.0), px(0.0)),
                             }])
                         }),
@@ -11353,7 +11554,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_window_with_serializable_items(cx: &mut TestAppContext) {
+    async fn test_close_window_with_worktrees_hot_exits(cx: &mut TestAppContext) {
         init_test(cx);
 
         // Register TestItem as a serializable item
@@ -11390,8 +11591,163 @@ mod tests {
         assert!(task.await.unwrap());
     }
 
+    // See https://github.com/zed-industries/zed/issues/55726.
+    //
+    // macOS only: on Linux/Windows, closing the last window sets
+    // `save_last_workspace`, which preserves the session (same as `Quit`),
+    // so hot-exit is safe there.
+    #[cfg(target_os = "macos")]
     #[gpui::test]
-    async fn test_close_window_with_failing_serialization(cx: &mut TestAppContext) {
+    async fn test_close_window_without_worktrees_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "closing a no-folder workspace with a dirty serializable item should prompt, \
+             since the workspace will not be reachable after close"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_quit_without_worktrees_hot_exits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::Quit, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            !cx.has_pending_prompt(),
+            "quitting should hot-exit silently; the session restore on next \
+             launch will bring the dirty buffer back"
+        );
+        assert!(task.await.unwrap());
+    }
+
+    // See https://github.com/zed-industries/zed/issues/55726.
+    #[gpui::test]
+    async fn test_replace_window_without_worktrees_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "replacing a workspace with a dirty serializable item should prompt, \
+             since the workspace will be detached afterwards"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_replace_window_with_worktrees_hot_exits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            !cx.has_pending_prompt(),
+            "replacing a workspace with folder paths should hot-exit silently; \
+             the buffer is recoverable by reopening the project"
+        );
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_close_window_with_failing_serialize_prompts(cx: &mut TestAppContext) {
         init_test(cx);
 
         cx.update(|cx| {
@@ -14515,6 +14871,47 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert_eq!(panel.read(cx).position, DockPosition::Right);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_active_pane_updates_to_focus_target_on_removal(cx: &mut TestAppContext) {
+        assert_active_pane_is_replaced_after_removal(cx, true).await;
+    }
+
+    #[gpui::test]
+    async fn test_active_pane_updates_to_fallback_on_removal(cx: &mut TestAppContext) {
+        assert_active_pane_is_replaced_after_removal(cx, false).await;
+    }
+
+    async fn assert_active_pane_is_replaced_after_removal(
+        cx: &mut TestAppContext,
+        use_focus_target: bool,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let first_pane = workspace.active_pane().clone();
+            let second_pane =
+                workspace.split_pane(first_pane.clone(), SplitDirection::Right, window, cx);
+            workspace.set_active_pane(&second_pane, window, cx);
+
+            let focus_target = use_focus_target.then(|| first_pane.clone());
+            workspace.remove_pane(second_pane, focus_target, window, cx);
+
+            assert_eq!(workspace.active_pane(), &first_pane);
+            assert!(
+                workspace
+                    .panes()
+                    .iter()
+                    .any(|pane| pane == workspace.active_pane()),
+                "active pane should be one of the remaining workspace panes"
+            );
         });
     }
 

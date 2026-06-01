@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -540,7 +540,7 @@ fn add_message_content_part(
     new_part: open_router::MessagePart,
     role: Role,
     messages: &mut Vec<open_router::RequestMessage>,
-    reasoning_details: Option<serde_json::Value>,
+    reasoning_details: Option<Arc<serde_json::Value>>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_router::RequestMessage::User { content }))

@@ -50,7 +50,7 @@ use unindent::Unindent as _;
 use util::{path, rel_path::rel_path, uri};
 use workspace::{Pane, ParticipantLocation};
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -1872,7 +1872,7 @@ async fn test_active_call_events(
         mem::take(&mut *events_b.borrow_mut()),
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
-                id: client_a.user_id().unwrap(),
+                legacy_id: client_a.user_id().unwrap(),
                 github_login: "user_a".into(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
@@ -1891,7 +1891,7 @@ async fn test_active_call_events(
         mem::take(&mut *events_a.borrow_mut()),
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
-                id: client_b.user_id().unwrap(),
+                legacy_id: client_b.user_id().unwrap(),
                 github_login: "user_b".into(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
@@ -7142,6 +7142,7 @@ async fn test_remote_git_branches(
     let new_branch = branches[2];
 
     let branches_b = branches_b
+        .branches
         .into_iter()
         .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();

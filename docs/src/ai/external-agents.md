@@ -21,18 +21,15 @@ Under the hood we run Gemini CLI in the background, and talk to it over ACP.
 
 ### Getting Started
 
-First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
+First open the agent panel with {#kb agent::ToggleFocus}, and then start a new Gemini CLI thread using the agent selector button on the left (in the empty state) or the `+` button in the top right.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
 ```json [keymap]
 [
   {
     "bindings": {
-      "cmd-alt-g": [
-        "agent::NewExternalAgentThread",
-        { "agent": { "custom": { "name": "gemini" } } }
-      ]
+      "cmd-alt-g": ["agent::NewExternalAgentThread", { "agent": "gemini" }]
     }
   }
 ]
@@ -67,18 +64,15 @@ Under the hood, Zed runs the Claude Agent SDK, which runs Claude Code under the 
 
 ### Getting Started
 
-Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Agent thread.
+Open the agent panel with {#kb agent::ToggleFocus}, and then start a new Claude Agent thread using the agent selector button on the left (in the empty state) or the `+` button in the top right.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
 ```json [keymap]
 [
   {
     "bindings": {
-      "cmd-alt-c": [
-        "agent::NewExternalAgentThread",
-        { "agent": { "custom": { "name": "claude-acp" } } }
-      ]
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude-acp" }]
     }
   }
 ]
@@ -142,18 +136,15 @@ Under the hood, Zed runs Codex CLI and communicates to it over ACP, through [a d
 ### Getting Started
 
 As of version `0.208`, you should be able to use Codex directly from Zed.
-Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Codex thread.
+Open the agent panel with {#kb agent::ToggleFocus}, and then start a new Codex thread using the agent selector button on the left (in the empty state) or the `+` button in the top right.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
 ```json
 [
   {
     "bindings": {
-      "cmd-alt-c": [
-        "agent::NewExternalAgentThread",
-        { "agent": { "custom": { "name": "codex-acp" } } }
-      ]
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "codex-acp" }]
     }
   }
 ]
@@ -202,7 +193,7 @@ At some point in the near future, Agent Server extensions will be deprecated.
 
 Add more external agents to Zed by installing [Agent Server extensions](../extensions/agent-servers.md).
 
-See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with `zed: extensions`, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
+See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with {#action zed::Extensions}, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
 
 ### Via The ACP Registry
 
@@ -216,7 +207,7 @@ At the moment, the registry is a curated set of agents, including only the ones 
 
 #### Using it in Zed
 
-Use the `zed: acp registry` command to quickly go to the ACP Registry page.
+Use the {#action zed::AcpRegistry} command to quickly go to the ACP Registry page.
 There's also a button ("Add Agent") that takes you there in the agent panel's configuration view.
 
 From there, you can click to install your preferred agent and it will become available right away in the `+` icon button in the agent panel.
@@ -244,9 +235,27 @@ This can be useful if you're in the middle of developing a new agent that speaks
 
 It's also possible to customize environment variables for registry-installed agents like Claude Agent, Codex, and Gemini CLI by using their registry names (`claude-acp`, `codex-acp`, `gemini`) with `"type": "registry"` in your settings.
 
+## Importing Threads {#importing-threads}
+
+Zed can import existing threads from your external agent so they show up in your [Thread History](./agent-panel.md#multiple-threads) alongside the rest of your threads. This is useful when you've been working with Claude Agent, Codex, or another agent elsewhere and want to continue those conversations in Zed.
+
+### Starting an Import
+
+Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} and open Thread History by clicking the clock icon at the bottom of the sidebar (or run {#action agents_sidebar::ToggleThreadHistory} from the Command Palette). Then click the **Import Threads** button (the download icon) in the Thread History toolbar.
+
+This opens the **Import External Agent Threads** dialog, which lists every external agent you have configured. Choose the agents you want to import from, then click **Import Threads**. Zed connects to each selected agent, retrieves its sessions over [ACP](https://agentclientprotocol.com), and adds any that aren't already in your history. When the import finishes, a notification reports how many threads were added.
+
+### What to Expect
+
+- **The agent must be configured in Zed.** Only agents you've already set up (see the sections above and [Add More Agents](#add-more-agents)) appear in the dialog.
+- **Imported threads are archived.** They're added to Thread History as archived entries; open one to restore it and continue where you left off. See [Managing Multiple Threads](./agent-panel.md#multiple-threads).
+- **Only threads tied to a project folder are imported.** Sessions that an agent reports without an associated working directory are skipped.
+- **Re-importing is safe.** Threads you've already imported are skipped, so you can run the import again later to pick up new sessions without creating duplicates.
+- **Local and remote projects are supported.** Threads are gathered from the agents available in your current local and [remote](../remote-development.md) projects.
+
 ## Debugging Agents
 
-When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette.
+When using external agents in Zed, you can access the debug view via {#action dev::OpenAcpLogs} from the Command Palette.
 This lets you see the messages being sent and received between Zed and the agent.
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
@@ -339,7 +348,7 @@ For more on configuring MCP servers, see [Model Context Protocol](./mcp.md).
 
 1. Verify the MCP server is enabled in `context_servers` settings
 2. For remote MCP servers with OAuth, this is a [known issue](https://github.com/zed-industries/zed/issues/54410) — try local stdio-based servers instead
-3. Open `dev: open acp logs` from the Command Palette to debug
+3. Open {#action dev::OpenAcpLogs} from the Command Palette to debug
 
 **"My existing Claude Code / Codex setup isn't working in Zed"**
 

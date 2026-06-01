@@ -8,7 +8,7 @@ use lsp::LanguageServerId;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
@@ -416,6 +416,16 @@ impl HeadlessProject {
                         log_store.remove_language_server(*id, cx);
                     });
                 }
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_name: None,
+                        language_server_id: id.to_proto(),
+                        variant: Some(proto::update_language_server::Variant::Removed(
+                            proto::ServerRemoved {},
+                        )),
+                    })
+                    .log_err();
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,

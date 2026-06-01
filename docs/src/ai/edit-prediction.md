@@ -111,7 +111,7 @@ After that, `alt-tab` remains available for accepting edit predictions, and on L
 
 To move both default accept bindings to something else, unbind them and add your replacement:
 
-Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and delete it. Then right click on the binding for `alt-tab`, select "Edit", and record your desired keystrokes before hitting saving.
+Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and delete it. Then right click on the binding for `alt-tab`, select "Edit", and record your desired keystrokes before saving.
 
 Alternatively, you can put the following in your `keymap.json`:
 
@@ -286,11 +286,29 @@ After adding your API key, Codestral will appear in the provider dropdown in the
 }
 ```
 
-### Self-Hosted OpenAI-compatible servers
+### Local and self-hosted models
 
-You can use any self-hosted server that implements the OpenAI completion API format. This works with vLLM, llama.cpp server, LocalAI, and other compatible servers.
+You can use local or self-hosted edit prediction models through Ollama or any server that implements the OpenAI completion API format. This works with Ollama, vLLM, llama.cpp server, LocalAI, and other compatible servers.
 
-#### Configuration
+#### Ollama
+
+Set `ollama` as your provider and configure the local model:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "ollama",
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "prompt_format": "infer",
+      "max_output_tokens": 512
+    }
+  }
+}
+```
+
+#### OpenAI-compatible servers
 
 Set `open_ai_compatible_api` as your provider and configure the API endpoint:
 
@@ -302,7 +320,7 @@ Set `open_ai_compatible_api` as your provider and configure the API endpoint:
       "api_url": "http://localhost:8080/v1/completions",
       "model": "deepseek-coder-6.7b-base",
       "prompt_format": "deepseek_coder",
-      "max_output_tokens": 64
+      "max_output_tokens": 512
     }
   }
 }
@@ -310,15 +328,55 @@ Set `open_ai_compatible_api` as your provider and configure the API endpoint:
 
 The `prompt_format` setting controls how code context is formatted for the model. Use `"infer"` to detect the format from the model name, or specify one explicitly:
 
+- `zeta` - Zeta 1 format
+- `zeta2` - Zeta 2 format
+- `zeta2_1` - Zeta 2.1 format
 - `code_llama` - CodeLlama format: `<PRE> prefix <SUF> suffix <MID>`
 - `star_coder` - StarCoder format: `<fim_prefix>prefix<fim_suffix>suffix<fim_middle>`
 - `deepseek_coder` - DeepSeek format with special unicode markers
 - `qwen` - Qwen/CodeGemma format: `<|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>`
+- `code_gemma` - CodeGemma format: `<|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>`
 - `codestral` - Codestral format: `[SUFFIX]suffix[PREFIX]prefix`
 - `glm` - GLM-4 format with code markers
 - `infer` - Auto-detect from model name (default)
 
-Your server must implement the OpenAI `/v1/completions` endpoint. Edit predictions will send POST requests with this format:
+With `"prompt_format": "infer"`, Zed automatically uses Zeta 2 format for models named `zeta2` and Zeta 2.1 format for models named `zeta2.1`.
+
+For example, to use Zeta 2 with Ollama:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "ollama",
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "zeta2",
+      "prompt_format": "infer",
+      "max_output_tokens": 512
+    }
+  }
+}
+```
+
+To use Zeta 2.1 with an OpenAI-compatible server:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "open_ai_compatible_api",
+    "open_ai_compatible_api": {
+      "api_url": "http://localhost:8080/v1/completions",
+      "model": "zeta2.1",
+      "prompt_format": "infer",
+      "max_output_tokens": 512
+    }
+  }
+}
+```
+
+You can also set `"prompt_format": "zeta2"` or `"prompt_format": "zeta2_1"` explicitly when the model name does not match.
+
+Your OpenAI-compatible server must implement the OpenAI `/v1/completions` endpoint. Edit predictions will send POST requests with this format:
 
 ```json
 {

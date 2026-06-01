@@ -14,7 +14,7 @@ pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
-use project::linked_worktree_short_name;
+use project::{linked_worktree_short_name, repo_identity_path};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -29,7 +29,7 @@ use cloud_api_types::Plan;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
+    StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
     pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
@@ -51,7 +51,8 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt,
+    MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
 use zed_actions::OpenRemote;
@@ -183,30 +184,56 @@ impl Render for TitleBar {
 
         let show_menus = show_menus(cx);
 
-        let mut children = <ArrayVec<_, 4>>::new();
+        let mut children = <ArrayVec<_, 5>>::new();
 
         let mut project_name = None;
         let mut repository = None;
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
             repository = self.get_repository_for_worktree(&worktree, cx);
-            let worktree = worktree.read(cx);
+            let worktree_abs_path = worktree.read(cx).abs_path();
             project_name = worktree
+                .read(cx)
                 .root_name()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                linked_worktree_name = linked_worktree_short_name(
-                    repo.original_repo_abs_path.as_ref(),
-                    repo.work_directory_abs_path.as_ref(),
-                );
-                if let Some(name) = repo
-                    .original_repo_abs_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                {
-                    project_name = Some(SharedString::from(name.to_string()));
+                linked_worktree_name = repo
+                    .main_worktree_abs_path()
+                    .and_then(|main_worktree_path| {
+                        linked_worktree_short_name(
+                            main_worktree_path,
+                            repo.work_directory_abs_path.as_ref(),
+                        )
+                    })
+                    .or_else(|| {
+                        repo.is_linked_worktree()
+                            .then_some(project_name.clone())
+                            .flatten()
+                    });
+
+                let identity = repo_identity_path(&repo.common_dir_abs_path);
+
+                let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
+                    identity.file_stem()
+                } else {
+                    identity.file_name()
+                };
+
+                if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
+                    let name = if let Ok(relative) =
+                        worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                    {
+                        if relative.as_os_str().is_empty() {
+                            repo_name.to_string()
+                        } else {
+                            format!("{}/{}", repo_name, relative.display())
+                        }
+                    } else {
+                        repo_name.to_string()
+                    };
+                    project_name = Some(SharedString::from(name));
                 }
             }
         }
@@ -428,6 +455,8 @@ impl TitleBar {
             titlebar
         });
 
+        let banner = None;
+
         let mut this = Self {
             platform_titlebar,
             application_menu,
@@ -437,7 +466,7 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
-            banner: None,
+            banner,
             update_version,
             screen_share_popover_handle: PopoverMenuHandle::default(),
             _diagnostics_subscription: None,
@@ -597,13 +626,8 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-            .map(|trusted_worktrees| {
-                trusted_worktrees
-                    .read(cx)
-                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
-            })
-            .unwrap_or(false);
+        let has_restricted_worktrees =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
         if !has_restricted_worktrees {
             return None;
         }
@@ -664,7 +688,7 @@ impl TitleBar {
             .user_store
             .read(cx)
             .participant_indices()
-            .get(&host_user.id)?;
+            .get(&host_user.legacy_id)?;
 
         Some(
             Button::new("project_owner_trigger", host_user.github_login.clone())
@@ -1136,6 +1160,7 @@ impl TitleBar {
         let show_update_button = self.update_version.read(cx).show_update_in_menu_bar();
 
         let user_store = self.user_store.clone();
+        let workspace = self.workspace.clone();
         let user_store_read = user_store.read(cx);
         let user = user_store_read.current_user();
 
@@ -1202,6 +1227,7 @@ impl TitleBar {
                 let current_organization = current_organization.clone();
                 let organizations = organizations.clone();
                 let user_store = user_store.clone();
+                let workspace = workspace.clone();
 
                 let ai_enabled = !project::DisableAiSettings::get_global(cx).disable_ai;
                 let current_layout = AgentSettings::get_layout(cx);
@@ -1293,11 +1319,13 @@ impl TitleBar {
                                 {
                                     let user_store = user_store.clone();
                                     let organization = organization.clone();
-                                    move |_window, cx| {
-                                        user_store.update(cx, |user_store, cx| {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        let task = user_store.update(cx, |user_store, cx| {
                                             user_store
-                                                .set_current_organization(organization.clone(), cx);
+                                                .set_current_organization(organization.clone(), cx)
                                         });
+                                        task.detach_and_notify_err(workspace.clone(), window, cx);
                                     }
                                 },
                             );

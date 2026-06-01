@@ -17,7 +17,7 @@ use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens}
 
 pub use settings::{
     AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
-    EditPredictionPromptFormat, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
+    EditPredictionPromptFormatContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
     LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
@@ -477,7 +477,6 @@ pub struct EditPredictionSettings {
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
-    pub examples_dir: Option<Arc<Path>>,
     /// Controls whether training data collection is enabled.
     ///
     /// `Default` means the value stored in the legacy KV store is used as a fallback,
@@ -538,6 +537,46 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     /// The prompt format to use for completions. When `None`, the format
     /// will be derived from the model name at request time.
     pub prompt_format: EditPredictionPromptFormat,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum EditPredictionPromptFormat {
+    #[default]
+    Infer,
+    Zeta(ZetaVersion),
+    CodeLlama,
+    StarCoder,
+    DeepseekCoder,
+    Qwen,
+    CodeGemma,
+    Codestral,
+    Glm,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum ZetaVersion {
+    Zeta1,
+    Zeta2,
+    #[default] // NOTE: make latest version default when adding
+    Zeta2_1,
+}
+
+impl From<EditPredictionPromptFormatContent> for EditPredictionPromptFormat {
+    fn from(value: EditPredictionPromptFormatContent) -> Self {
+        match value {
+            EditPredictionPromptFormatContent::Infer => Self::Infer,
+            EditPredictionPromptFormatContent::Zeta => Self::Zeta(ZetaVersion::Zeta1),
+            EditPredictionPromptFormatContent::Zeta2 => Self::Zeta(ZetaVersion::Zeta2),
+            EditPredictionPromptFormatContent::Zeta2_1 => Self::Zeta(ZetaVersion::Zeta2_1),
+            EditPredictionPromptFormatContent::CodeLlama => Self::CodeLlama,
+            EditPredictionPromptFormatContent::StarCoder => Self::StarCoder,
+            EditPredictionPromptFormatContent::DeepseekCoder => Self::DeepseekCoder,
+            EditPredictionPromptFormatContent::Qwen => Self::Qwen,
+            EditPredictionPromptFormatContent::CodeGemma => Self::CodeGemma,
+            EditPredictionPromptFormatContent::Codestral => Self::Codestral,
+            EditPredictionPromptFormatContent::Glm => Self::Glm,
+        }
+    }
 }
 
 impl AllLanguageSettings {
@@ -816,7 +855,7 @@ impl settings::Settings for AllLanguageSettings {
                 model: model.0,
                 max_output_tokens: ollama.max_output_tokens.unwrap(),
                 api_url: ollama.api_url.unwrap().into(),
-                prompt_format: ollama.prompt_format.unwrap(),
+                prompt_format: ollama.prompt_format.unwrap().into(),
             });
         let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
         let openai_compatible_settings = openai_compatible_settings
@@ -831,7 +870,7 @@ impl settings::Settings for AllLanguageSettings {
                 model,
                 max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
                 api_url: api_url.into(),
-                prompt_format: openai_compatible_settings.prompt_format.unwrap(),
+                prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
             });
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
@@ -871,7 +910,6 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
-                examples_dir: edit_predictions.examples_dir,
                 allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },
             defaults: default_language_settings,

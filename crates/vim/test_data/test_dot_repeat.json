@@ -36,3 +36,25 @@
 {"Put":{"state":"THE QUIˇck brown fox"}}
 {"Key":"."}
 {"Get":{"state":"THE QUICK ˇbrown fox","mode":"Normal"}}
+{"Put":{"state":"ˇ"}}
+{"Key":"q"}
+{"Key":"l"}
+{"Key":"shift-o"}
+{"Key":"h"}
+{"Key":"e"}
+{"Key":"l"}
+{"Key":"l"}
+{"Key":"o"}
+{"Key":"space"}
+{"Key":"w"}
+{"Key":"o"}
+{"Key":"r"}
+{"Key":"l"}
+{"Key":"d"}
+{"Key":"escape"}
+{"Key":"q"}
+{"Key":"@"}
+{"Key":"l"}
+{"Get":{"state":"hello worlˇd\nhello world\n","mode":"Normal"}}
+{"Key":"."}
+{"Get":{"state":"hello worlˇd\nhello world\nhello world\n","mode":"Normal"}}
