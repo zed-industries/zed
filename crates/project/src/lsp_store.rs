@@ -3314,7 +3314,18 @@ impl LocalLspStore {
                 //
                 // In order for the diffing logic below to work properly, any edits that
                 // cancel each other out must be combined into one.
+                //
+                // Do not merge overlapping edits by concatenating replacement text.
+                // Some language servers (e.g. oxc for nested sort-keys fixes) return
+                // nested replacements whose ranges overlap. The outermost edit already
+                // contains the correct final text for its entire range, so we discard
+                // any edit whose start falls inside the current range.
                 while let Some((next_range, next_text)) = lsp_edits.peek() {
+                    if next_range.start.0 < range.end {
+                        lsp_edits.next();
+                        continue;
+                    }
+
                     if next_range.start.0 > range.end {
                         if next_range.start.0.row > range.end.row + 1
                             || next_range.start.0.column > 0
@@ -3325,6 +3336,7 @@ impl LocalLspStore {
                         {
                             break;
                         }
+
                         new_text.push('\n');
                     }
                     range.end = snapshot.clip_point_utf16(next_range.end, Bias::Left);

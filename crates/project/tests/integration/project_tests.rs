@@ -4431,6 +4431,99 @@ async fn test_edits_from_lsp_with_replacement_followed_by_adjacent_insertion(
 }
 
 #[gpui::test]
+async fn test_edits_from_lsp_with_overlapping_multiline_replacements(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let text = "
+        export const obj = {
+          b: 1,
+          a: {
+            d: 1,
+            c: {
+              f: 1,
+              e: 1,
+            },
+          },
+        };
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.js": text.clone(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.js"), cx)
+        })
+        .await
+        .unwrap();
+
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [
+                    // Outermost edit: sorts top-level keys and already contains the
+                    // fully-sorted nested result.  Overlaps with E2 and E3.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(9, 0)),
+                        new_text: "  a: {\n    c: {\n      e: 1,\n      f: 1,\n    },\n    d: 1,\n  },\n  b: 1,\n".into(),
+                    },
+                    // Middle edit: sorts second-level keys inside `a`.
+                    // Range is entirely inside E1 and should be discarded.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(3, 0), lsp::Position::new(8, 0)),
+                        new_text: "    c: {\n      e: 1,\n      f: 1,\n    },\n    d: 1,\n".into(),
+                    },
+                    // Innermost edit: sorts third-level keys inside `c`.
+                    // Range is entirely inside E2 (and E1) and should be discarded.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(5, 0), lsp::Position::new(7, 0)),
+                        new_text: "      e: 1,\n      f: 1,\n".into(),
+                    },
+                ],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                export const obj = {
+                  a: {
+                    c: {
+                      e: 1,
+                      f: 1,
+                    },
+                    d: 1,
+                  },
+                  b: 1,
+                };
+            "
+            .unindent()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
