@@ -291,6 +291,8 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 }
 ```
 
+To add custom commit instructions for the model, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+
 To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
 
 ```json [settings]
