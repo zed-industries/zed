@@ -1,7 +1,7 @@
 use gpui::{Action, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -17,7 +17,7 @@ pub fn init() {}
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens a zed:// URL within the application.
@@ -25,7 +25,7 @@ pub struct OpenBrowser {
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens the keymap to either add a keybinding or change an existing one

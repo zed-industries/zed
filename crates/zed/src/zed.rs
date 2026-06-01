@@ -901,7 +901,7 @@ fn register_actions(
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
-                urls: vec![action.url.clone()],
+                urls: vec![String::from(&*action.url)],
                 ..Default::default()
             })
         })
@@ -1318,10 +1318,8 @@ fn register_actions(
                 ErrorSeverity::Error
             }
 
-            fn primary_action(&self) -> Option<ErrorAction> {
-                Some(ErrorAction::new("Dismiss", |_, cx| {
-                    cx.emit(DismissEvent);
-                }))
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
             }
         }
 
@@ -1334,10 +1332,8 @@ fn register_actions(
                 ErrorSeverity::Error
             }
 
-            fn primary_action(&self) -> Option<ErrorAction> {
-                Some(ErrorAction::new("Dismiss", |_, cx| {
-                    cx.emit(DismissEvent);
-                }))
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
             }
         }
 

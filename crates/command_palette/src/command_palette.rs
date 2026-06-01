@@ -488,7 +488,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     CommandInterceptResult {
                         results: vec![CommandInterceptItem {
                             action: OpenZedUrl {
-                                url: query_for_link.clone(),
+                                url: query_for_link.clone().into(),
                             }
                             .boxed_clone(),
                             string: query_for_link,

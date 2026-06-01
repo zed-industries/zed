@@ -505,8 +505,8 @@ fn handle_api_response<T>(
                         fn severity(&self) -> ErrorSeverity {
                             ErrorSeverity::Error
                         }
-                        fn primary_action(&self) -> Option<ErrorAction> {
-                            Some(ErrorAction::link("Update Zed", "https://zed.dev/releases"))
+                        fn primary_action(&self) -> ErrorAction {
+                            ErrorAction::link("Update Zed", "https://zed.dev/releases")
                         }
                     }
 

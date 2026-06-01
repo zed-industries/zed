@@ -1,10 +1,8 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use gpui::{SharedString, Window};
-use ui::{Context, IconName};
-
-use crate::notifications::simple_message_notification::MessageNotification;
+use gpui::{Action, SharedString};
+use ui::IconName;
+use zed_actions::OpenBrowser;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorSeverity {
@@ -23,23 +21,42 @@ impl ErrorSeverity {
     }
 }
 
+/// The behavior triggered when the user invokes an [`ErrorAction`].
+pub enum ErrorActionHandler {
+    /// Run the provided callback when the action is invoked.
+    /// The notification is still dismissed afterwards by the button's click handler.
+    Action(Box<dyn Action>),
+    /// Dismiss the notification without running any extra logic.
+    Dismiss,
+}
+
 pub struct ErrorAction {
     pub label: SharedString,
     pub icon: Option<IconName>,
     pub tooltip: Option<SharedString>,
-    pub handler: Arc<dyn Fn(&mut Window, &mut Context<'_, MessageNotification>) + 'static>,
+    pub handler: ErrorActionHandler,
 }
 
 impl ErrorAction {
-    pub fn new(
-        label: impl Into<SharedString>,
-        handler: impl Fn(&mut Window, &mut Context<'_, MessageNotification>) + 'static,
-    ) -> Self {
+    pub fn new<A: Action + 'static>(label: impl Into<SharedString>, handler: A) -> Self {
         Self {
             label: label.into(),
             icon: None,
             tooltip: None,
-            handler: Arc::new(handler),
+            handler: ErrorActionHandler::Action(Box::new(handler)),
+        }
+    }
+
+    /// Creates a dismiss-only action labelled "Dismiss".
+    ///
+    /// Useful as a sensible default for [`WorkspaceError::primary_action`] when the error has no
+    /// recovery affordance beyond closing the notification.
+    pub fn dismiss() -> Self {
+        Self {
+            label: "Dismiss".into(),
+            icon: None,
+            tooltip: None,
+            handler: ErrorActionHandler::Dismiss,
         }
     }
 
@@ -54,11 +71,7 @@ impl ErrorAction {
     }
 
     pub fn link(label: impl Into<SharedString>, url: impl Into<Arc<str>>) -> Self {
-        let url = url.into();
-        Self::new(label, move |_window, cx| {
-            cx.open_url(&url);
-        })
-        .with_icon(IconName::ArrowUpRight)
+        Self::new(label, OpenBrowser { url: url.into() }).with_icon(IconName::ArrowUpRight)
     }
 }
 
@@ -69,9 +82,10 @@ pub trait WorkspaceError {
         None
     }
 
-    fn primary_action(&self) -> Option<ErrorAction> {
-        None
-    }
+    /// The primary action shown in the error notification.
+    ///
+    /// If in doubt, use [`ErrorAction::dismiss`].
+    fn primary_action(&self) -> ErrorAction;
 
     fn secondary_action(&self) -> Option<ErrorAction> {
         None
@@ -85,6 +99,10 @@ impl WorkspaceError for String {
         self.clone().into()
     }
 
+    fn primary_action(&self) -> ErrorAction {
+        ErrorAction::dismiss()
+    }
+
     fn severity(&self) -> ErrorSeverity {
         ErrorSeverity::Error
     }
@@ -93,6 +111,10 @@ impl WorkspaceError for String {
 impl WorkspaceError for anyhow::Error {
     fn primary_message(&self) -> SharedString {
         format!("{self}").into()
+    }
+
+    fn primary_action(&self) -> ErrorAction {
+        ErrorAction::dismiss()
     }
 
     fn severity(&self) -> ErrorSeverity {
@@ -121,10 +143,10 @@ impl WorkspaceError for PortalError {
         ErrorSeverity::Critical
     }
 
-    fn primary_action(&self) -> Option<ErrorAction> {
-        Some(ErrorAction::link(
+    fn primary_action(&self) -> ErrorAction {
+        ErrorAction::link(
             "See docs",
             "https://zed.dev/docs/linux#i-cant-open-any-files",
-        ))
+        )
     }
 }

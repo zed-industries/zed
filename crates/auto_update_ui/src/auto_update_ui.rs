@@ -83,10 +83,11 @@ fn notify_release_notes_failed_to_show(
                     fn severity(&self) -> ErrorSeverity {
                         ErrorSeverity::Error
                     }
-                    fn primary_action(&self) -> Option<ErrorAction> {
+                    fn primary_action(&self) -> ErrorAction {
                         self.url
                             .clone()
                             .map(|url| ErrorAction::link("View in Browser", url))
+                            .unwrap_or_else(ErrorAction::dismiss)
                     }
                 }
 
