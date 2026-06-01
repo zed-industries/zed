@@ -451,6 +451,27 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
     }
 }
 
+pub fn merge_json_value_into_replacing_arrays(
+    source: serde_json::Value,
+    target: &mut serde_json::Value,
+) {
+    use serde_json::Value;
+
+    match (source, target) {
+        (Value::Object(source), Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_value_into_replacing_arrays(value, target);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+
+        (source, target) => *target = source,
+    }
+}
+
 pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
     use serde_json::Value;
     if let Value::Object(source_object) = source {
@@ -1072,5 +1093,17 @@ Line 3"#
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
         assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
+    }
+
+    #[test]
+    fn test_merge_json_value_into_replacing_arrays() {
+        let mut target =
+            serde_json::json!({ "a": 1, "nested": { "x": 1, "y": 2 }, "array": [1, 2] });
+        let source = serde_json::json!({ "b": 2, "nested": { "y": 20, "z": 30 }, "array": [3, 4] });
+        merge_json_value_into_replacing_arrays(source, &mut target);
+        assert_eq!(
+            target,
+            serde_json::json!({ "a": 1, "b": 2, "nested": { "x": 1, "y": 20, "z": 30 }, "array": [3, 4] })
+        );
     }
 }

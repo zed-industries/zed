@@ -141,6 +141,7 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
+    merge_json_value_into_replacing_arrays,
     paths::{PathStyle, SanitizedPath, UrlExt},
     post_inc,
     redact::redact_command,
@@ -564,7 +565,10 @@ impl LocalLspStore {
 
                     match (&mut initialization_options, override_options) {
                         (Some(initialization_options), Some(override_options)) => {
-                            merge_json_value_into(override_options, initialization_options);
+                            merge_json_value_into_replacing_arrays(
+                                override_options,
+                                initialization_options,
+                            );
                         }
                         (None, override_options) => initialization_options = override_options,
                         _ => {}
