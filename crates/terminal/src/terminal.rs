@@ -463,7 +463,7 @@ impl TerminalBuilder {
         window_id: u64,
         background_executor: &BackgroundExecutor,
         path_style: PathStyle,
-    ) -> Result<TerminalBuilder> {
+    ) -> TerminalBuilder {
         Self::new_display_only_with_bounds(
             cursor_shape,
             alternate_scroll,
@@ -483,7 +483,7 @@ impl TerminalBuilder {
         background_executor: &BackgroundExecutor,
         path_style: PathStyle,
         terminal_bounds: TerminalBounds,
-    ) -> Result<TerminalBuilder> {
+    ) -> TerminalBuilder {
         let terminal_bounds = normalize_terminal_bounds(terminal_bounds);
 
         // Create a display-only terminal (no actual PTY).
@@ -556,10 +556,10 @@ impl TerminalBuilder {
             input_log: Vec::new(),
         };
 
-        Ok(TerminalBuilder {
+        TerminalBuilder {
             terminal,
             events_rx,
-        })
+        }
     }
 
     pub fn new(
@@ -2922,7 +2922,6 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .unwrap()
             .subscribe(cx)
         });
 
@@ -3389,7 +3388,6 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .unwrap()
         });
         let mut terminal = builder.terminal;
 
@@ -3473,7 +3471,6 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .unwrap()
             .subscribe(cx)
         });
 
@@ -3521,7 +3518,6 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .unwrap()
             .subscribe(cx)
         });
 
@@ -3563,7 +3559,6 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .unwrap()
             .subscribe(cx)
         });
 
@@ -3612,7 +3607,6 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .unwrap()
             .subscribe(cx)
         });
 

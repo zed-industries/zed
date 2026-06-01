@@ -42,8 +42,7 @@ use crate::repl_settings::ReplSettings;
 ///
 pub struct TerminalOutput {
     full_buffer: Option<Entity<Buffer>>,
-    terminal: Option<Entity<Terminal>>,
-    fallback_text: String,
+    terminal: Entity<Terminal>,
 }
 
 /// Returns the default text style for the terminal output.
@@ -136,7 +135,7 @@ impl TerminalOutput {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let terminal_bounds = terminal_size(window, cx);
         let background_executor = cx.background_executor().clone();
-        let terminal = match TerminalBuilder::new_display_only_with_bounds(
+        let terminal_builder = TerminalBuilder::new_display_only_with_bounds(
             TerminalSettings::get_global(cx).cursor_shape,
             TerminalSettings::get_global(cx).alternate_scroll,
             None,
@@ -144,17 +143,10 @@ impl TerminalOutput {
             &background_executor,
             PathStyle::local(),
             terminal_bounds,
-        ) {
-            Ok(builder) => Some(cx.new(|cx| builder.subscribe(cx))),
-            Err(error) => {
-                log::error!("failed to initialize REPL terminal output: {error}");
-                None
-            }
-        };
+        );
 
         Self {
-            terminal,
-            fallback_text: String::new(),
+            terminal: cx.new(|cx| terminal_builder.subscribe(cx)),
             full_buffer: None,
         }
     }
@@ -204,13 +196,9 @@ impl TerminalOutput {
     ///
     /// * `text` - A string slice containing the text to be appended.
     pub fn append_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        if let Some(terminal) = &self.terminal {
-            terminal.update(cx, |terminal, cx| {
-                terminal.write_output(text.as_bytes(), cx);
-            });
-        } else {
-            self.fallback_text.push_str(text);
-        }
+        self.terminal.update(cx, |terminal, cx| {
+            terminal.write_output(text.as_bytes(), cx);
+        });
 
         // This will keep the buffer up to date, though with some terminal codes it won't be perfect
         if let Some(buffer) = self.full_buffer.as_ref() {
@@ -221,11 +209,7 @@ impl TerminalOutput {
     }
 
     pub fn full_text(&self, cx: &App) -> String {
-        if let Some(terminal) = &self.terminal {
-            Self::sanitize_terminal_text(terminal.read(cx).get_content())
-        } else {
-            self.fallback_text.clone()
-        }
+        Self::sanitize_terminal_text(self.terminal.read(cx).get_content())
     }
 
     fn sanitize_terminal_text(text: String) -> String {
@@ -374,9 +358,7 @@ impl Render for TerminalOutput {
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(terminal) = self.terminal.clone() else {
-            return div().child(self.full_text(cx)).into_any_element();
-        };
+        let terminal = self.terminal.clone();
 
         let text_style = text_style(window, cx);
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;

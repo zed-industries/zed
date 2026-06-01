@@ -257,7 +257,6 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             )
-            .expect("Failed to create display-only terminal")
             .subscribe(cx)
         });
 
