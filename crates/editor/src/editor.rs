@@ -12911,12 +12911,7 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let style = if let Some(existing_style) = &self.style {
-            existing_style.clone()
-        } else {
-            self.create_style(cx)
-        };
-        EditorElement::new(&cx.entity(), style)
+        EditorElement::new(&cx.entity(), self.create_style(cx))
     }
 }
 
