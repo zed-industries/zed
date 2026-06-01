@@ -295,6 +295,25 @@ impl LanguageModels {
     }
 }
 
+/// Implemented by the UI layer to provide the ability for agent tools to create
+/// sibling threads that appear in the agent panel.
+///
+/// `agent_ui::AgentPanel` installs an implementation of this trait on the
+/// `NativeAgent` when it sets up a connection. Tools in a native-agent thread
+/// then discover and use the host via `NativeThreadEnvironment`. The UI side
+/// is responsible for keeping the installed host current; a host whose
+/// backing UI has been torn down will fail its first request with a clear
+/// error rather than being detected up front.
+pub trait SiblingThreadHost {
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>>;
+
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents>;
+}
+
 pub struct NativeAgent {
     /// Session ID -> Session mapping
     sessions: HashMap<acp::SessionId, Session>,
@@ -306,6 +325,8 @@ pub struct NativeAgent {
     templates: Arc<Templates>,
     /// Cached model information
     models: LanguageModels,
+    /// Handler installed by the UI for `create_thread` / `list_agents_and_models` tools.
+    sibling_thread_host: Option<Rc<dyn SiblingThreadHost>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the lifecycle of global skills directory observation. We
@@ -469,6 +490,7 @@ impl NativeAgent {
                 projects: HashMap::default(),
                 templates,
                 models: LanguageModels::new(cx),
+                sibling_thread_host: None,
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
@@ -593,6 +615,14 @@ impl NativeAgent {
                 return;
             }
         }
+    }
+
+    pub fn set_sibling_thread_host(&mut self, host: Rc<dyn SiblingThreadHost>) {
+        self.sibling_thread_host = Some(host);
+    }
+
+    pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
+        self.sibling_thread_host.clone()
     }
 
     fn new_session(
@@ -2862,6 +2892,40 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         self.resume_subagent_thread(session_id, cx)
+    }
+
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>> {
+        let host = match self
+            .agent
+            .read_with(cx, |agent, _| agent.sibling_thread_host())
+        {
+            Ok(Some(host)) => host,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No sibling-thread host is registered. This usually means the \
+                     agent panel hasn't been initialized in this workspace."
+                )));
+            }
+            Err(err) => return Task::ready(Err(err)),
+        };
+        host.create_sibling_thread(request, cx)
+    }
+
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
+        let host = self
+            .agent
+            .read_with(cx, |agent, _| agent.sibling_thread_host())?
+            .ok_or_else(|| {
+                anyhow!(
+                    "No sibling-thread host is registered. This usually means the \
+                     agent panel hasn't been initialized in this workspace."
+                )
+            })?;
+        host.list_available_agents(cx)
     }
 }
 
