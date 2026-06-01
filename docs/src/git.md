@@ -234,6 +234,48 @@ Click a button to resolve that conflict. The conflict markers are removed and re
 
 > **Tip:** For complex conflicts that need manual editing, you can edit the file directly. Remove the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and keep the content you want.
 
+### Auto-Resolving Non-Conflicting Changes
+
+When a merge or rebase produces conflicts, many regions often have changes on only one side — your branch made an edit, but the incoming branch did not, or vice versa. These are not real conflicts; they appear as conflict markers because Git couldn't auto-resolve them without the merge base. **Auto-Resolve** handles all of these unambiguous regions in one click, leaving only genuinely conflicting regions for you to resolve manually.
+
+#### Requirements
+
+Auto-Resolve needs `diff3` or `zdiff3` conflict markers, which include the merge base alongside your changes and the incoming changes. Enable this once per repository:
+
+```sh
+git config merge.conflictStyle zdiff3
+```
+
+This setting only affects future merges. Conflict markers from a merge already in progress cannot be retroactively populated with the base.
+
+#### Using Auto-Resolve
+
+When a file with conflicts is open, an Auto-Resolve banner appears at the top of the file. Clicking the banner auto-resolves all non-conflicting regions in that file in a single, undoable transaction. A toast confirms how many regions were resolved and how many genuine conflicts remain.
+
+You can also invoke Auto-Resolve from the Command Palette:
+
+- {#action git::AutoResolveNonConflicting} — auto-resolve conflicts in the current file
+- {#action git::AutoResolveNonConflictingInProject} — auto-resolve across every conflicted file currently open in the project
+
+A single undo reverts the entire batch.
+
+#### What Auto-Resolve handles
+
+For each conflict region, Auto-Resolve compares all three sides — yours, theirs, and the merge base — using strict equality:
+
+- If only your side changed (theirs equals base), your change is kept
+- If only the incoming side changed (yours equals base), the incoming change is kept
+- If both sides made the identical change, that change is kept
+- Otherwise the region is left untouched for manual resolution
+
+#### Banner states
+
+The banner is shown whenever conflicts exist in the file. Its state depends on whether anything is auto-resolvable:
+
+- **Auto-Resolve — N non-conflicting changes • K will remain** — at least one region can be resolved automatically; click to apply
+- **Auto-Resolve — no non-conflicting changes detected** — every conflict has changes on both sides, so manual resolution is required for all of them
+- **Auto-Resolve — requires diff3 conflict markers** — the markers don't include the merge base; enable `merge.conflictStyle = zdiff3` and re-run the merge to populate them
+
 ## Stashing
 
 Git stash allows you to temporarily save your uncommitted changes and revert your working directory to a clean state. This is particularly useful when you need to quickly switch branches or pull updates without committing incomplete work.
@@ -386,6 +428,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
 | {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
+| {#action git::AutoResolveNonConflicting}  | {#kb git::AutoResolveNonConflicting}  |
+| {#action git::AutoResolveNonConflictingInProject} | {#kb git::AutoResolveNonConflictingInProject} |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |
 | {#action git::StashApply}                 | {#kb git::StashApply}                 |
