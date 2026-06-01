@@ -150,6 +150,7 @@ pub struct AgentSettings {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -649,6 +650,7 @@ impl Settings for AgentSettings {
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
             commit_message_model: agent.commit_message_model,
+            commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,

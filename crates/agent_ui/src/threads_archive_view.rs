@@ -1580,7 +1580,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                         .child(
                             h_flex()
                                 .gap_3()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .child(highlighted_match.render(window, cx)),
                         )
                         .tooltip(Tooltip::text(tooltip_path))

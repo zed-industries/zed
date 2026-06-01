@@ -1330,10 +1330,11 @@ impl Window {
             WindowBounds::Windowed(_) => {}
         }
 
+        let accessibility_force_disabled = cx.accessibility_force_disabled;
         let a11y_active_flag = Arc::new(AtomicBool::new(false));
 
         #[cfg(not(target_family = "wasm"))]
-        {
+        if !accessibility_force_disabled {
             let initial_tree = accesskit::TreeUpdate {
                 nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
                 tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
@@ -1717,7 +1718,7 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(a11y_active_flag),
+            a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
         })
     }
 
@@ -2308,6 +2309,12 @@ impl Window {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
+    }
+
+    /// Sets the position of the macOS traffic light buttons.
+    #[cfg(target_os = "macos")]
+    pub fn set_traffic_light_position(&self, position: Point<Pixels>) {
+        self.platform_window.set_traffic_light_position(position);
     }
 
     /// Sets the application identifier.

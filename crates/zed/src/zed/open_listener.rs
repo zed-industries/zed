@@ -62,6 +62,10 @@ pub enum OpenRequestKind {
     SharedAgentThread {
         session_id: String,
     },
+    InstallSkill {
+        /// Full `SKILL.md` contents embedded in a `zed://skill` share link.
+        content: String,
+    },
     DockMenuAction {
         index: usize,
     },
@@ -98,6 +102,10 @@ impl std::fmt::Debug for OpenRequestKind {
             Self::SharedAgentThread { session_id } => f
                 .debug_struct("SharedAgentThread")
                 .field("session_id", session_id)
+                .finish(),
+            Self::InstallSkill { content } => f
+                .debug_struct("InstallSkill")
+                .field("content_len", &content.len())
                 .finish(),
             Self::DockMenuAction { index } => f
                 .debug_struct("DockMenuAction")
@@ -178,6 +186,8 @@ impl OpenRequest {
                 } else {
                     log::error!("Invalid session ID in URL: {}", session_id_str);
                 }
+            } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
+                this.parse_skill_install_url(&url)?
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
                 this.parse_agent_url(agent_path)
             } else if url == "zed://" || url == "zed://open" || url == "zed://open/" {
@@ -235,6 +245,13 @@ impl OpenRequest {
         self.kind = Some(OpenRequestKind::AgentPanel {
             external_source_prompt,
         });
+    }
+
+    fn parse_skill_install_url(&mut self, url: &str) -> Result<()> {
+        // Format: zed://skill?data=<base64url of SKILL.md contents>
+        let content = agent_skills::decode_skill_share_link(url)?;
+        self.kind = Some(OpenRequestKind::InstallSkill { content });
+        Ok(())
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -1266,6 +1283,52 @@ mod tests {
             }
             _ => panic!("Expected AgentPanel kind"),
         }
+    }
+
+    #[gpui::test]
+    fn test_parse_skill_install_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let content =
+            "---\nname: my-skill\ndescription: Does a thing.\n---\n\nDo the thing.\n".to_string();
+        let link = agent_skills::encode_skill_share_link(&content);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![link],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::InstallSkill {
+                content: parsed_content,
+            }) => {
+                assert_eq!(parsed_content, content);
+            }
+            _ => panic!("Expected InstallSkill kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_malformed_skill_install_url_errors(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let result = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://skill?data=!!!notbase64".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+
+        assert!(result.is_err());
     }
 
     fn agent_url_with_prompt(prompt: &str) -> String {

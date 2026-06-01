@@ -571,6 +571,8 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
+        let avatar_size = rems_from_px(40.);
+        let avatar_size_px = avatar_size.to_pixels(window.rem_size());
         let gutter_width = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let style = editor.style(cx);
@@ -580,6 +582,9 @@ impl CommitView {
                 .gutter_dimensions(font_id, font_size, style, window, cx)
                 .full_width()
         });
+        let avatar_min_side_padding = rems_from_px(10.).to_pixels(window.rem_size());
+        let avatar_container_min = avatar_size_px + avatar_min_side_padding * 2.0;
+        let avatar_container_width = gutter_width.max(avatar_container_min);
 
         let clipboard_has_sha = cx
             .read_from_clipboard()
@@ -603,9 +608,13 @@ impl CommitView {
             .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
-                    .child(h_flex().w(gutter_width).justify_center().child(
-                        self.render_commit_avatar(&commit.sha, rems_from_px(40.), window, cx),
-                    ))
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .w(avatar_container_width)
+                            .justify_center()
+                            .child(self.render_commit_avatar(&commit.sha, avatar_size, window, cx)),
+                    )
                     .child(
                         v_flex().child(Label::new(author_name)).child(
                             h_flex()
@@ -1113,7 +1122,7 @@ impl Render for CommitView {
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
             .when(!self.editor.read(cx).is_empty(cx), |this| {
-                this.child(div().flex_grow().child(self.editor.clone()))
+                this.child(div().flex_grow_1().child(self.editor.clone()))
             })
     }
 }

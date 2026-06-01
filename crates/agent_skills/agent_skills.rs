@@ -6,6 +6,7 @@ use gpui::{Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use url::Url;
 use util::paths::component_matches_ignore_ascii_case;
 
 /// First segment of the skills directory path: `.agents`.
@@ -619,7 +620,14 @@ pub async fn read_skill_body(
         message: format!("Failed to read file: {}", e),
     })?;
 
-    let (_metadata, body) = extract_frontmatter(&content).map_err(|e| SkillLoadError {
+    read_skill_body_from_content(skill_file_path, &content)
+}
+
+pub fn read_skill_body_from_content(
+    skill_file_path: &Path,
+    content: &str,
+) -> Result<String, SkillLoadError> {
+    let (_metadata, body) = parse_skill_file_content(content).map_err(|e| SkillLoadError {
         path: skill_file_path.to_path_buf(),
         message: e.to_string(),
     })?;
@@ -729,6 +737,58 @@ pub fn is_agents_skills_path(path: &Path) -> bool {
         prev = curr;
     }
     false
+}
+
+/// The `zed://` scheme used by share links.
+const SKILL_SHARE_LINK_SCHEME: &str = "zed";
+/// The host (the part after `zed://`) that identifies a skill share link.
+const SKILL_SHARE_LINK_HOST: &str = "skill";
+/// The query parameter that carries the embedded `SKILL.md` payload.
+const SKILL_SHARE_LINK_DATA_PARAM: &str = "data";
+
+/// The `zed://` deep-link prefix for a shared skill. Opening a link with this
+/// prefix prompts the recipient to review and install the embedded skill.
+pub const SKILL_SHARE_LINK_PREFIX: &str =
+    concatcp!(SKILL_SHARE_LINK_SCHEME, "://", SKILL_SHARE_LINK_HOST);
+
+/// Build a shareable `zed://skill?data=…` link that fully embeds the given
+/// `SKILL.md` file contents.
+///
+/// The contents are base64url-encoded (no padding) so the link is
+/// self-contained and URL-safe: the recipient doesn't need the skill to be
+/// hosted anywhere. Recover the contents with [`decode_skill_share_link`].
+pub fn encode_skill_share_link(skill_file_content: &str) -> String {
+    use base64::Engine as _;
+    let data =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(skill_file_content.as_bytes());
+    let mut url = Url::parse(SKILL_SHARE_LINK_PREFIX).expect("skill share link prefix is valid");
+    url.query_pairs_mut()
+        .append_pair(SKILL_SHARE_LINK_DATA_PARAM, &data);
+    url.into()
+}
+
+/// Recover the `SKILL.md` contents embedded in a `zed://skill?data=…` link
+/// produced by [`encode_skill_share_link`].
+pub fn decode_skill_share_link(link: &str) -> Result<String> {
+    use base64::Engine as _;
+    let url = Url::parse(link).context("skill share link is not a valid URL")?;
+    anyhow::ensure!(
+        url.scheme() == SKILL_SHARE_LINK_SCHEME && url.host_str() == Some(SKILL_SHARE_LINK_HOST),
+        "not a skill share link"
+    );
+    let data = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == SKILL_SHARE_LINK_DATA_PARAM).then_some(value))
+        .context("skill share link is missing the `data` parameter")?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(data.as_bytes())
+        .context("skill share link `data` is not valid base64")?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_SKILL_FILE_SIZE,
+        "shared skill exceeds the maximum size of {MAX_SKILL_FILE_SIZE} bytes"
+    );
+    let content = String::from_utf8(bytes).context("skill share link `data` is not valid UTF-8")?;
+    Ok(content)
 }
 
 #[cfg(test)]
@@ -1478,6 +1538,41 @@ description: A skill with no body content
     }
 
     #[gpui::test]
+    async fn test_load_symlinked_skill_directory(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/external/my-skill",
+            serde_json::json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: Symlinked skill\n---\n\n# Instructions"
+            }),
+        )
+        .await;
+        fs.create_dir(Path::new("/skills")).await.unwrap();
+        fs.create_symlink(
+            Path::new("/skills/my-skill"),
+            PathBuf::from("/external/my-skill"),
+        )
+        .await
+        .unwrap();
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        assert_eq!(results.len(), 1);
+        let skill = results[0].as_ref().expect("Should load successfully");
+        assert_eq!(skill.name, "my-skill");
+        assert_eq!(skill.description, "Symlinked skill");
+        assert_eq!(
+            skill.skill_file_path,
+            Path::new("/skills/my-skill/SKILL.md")
+        );
+    }
+
+    #[gpui::test]
     async fn test_load_nested_skills(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -1958,5 +2053,26 @@ description: A skill with no body content
                 );
             }
         }
+    }
+
+    #[test]
+    fn skill_share_link_round_trips() {
+        let content =
+            "---\nname: my-skill\ndescription: Does a thing.\n---\n\n## Steps\n\nDo the thing.\n";
+        let link = encode_skill_share_link(content);
+        let data = link
+            .strip_prefix("zed://skill?data=")
+            .expect("link should start with the skill share prefix");
+        // base64url (no-pad) output must not require percent-encoding.
+        assert!(!data.contains('+') && !data.contains('/') && !data.contains('='));
+        assert_eq!(decode_skill_share_link(&link).unwrap(), content);
+    }
+
+    #[test]
+    fn decode_skill_share_link_rejects_non_skill_links() {
+        assert!(decode_skill_share_link("zed://settings/agent.skills").is_err());
+        assert!(decode_skill_share_link("zed://skill").is_err());
+        assert!(decode_skill_share_link("zed://skill?other=1").is_err());
+        assert!(decode_skill_share_link("zed://skill?data=!!!notbase64").is_err());
     }
 }
