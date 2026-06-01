@@ -81,6 +81,13 @@ impl ConfirmationDialog {
         }
         cx.emit(DismissEvent);
     }
+
+    fn confirm_key_h_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.key_h_button_index {
+            self.select_button(index, window, cx);
+            self.confirm_selection(window, cx);
+        }
+    }
 }
 
 impl EventEmitter<DismissEvent> for ConfirmationDialog {}
@@ -113,22 +120,24 @@ impl Render for ConfirmationDialog {
             .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| {
                 this.cancel(window, cx);
             }))
-            .on_action(cx.listener(move |this, _: &ConfirmDontSave, window, cx| {
-                if let Some(index) = key_h_button_index {
-                    this.select_button(index, window, cx);
-                    this.confirm_selection(window, cx);
-                }
+            .on_action(cx.listener(|this, _: &ConfirmDontSave, window, cx| {
+                this.confirm_key_h_button(window, cx);
             }))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "Enter" => {
-                        this.select_button(0, window, cx);
-                        this.confirm_selection(window, cx);
+                let key = event.keystroke.key.as_str();
+                if event.keystroke.modifiers.secondary() && key.eq_ignore_ascii_case("w") {
+                    this.confirm_key_h_button(window, cx);
+                } else {
+                    match key {
+                        "Enter" => {
+                            this.select_button(0, window, cx);
+                            this.confirm_selection(window, cx);
+                        }
+                        "Escape" => {
+                            this.cancel(window, cx);
+                        }
+                        _ => {}
                     }
-                    "Escape" => {
-                        this.cancel(window, cx);
-                    }
-                    _ => {}
                 }
             }))
             .child(
