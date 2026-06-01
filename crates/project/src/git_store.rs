@@ -4065,7 +4065,7 @@ impl BufferGitState {
                 buffer.remote_id()
             );
 
-            let mut index_edited_base_text = None;
+            let mut edited_index_text = None;
             if index_text_buffer_language_enabled && language_changed {
                 index_text_buffer.update(cx, |index_text_buffer, cx| {
                     if let Some(language_registry) = language_registry.clone() {
@@ -4074,28 +4074,32 @@ impl BufferGitState {
                     index_text_buffer.set_language_async(language.clone(), cx);
                 });
             }
-            let index_base_text_snapshot = if unstaged_diff.is_some() || staged_diff.is_some() {
+            let index_text_snapshot = if unstaged_diff.is_some() || staged_diff.is_some() {
                 Some(if index_changed {
-                    let base_text = index.clone().unwrap_or_default();
-                    let base_text_diff = index_text_buffer.update(cx, |base_text_buffer, cx| {
-                        base_text_buffer.diff(base_text.clone(), cx)
-                    });
-                    let base_text_diff = base_text_diff.await;
-                    let edited_base_text = index_text_buffer.update(cx, |base_text_buffer, cx| {
-                        base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
-                        let edits = if base_text_buffer.version() == base_text_diff.base_version {
-                            base_text_diff.edits
-                        } else {
-                            vec![(
-                                0..base_text_buffer.len(),
-                                text::LineEnding::normalize_arc(base_text.clone()),
-                            )]
-                        };
-                        base_text_buffer.snapshot_with_edits(edits, cx)
-                    });
-                    let edited_base_text = edited_base_text.await;
-                    let snapshot = edited_base_text.snapshot().clone();
-                    index_edited_base_text = Some(edited_base_text);
+                    let new_index_text = index.clone().unwrap_or_default();
+                    let index_text_diff = index_text_buffer
+                        .update(cx, |index_text_buffer, cx| {
+                            index_text_buffer.diff(new_index_text.clone(), cx)
+                        })
+                        .await;
+                    let edited = index_text_buffer
+                        .update(cx, |index_text_buffer, cx| {
+                            let edits =
+                                if index_text_buffer.version() == index_text_diff.base_version {
+                                    index_text_diff.edits
+                                } else {
+                                    // FIXME could this ever be hit?
+                                    debug_panic!("someone else edited the index text buffer");
+                                    vec![(
+                                        0..index_text_buffer.len(),
+                                        text::LineEnding::normalize_arc(new_index_text.clone()),
+                                    )]
+                                };
+                            index_text_buffer.snapshot_with_edits(edits, cx)
+                        })
+                        .await;
+                    let snapshot = edited.snapshot().clone();
+                    edited_index_text = Some(edited);
                     snapshot
                 } else {
                     index_text_buffer.read_with(cx, |buffer, _| buffer.snapshot())
@@ -4104,14 +4108,14 @@ impl BufferGitState {
                 None
             };
             let mut new_unstaged_diff = None;
-            if let (Some(unstaged_diff), Some(index_base_text_snapshot)) =
-                (unstaged_diff.as_ref(), index_base_text_snapshot.as_ref())
+            if let (Some(unstaged_diff), Some(index_text_snapshot)) =
+                (unstaged_diff.as_ref(), index_text_snapshot.as_ref())
             {
                 new_unstaged_diff = Some(
                     cx.update(|cx| {
                         unstaged_diff.read(cx).update_diff(
                             buffer.clone(),
-                            index_base_text_snapshot,
+                            index_text_snapshot,
                             index.clone(),
                             language.clone(),
                             cx,
@@ -4125,7 +4129,7 @@ impl BufferGitState {
             // for a bit
             yield_now().await;
 
-            let mut head_edited_base_text = None;
+            let mut edited_head_text = None;
             let mut new_staged_diff = None;
             let mut new_uncommitted_diff = None;
             if staged_diff.is_some() || uncommitted_diff.is_some() {
@@ -4138,39 +4142,42 @@ impl BufferGitState {
                     });
                 }
                 let head_base_text_exists = head.is_some();
-                let head_base_text_snapshot = if head_changed {
-                    let base_text = head.clone().unwrap_or_default();
-                    let base_text_diff = head_text_buffer.update(cx, |base_text_buffer, cx| {
-                        base_text_buffer.diff(base_text.clone(), cx)
-                    });
-                    let base_text_diff = base_text_diff.await;
-                    let edited_base_text = head_text_buffer.update(cx, |base_text_buffer, cx| {
-                        base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
-                        let edits = if base_text_buffer.version() == base_text_diff.base_version {
-                            base_text_diff.edits
-                        } else {
-                            vec![(
-                                0..base_text_buffer.len(),
-                                text::LineEnding::normalize_arc(base_text.clone()),
-                            )]
-                        };
-                        base_text_buffer.snapshot_with_edits(edits, cx)
-                    });
-                    let edited_base_text = edited_base_text.await;
-                    let snapshot = edited_base_text.snapshot().clone();
-                    head_edited_base_text = Some(edited_base_text);
+                let head_text_snapshot = if head_changed {
+                    let new_head_text = head.clone().unwrap_or_default();
+                    let head_text_diff = head_text_buffer
+                        .update(cx, |head_text_buffer, cx| {
+                            head_text_buffer.diff(new_head_text.clone(), cx)
+                        })
+                        .await;
+                    let edited = head_text_buffer
+                        .update(cx, |base_text_buffer, cx| {
+                            let edits = if base_text_buffer.version() == head_text_diff.base_version
+                            {
+                                head_text_diff.edits
+                            } else {
+                                debug_panic!("someone else edited the base text buffer within recaluclate diffs");
+                                vec![(
+                                    0..base_text_buffer.len(),
+                                    text::LineEnding::normalize_arc(new_head_text.clone()),
+                                )]
+                            };
+                            base_text_buffer.snapshot_with_edits(edits, cx)
+                        })
+                        .await;
+                    let snapshot = edited.snapshot().clone();
+                    edited_head_text = Some(edited);
                     snapshot
                 } else {
                     head_text_buffer.read_with(cx, |buffer, _| buffer.snapshot())
                 };
                 if let (Some(staged_diff), Some(index_base_text_snapshot)) =
-                    (staged_diff.as_ref(), index_base_text_snapshot.as_ref())
+                    (staged_diff.as_ref(), index_text_snapshot.as_ref())
                 {
                     new_staged_diff = Some(
                         cx.update(|cx| {
                             staged_diff.read(cx).update_diff(
                                 index_base_text_snapshot.text.clone(),
-                                &head_base_text_snapshot,
+                                &head_text_snapshot,
                                 head.clone(),
                                 language.clone(),
                                 cx,
@@ -4184,7 +4191,7 @@ impl BufferGitState {
                     new_uncommitted_diff = if index_matches_head {
                         new_unstaged_diff.clone().map(|mut update| {
                             update.set_base_text_snapshot(
-                                head_base_text_snapshot.clone(),
+                                head_text_snapshot.clone(),
                                 head_base_text_exists,
                             );
                             update
@@ -4197,7 +4204,7 @@ impl BufferGitState {
                             cx.update(|cx| {
                                 uncommitted_diff.read(cx).update_diff(
                                     buffer.clone(),
-                                    &head_base_text_snapshot,
+                                    &head_text_snapshot,
                                     head.clone(),
                                     language.clone(),
                                     cx,
@@ -4243,14 +4250,14 @@ impl BufferGitState {
                     (staged_diff.as_ref(), new_staged_diff.clone())
                 {
                     staged_diff.update(cx, |diff, cx| {
-                        if let Some(edited_base_text) = index_edited_base_text.take() {
-                            index_text_buffer.update(cx, |base_text_buffer, cx| {
-                                base_text_buffer.fast_forward(edited_base_text, cx)
+                        if let Some(edited_base_text) = edited_index_text.take() {
+                            index_text_buffer.update(cx, |index_text_buffer, cx| {
+                                index_text_buffer.fast_forward(edited_base_text, cx)
                             });
                         }
-                        if let Some(edited_base_text) = head_edited_base_text.take() {
-                            head_text_buffer.update(cx, |base_text_buffer, cx| {
-                                base_text_buffer.fast_forward(edited_base_text, cx)
+                        if let Some(edited_head_text) = edited_head_text.take() {
+                            head_text_buffer.update(cx, |head_text_buffer, cx| {
+                                head_text_buffer.fast_forward(edited_head_text, cx)
                             });
                         }
                         if language_changed {
@@ -4264,9 +4271,9 @@ impl BufferGitState {
                     (unstaged_diff.as_ref(), new_unstaged_diff.clone())
                 {
                     Some(unstaged_diff.update(cx, |diff, cx| {
-                        if let Some(edited_base_text) = index_edited_base_text.take() {
-                            index_text_buffer.update(cx, |base_text_buffer, cx| {
-                                base_text_buffer.fast_forward(edited_base_text, cx)
+                        if let Some(edited_index_text) = edited_index_text.take() {
+                            index_text_buffer.update(cx, |index_text_buffer, cx| {
+                                index_text_buffer.fast_forward(edited_index_text, cx)
                             });
                         }
                         diff.set_snapshot(new_unstaged_diff, cx)
@@ -4279,9 +4286,9 @@ impl BufferGitState {
                     (uncommitted_diff.as_ref(), new_uncommitted_diff.clone())
                 {
                     uncommitted_diff.update(cx, |diff, cx| {
-                        if let Some(edited_base_text) = head_edited_base_text.take() {
-                            head_text_buffer.update(cx, |base_text_buffer, cx| {
-                                base_text_buffer.fast_forward(edited_base_text, cx)
+                        if let Some(edited_base_text) = edited_head_text.take() {
+                            head_text_buffer.update(cx, |head_text_buffer, cx| {
+                                head_text_buffer.fast_forward(edited_base_text, cx)
                             });
                         }
                         if language_changed {

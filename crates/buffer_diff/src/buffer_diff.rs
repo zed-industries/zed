@@ -1724,7 +1724,6 @@ impl BufferDiff {
         })
     }
 
-    // FIXME get rid of this
     #[ztracing::instrument(skip_all)]
     pub fn language_changed(
         &mut self,
