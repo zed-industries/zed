@@ -1724,6 +1724,7 @@ impl BufferDiff {
         })
     }
 
+    /// Set the language of the base text buffer without recalculating hunks
     #[ztracing::instrument(skip_all)]
     pub fn language_changed(
         &mut self,
