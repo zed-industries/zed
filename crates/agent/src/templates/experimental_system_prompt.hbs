@@ -173,12 +173,11 @@ The current project contains the following root directories:
 You are powered by the model named {{model_name}}.
 
 {{/if}}
-{{#if (or has_rules has_user_rules)}}
+{{#if has_rules}}
 ## User's Custom Instructions
 
 The following additional instructions are provided by the user and should be followed to the best of your ability{{#if (gt (len available_tools) 0)}} without interfering with the tool use guidelines{{/if}}.
 
-{{#if has_rules}}
 There are project rules that apply to these root directories:
 {{#each worktrees}}
 {{#if rules_file}}
@@ -188,18 +187,4 @@ There are project rules that apply to these root directories:
 ``````
 {{/if}}
 {{/each}}
-{{/if}}
-
-{{#if has_user_rules}}
-The user has specified the following rules that should be applied:
-{{#each user_rules}}
-
-{{#if title}}
-Rules title: {{title}}
-{{/if}}
-``````
-{{contents}}
-``````
-{{/each}}
-{{/if}}
 {{/if}}
