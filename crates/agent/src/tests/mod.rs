@@ -117,6 +117,11 @@ impl FakeTerminalHandle {
         }
     }
 
+    pub(crate) fn with_output(mut self, output: acp::TerminalOutputResponse) -> Self {
+        self.output = output;
+        self
+    }
+
     pub(crate) fn was_killed(&self) -> bool {
         self.killed.load(Ordering::SeqCst)
     }
@@ -181,6 +186,7 @@ pub(crate) struct FakeThreadEnvironment {
     terminal_handle: Option<Rc<FakeTerminalHandle>>,
     subagent_handle: Option<Rc<FakeSubagentHandle>>,
     terminal_creations: Arc<AtomicUsize>,
+    terminal_output_limits: std::cell::RefCell<Vec<Option<u64>>>,
 }
 
 impl FakeThreadEnvironment {
@@ -194,6 +200,10 @@ impl FakeThreadEnvironment {
     pub(crate) fn terminal_creation_count(&self) -> usize {
         self.terminal_creations.load(Ordering::SeqCst)
     }
+
+    pub(crate) fn terminal_output_limits(&self) -> Vec<Option<u64>> {
+        self.terminal_output_limits.borrow().clone()
+    }
 }
 
 impl crate::ThreadEnvironment for FakeThreadEnvironment {
@@ -202,11 +212,14 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _command: String,
         _extra_env: Vec<acp::EnvVariable>,
         _cwd: Option<std::path::PathBuf>,
-        _output_byte_limit: Option<u64>,
+        output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
         self.terminal_creations.fetch_add(1, Ordering::SeqCst);
+        self.terminal_output_limits
+            .borrow_mut()
+            .push(output_byte_limit);
         let handle = self
             .terminal_handle
             .clone()

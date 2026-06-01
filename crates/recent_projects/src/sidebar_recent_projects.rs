@@ -203,7 +203,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
