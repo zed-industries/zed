@@ -6191,6 +6191,131 @@ async fn test_empty_draft_is_visible_per_workspace_panel(cx: &mut TestAppContext
     );
 }
 
+#[gpui::test]
+async fn test_discarding_inactive_workspace_draft_does_not_create_empty_replacement(
+    cx: &mut TestAppContext,
+) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: std::path::PathBuf::from("/wt-feature-a"),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let (sidebar, main_panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let worktree_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+    let worktree_panel = add_agent_panel(&worktree_workspace, cx);
+    cx.run_until_parked();
+
+    agent_ui::test_support::open_draft_with_connection(&main_panel, StubAgentConnection::new(), cx);
+    cx.run_until_parked();
+    let main_draft_id = main_panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+    agent_ui::test_support::type_draft_prompt(&main_panel, "main draft to discard", cx);
+
+    agent_ui::test_support::open_draft_with_connection(
+        &worktree_panel,
+        StubAgentConnection::new(),
+        cx,
+    );
+    cx.run_until_parked();
+    let worktree_draft_id =
+        worktree_panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+
+    let main_draft_index = sidebar.read_with(cx, |sidebar, _| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Thread(thread) if thread.metadata.thread_id == main_draft_id
+                )
+            })
+            .expect("main draft should be visible before removal")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.selection = Some(main_draft_index);
+        sidebar.archive_selected_thread(&agent_ui::ArchiveSelectedThread, window, cx);
+    });
+    cx.run_until_parked();
+
+    main_panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.active_thread_id(cx),
+            None,
+            "discarding an inactive workspace draft should not activate a replacement draft"
+        );
+    });
+
+    let visible_empty_drafts = sidebar.read_with(cx, |sidebar, _| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::Thread(thread) if thread.draft == Some(DraftKind::Empty) => {
+                    Some(thread.metadata.thread_id)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        visible_empty_drafts,
+        vec![worktree_draft_id],
+        "discarding the main workspace draft should leave only the worktree empty draft visible"
+    );
+
+    cx.update(|_window, cx| {
+        assert!(
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(main_draft_id)
+                .is_none(),
+            "discarded main draft metadata should be deleted"
+        );
+    });
+}
+
 async fn init_test_project_with_git(
     worktree_path: &str,
     cx: &mut TestAppContext,
