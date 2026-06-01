@@ -77,6 +77,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
+use notifications::status_toast::StatusToast;
 use project::{Project, ProjectPath, Worktree};
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
@@ -314,6 +315,14 @@ fn read_legacy_serialized_panel(kvp: &KeyValueStore) -> Option<SerializedAgentPa
         .log_err()
         .flatten()
         .and_then(|json| serde_json::from_str::<SerializedAgentPanel>(&json).log_err())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThreadTitleRegenerationResult {
+    NotOpen,
+    Started,
+    NoModel,
+    AlreadyGenerating,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -3832,20 +3841,34 @@ impl AgentPanel {
         })
     }
 
-    /// Regenerates the title of a thread that is currently open (active or
-    /// retained) in this panel, driving the live `agent::Thread` so the new
-    /// title is persisted and reflected everywhere. Returns `false` when the
-    /// thread isn't open here, so the caller can fall back to a
-    /// database-backed regeneration.
-    pub fn regenerate_thread_title(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> bool {
+    pub fn regenerate_thread_title(
+        &mut self,
+        thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) -> ThreadTitleRegenerationResult {
         let Some(conversation_view) = self.conversation_view_for_id(&thread_id, cx).cloned() else {
-            return false;
+            return ThreadTitleRegenerationResult::NotOpen;
         };
+        Self::regenerate_conversation_thread_title(conversation_view, cx)
+    }
+
+    fn regenerate_conversation_thread_title(
+        conversation_view: Entity<ConversationView>,
+        cx: &mut App,
+    ) -> ThreadTitleRegenerationResult {
         let Some(thread) = conversation_view.read(cx).as_native_thread(cx) else {
-            return false;
+            return ThreadTitleRegenerationResult::NotOpen;
         };
-        thread.update(cx, |thread, cx| thread.regenerate_title(cx));
-        true
+        thread.update(cx, |thread, cx| {
+            if thread.is_generating_title() {
+                ThreadTitleRegenerationResult::AlreadyGenerating
+            } else if thread.summarization_model().is_none() {
+                ThreadTitleRegenerationResult::NoModel
+            } else {
+                thread.regenerate_title(cx);
+                ThreadTitleRegenerationResult::Started
+            }
+        })
     }
 
     pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
@@ -4888,9 +4911,11 @@ impl AgentPanel {
                                         .tooltip(Tooltip::text("Title generation failed. Retry"))
                                         .on_click({
                                             let conversation_view = conversation_view.clone();
+                                            let workspace = self.workspace.clone();
                                             move |_event, _window, cx| {
                                                 Self::handle_regenerate_thread_title(
                                                     conversation_view.clone(),
+                                                    workspace.clone(),
                                                     cx,
                                                 );
                                             }
@@ -4988,17 +5013,39 @@ impl AgentPanel {
             .into_any()
     }
 
-    fn handle_regenerate_thread_title(conversation_view: Entity<ConversationView>, cx: &mut App) {
-        conversation_view.update(cx, |conversation_view, cx| {
-            if let Some(thread) = conversation_view.as_native_thread(cx) {
-                thread.update(cx, |thread, cx| {
-                    if thread.can_generate_title(cx) {
-                        thread.generate_title(cx);
-                        cx.notify();
-                    }
-                });
-            }
+    fn show_no_thread_summary_model_toast(workspace: Entity<Workspace>, cx: &mut App) {
+        workspace.update(cx, |workspace, cx| {
+            let toast = StatusToast::new(
+                "No model is configured for summarizing thread titles.",
+                cx,
+                |this, _cx| {
+                    this.icon(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .dismiss_button(true)
+                },
+            );
+            workspace.toggle_status_toast(toast, cx);
         });
+    }
+
+    fn handle_regenerate_thread_title(
+        conversation_view: Entity<ConversationView>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut App,
+    ) {
+        match Self::regenerate_conversation_thread_title(conversation_view, cx) {
+            ThreadTitleRegenerationResult::NoModel => {
+                if let Some(workspace) = workspace.upgrade() {
+                    Self::show_no_thread_summary_model_toast(workspace, cx);
+                }
+            }
+            ThreadTitleRegenerationResult::NotOpen
+            | ThreadTitleRegenerationResult::Started
+            | ThreadTitleRegenerationResult::AlreadyGenerating => {}
+        }
     }
 
     fn render_panel_options_menu(
@@ -5030,7 +5077,7 @@ impl AgentPanel {
                 conversation_view.has_user_submitted_prompt(cx)
                     && conversation_view
                         .as_native_thread(cx)
-                        .is_some_and(|thread| thread.read(cx).can_generate_title(cx))
+                        .is_some_and(|thread| !thread.read(cx).is_generating_title())
             });
 
         let has_auth_methods = match &self.base_view {
@@ -5078,9 +5125,11 @@ impl AgentPanel {
                                 menu = menu
                                     .entry("Regenerate Thread Title", None, {
                                         let conversation_view = conversation_view.clone();
+                                        let workspace = workspace.clone();
                                         move |_, cx| {
                                             Self::handle_regenerate_thread_title(
                                                 conversation_view.clone(),
+                                                workspace.clone(),
                                                 cx,
                                             );
                                         }

@@ -3974,6 +3974,53 @@ async fn test_update_title_availability_suppresses_summary_title_generation(
 }
 
 #[gpui::test]
+async fn test_explicit_title_regeneration_bypasses_update_title_tool_suppression(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    let summary_model = Arc::new(FakeLanguageModel::default());
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["update-title-tool".to_string()]);
+    });
+    thread.update(cx, |thread, cx| {
+        thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
+        thread.set_summarization_model(Some(summary_model.clone()), cx);
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Explore title tooling"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, cx| {
+        assert!(!thread.can_generate_title(cx));
+        assert_eq!(thread.title(), None);
+    });
+    assert_eq!(summary_model.pending_completions(), Vec::new());
+
+    thread.update(cx, |thread, cx| thread.regenerate_title(cx));
+    cx.run_until_parked();
+    assert_eq!(summary_model.pending_completions().len(), 1);
+
+    summary_model.send_last_completion_stream_text_chunk("Manual title");
+    summary_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Manual title".into()));
+    });
+}
+
+#[gpui::test]
 async fn test_update_title_flag_without_available_tool_falls_back_to_summary_title_generation(
     cx: &mut TestAppContext,
 ) {

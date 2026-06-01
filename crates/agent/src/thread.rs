@@ -3353,7 +3353,7 @@ impl RunningTurn {
 /// `Thread::to_markdown` and `DbThread::to_markdown` so the in-memory and
 /// database-backed paths produce identical output; the only difference is that
 /// a live `Thread` may additionally append its pending (streaming) message.
-pub fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
+pub(crate) fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
     let mut markdown = String::new();
     for (ix, message) in messages.iter().enumerate() {
         if ix > 0 {

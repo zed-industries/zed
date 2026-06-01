@@ -20,7 +20,7 @@ use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
     ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
     NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
-    channels_with_threads, import_threads_from_other_channels,
+    ThreadTitleRegenerationResult, channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
 use editor::Editor;
@@ -666,10 +666,8 @@ pub struct Sidebar {
     active_entry: Option<ActiveEntry>,
     hovered_thread_index: Option<usize>,
     renaming_thread_id: Option<ThreadId>,
-    /// Threads whose titles are currently being regenerated via the
-    /// right-click "Regenerate Thread Title" action. While a thread is in
-    /// this set, its sidebar row renders a pulsating title to signal work
-    /// in progress, even when it isn't the active thread.
+    // Threads in the database-backed regeneration path need their own loading
+    // state because they do not have a live `agent::Thread` to report it.
     regenerating_titles: HashSet<ThreadId>,
     /// start_renaming_thread must seed current title into the title editor
     /// so this prevents that BufferEdited event from being interpreted as user input.
@@ -3243,13 +3241,6 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
-    /// Loads the thread from the database, converts it to markdown, and
-    /// opens it as a new editor tab in the given workspace. Does not
-    /// touch the AgentPanel or change the active thread.
-    ///
-    /// The markdown rendering and editor setup are shared with the
-    /// AgentPanel via `agent::DbThread::to_markdown` and
-    /// `agent_ui::open_markdown_in_workspace`.
     fn open_thread_as_markdown(
         session_id: &acp::SessionId,
         title: Option<SharedString>,
@@ -3289,21 +3280,24 @@ impl Sidebar {
             .detach_and_log_err(cx);
     }
 
-    /// Regenerates a thread's title from an explicit right-click action.
-    ///
-    /// For a thread that is currently open in a workspace's AgentPanel we
-    /// drive the live `agent::Thread` so the regenerated title summarizes the
-    /// up-to-date (possibly still-unsaved) conversation and is persisted
-    /// through the normal thread machinery — rather than summarizing a stale
-    /// database snapshot and writing a title override the live thread could
-    /// later clobber.
-    ///
-    /// Only when the thread isn't open anywhere do we fall back to the
-    /// database-backed path below. While that request is in flight the thread
-    /// is added to `regenerating_titles` so its sidebar row pulses, and it is
-    /// removed (along with persisting the new title) in a single update so the
-    /// row swaps straight to the new title without a flicker. (Open threads
-    /// already pulse via the live thread's own `is_title_generating`.)
+    fn show_no_thread_summary_model_toast(workspace: Entity<Workspace>, cx: &mut App) {
+        workspace.update(cx, |workspace, cx| {
+            let toast = StatusToast::new(
+                "No model is configured for summarizing thread titles.",
+                cx,
+                |this, _cx| {
+                    this.icon(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .dismiss_button(true)
+                },
+            );
+            workspace.toggle_status_toast(toast, cx);
+        });
+    }
+
     fn regenerate_thread_title(
         &mut self,
         session_id: &acp::SessionId,
@@ -3311,42 +3305,30 @@ impl Sidebar {
         open_workspace: Option<Entity<Workspace>>,
         cx: &mut Context<Self>,
     ) {
-        let Some(configured_model) =
-            LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
-        else {
-            // No summarization model configured: there's nothing we can do, so
-            // surface that to the user instead of silently doing nothing.
-            if let Some(workspace) = open_workspace.or_else(|| self.active_workspace(cx)) {
-                workspace.update(cx, |workspace, cx| {
-                    let toast = StatusToast::new(
-                        "No model is configured for summarizing thread titles.",
-                        cx,
-                        |this, _cx| {
-                            this.icon(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::Small)
-                                    .color(Color::Warning),
-                            )
-                            .dismiss_button(true)
-                        },
-                    );
-                    workspace.toggle_status_toast(toast, cx);
-                });
-            }
-            return;
-        };
-
-        // If the thread is open, route to its live thread so we summarize the
-        // current conversation and persist correctly.
+        // Open threads must use their live state: the DB snapshot can be stale,
+        // and a title override from here could later be overwritten by the live thread.
         if let Some(workspace) = &open_workspace {
             if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                let handled =
-                    panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx));
-                if handled {
-                    return;
+                match panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx)) {
+                    ThreadTitleRegenerationResult::Started
+                    | ThreadTitleRegenerationResult::AlreadyGenerating => return,
+                    ThreadTitleRegenerationResult::NoModel => {
+                        Self::show_no_thread_summary_model_toast(workspace.clone(), cx);
+                        return;
+                    }
+                    ThreadTitleRegenerationResult::NotOpen => {}
                 }
             }
         }
+
+        let Some(configured_model) =
+            LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
+        else {
+            if let Some(workspace) = open_workspace.or_else(|| self.active_workspace(cx)) {
+                Self::show_no_thread_summary_model_toast(workspace, cx);
+            }
+            return;
+        };
 
         let model = configured_model.model;
         let temperature = AgentSettings::temperature_for_model(&model, cx);
@@ -6009,6 +5991,10 @@ impl Sidebar {
             return thread_item.into_any_element();
         }
 
+        let Some(session_id) = thread.metadata.session_id.clone() else {
+            return thread_item.into_any_element();
+        };
+
         let context_menu_id = SharedString::from(format!("thread-context-menu-{}", ix));
         let sidebar = cx.weak_entity();
 
@@ -6031,7 +6017,6 @@ impl Sidebar {
         right_click_menu(context_menu_id)
             .trigger(move |_, _, _| thread_item)
             .menu({
-                let session_id = thread.metadata.session_id.clone();
                 let thread_id = thread.metadata.thread_id;
                 let title = thread.metadata.title.clone();
                 move |_window, cx| {
@@ -6048,14 +6033,12 @@ impl Sidebar {
                             move |_window, cx| {
                                 sidebar
                                     .update(cx, |sidebar, cx| {
-                                        if let Some(ref session_id) = session_id {
-                                            sidebar.regenerate_thread_title(
-                                                session_id,
-                                                thread_id,
-                                                open_workspace.clone(),
-                                                cx,
-                                            );
-                                        }
+                                        sidebar.regenerate_thread_title(
+                                            &session_id,
+                                            thread_id,
+                                            open_workspace.clone(),
+                                            cx,
+                                        );
                                     })
                                     .ok();
                             }
@@ -6064,16 +6047,14 @@ impl Sidebar {
                             let session_id = session_id.clone();
                             let title = title.clone();
                             move |window, cx| {
-                                if let Some(ref session_id) = session_id {
-                                    if let Some(ref workspace) = workspace_for_markdown {
-                                        Self::open_thread_as_markdown(
-                                            session_id,
-                                            title.clone(),
-                                            workspace,
-                                            window,
-                                            cx,
-                                        );
-                                    }
+                                if let Some(ref workspace) = workspace_for_markdown {
+                                    Self::open_thread_as_markdown(
+                                        &session_id,
+                                        title.clone(),
+                                        workspace,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             }
                         })
@@ -6084,9 +6065,7 @@ impl Sidebar {
                             move |window, cx| {
                                 sidebar
                                     .update(cx, |sidebar, cx| {
-                                        if let Some(ref session_id) = session_id {
-                                            sidebar.archive_thread(session_id, window, cx);
-                                        }
+                                        sidebar.archive_thread(&session_id, window, cx);
                                     })
                                     .ok();
                             }
