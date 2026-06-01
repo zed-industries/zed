@@ -950,6 +950,178 @@ async fn test_scan_symlinks_always_respects_gitignore(cx: &mut TestAppContext) {
     });
 }
 
+// Real-fs counterparts to the FakeFs scan_symlinks tests above. FakeFs does not
+// model `fs::canonicalize` against a real filesystem, so platform-specific
+// canonicalization or readdir behavior is not covered by the FakeFs tests.
+// These tests use a real temp directory and a real symlink to exercise the
+// production path on the host platform.
+#[cfg(unix)]
+#[gpui::test]
+async fn test_real_fs_scan_symlinks_always(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let temp_root = TempTree::new(json!({
+        "project": {
+            "deps": {},
+            "src": {
+                "a.rs": "",
+            },
+        },
+        "external": {
+            "src": {
+                "b.rs": "",
+            },
+        },
+    }));
+
+    // Relative symlink: from temp_root/project/deps/, `../../external` resolves
+    // to temp_root/external — outside the worktree root at temp_root/project.
+    std::os::unix::fs::symlink(
+        "../../external",
+        temp_root.path().join("project/deps/dep-external"),
+    )
+    .unwrap();
+
+    let project_root = temp_root.path().join("project");
+    let tree = Worktree::local(
+        project_root.as_path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path("deps"), false),
+                (rel_path("deps/dep-external"), true),
+                (rel_path("deps/dep-external/src"), true),
+                (rel_path("deps/dep-external/src/b.rs"), true),
+                (rel_path("src"), false),
+                (rel_path("src/a.rs"), false),
+            ]
+        );
+    });
+}
+
+#[cfg(unix)]
+#[gpui::test]
+async fn test_real_fs_scan_symlinks_expanded(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    // scan_symlinks defaults to Expanded — no settings change needed.
+
+    let temp_root = TempTree::new(json!({
+        "project": {
+            "deps": {},
+            "src": {
+                "a.rs": "",
+            },
+        },
+        "external": {
+            "src": {
+                "b.rs": "",
+            },
+        },
+    }));
+
+    std::os::unix::fs::symlink(
+        "../../external",
+        temp_root.path().join("project/deps/dep-external"),
+    )
+    .unwrap();
+
+    let project_root = temp_root.path().join("project");
+    let tree = Worktree::local(
+        project_root.as_path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Before expansion, the symlinked directory should appear as an UnloadedDir
+    // with no children visible.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path("deps"), false),
+                (rel_path("deps/dep-external"), true),
+                (rel_path("src"), false),
+                (rel_path("src/a.rs"), false),
+            ]
+        );
+
+        assert_eq!(
+            tree.entry_for_path(rel_path("deps/dep-external"))
+                .unwrap()
+                .kind,
+            EntryKind::UnloadedDir
+        );
+    });
+
+    // Manually expand the symlinked directory. This is the case #51382 was
+    // added to fix; if this assertion fails it's a regression of that fix on
+    // real filesystems.
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("deps/dep-external").into()])
+    })
+    .recv()
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path("deps"), false),
+                (rel_path("deps/dep-external"), true),
+                (rel_path("deps/dep-external/src"), true),
+                (rel_path("src"), false),
+                (rel_path("src/a.rs"), false),
+            ]
+        );
+    });
+}
+
 #[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_renaming_case_only(cx: &mut TestAppContext) {
