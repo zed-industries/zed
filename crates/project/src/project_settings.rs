@@ -494,6 +494,11 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: String,
+    /// Whether to automatically stage files when all conflict markers
+    /// have been resolved and the file is saved.
+    ///
+    /// Default: true
+    pub auto_stage_on_conflict_resolution: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -688,6 +693,9 @@ impl Settings for ProjectSettings {
                 .worktree_directory
                 .clone()
                 .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
+            auto_stage_on_conflict_resolution: git
+                .auto_stage_on_conflict_resolution
+                .unwrap_or(true),
         };
         Self {
             context_servers: project

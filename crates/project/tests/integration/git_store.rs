@@ -8,7 +8,7 @@ mod conflict_set_tests {
         repository::{RepoPath, repo_path},
         status::{UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{BackgroundExecutor, TestAppContext};
+    use gpui::{BackgroundExecutor, TestAppContext, UpdateGlobal as _};
     use project::git_store::*;
     use serde_json::json;
     use text::{Buffer, BufferId, OffsetRangeExt, Point, ReplicaId, ToOffset as _};
@@ -622,6 +622,328 @@ mod conflict_set_tests {
             assert!(!conflict_set.has_conflict);
             assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
         });
+    }
+
+    #[gpui::test]
+    async fn test_auto_stage_on_save_when_conflicts_resolved(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let conflicted_text = "
+            zero
+            <<<<<<< HEAD
+            one
+            =======
+            two
+            >>>>>>> branch
+            three
+        "
+        .unindent();
+
+        let resolved_text = "
+            zero
+            one
+            three
+        "
+        .unindent();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": conflicted_text.clone(),
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("a.txt", "zero\none\nthree\n".into())],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.insert(
+                repo_path("a.txt"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            );
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(resolved_text.clone(), cx);
+        });
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            assert!(
+                state.index_contents.contains_key(&repo_path("a.txt")),
+                "file should be staged after saving with conflicts resolved"
+            );
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_no_auto_stage_when_conflicts_remain(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let conflicted_text = "
+            zero
+            <<<<<<< HEAD
+            one
+            =======
+            two
+            >>>>>>> branch
+            three
+        "
+        .unindent();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": conflicted_text.clone(),
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("a.txt", "zero\none\nthree\n".into())],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.insert(
+                repo_path("a.txt"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            );
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let index_before = fs
+            .with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.index_contents.get(&repo_path("a.txt")).cloned()
+            })
+            .unwrap();
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let index_after = fs
+            .with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.index_contents.get(&repo_path("a.txt")).cloned()
+            })
+            .unwrap();
+
+        assert_eq!(
+            index_before, index_after,
+            "index should not change when conflict markers are still present"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_auto_stage_when_file_not_conflicted(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let initial_text = "
+            zero
+            one
+            three
+        "
+        .unindent();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": initial_text.clone(),
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("a.txt", initial_text.clone())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text("modified content\n".to_string(), cx);
+        });
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            assert_eq!(
+                state.index_contents.get(&repo_path("a.txt")).map(|s| s.as_str()),
+                Some(initial_text.as_str()),
+                "index should remain unchanged for non-conflicted files"
+            );
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_no_auto_stage_when_setting_disabled(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let conflicted_text = "
+            zero
+            <<<<<<< HEAD
+            one
+            =======
+            two
+            >>>>>>> branch
+            three
+        "
+        .unindent();
+
+        let resolved_text = "
+            zero
+            one
+            three
+        "
+        .unindent();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": conflicted_text.clone(),
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("a.txt", "zero\none\nthree\n".into())],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.insert(
+                repo_path("a.txt"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            );
+        })
+        .unwrap();
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .git
+                        .get_or_insert_default()
+                        .auto_stage_on_conflict_resolution = Some(false);
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let index_before = fs
+            .with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.index_contents.get(&repo_path("a.txt")).cloned()
+            })
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(resolved_text.clone(), cx);
+        });
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let index_after = fs
+            .with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.index_contents.get(&repo_path("a.txt")).cloned()
+            })
+            .unwrap();
+
+        assert_eq!(
+            index_before, index_after,
+            "index should not change when auto_stage_on_conflict_resolution is disabled"
+        );
     }
 }
 

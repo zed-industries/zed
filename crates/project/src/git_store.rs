@@ -1816,13 +1816,19 @@ impl GitStore {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
                 cx.subscribe(buffer, |this, buffer, event, cx| {
-                    if let BufferEvent::LanguageChanged(_) = event {
-                        let buffer_id = buffer.read(cx).remote_id();
-                        if let Some(diff_state) = this.diffs.get(&buffer_id) {
-                            diff_state.update(cx, |diff_state, cx| {
-                                diff_state.buffer_language_changed(buffer, cx);
-                            });
+                    match event {
+                        BufferEvent::LanguageChanged(_) => {
+                            let buffer_id = buffer.read(cx).remote_id();
+                            if let Some(diff_state) = this.diffs.get(&buffer_id) {
+                                diff_state.update(cx, |diff_state, cx| {
+                                    diff_state.buffer_language_changed(buffer, cx);
+                                });
+                            }
                         }
+                        BufferEvent::Saved => {
+                            this.auto_stage_resolved_conflict(buffer, cx);
+                        }
+                        _ => {}
                     }
                 })
                 .detach();
@@ -1878,6 +1884,34 @@ impl GitStore {
                 }
             }
         }
+    }
+
+    fn auto_stage_resolved_conflict(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) {
+        if !ProjectSettings::get_global(cx)
+            .git
+            .auto_stage_on_conflict_resolution
+        {
+            return;
+        }
+        let buffer_id = buffer.read(cx).remote_id();
+        let Some((repo, repo_path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) else {
+            return;
+        };
+        if !repo.read(cx).snapshot.has_conflict(&repo_path) {
+            return;
+        }
+        let parsed = ConflictSet::parse(&buffer.read(cx).text_snapshot());
+        if !parsed.conflicts.is_empty() {
+            return;
+        }
+        cx.defer(move |cx| {
+            repo.update(cx, |repo, cx| repo.stage_entries(vec![repo_path], cx))
+                .detach_and_log_err(cx);
+        });
     }
 
     pub fn recalculate_buffer_diffs(
