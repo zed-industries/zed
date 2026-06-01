@@ -3368,12 +3368,29 @@ async fn test_stream_thread_title_keeps_only_first_line(cx: &mut TestAppContext)
         async move |cx| crate::stream_thread_title(model, request, &cx).await
     });
 
-    // Let the task issue its completion request before we feed it chunks.
     cx.run_until_parked();
 
-    // The model streams more than one line; only the first should survive, and
-    // streaming should stop as soon as the second line is seen.
     model.send_last_completion_stream_text_chunk("Hello world\nGoodnight Moon");
+    model.end_last_completion_stream();
+
+    let title = title_task.await.unwrap();
+    assert_eq!(title, "Hello world");
+}
+
+#[gpui::test]
+async fn test_stream_thread_title_stops_when_newline_ends_chunk(cx: &mut TestAppContext) {
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = LanguageModelRequest::default();
+
+    let title_task = cx.spawn({
+        let model = model.clone();
+        async move |cx| crate::stream_thread_title(model, request, &cx).await
+    });
+
+    cx.run_until_parked();
+
+    model.send_last_completion_stream_text_chunk("Hello world\n");
+    model.send_last_completion_stream_text_chunk("Goodnight Moon");
     model.end_last_completion_stream();
 
     let title = title_task.await.unwrap();
