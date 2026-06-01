@@ -6090,7 +6090,7 @@ impl Sidebar {
             })
             .flatten();
         let mut markdown_panel_workspaces = Vec::new();
-        if let Some(open_workspace) = open_workspace.clone() {
+        if let Some(open_workspace) = open_workspace {
             markdown_panel_workspaces.push(open_workspace);
         }
         if let Some(active_thread_workspace) = active_thread_workspace.clone()
