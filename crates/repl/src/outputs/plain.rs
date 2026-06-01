@@ -26,7 +26,6 @@ use util::paths::PathStyle;
 
 use crate::outputs::OutputContent;
 use crate::repl_settings::ReplSettings;
-use std::cell::{Cell, RefCell};
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -44,8 +43,7 @@ use std::cell::{Cell, RefCell};
 pub struct TerminalOutput {
     full_buffer: Option<Entity<Buffer>>,
     terminal: Option<Entity<Terminal>>,
-    full_text: RefCell<String>,
-    full_text_dirty: Cell<bool>,
+    fallback_text: String,
 }
 
 /// Returns the default text style for the terminal output.
@@ -156,8 +154,7 @@ impl TerminalOutput {
 
         Self {
             terminal,
-            full_text: RefCell::new(String::new()),
-            full_text_dirty: Cell::new(false),
+            fallback_text: String::new(),
             full_buffer: None,
         }
     }
@@ -211,9 +208,8 @@ impl TerminalOutput {
             terminal.update(cx, |terminal, cx| {
                 terminal.write_output(text.as_bytes(), cx);
             });
-            self.full_text_dirty.set(true);
         } else {
-            self.full_text.borrow_mut().push_str(text);
+            self.fallback_text.push_str(text);
         }
 
         // This will keep the buffer up to date, though with some terminal codes it won't be perfect
@@ -225,15 +221,11 @@ impl TerminalOutput {
     }
 
     pub fn full_text(&self, cx: &App) -> String {
-        if self.full_text_dirty.get()
-            && let Some(terminal) = &self.terminal
-        {
-            let text = terminal.read(cx).get_content();
-            *self.full_text.borrow_mut() = Self::sanitize_terminal_text(text);
-            self.full_text_dirty.set(false);
+        if let Some(terminal) = &self.terminal {
+            Self::sanitize_terminal_text(terminal.read(cx).get_content())
+        } else {
+            self.fallback_text.clone()
         }
-
-        self.full_text.borrow().clone()
     }
 
     fn sanitize_terminal_text(text: String) -> String {
@@ -324,17 +316,13 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_append_text_defers_full_text_refresh(cx: &mut TestAppContext) {
+    fn test_full_text_reads_terminal_output(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         cx.update(|window, cx| {
             let output = cx.new(|cx| TerminalOutput::new(window, cx));
             output.update(cx, |output, cx| {
                 output.append_text("hello\n", cx);
-
-                assert!(output.full_text_dirty.get());
-                assert_eq!(output.full_text.borrow().as_str(), "");
                 assert_eq!(output.full_text(cx), "hello\n");
-                assert!(!output.full_text_dirty.get());
             });
         });
     }
