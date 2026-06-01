@@ -1,14 +1,16 @@
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{GitPanel, commit_message_editor, panel_editor_style};
+use crate::git_panel::{
+    GitPanel, commit_message_editor, commit_title_exceeds_limit, git_commit_editor_style,
+};
 use crate::git_panel_settings::GitPanelSettings;
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
-use panel::panel_button;
 use project::DisableAiSettings;
 use settings::Settings;
 use ui::{
     ContextMenu, KeybindingHint, PopoverMenu, PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
 };
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 use editor::{Editor, EditorElement};
 use gpui::*;
@@ -227,8 +229,9 @@ impl CommitModal {
         }
     }
 
-    fn commit_editor_element(&self, window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
-        let editor_style = panel_editor_style(true, window, cx);
+    fn commit_editor_element(&self, _window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
+        let settings = theme_settings::ThemeSettings::get_global(cx);
+        let editor_style = git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
         EditorElement::new(&self.commit_editor, editor_style)
     }
 
@@ -366,17 +369,17 @@ impl CommitModal {
             .map(|b| b.name().to_owned())
             .unwrap_or_else(|| "<no branch>".to_owned());
 
-        let branch_picker_button = panel_button(branch)
+        let branch_picker_button = Button::new("branch_picker_button", branch)
             .start_icon(
                 Icon::new(IconName::GitBranch)
                     .size(IconSize::Small)
                     .color(Color::Placeholder),
             )
+            .style(ButtonStyle::Transparent)
             .color(Color::Muted)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
+            }));
 
         let branch_picker = PopoverMenu::new("popover-button")
             .menu(move |window, cx| {
@@ -416,11 +419,11 @@ impl CommitModal {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .overflow_x_hidden()
                     .child(
                         h_flex()
-                            .flex_shrink()
+                            .flex_shrink_1()
                             .overflow_x_hidden()
                             .child(branch_picker),
                     )
@@ -532,6 +535,39 @@ impl CommitModal {
             self.branch_list_handle.toggle(window, cx);
         }
     }
+
+    fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.increase_font_size(action, window, cx);
+        });
+    }
+
+    fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.decrease_font_size(action, window, cx);
+        });
+    }
+
+    fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.reset_font_size(action, window, cx);
+        });
+    }
 }
 
 impl Render for CommitModal {
@@ -549,7 +585,7 @@ impl Render for CommitModal {
                 .text(cx)
                 .lines()
                 .next()
-                .is_some_and(|title| title.len() > max_title_length)
+                .is_some_and(|title| commit_title_exceeds_limit(title, max_title_length))
         } else {
             false
         };
@@ -560,6 +596,9 @@ impl Render for CommitModal {
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::on_commit))
             .on_action(cx.listener(Self::on_amend))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
             .when(!DisableAiSettings::get_global(cx).disable_ai, |this| {
                 this.on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
                     this.git_panel.update(cx, |panel, cx| {
@@ -583,7 +622,7 @@ impl Render for CommitModal {
                 }),
             )
             .w(width)
-            .h_112()
+            .min_h_112()
             .p(container_padding)
             .elevation_3(cx)
             .overflow_hidden()

@@ -190,6 +190,7 @@ impl Button {
     /// Displays a rotating loading spinner in place of the `start_icon`.
     ///
     /// When `loading` is `true`, any `start_icon` is ignored. and a rotating
+    /// loading spinner is shown instead.
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
         self
@@ -389,23 +390,26 @@ impl RenderOnce for Button {
             h_flex()
                 .when(self.truncate, |this| this.min_w_0().overflow_hidden())
                 .gap(DynamicSpacing::Base04.rems(cx))
-                .when(self.loading, |this| {
-                    this.child(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_rotate_animation(2),
-                    )
-                })
-                .when(!self.loading, |this| {
-                    this.when_some(self.start_icon, |this, icon| {
-                        this.child(if is_disabled {
-                            icon.color(Color::Disabled)
-                        } else {
-                            icon
+                .when_else(
+                    self.loading,
+                    |this| {
+                        this.child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                                .with_rotate_animation(2),
+                        )
+                    },
+                    |this| {
+                        this.when_some(self.start_icon, |this, icon| {
+                            this.child(if is_disabled {
+                                icon.color(Color::Disabled)
+                            } else {
+                                icon
+                            })
                         })
-                    })
-                })
+                    },
+                )
                 .child(
                     h_flex()
                         .when(self.truncate, |this| this.min_w_0().overflow_hidden())
@@ -444,130 +448,128 @@ impl Component for Button {
         "ButtonA"
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A button triggers an event or action.")
+    fn description() -> &'static str {
+        "A button triggers an event or action."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Button Styles",
-                        vec![
-                            single_example(
-                                "Default",
-                                Button::new("default", "Default").into_any_element(),
-                            ),
-                            single_example(
-                                "Filled",
-                                Button::new("filled", "Filled")
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Subtle",
-                                Button::new("outline", "Subtle")
-                                    .style(ButtonStyle::Subtle)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Tinted",
-                                Button::new("tinted_accent_style", "Accent")
-                                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Transparent",
-                                Button::new("transparent", "Transparent")
-                                    .style(ButtonStyle::Transparent)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Tint Styles",
-                        vec![
-                            single_example(
-                                "Accent",
-                                Button::new("tinted_accent", "Accent")
-                                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                Button::new("tinted_negative", "Error")
-                                    .style(ButtonStyle::Tinted(TintColor::Error))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Warning",
-                                Button::new("tinted_warning", "Warning")
-                                    .style(ButtonStyle::Tinted(TintColor::Warning))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Success",
-                                Button::new("tinted_positive", "Success")
-                                    .style(ButtonStyle::Tinted(TintColor::Success))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Special States",
-                        vec![
-                            single_example(
-                                "Default",
-                                Button::new("default_state", "Default").into_any_element(),
-                            ),
-                            single_example(
-                                "Disabled",
-                                Button::new("disabled", "Disabled")
-                                    .disabled(true)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                Button::new("selected", "Selected")
-                                    .toggle_state(true)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Buttons with Icons",
-                        vec![
-                            single_example(
-                                "Start Icon",
-                                Button::new("icon_start", "Start Icon")
-                                    .start_icon(Icon::new(IconName::Check))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "End Icon",
-                                Button::new("icon_end", "End Icon")
-                                    .end_icon(Icon::new(IconName::Check))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Both Icons",
-                                Button::new("both_icons", "Both Icons")
-                                    .start_icon(Icon::new(IconName::Check))
-                                    .end_icon(Icon::new(IconName::ChevronDown))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Icon Color",
-                                Button::new("icon_color", "Icon Color")
-                                    .start_icon(Icon::new(IconName::Check).color(Color::Accent))
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Button Styles",
+                    vec![
+                        single_example(
+                            "Default",
+                            Button::new("default", "Default").into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            Button::new("filled", "Filled")
+                                .style(ButtonStyle::Filled)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Subtle",
+                            Button::new("outline", "Subtle")
+                                .style(ButtonStyle::Subtle)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Tinted",
+                            Button::new("tinted_accent_style", "Accent")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Transparent",
+                            Button::new("transparent", "Transparent")
+                                .style(ButtonStyle::Transparent)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Tint Styles",
+                    vec![
+                        single_example(
+                            "Accent",
+                            Button::new("tinted_accent", "Accent")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Error",
+                            Button::new("tinted_negative", "Error")
+                                .style(ButtonStyle::Tinted(TintColor::Error))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Warning",
+                            Button::new("tinted_warning", "Warning")
+                                .style(ButtonStyle::Tinted(TintColor::Warning))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Success",
+                            Button::new("tinted_positive", "Success")
+                                .style(ButtonStyle::Tinted(TintColor::Success))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Special States",
+                    vec![
+                        single_example(
+                            "Default",
+                            Button::new("default_state", "Default").into_any_element(),
+                        ),
+                        single_example(
+                            "Disabled",
+                            Button::new("disabled", "Disabled")
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Button::new("selected", "Selected")
+                                .toggle_state(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Buttons with Icons",
+                    vec![
+                        single_example(
+                            "Start Icon",
+                            Button::new("icon_start", "Start Icon")
+                                .start_icon(Icon::new(IconName::Check))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "End Icon",
+                            Button::new("icon_end", "End Icon")
+                                .end_icon(Icon::new(IconName::Check))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Both Icons",
+                            Button::new("both_icons", "Both Icons")
+                                .start_icon(Icon::new(IconName::Check))
+                                .end_icon(Icon::new(IconName::ChevronDown))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Icon Color",
+                            Button::new("icon_color", "Icon Color")
+                                .start_icon(Icon::new(IconName::Check).color(Color::Accent))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

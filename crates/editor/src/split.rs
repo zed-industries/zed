@@ -18,7 +18,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, Settings};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -504,6 +504,7 @@ impl SplittableEditor {
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
+            editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
             editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
@@ -1755,6 +1756,10 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).buffer_kind(cx)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+        self.rhs_editor.read(cx).active_project_path(cx)
+    }
+
     fn is_dirty(&self, cx: &App) -> bool {
         self.rhs_editor.read(cx).is_dirty(cx)
     }
@@ -1940,12 +1945,12 @@ impl SearchableItem for SplittableEditor {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
         self.focused_editor().update(cx, |editor, cx| {
-            editor.query_suggestion(ignore_settings, window, cx)
+            editor.query_suggestion(seed_query_override, window, cx)
         })
     }
 

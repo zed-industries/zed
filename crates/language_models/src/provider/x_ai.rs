@@ -6,10 +6,10 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
-    env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -255,6 +255,75 @@ impl XAiLanguageModel {
     }
 }
 
+fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEffort] {
+    if model.supports_reasoning_effort() {
+        &[
+            open_ai::ReasoningEffort::None,
+            open_ai::ReasoningEffort::Low,
+            open_ai::ReasoningEffort::Medium,
+            open_ai::ReasoningEffort::High,
+        ]
+    } else {
+        &[]
+    }
+}
+
+fn default_thinking_reasoning_effort(model: &x_ai::Model) -> Option<open_ai::ReasoningEffort> {
+    if model.supports_reasoning_effort() {
+        Some(open_ai::ReasoningEffort::Low)
+    } else {
+        None
+    }
+}
+
+fn reasoning_effort_for_request(
+    request: &LanguageModelRequest,
+    model: &x_ai::Model,
+) -> Option<open_ai::ReasoningEffort> {
+    let supported_efforts = x_ai_reasoning_efforts(model);
+    if supported_efforts.is_empty() {
+        return None;
+    }
+
+    if request.thinking_allowed {
+        request
+            .thinking_effort
+            .as_deref()
+            .and_then(|effort| effort.parse::<open_ai::ReasoningEffort>().ok())
+            .filter(|effort| supported_efforts.contains(effort))
+            .filter(|effort| *effort != open_ai::ReasoningEffort::None)
+            .or_else(|| default_thinking_reasoning_effort(model))
+    } else if supported_efforts.contains(&open_ai::ReasoningEffort::None) {
+        Some(open_ai::ReasoningEffort::None)
+    } else {
+        None
+    }
+}
+
+fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEffortLevel> {
+    let default_effort = default_thinking_reasoning_effort(model);
+    x_ai_reasoning_efforts(model)
+        .iter()
+        .copied()
+        .filter_map(|effort| {
+            let (name, value) = match effort {
+                open_ai::ReasoningEffort::None => return None,
+                open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                open_ai::ReasoningEffort::Low => ("Low", "low"),
+                open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
+                open_ai::ReasoningEffort::High => ("High", "high"),
+                open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+            };
+
+            Some(LanguageModelEffortLevel {
+                name: name.into(),
+                value: value.into(),
+                is_default: Some(effort) == default_effort,
+            })
+        })
+        .collect()
+}
+
 impl LanguageModel for XAiLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -291,6 +360,15 @@ impl LanguageModel for XAiLanguageModel {
             | LanguageModelToolChoice::None => true,
         }
     }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_reasoning_effort()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        supported_thinking_effort_levels(&self.model)
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         if self.model.requires_json_schema_subset() {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
@@ -329,13 +407,14 @@ impl LanguageModel for XAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let reasoning_effort = reasoning_effort_for_request(&request, &self.model);
         let request = crate::provider::open_ai::into_open_ai(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
-            None,
+            reasoning_effort,
             false,
         );
         let completions = self.stream_completion(request, cx);
@@ -425,6 +504,56 @@ impl ConfigurationView {
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grok_43_supports_selectable_thinking_effort_levels() {
+        let effort_levels = supported_thinking_effort_levels(&x_ai::Model::Grok43);
+        let values = effort_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, ["low", "medium", "high"]);
+        assert_eq!(
+            effort_levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn grok_43_request_uses_selected_reasoning_effort() {
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok43),
+            Some(open_ai::ReasoningEffort::High)
+        );
+    }
+
+    #[test]
+    fn grok_43_request_uses_none_when_thinking_is_disabled() {
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reasoning_effort_for_request(&request, &x_ai::Model::Grok43),
+            Some(open_ai::ReasoningEffort::None)
+        );
     }
 }
 

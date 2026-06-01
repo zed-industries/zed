@@ -10,10 +10,11 @@ use serde_json::json;
 use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
 use workspace::{
-    AppState, CloseActiveItem, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace, open_paths,
+    AppState, CloseActiveItem, Item, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace,
+    open_paths,
 };
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -681,6 +682,200 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         });
 }
 
+#[test]
+fn test_line_range_query_parsing() {
+    let query = parse_file_search_query("fs/smb/server/connection.c:428-440");
+
+    assert_eq!(query.raw_query, "fs/smb/server/connection.c:428-440");
+    assert_eq!(
+        query.file_query_end,
+        Some("fs/smb/server/connection.c".len())
+    );
+    assert_eq!(query.path_query(), "fs/smb/server/connection.c");
+    assert_eq!(query.path_position.row, Some(428));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(428..=440));
+}
+
+#[test]
+fn test_parse_search_query() {
+    // Test trailing colon stripping.
+    let query = parse_file_search_query("content.rs:2:");
+    assert_eq!(query.raw_query, "content.rs:2");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test multiple trailing colons are also stripped.
+    let query = parse_file_search_query("content.rs:2:::");
+    assert_eq!(query.raw_query, "content.rs:2");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test trailing colon after an incomplete range is stripped.
+    let query = parse_file_search_query("content.rs:2-:");
+    assert_eq!(query.raw_query, "content.rs:2-");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test trailing colon after a complete range is stripped, range is preserved.
+    let query = parse_file_search_query("content.rs:2-4:");
+    assert_eq!(query.raw_query, "content.rs:2-4");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(2..=4));
+
+    // Test multiple trailing colons after a complete range are all stripped.
+    let query = parse_file_search_query("content.rs:2-4:::");
+    assert_eq!(query.raw_query, "content.rs:2-4");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(2..=4));
+
+    // Test invalid end should fall back to using the start as a single row.
+    let query = parse_file_search_query("content.rs:5-x");
+    assert_eq!(query.raw_query, "content.rs:5-x");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(5));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test reversed range (end < start) should fall back to using the start as a single row.
+    let query = parse_file_search_query("content.rs:10-5");
+    assert_eq!(query.raw_query, "content.rs:10-5");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(10));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+}
+
+#[gpui::test]
+async fn test_line_range_query_selects_lines(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    let first_file_contents = "line 1\nline 2\nline 3\nline 4\nline 5";
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": first_file_contents,
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let query = "test/first.rs:2-4";
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(query.to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "first.rs");
+        assert_match_at_position(finder, 1, "first.rs:2-4");
+
+        let latest_search_query = finder
+            .delegate
+            .latest_search_query
+            .as_ref()
+            .expect("Finder should have a query after the update_matches call");
+        assert_eq!(latest_search_query.raw_query, query);
+        assert_eq!(
+            latest_search_query.file_query_end,
+            Some("test/first.rs".len())
+        );
+        assert_eq!(latest_search_query.path_position.row, Some(2));
+        assert_eq!(latest_search_query.path_position.column, None);
+        assert_eq!(latest_search_query.line_range, Some(2..=4));
+    });
+
+    cx.dispatch_action(Confirm);
+
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    cx.executor().advance_clock(Duration::from_secs(2));
+
+    editor.update(cx, |editor, cx| {
+        let all_selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+        assert_eq!(
+            all_selections.len(),
+            1,
+            "Expected to have 1 selection after file finder confirm, but got: {all_selections:?}"
+        );
+        let selection = all_selections.into_iter().next().unwrap();
+        assert_eq!(selection.start.row, 1);
+        assert_eq!(selection.start.column, 0);
+        assert_eq!(selection.end.row, 4);
+        assert_eq!(selection.end.column, 0);
+    });
+}
+
+#[gpui::test]
+async fn test_line_range_query_outside_file_clamps_to_eof(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    let first_file_contents = "line 1\nline 2";
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": first_file_contents,
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let query = "test/first.rs:200-300";
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(query.to_string(), window, cx)
+        })
+        .await;
+
+    cx.dispatch_action(Confirm);
+
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    cx.executor().advance_clock(Duration::from_secs(2));
+
+    editor.update(cx, |editor, cx| {
+        let all_selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+        assert_eq!(
+            all_selections.len(),
+            1,
+            "Expected to have 1 selection after file finder confirm, but got: {all_selections:?}"
+        );
+        let selection = all_selections.into_iter().next().unwrap();
+        assert_eq!(selection.start, selection.end);
+        assert_eq!(selection.start.row, 1);
+        assert_eq!(selection.start.column, "line 2".len() as u32);
+    });
+}
+
 #[gpui::test]
 async fn test_matching_cancellation(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
@@ -1346,7 +1541,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
-        let project_path = active_editor.read(cx).project_path(cx);
+        let project_path = active_editor.read(cx).active_project_path(cx);
         assert_eq!(
             project_path,
             Some(ProjectPath {
@@ -1424,7 +1619,7 @@ async fn test_create_file_focused_file_does_not_belong_to_available_worktrees(
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
 
-        let project_path = active_editor.read(cx).project_path(cx);
+        let project_path = active_editor.read(cx).active_project_path(cx);
 
         assert!(
             project_path.is_some(),
@@ -1496,7 +1691,7 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
-        let project_path = active_editor.read(cx).project_path(cx);
+        let project_path = active_editor.read(cx).active_project_path(cx);
         assert_eq!(
             project_path,
             Some(ProjectPath {
@@ -3728,6 +3923,189 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_open_without_dismiss_keeps_finder_open(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "file1.txt": "content1",
+                    "file2.txt": "content2",
+                    "file3.txt": "content3",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("file");
+    cx.run_until_parked();
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.matches.len() >= 3,
+            "Expected at least 3 matches for 'file', got {}",
+            picker.delegate.matches.len()
+        );
+    });
+
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    // Finder must still be visible after opening a file without dismiss.
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_some(),
+            "File finder should remain open after OpenWithoutDismiss"
+        );
+    });
+
+    // Exactly one file was opened in the pane.
+    cx.read(|cx| {
+        let items: Vec<_> = workspace.read(cx).active_pane().read(cx).items().collect();
+        assert_eq!(items.len(), 1, "One file should be open in the pane");
+    });
+
+    // The search query and results are preserved so the user can continue browsing.
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.matches.len() >= 3,
+            "Search results should remain unchanged after OpenWithoutDismiss"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_open_without_dismiss_opens_multiple_files(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "alpha.txt": "alpha",
+                    "beta.txt": "beta",
+                    "gamma.txt": "gamma",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (_picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("a");
+    cx.run_until_parked();
+
+    // Open the first match and stay in the finder.
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_some(),
+            "Finder should remain open after first OpenWithoutDismiss"
+        );
+    });
+    cx.read(|cx| {
+        let pane = workspace.read(cx).active_pane().read(cx);
+        assert_eq!(
+            pane.items().count(),
+            1,
+            "One file open after first OpenWithoutDismiss"
+        );
+    });
+
+    // Navigate to the next result and open it too.
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_some(),
+            "Finder should remain open after second OpenWithoutDismiss"
+        );
+    });
+    cx.read(|cx| {
+        let pane = workspace.read(cx).active_pane().read(cx);
+        assert_eq!(
+            pane.items().count(),
+            2,
+            "Two files open after second OpenWithoutDismiss"
+        );
+        // The second opened file should now be the active tab.
+        let active_index = pane.active_item_index();
+        assert_eq!(active_index, 1, "Second file should be the active tab");
+    });
+}
+
+#[gpui::test]
+async fn test_open_without_dismiss_then_confirm_closes_finder(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "first.txt": "first",
+                    "second.txt": "second",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("t");
+    cx.run_until_parked();
+    picker.update(cx, |picker, _| {
+        assert!(picker.delegate.matches.len() >= 2);
+    });
+
+    // Open first file, keep finder open.
+    cx.dispatch_action(OpenWithoutDismiss);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(workspace.active_modal::<FileFinder>(cx).is_some());
+    });
+
+    // Navigate to the next match and confirm normally — this should close the finder.
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<FileFinder>(cx).is_none(),
+            "Finder should be closed after regular Confirm"
+        );
+    });
+
+    // Two files were opened in total, with the confirmed one now active.
+    cx.read(|cx| {
+        let pane = workspace.read(cx).active_pane().read(cx);
+        assert_eq!(pane.items().count(), 2, "Two files should be open total");
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        let title = active_editor.read(cx).title(cx);
+        assert!(
+            title == "second.txt" || title == "first.txt",
+            "Active editor should be one of the opened files, got: {title}"
+        );
+    });
+}
+
 async fn open_close_queried_buffer(
     input: &str,
     expected_matches: usize,
@@ -3797,17 +4175,7 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 }
 
 fn test_path_position(test_str: &str) -> FileSearchQuery {
-    let path_position = PathWithPosition::parse_str(test_str);
-
-    FileSearchQuery {
-        raw_query: test_str.to_owned(),
-        file_query_end: if path_position.path.to_str().unwrap() == test_str {
-            None
-        } else {
-            Some(path_position.path.to_str().unwrap().len())
-        },
-        path_position,
-    }
+    parse_file_search_query(test_str)
 }
 
 fn build_find_picker(

@@ -816,6 +816,10 @@ impl Item for Editor {
         }
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.active_buffer(cx)?.read(cx).project_path(cx)
+    }
+
     fn can_save_as(&self, cx: &App) -> bool {
         self.buffer.read(cx).is_singleton()
     }
@@ -1025,7 +1029,7 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.show_breadcrumbs && self.buffer().read(cx).is_singleton() {
+        if self.breadcrumbs_visible() && self.buffer().read(cx).is_singleton() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -1699,15 +1703,12 @@ impl SearchableItem for Editor {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
-        let setting = if ignore_settings {
-            SeedQuerySetting::Always
-        } else {
-            EditorSettings::get_global(cx).seed_search_query_from_cursor
-        };
+        let setting = seed_query_override
+            .unwrap_or_else(|| EditorSettings::get_global(cx).seed_search_query_from_cursor);
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
         let buffer_snapshot = snapshot.buffer_snapshot();

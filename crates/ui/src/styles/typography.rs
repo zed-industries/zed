@@ -250,45 +250,43 @@ impl Component for Headline {
         ComponentScope::Typography
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A headline element used to emphasize text and create visual hierarchy in the UI.")
+    fn description() -> &'static str {
+        "A headline element used to emphasize text and create visual hierarchy in the UI."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_1()
-                .children(vec![
-                    single_example(
-                        "XLarge",
-                        Headline::new("XLarge Headline")
-                            .size(HeadlineSize::XLarge)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Large",
-                        Headline::new("Large Headline")
-                            .size(HeadlineSize::Large)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Medium (Default)",
-                        Headline::new("Medium Headline").into_any_element(),
-                    ),
-                    single_example(
-                        "Small",
-                        Headline::new("Small Headline")
-                            .size(HeadlineSize::Small)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "XSmall",
-                        Headline::new("XSmall Headline")
-                            .size(HeadlineSize::XSmall)
-                            .into_any_element(),
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_1()
+            .children(vec![
+                single_example(
+                    "XLarge",
+                    Headline::new("XLarge Headline")
+                        .size(HeadlineSize::XLarge)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Large",
+                    Headline::new("Large Headline")
+                        .size(HeadlineSize::Large)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Medium (Default)",
+                    Headline::new("Medium Headline").into_any_element(),
+                ),
+                single_example(
+                    "Small",
+                    Headline::new("Small Headline")
+                        .size(HeadlineSize::Small)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "XSmall",
+                    Headline::new("XSmall Headline")
+                        .size(HeadlineSize::XSmall)
+                        .into_any_element(),
+                ),
+            ])
+            .into_any_element()
     }
 }

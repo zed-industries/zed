@@ -122,7 +122,7 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-#[ctor]
+#[ctor(unsafe)]
 unsafe fn build_classes() {
     unsafe {
         WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
@@ -130,181 +130,177 @@ unsafe fn build_classes() {
         VIEW_CLASS = {
             let mut decl = ClassDecl::new("GPUIView", class!(NSView)).unwrap();
             decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
-            unsafe {
-                decl.add_method(sel!(dealloc), dealloc_view as extern "C" fn(&Object, Sel));
+            decl.add_method(sel!(dealloc), dealloc_view as extern "C" fn(&Object, Sel));
 
-                decl.add_method(
-                    sel!(performKeyEquivalent:),
-                    handle_key_equivalent as extern "C" fn(&Object, Sel, id) -> BOOL,
-                );
-                decl.add_method(
-                    sel!(keyDown:),
-                    handle_key_down as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(keyUp:),
-                    handle_key_up as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(mouseDown:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(mouseUp:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(rightMouseDown:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(rightMouseUp:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(otherMouseDown:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(otherMouseUp:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(mouseMoved:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(resetCursorRects),
-                    reset_cursor_rects as extern "C" fn(&Object, Sel),
-                );
-                decl.add_method(
-                    sel!(pressureChangeWithEvent:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(mouseExited:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(magnifyWithEvent:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(mouseDragged:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(rightMouseDragged:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(otherMouseDragged:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(scrollWheel:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(swipeWithEvent:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(flagsChanged:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
+            decl.add_method(
+                sel!(performKeyEquivalent:),
+                handle_key_equivalent as extern "C" fn(&Object, Sel, id) -> BOOL,
+            );
+            decl.add_method(
+                sel!(keyDown:),
+                handle_key_down as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(keyUp:),
+                handle_key_up as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(mouseDown:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(mouseUp:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(rightMouseDown:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(rightMouseUp:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(otherMouseDown:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(otherMouseUp:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(mouseMoved:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(resetCursorRects),
+                reset_cursor_rects as extern "C" fn(&Object, Sel),
+            );
+            decl.add_method(
+                sel!(pressureChangeWithEvent:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(mouseExited:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(magnifyWithEvent:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(mouseDragged:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(rightMouseDragged:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(otherMouseDragged:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(scrollWheel:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(swipeWithEvent:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(flagsChanged:),
+                handle_view_event as extern "C" fn(&Object, Sel, id),
+            );
 
-                decl.add_method(
-                    sel!(makeBackingLayer),
-                    make_backing_layer as extern "C" fn(&Object, Sel) -> id,
-                );
+            decl.add_method(
+                sel!(makeBackingLayer),
+                make_backing_layer as extern "C" fn(&Object, Sel) -> id,
+            );
 
-                decl.add_protocol(Protocol::get("CALayerDelegate").unwrap());
-                decl.add_method(
-                    sel!(viewDidChangeBackingProperties),
-                    view_did_change_backing_properties as extern "C" fn(&Object, Sel),
-                );
-                decl.add_method(
-                    sel!(setFrameSize:),
-                    set_frame_size as extern "C" fn(&Object, Sel, NSSize),
-                );
-                decl.add_method(
-                    sel!(displayLayer:),
-                    display_layer as extern "C" fn(&Object, Sel, id),
-                );
+            decl.add_protocol(Protocol::get("CALayerDelegate").unwrap());
+            decl.add_method(
+                sel!(viewDidChangeBackingProperties),
+                view_did_change_backing_properties as extern "C" fn(&Object, Sel),
+            );
+            decl.add_method(
+                sel!(setFrameSize:),
+                set_frame_size as extern "C" fn(&Object, Sel, NSSize),
+            );
+            decl.add_method(
+                sel!(displayLayer:),
+                display_layer as extern "C" fn(&Object, Sel, id),
+            );
 
-                decl.add_protocol(Protocol::get("NSTextInputClient").unwrap());
-                decl.add_method(
-                    sel!(validAttributesForMarkedText),
-                    valid_attributes_for_marked_text as extern "C" fn(&Object, Sel) -> id,
-                );
-                decl.add_method(
-                    sel!(hasMarkedText),
-                    has_marked_text as extern "C" fn(&Object, Sel) -> BOOL,
-                );
-                decl.add_method(
-                    sel!(markedRange),
-                    marked_range as extern "C" fn(&Object, Sel) -> NSRange,
-                );
-                decl.add_method(
-                    sel!(selectedRange),
-                    selected_range as extern "C" fn(&Object, Sel) -> NSRange,
-                );
-                decl.add_method(
-                    sel!(firstRectForCharacterRange:actualRange:),
-                    first_rect_for_character_range
-                        as extern "C" fn(&Object, Sel, NSRange, id) -> NSRect,
-                );
-                decl.add_method(
-                    sel!(insertText:replacementRange:),
-                    insert_text as extern "C" fn(&Object, Sel, id, NSRange),
-                );
-                decl.add_method(
-                    sel!(setMarkedText:selectedRange:replacementRange:),
-                    set_marked_text as extern "C" fn(&Object, Sel, id, NSRange, NSRange),
-                );
-                decl.add_method(sel!(unmarkText), unmark_text as extern "C" fn(&Object, Sel));
-                decl.add_method(
-                    sel!(attributedSubstringForProposedRange:actualRange:),
-                    attributed_substring_for_proposed_range
-                        as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
-                );
-                decl.add_method(
-                    sel!(viewDidChangeEffectiveAppearance),
-                    view_did_change_effective_appearance as extern "C" fn(&Object, Sel),
-                );
+            decl.add_protocol(Protocol::get("NSTextInputClient").unwrap());
+            decl.add_method(
+                sel!(validAttributesForMarkedText),
+                valid_attributes_for_marked_text as extern "C" fn(&Object, Sel) -> id,
+            );
+            decl.add_method(
+                sel!(hasMarkedText),
+                has_marked_text as extern "C" fn(&Object, Sel) -> BOOL,
+            );
+            decl.add_method(
+                sel!(markedRange),
+                marked_range as extern "C" fn(&Object, Sel) -> NSRange,
+            );
+            decl.add_method(
+                sel!(selectedRange),
+                selected_range as extern "C" fn(&Object, Sel) -> NSRange,
+            );
+            decl.add_method(
+                sel!(firstRectForCharacterRange:actualRange:),
+                first_rect_for_character_range
+                    as extern "C" fn(&Object, Sel, NSRange, id) -> NSRect,
+            );
+            decl.add_method(
+                sel!(insertText:replacementRange:),
+                insert_text as extern "C" fn(&Object, Sel, id, NSRange),
+            );
+            decl.add_method(
+                sel!(setMarkedText:selectedRange:replacementRange:),
+                set_marked_text as extern "C" fn(&Object, Sel, id, NSRange, NSRange),
+            );
+            decl.add_method(sel!(unmarkText), unmark_text as extern "C" fn(&Object, Sel));
+            decl.add_method(
+                sel!(attributedSubstringForProposedRange:actualRange:),
+                attributed_substring_for_proposed_range
+                    as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
+            );
+            decl.add_method(
+                sel!(viewDidChangeEffectiveAppearance),
+                view_did_change_effective_appearance as extern "C" fn(&Object, Sel),
+            );
 
-                // Suppress beep on keystrokes with modifier keys.
-                decl.add_method(
-                    sel!(doCommandBySelector:),
-                    do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
-                );
+            // Suppress beep on keystrokes with modifier keys.
+            decl.add_method(
+                sel!(doCommandBySelector:),
+                do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
+            );
 
-                decl.add_method(
-                    sel!(acceptsFirstMouse:),
-                    accepts_first_mouse as extern "C" fn(&Object, Sel, id) -> BOOL,
-                );
+            decl.add_method(
+                sel!(acceptsFirstMouse:),
+                accepts_first_mouse as extern "C" fn(&Object, Sel, id) -> BOOL,
+            );
 
-                decl.add_method(
-                    sel!(characterIndexForPoint:),
-                    character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
-                );
-            }
+            decl.add_method(
+                sel!(characterIndexForPoint:),
+                character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
+            );
             decl.register()
         };
         BLURRED_VIEW_CLASS = {
             let mut decl = ClassDecl::new("BlurredView", class!(NSVisualEffectView)).unwrap();
-            unsafe {
-                decl.add_method(
-                    sel!(initWithFrame:),
-                    blurred_view_init_with_frame as extern "C" fn(&Object, Sel, NSRect) -> id,
-                );
-                decl.add_method(
-                    sel!(updateLayer),
-                    blurred_view_update_layer as extern "C" fn(&Object, Sel),
-                );
-                decl.register()
-            }
+            decl.add_method(
+                sel!(initWithFrame:),
+                blurred_view_init_with_frame as extern "C" fn(&Object, Sel, NSRect) -> id,
+            );
+            decl.add_method(
+                sel!(updateLayer),
+                blurred_view_update_layer as extern "C" fn(&Object, Sel),
+            );
+            decl.register()
         };
     }
 }
@@ -504,6 +500,7 @@ struct MacWindowState {
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
     activated_least_once: bool,
     closed: Arc<AtomicBool>,
+    accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
 }
@@ -833,6 +830,7 @@ impl MacWindow {
                 toggle_tab_bar_callback: None,
                 activated_least_once: false,
                 closed: Arc::new(AtomicBool::new(false)),
+                accesskit_adapter: None,
                 sheet_parent: None,
             })));
 
@@ -1190,6 +1188,12 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_traffic_light_position(&self, position: Point<Pixels>) {
+        let mut state = self.0.lock();
+        state.traffic_light_position = Some(position);
+        state.move_traffic_light();
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.as_ref().lock().scale_factor()
     }
@@ -1272,30 +1276,17 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
-        // macOs applies overrides to modal window buttons after they are added.
-        // Two most important for this logic are:
-        // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
-        // * Last button added to the modal via `addButtonWithTitle` stays focused
-        // * Focused buttons react on "space"/" " keypresses
-        // * Usage of `keyEquivalent`, `makeFirstResponder` or `setInitialFirstResponder` does not change the focus
-        //
-        // See also https://developer.apple.com/documentation/appkit/nsalert/1524532-addbuttonwithtitle#discussion
-        // ```
-        // By default, the first button has a key equivalent of Return,
-        // any button with a title of “Cancel” has a key equivalent of Escape,
-        // and any button with the title “Don’t Save” has a key equivalent of Command-D (but only if it’s not the first button).
-        // ```
-        //
-        // To avoid situations when the last element added is "Cancel" and it gets the focus
-        // (hence stealing both ESC and Space shortcuts), we find and add one non-Cancel button
-        // last, so it gets focus and a Space shortcut.
-        // This way, "Save this file? Yes/No/Cancel"-ish modals will get all three buttons mapped with a key.
-        let latest_non_cancel_label = answers
+        // NSAlert's first button keeps Return and Cancel keeps Escape, but the keyboard
+        // focus (and therefore Space) defaults to Cancel, leaving the middle button of
+        // prompts like "Save / Don't Save / Cancel" unreachable from the keyboard. Move
+        // the initial focus onto the last non-cancel, non-default button instead.
+        let initial_focus_ix = answers
             .iter()
             .enumerate()
             .rev()
             .find(|(_, label)| !label.is_cancel())
-            .filter(|&(label_index, _)| label_index > 0);
+            .map(|(ix, _)| ix)
+            .filter(|&ix| ix > 0);
 
         unsafe {
             let alert: id = msg_send![class!(NSAlert), alloc];
@@ -1311,25 +1302,24 @@ impl PlatformWindow for MacWindow {
                 let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
             }
 
-            for (ix, answer) in answers
-                .iter()
-                .enumerate()
-                .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
-            {
+            let mut initial_focus_button: Option<id> = None;
+            for (ix, answer) in answers.iter().enumerate() {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
 
                 if answer.is_cancel() {
-                    // Bind Escape Key to Cancel Button
                     if let Some(key) = std::char::from_u32(crate::events::ESCAPE_KEY as u32) {
                         let _: () =
                             msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
                     }
+                } else if Some(ix) == initial_focus_ix {
+                    initial_focus_button = Some(button);
                 }
             }
-            if let Some((ix, answer)) = latest_non_cancel_label {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
-                let _: () = msg_send![button, setTag: ix as NSInteger];
+
+            if let Some(button) = initial_focus_button {
+                let alert_window: id = msg_send![alert, window];
+                let _: () = msg_send![alert_window, setInitialFirstResponder: button];
             }
 
             let (done_tx, done_rx) = oneshot::channel();
@@ -1747,6 +1737,59 @@ impl PlatformWindow for MacWindow {
     fn render_to_image(&self, scene: &gpui::Scene) -> Result<RgbaImage> {
         let mut this = self.0.lock();
         this.renderer.render_to_image(scene)
+    }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let mut lock = self.0.lock();
+
+        let activation_handler = A11yActivationHandler {
+            callback: callbacks.activation,
+        };
+        let action_handler = A11yActionHandler(callbacks.action);
+
+        let adapter = unsafe {
+            accesskit_macos::SubclassingAdapter::for_window(
+                lock.native_window as *mut c_void,
+                activation_handler,
+                action_handler,
+            )
+        };
+
+        lock.accesskit_adapter = Some(adapter);
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        let events = {
+            let mut lock = self.0.lock();
+            lock.accesskit_adapter
+                .as_mut()
+                .and_then(|adapter| adapter.update_if_active(|| tree_update))
+        };
+        if let Some(events) = events {
+            events.raise();
+        }
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        // macOS handles window bounds tracking automatically via NSAccessibility.
+    }
+}
+
+struct A11yActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+}
+
+impl accesskit::ActivationHandler for A11yActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        (self.callback)()
+    }
+}
+
+struct A11yActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+
+impl accesskit::ActionHandler for A11yActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        (self.0)(request);
     }
 }
 
@@ -2358,6 +2401,16 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
     let executor = lock.foreground_executor.clone();
     drop(lock);
+
+    let a11y_events = {
+        let mut lock = window_state.lock();
+        lock.accesskit_adapter
+            .as_mut()
+            .and_then(|adapter| adapter.update_view_focus_state(is_active))
+    };
+    if let Some(events) = a11y_events {
+        events.raise();
+    }
 
     // When a window becomes active, trigger an immediate synchronous frame request to prevent
     // tab flicker when switching between windows in native tabs mode.
