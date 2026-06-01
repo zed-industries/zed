@@ -4,7 +4,9 @@ mod alacritty;
 mod pty_info;
 pub mod terminal_settings;
 
-use anyhow::{Context as _, Result, bail};
+#[cfg(not(windows))]
+use anyhow::Context as _;
+use anyhow::{Result, bail};
 use futures_lite::future::yield_now;
 use log::trace;
 
