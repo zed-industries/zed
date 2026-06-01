@@ -1105,6 +1105,39 @@ impl RefEdit {
     }
 }
 
+/// Allow-list libgit2 repository extensions that we know are safe to encounter.
+///
+/// libgit2 refuses to open a repository whose config declares an `extensions.*`
+/// key it does not recognize (to avoid reading a repo whose on-disk layout it
+/// cannot faithfully interpret). Some extensions — notably `relativeWorktrees`,
+/// which git writes when `worktree.userelativepaths=true` — only affect on-disk
+/// pointer files that libgit2 already resolves correctly. Whitelisting them
+/// lets Zed open these repositories without changing libgit2's behavior.
+///
+/// Must be called before `git2::Repository::open` on a repo that uses the
+/// extension. Modifies global libgit2 state, so we run it exactly once.
+fn ensure_libgit2_extensions_enabled() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let existing = match unsafe { git2::opts::get_extensions() } {
+            Ok(list) => list,
+            Err(err) => {
+                log::warn!("git2::opts::get_extensions failed: {err}");
+                return;
+            }
+        };
+        let mut names: Vec<String> = existing
+            .iter()
+            .filter_map(|entry| entry.as_ref().map(|s| s.to_string()))
+            .collect();
+        names.push("relativeworktrees".into());
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        if let Err(err) = unsafe { git2::opts::set_extensions(&refs) } {
+            log::warn!("git2::opts::set_extensions failed: {err}");
+        }
+    });
+}
+
 impl RealGitRepository {
     pub fn new(
         dotgit_path: &Path,
@@ -1119,6 +1152,7 @@ impl RealGitRepository {
         log::info!(
             "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
         );
+        ensure_libgit2_extensions_enabled();
         let workdir_root = dotgit_path.parent().context(".git has no parent")?;
         let repository =
             git2::Repository::open(workdir_root).context("creating libgit2 repository")?;
