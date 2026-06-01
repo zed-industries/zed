@@ -1147,7 +1147,7 @@ impl Render for CommitView {
             .child(self.render_message(window, cx))
             .when(
                 !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
-                |this| this.child(div().flex_grow().child(self.editor.clone())),
+                |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
             )
     }
 }
