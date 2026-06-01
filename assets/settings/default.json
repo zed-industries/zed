@@ -2362,6 +2362,7 @@
       "api_url": "https://api.openai.com/v1",
     },
     "openai_compatible": {},
+    "anthropic_compatible": {},
     "opencode": {
       "api_url": "https://opencode.ai/zen",
     },

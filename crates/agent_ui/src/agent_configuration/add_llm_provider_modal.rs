@@ -8,7 +8,10 @@ use gpui::{
 };
 use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
-use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
+use settings::{
+    AnthropicCompatibleAvailableModel, AnthropicCompatibleSettingsContent,
+    OpenAiCompatibleSettingsContent, update_settings_file,
+};
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState,
     WithScrollbar, prelude::*,
@@ -40,30 +43,33 @@ fn single_line_input(
 #[derive(Clone, Copy)]
 pub enum LlmCompatibleProvider {
     OpenAi,
+    Anthropic,
 }
 
 impl LlmCompatibleProvider {
     fn name(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "OpenAI",
+            LlmCompatibleProvider::Anthropic => "Anthropic",
         }
     }
 
     fn api_url(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "https://api.openai.com/v1",
+            LlmCompatibleProvider::Anthropic => "https://api.anthropic.com",
         }
     }
 }
 
-struct AddLlmProviderInput {
+struct AddOpenAICompatibleInput {
     provider_name: Entity<InputField>,
     api_url: Entity<InputField>,
     api_key: Entity<InputField>,
     models: Vec<ModelInput>,
 }
 
-impl AddLlmProviderInput {
+impl AddOpenAICompatibleInput {
     fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut App) -> Self {
         let provider_name =
             single_line_input("Provider Name", provider.name(), None, 1, window, cx);
@@ -216,8 +222,174 @@ impl ModelInput {
     }
 }
 
+struct AnthropicModelInput {
+    name: Entity<InputField>,
+    max_tokens: Entity<InputField>,
+    max_output_tokens: Entity<InputField>,
+    supports_images: bool,
+}
+
+impl AnthropicModelInput {
+    fn new(model_index: usize, window: &mut Window, cx: &mut App) -> Self {
+        let base_tab_index = (3 + (model_index * 3)) as isize;
+
+        let model_name = single_line_input(
+            "Model Name",
+            "e.g. claude-opus-4-5, claude-sonnet-4-5",
+            None,
+            base_tab_index + 1,
+            window,
+            cx,
+        );
+        let max_tokens = single_line_input(
+            "Max Tokens",
+            "200000",
+            Some("200000"),
+            base_tab_index + 2,
+            window,
+            cx,
+        );
+        let max_output_tokens = single_line_input(
+            "Max Output Tokens",
+            "32000",
+            Some("32000"),
+            base_tab_index + 3,
+            window,
+            cx,
+        );
+
+        Self {
+            name: model_name,
+            max_tokens,
+            max_output_tokens,
+            supports_images: true,
+        }
+    }
+
+    fn parse(&self, cx: &App) -> Result<AnthropicCompatibleAvailableModel, SharedString> {
+        let name = self.name.read(cx).text(cx);
+        if name.is_empty() {
+            return Err(SharedString::from("Model Name cannot be empty"));
+        }
+        let max_tokens = self
+            .max_tokens
+            .read(cx)
+            .text(cx)
+            .parse::<u64>()
+            .map_err(|_| SharedString::from("Max Tokens must be a number"))?;
+        let max_output_tokens = self
+            .max_output_tokens
+            .read(cx)
+            .text(cx)
+            .parse::<u64>()
+            .map_err(|_| SharedString::from("Max Output Tokens must be a number"))?;
+
+        Ok(AnthropicCompatibleAvailableModel {
+            name,
+            display_name: None,
+            max_tokens,
+            max_output_tokens: Some(max_output_tokens),
+            default_temperature: None,
+            mode: None,
+            supports_images: self.supports_images,
+        })
+    }
+}
+
+struct AddAnthropicCompatibleInput {
+    provider_name: Entity<InputField>,
+    api_url: Entity<InputField>,
+    api_key: Entity<InputField>,
+    models: Vec<AnthropicModelInput>,
+}
+
+impl AddAnthropicCompatibleInput {
+    fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut App) -> Self {
+        let provider_name =
+            single_line_input("Provider Name", provider.name(), None, 1, window, cx);
+        let api_url = single_line_input("API URL", provider.api_url(), None, 2, window, cx);
+        let api_key = cx.new(|cx| {
+            InputField::new(
+                window,
+                cx,
+                "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            )
+            .label("API Key")
+            .tab_index(3)
+            .tab_stop(true)
+            .masked(true)
+        });
+
+        Self {
+            provider_name,
+            api_url,
+            api_key,
+            models: vec![AnthropicModelInput::new(0, window, cx)],
+        }
+    }
+
+    fn add_model(&mut self, window: &mut Window, cx: &mut App) {
+        let model_index = self.models.len();
+        self.models
+            .push(AnthropicModelInput::new(model_index, window, cx));
+    }
+
+    fn remove_model(&mut self, index: usize) {
+        self.models.remove(index);
+    }
+}
+
+enum ProviderInput {
+    OpenAiCompatible(AddOpenAICompatibleInput),
+    AnthropicCompatible(AddAnthropicCompatibleInput),
+}
+
+impl ProviderInput {
+    fn provider_name_field(&self) -> Entity<InputField> {
+        match self {
+            ProviderInput::OpenAiCompatible(input) => input.provider_name.clone(),
+            ProviderInput::AnthropicCompatible(input) => input.provider_name.clone(),
+        }
+    }
+
+    fn api_url_field(&self) -> Entity<InputField> {
+        match self {
+            ProviderInput::OpenAiCompatible(input) => input.api_url.clone(),
+            ProviderInput::AnthropicCompatible(input) => input.api_url.clone(),
+        }
+    }
+
+    fn api_key_field(&self) -> Entity<InputField> {
+        match self {
+            ProviderInput::OpenAiCompatible(input) => input.api_key.clone(),
+            ProviderInput::AnthropicCompatible(input) => input.api_key.clone(),
+        }
+    }
+
+    fn add_model(&mut self, window: &mut Window, cx: &mut App) {
+        match self {
+            ProviderInput::OpenAiCompatible(input) => input.add_model(window, cx),
+            ProviderInput::AnthropicCompatible(input) => input.add_model(window, cx),
+        }
+    }
+
+    fn remove_model(&mut self, index: usize) {
+        match self {
+            ProviderInput::OpenAiCompatible(input) => input.remove_model(index),
+            ProviderInput::AnthropicCompatible(input) => input.remove_model(index),
+        }
+    }
+
+    fn model_count(&self) -> usize {
+        match self {
+            ProviderInput::OpenAiCompatible(input) => input.models.len(),
+            ProviderInput::AnthropicCompatible(input) => input.models.len(),
+        }
+    }
+}
+
 fn save_provider_to_settings(
-    input: &AddLlmProviderInput,
+    input: &AddOpenAICompatibleInput,
     cx: &mut App,
 ) -> Task<Result<(), SharedString>> {
     let provider_name: Arc<str> = input.provider_name.read(cx).text(cx).into();
@@ -287,9 +459,80 @@ fn save_provider_to_settings(
     })
 }
 
+fn save_anthropic_provider_to_settings(
+    input: &AddAnthropicCompatibleInput,
+    cx: &mut App,
+) -> Task<Result<(), SharedString>> {
+    let provider_name: Arc<str> = input.provider_name.read(cx).text(cx).into();
+    if provider_name.is_empty() {
+        return Task::ready(Err("Provider Name cannot be empty".into()));
+    }
+
+    if LanguageModelRegistry::read_global(cx)
+        .providers()
+        .iter()
+        .any(|provider| {
+            provider.id().0.as_ref() == provider_name.as_ref()
+                || provider.name().0.as_ref() == provider_name.as_ref()
+        })
+    {
+        return Task::ready(Err(
+            "Provider Name is already taken by another provider".into()
+        ));
+    }
+
+    let api_url = input.api_url.read(cx).text(cx);
+    if api_url.is_empty() {
+        return Task::ready(Err("API URL cannot be empty".into()));
+    }
+
+    let api_key = input.api_key.read(cx).text(cx);
+    if api_key.is_empty() {
+        return Task::ready(Err("API Key cannot be empty".into()));
+    }
+
+    let mut models = Vec::new();
+    let mut model_names: HashSet<String> = HashSet::default();
+    for model in &input.models {
+        match model.parse(cx) {
+            Ok(model) => {
+                if !model_names.insert(model.name.clone()) {
+                    return Task::ready(Err("Model Names must be unique".into()));
+                }
+                models.push(model)
+            }
+            Err(err) => return Task::ready(Err(err)),
+        }
+    }
+
+    let fs = <dyn Fs>::global(cx);
+    let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
+    cx.spawn(async move |cx| {
+        task.await
+            .map_err(|_| SharedString::from("Failed to write API key to keychain"))?;
+        cx.update(|cx| {
+            update_settings_file(fs, cx, |settings, _cx| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .anthropic_compatible
+                    .get_or_insert_default()
+                    .insert(
+                        provider_name,
+                        AnthropicCompatibleSettingsContent {
+                            api_url,
+                            available_models: models,
+                        },
+                    );
+            });
+        });
+        Ok(())
+    })
+}
+
 pub struct AddLlmProviderModal {
     provider: LlmCompatibleProvider,
-    input: AddLlmProviderInput,
+    input: ProviderInput,
     scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     last_error: Option<SharedString>,
@@ -306,8 +549,16 @@ impl AddLlmProviderModal {
     }
 
     fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let input = match provider {
+            LlmCompatibleProvider::OpenAi => {
+                ProviderInput::OpenAiCompatible(AddOpenAICompatibleInput::new(provider, window, cx))
+            }
+            LlmCompatibleProvider::Anthropic => ProviderInput::AnthropicCompatible(
+                AddAnthropicCompatibleInput::new(provider, window, cx),
+            ),
+        };
         Self {
-            input: AddLlmProviderInput::new(provider, window, cx),
+            input,
             provider,
             last_error: None,
             focus_handle: cx.focus_handle(),
@@ -316,7 +567,12 @@ impl AddLlmProviderModal {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        let task = save_provider_to_settings(&self.input, cx);
+        let task = match &self.input {
+            ProviderInput::OpenAiCompatible(input) => save_provider_to_settings(input, cx),
+            ProviderInput::AnthropicCompatible(input) => {
+                save_anthropic_provider_to_settings(input, cx)
+            }
+        };
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| match result {
@@ -336,7 +592,19 @@ impl AddLlmProviderModal {
         cx.emit(DismissEvent);
     }
 
-    fn render_model_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_model_section(&self, cx: &mut Context<Self>) -> AnyElement {
+        match &self.input {
+            ProviderInput::OpenAiCompatible(_) => {
+                self.render_openai_model_section(cx).into_any_element()
+            }
+            ProviderInput::AnthropicCompatible(_) => {
+                self.render_anthropic_model_section(cx).into_any_element()
+            }
+        }
+    }
+
+    fn render_openai_model_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let model_count = self.input.model_count();
         v_flex()
             .mt_1()
             .gap_2()
@@ -358,18 +626,15 @@ impl AddLlmProviderModal {
                             })),
                     ),
             )
-            .children(
-                self.input
-                    .models
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, _)| self.render_model(ix, cx)),
-            )
+            .children((0..model_count).map(|ix| self.render_openai_model(ix, cx)))
     }
 
-    fn render_model(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let has_more_than_one_model = self.input.models.len() > 1;
-        let model = &self.input.models[ix];
+    fn render_openai_model(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let ProviderInput::OpenAiCompatible(input) = &self.input else {
+            return div().into_any_element();
+        };
+        let has_more_than_one_model = input.models.len() > 1;
+        let model = &input.models[ix];
 
         v_flex()
             .p_2()
@@ -394,7 +659,9 @@ impl AddLlmProviderModal {
                         Checkbox::new(("supports-tools", ix), model.capabilities.supports_tools)
                             .label("Supports tools")
                             .on_click(cx.listener(move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_tools = *checked;
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_tools = *checked;
+                                }
                                 cx.notify();
                             })),
                     )
@@ -402,7 +669,9 @@ impl AddLlmProviderModal {
                         Checkbox::new(("supports-images", ix), model.capabilities.supports_images)
                             .label("Supports images")
                             .on_click(cx.listener(move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_images = *checked;
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_images = *checked;
+                                }
                                 cx.notify();
                             })),
                     )
@@ -414,9 +683,10 @@ impl AddLlmProviderModal {
                         .label("Supports parallel_tool_calls")
                         .on_click(cx.listener(
                             move |this, checked, _window, cx| {
-                                this.input.models[ix]
-                                    .capabilities
-                                    .supports_parallel_tool_calls = *checked;
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_parallel_tool_calls =
+                                        *checked;
+                                }
                                 cx.notify();
                             },
                         )),
@@ -429,8 +699,10 @@ impl AddLlmProviderModal {
                         .label("Supports prompt_cache_key")
                         .on_click(cx.listener(
                             move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_prompt_cache_key =
-                                    *checked;
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_prompt_cache_key =
+                                        *checked;
+                                }
                                 cx.notify();
                             },
                         )),
@@ -443,8 +715,10 @@ impl AddLlmProviderModal {
                         .label("Supports /chat/completions")
                         .on_click(cx.listener(
                             move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_chat_completions =
-                                    *checked;
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_chat_completions =
+                                        *checked;
+                                }
                                 cx.notify();
                             },
                         )),
@@ -467,6 +741,86 @@ impl AddLlmProviderModal {
                         })),
                 )
             })
+            .into_any_element()
+    }
+
+    fn render_anthropic_model_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let model_count = self.input.model_count();
+        v_flex()
+            .mt_1()
+            .gap_2()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Label::new("Models").size(LabelSize::Small))
+                    .child(
+                        Button::new("add-model", "Add Model")
+                            .start_icon(
+                                Icon::new(IconName::Plus)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.input.add_model(window, cx);
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .children((0..model_count).map(|ix| self.render_anthropic_model(ix, cx)))
+    }
+
+    fn render_anthropic_model(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let ProviderInput::AnthropicCompatible(input) = &self.input else {
+            return div().into_any_element();
+        };
+        let has_more_than_one_model = input.models.len() > 1;
+        let model = &input.models[ix];
+
+        v_flex()
+            .p_2()
+            .gap_2()
+            .rounded_sm()
+            .border_1()
+            .border_dashed()
+            .border_color(cx.theme().colors().border.opacity(0.6))
+            .bg(cx.theme().colors().element_active.opacity(0.15))
+            .child(model.name.clone())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(model.max_tokens.clone())
+                    .child(model.max_output_tokens.clone()),
+            )
+            .child(
+                Checkbox::new(("supports-images", ix), model.supports_images.into())
+                    .label("Supports images")
+                    .on_click(cx.listener(move |this, checked, _window, cx| {
+                        if let ProviderInput::AnthropicCompatible(input) = &mut this.input {
+                            input.models[ix].supports_images =
+                                matches!(checked, ToggleState::Selected);
+                        }
+                        cx.notify();
+                    })),
+            )
+            .when(has_more_than_one_model, |this| {
+                this.child(
+                    Button::new(("remove-model", ix), "Remove Model")
+                        .start_icon(
+                            Icon::new(IconName::Trash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .full_width()
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.input.remove_model(ix);
+                            cx.notify();
+                        })),
+                )
+            })
+            .into_any_element()
     }
 
     fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
@@ -525,6 +879,9 @@ impl Render for AddLlmProviderModal {
                             LlmCompatibleProvider::OpenAi => {
                                 "This provider will use an OpenAI compatible API."
                             }
+                            LlmCompatibleProvider::Anthropic => {
+                                "This provider will use an Anthropic compatible API."
+                            }
                         },
                     ))
                     .when_some(self.last_error.clone(), |this, error| {
@@ -552,9 +909,9 @@ impl Render for AddLlmProviderModal {
                                     .gap_2()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.scroll_handle)
-                                    .child(self.input.provider_name.clone())
-                                    .child(self.input.api_url.clone())
-                                    .child(self.input.api_key.clone())
+                                    .child(self.input.provider_name_field())
+                                    .child(self.input.api_url_field())
+                                    .child(self.input.api_key_field())
                                     .child(self.render_model_section(cx)),
                             ),
                     )
@@ -846,7 +1203,8 @@ mod tests {
         }
 
         let task = cx.update(|window, cx| {
-            let mut input = AddLlmProviderInput::new(LlmCompatibleProvider::OpenAi, window, cx);
+            let mut input =
+                AddOpenAICompatibleInput::new(LlmCompatibleProvider::OpenAi, window, cx);
             set_text(&input.provider_name, provider_name, window, cx);
             set_text(&input.api_url, api_url, window, cx);
             set_text(&input.api_key, api_key, window, cx);
