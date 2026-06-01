@@ -661,10 +661,6 @@ fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Opti
     (!full_path.is_empty()).then_some(full_path)
 }
 
-/// Opens a Markdown string as a new read-write editor tab in the given
-/// workspace's active pane. Shared by the AgentPanel's "Open Thread as
-/// Markdown" (live threads) and the sidebar's right-click action
-/// (database-backed threads) so the editor setup stays identical.
 pub fn open_markdown_in_workspace(
     title: String,
     markdown: String,

@@ -2837,10 +2837,6 @@ impl Thread {
         self.spawn_title_generation(model, cx);
     }
 
-    /// Forces title regeneration in response to an explicit user request,
-    /// bypassing the `can_generate_title` heuristics that suppress *automatic*
-    /// generation (e.g. when an update-title tool is available). Does nothing
-    /// if a generation is already in flight or no summarization model exists.
     pub fn regenerate_title(&mut self, cx: &mut Context<Self>) {
         if self.pending_title_generation.is_some() {
             return;
@@ -3363,11 +3359,6 @@ pub(crate) fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
     markdown
 }
 
-/// Builds the LLM request used to summarize a conversation into a short title.
-///
-/// Shared by `Thread::generate_title` (live, in-memory threads) and the
-/// sidebar's "Regenerate Thread Title" action (database-backed threads) so
-/// both paths produce identical prompts and stay in sync.
 pub fn build_thread_title_request(
     messages: &[Arc<Message>],
     temperature: Option<f32>,
@@ -3389,9 +3380,6 @@ pub fn build_thread_title_request(
     request
 }
 
-/// Streams a title from the model and returns the first generated line,
-/// stopping as soon as the model emits a second line. Pair with
-/// `build_thread_title_request` to build the `request`.
 pub async fn stream_thread_title(
     model: Arc<dyn LanguageModel>,
     request: LanguageModelRequest,

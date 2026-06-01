@@ -689,13 +689,12 @@ pub struct Sidebar {
     active_entry: Option<ActiveEntry>,
     hovered_thread_index: Option<usize>,
     renaming_thread_id: Option<ThreadId>,
-    // Threads in the database-backed regeneration path need their own loading
-    // state because they do not have a live `agent::Thread` to report it.
+    /// Threads in the database-backed regeneration path need their own loading
+    /// state because they do not have a live `agent::Thread` to report it.
     regenerating_titles: HashSet<ThreadId>,
     /// start_renaming_thread must seed current title into the title editor
     /// so this prevents that BufferEdited event from being interpreted as user input.
     suppress_next_rename_edit: bool,
-
     /// Updated only in response to explicit user actions (clicking a
     /// thread, confirming in the thread switcher, etc.) — never from
     /// background data changes. Used to sort the thread switcher popup.
@@ -3280,6 +3279,7 @@ impl Sidebar {
             .unwrap_or_else(|| DEFAULT_THREAD_TITLE.to_string());
 
         let workspace = workspace.clone();
+
         window
             .spawn(cx, async move |cx| {
                 let db_thread = load_task.await?;
@@ -6042,6 +6042,7 @@ impl Sidebar {
             ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
             ThreadEntryWorkspace::Closed { .. } => self.active_workspace(cx),
         };
+        
         let open_workspace = match &thread_workspace {
             ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
             ThreadEntryWorkspace::Closed { .. } => None,
