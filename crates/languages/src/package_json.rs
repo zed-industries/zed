@@ -156,9 +156,6 @@ fn package_manager_name(value: &str) -> Option<&'static str> {
 mod tests {
     use std::path::Path;
 
-    use collections::HashMap;
-    use serde_json_lenient::Value;
-
     use super::PackageJsonData;
 
     #[test]
