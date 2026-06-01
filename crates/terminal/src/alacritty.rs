@@ -2,7 +2,7 @@
 use std::num::NonZeroU32;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
-use std::{borrow::Cow, ops::RangeInclusive, sync::Arc};
+use std::{borrow::Cow, io, ops::RangeInclusive, path::PathBuf, sync::Arc};
 
 mod hyperlinks;
 
@@ -36,9 +36,9 @@ use vte::ansi::Handler;
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use crate::{
-    Cell, Content, Cursor, CursorShape, Hyperlink, HyperlinkData, IndexedCell, Modes, Point,
+    Cell, Color, Content, Cursor, CursorShape, Hyperlink, HyperlinkData, IndexedCell, Modes, Point,
     PtyEvent, Range, RenderableCells, Scroll, Search, Selection, SelectionRange, SelectionSide,
-    SelectionType, TerminalBackendEvent, TerminalBounds, ViMotion, ZedListener,
+    SelectionType, TerminalBackendEvent, TerminalBounds, ViMotion,
     pty_info::ProcessIdGetter,
     terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape},
 };
@@ -49,6 +49,14 @@ pub(super) type AlacrittyPty = tty::Pty;
 pub(super) type AlacrittyTerm = Term<ZedListener>;
 pub(super) type AlacrittyTermConfig = Config;
 pub(super) type AlacrittyTermLock = FairMutex<AlacrittyTerm>;
+
+#[derive(Clone)]
+pub(super) struct ZedListener(UnboundedSender<PtyEvent>);
+
+#[derive(Clone, Debug)]
+pub(super) struct AlacrittySearch {
+    search: RegexSearch,
+}
 
 #[cfg(unix)]
 impl From<&AlacrittyPty> for ProcessIdGetter {
@@ -126,6 +134,45 @@ pub(super) fn pty_term_config(
         default_cursor_style: alacritty_cursor_style(cursor_shape),
         ..Config::default()
     }
+}
+
+pub(super) fn set_default_cursor_style(
+    config: &mut AlacrittyTermConfig,
+    cursor_shape: SettingsCursorShape,
+) {
+    config.default_cursor_style = alacritty_cursor_style(cursor_shape);
+}
+
+#[cfg(not(windows))]
+pub(super) fn current_child_signal_mask() -> io::Result<tty::SignalMask> {
+    tty::SignalMask::current()
+}
+
+pub(super) fn pty_options(
+    shell: Option<(String, Vec<String>)>,
+    working_directory: Option<PathBuf>,
+    env: impl IntoIterator<Item = (String, String)>,
+    #[cfg(not(windows))] child_signal_mask: Option<tty::SignalMask>,
+    #[cfg(windows)] escape_args: bool,
+) -> tty::Options {
+    tty::Options {
+        shell: shell.map(|(program, args)| tty::Shell::new(program, args)),
+        working_directory,
+        drain_on_exit: true,
+        env: env.into_iter().collect(),
+        #[cfg(not(windows))]
+        child_signal_mask,
+        #[cfg(windows)]
+        escape_args,
+    }
+}
+
+pub(super) fn open_pty(
+    options: &tty::Options,
+    bounds: TerminalBounds,
+    window_id: u64,
+) -> io::Result<AlacrittyPty> {
+    tty::new(options, window_size_from_terminal_bounds(bounds), window_id)
 }
 
 pub(super) fn new_term(
@@ -257,8 +304,16 @@ impl ViMotion {
 }
 
 impl Search {
+    pub fn new(search: &str) -> Option<Self> {
+        Some(Self {
+            search: AlacrittySearch {
+                search: RegexSearch::new(search).ok()?,
+            },
+        })
+    }
+
     pub(super) fn into_alacritty(self) -> RegexSearch {
-        self.search
+        self.search.search
     }
 }
 
@@ -296,6 +351,29 @@ impl Selection {
 }
 
 impl Hyperlink {
+    pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
+        Self {
+            data: HyperlinkData::Owned {
+                id: id.map(|id| Arc::from(id.to_string())),
+                uri: Arc::from(uri),
+            },
+        }
+    }
+
+    pub fn id(&self) -> Option<&str> {
+        match &self.data {
+            HyperlinkData::Alacritty(hyperlink) => Some(hyperlink.id()),
+            HyperlinkData::Owned { id, .. } => id.as_deref(),
+        }
+    }
+
+    pub fn uri(&self) -> &str {
+        match &self.data {
+            HyperlinkData::Alacritty(hyperlink) => hyperlink.uri(),
+            HyperlinkData::Owned { uri, .. } => uri,
+        }
+    }
+
     fn from_alacritty(hyperlink: AlacHyperlink) -> Self {
         Self {
             data: HyperlinkData::Alacritty(hyperlink),
@@ -318,6 +396,103 @@ impl From<Hyperlink> for AlacHyperlink {
 
 pub(super) fn terminal_cell_from_alacritty(cell: &AlacCell) -> Cell {
     Cell { cell: cell.clone() }
+}
+
+impl Cell {
+    #[inline]
+    pub fn character(&self) -> char {
+        self.cell.c
+    }
+
+    #[inline]
+    pub fn set_character(&mut self, character: char) {
+        self.cell.c = character;
+    }
+
+    #[inline]
+    pub fn foreground(&self) -> Color {
+        self.cell.fg
+    }
+
+    #[inline]
+    pub fn background(&self) -> Color {
+        self.cell.bg
+    }
+
+    #[inline]
+    pub fn zerowidth(&self) -> Option<&[char]> {
+        self.cell.zerowidth()
+    }
+
+    #[inline]
+    pub fn push_zerowidth(&mut self, character: char) {
+        self.cell.push_zerowidth(character);
+    }
+
+    pub fn set_underline_color(&mut self, color: Option<Color>) {
+        self.cell.set_underline_color(color);
+    }
+
+    #[inline]
+    pub fn underline_color(&self) -> Option<Color> {
+        self.cell.underline_color()
+    }
+
+    pub fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
+        self.cell.set_hyperlink(hyperlink.map(Into::into));
+    }
+
+    #[inline]
+    pub fn hyperlink(&self) -> Option<Hyperlink> {
+        self.cell.hyperlink().map(terminal_hyperlink_from_alacritty)
+    }
+
+    #[inline]
+    pub fn is_inverse(&self) -> bool {
+        self.cell.flags.contains(Flags::INVERSE)
+    }
+
+    #[inline]
+    pub fn is_wide_char_spacer(&self) -> bool {
+        self.cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+    }
+
+    #[inline]
+    pub fn is_dim(&self) -> bool {
+        self.cell.flags.intersects(Flags::DIM)
+    }
+
+    #[inline]
+    pub fn has_underline(&self) -> bool {
+        self.cell.flags.intersects(Flags::ALL_UNDERLINES)
+    }
+
+    #[inline]
+    pub fn has_undercurl(&self) -> bool {
+        self.cell.flags.contains(Flags::UNDERCURL)
+    }
+
+    #[inline]
+    pub fn has_strikeout(&self) -> bool {
+        self.cell.flags.intersects(Flags::STRIKEOUT)
+    }
+
+    #[inline]
+    pub fn is_bold(&self) -> bool {
+        self.cell.flags.intersects(Flags::BOLD)
+    }
+
+    #[inline]
+    pub fn is_italic(&self) -> bool {
+        self.cell.flags.intersects(Flags::ITALIC)
+    }
+
+    #[inline]
+    pub fn has_visible_style_modifier(&self) -> bool {
+        self.cell
+            .flags
+            .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
+    }
 }
 
 impl<'a> RenderableCells<'a> {
@@ -773,7 +948,14 @@ pub(super) unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_line
     }
 }
 
-pub(super) fn all_search_matches<'a, T>(
+pub(super) fn search_matches(term: &AlacrittyTerm, searcher: Search) -> Vec<Range> {
+    let mut searcher = searcher.into_alacritty();
+    all_search_matches(term, &mut searcher)
+        .map(Range::from_alacritty)
+        .collect()
+}
+
+fn all_search_matches<'a, T>(
     term: &'a Term<T>,
     regex: &'a mut RegexSearch,
 ) -> impl Iterator<Item = Match> + 'a {

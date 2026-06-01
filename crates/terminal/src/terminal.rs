@@ -6,17 +6,12 @@ pub mod terminal_settings;
 
 use alacritty_terminal::{
     grid::GridIterator,
-    term::{
-        cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
-        search::RegexSearch,
-    },
-    tty,
+    term::cell::{Cell as AlacCell, Hyperlink as AlacHyperlink},
 };
 use anyhow::{Context as _, Result, bail};
 use futures_lite::future::yield_now;
 use log::trace;
 
-use futures::channel::mpsc::UnboundedSender;
 use futures::{
     FutureExt,
     channel::mpsc::{UnboundedReceiver, unbounded},
@@ -62,13 +57,15 @@ use gpui::{
     Point as GpuiPoint, Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
+#[cfg(not(windows))]
+use crate::alacritty::current_child_signal_mask;
 use crate::alacritty::{
-    AlacrittyTerm, AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch, PtySender,
-    RegexSearches, alacritty_cursor_style, all_search_matches, append_text_to_term,
-    clear_saved_screen, content_text, display_only_term_config, find_from_terminal_point,
-    full_content_range, last_non_empty_lines, make_content, new_term, pty_term_config,
-    screen_lines, spawn_event_loop, terminal_hyperlink_from_alacritty, total_lines,
-    update_selection_to_vi_cursor, update_vi_cursor_for_scroll, window_size_from_terminal_bounds,
+    AlacrittySearch, AlacrittyTerm, AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch,
+    PtySender, RegexSearches, append_text_to_term, clear_saved_screen, content_text,
+    display_only_term_config, find_from_terminal_point, full_content_range, last_non_empty_lines,
+    make_content, new_term, open_pty, pty_options, pty_term_config, screen_lines, search_matches,
+    set_default_cursor_style, spawn_event_loop, total_lines, update_selection_to_vi_cursor,
+    update_vi_cursor_for_scroll,
 };
 #[cfg(test)]
 use crate::alacritty::{terminal_modes_from_alacritty, terminal_selection_range_from_alacritty};
@@ -104,15 +101,7 @@ enum ViMotion {
 
 #[derive(Clone, Debug)]
 pub struct Search {
-    search: RegexSearch,
-}
-
-impl Search {
-    pub fn new(search: &str) -> Option<Self> {
-        Some(Self {
-            search: RegexSearch::new(search).ok()?,
-        })
-    }
+    search: AlacrittySearch,
 }
 
 #[derive(Clone, Debug)]
@@ -315,131 +304,9 @@ enum HyperlinkData {
     Owned { id: Option<Arc<str>>, uri: Arc<str> },
 }
 
-impl Hyperlink {
-    pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
-        Self {
-            data: HyperlinkData::Owned {
-                id: id.map(|id| Arc::from(id.to_string())),
-                uri: Arc::from(uri),
-            },
-        }
-    }
-
-    pub fn id(&self) -> Option<&str> {
-        match &self.data {
-            HyperlinkData::Alacritty(hyperlink) => Some(hyperlink.id()),
-            HyperlinkData::Owned { id, .. } => id.as_deref(),
-        }
-    }
-
-    pub fn uri(&self) -> &str {
-        match &self.data {
-            HyperlinkData::Alacritty(hyperlink) => hyperlink.uri(),
-            HyperlinkData::Owned { uri, .. } => uri,
-        }
-    }
-}
-
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct Cell {
     cell: AlacCell,
-}
-
-impl Cell {
-    #[inline]
-    pub fn character(&self) -> char {
-        self.cell.c
-    }
-
-    #[inline]
-    pub fn set_character(&mut self, character: char) {
-        self.cell.c = character;
-    }
-
-    #[inline]
-    pub fn foreground(&self) -> Color {
-        self.cell.fg
-    }
-
-    #[inline]
-    pub fn background(&self) -> Color {
-        self.cell.bg
-    }
-
-    #[inline]
-    pub fn zerowidth(&self) -> Option<&[char]> {
-        self.cell.zerowidth()
-    }
-
-    #[inline]
-    pub fn push_zerowidth(&mut self, character: char) {
-        self.cell.push_zerowidth(character);
-    }
-
-    pub fn set_underline_color(&mut self, color: Option<Color>) {
-        self.cell.set_underline_color(color);
-    }
-
-    #[inline]
-    pub fn underline_color(&self) -> Option<Color> {
-        self.cell.underline_color()
-    }
-
-    pub fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
-        self.cell.set_hyperlink(hyperlink.map(Into::into));
-    }
-
-    #[inline]
-    pub fn hyperlink(&self) -> Option<Hyperlink> {
-        self.cell.hyperlink().map(terminal_hyperlink_from_alacritty)
-    }
-
-    #[inline]
-    pub fn is_inverse(&self) -> bool {
-        self.cell.flags.contains(Flags::INVERSE)
-    }
-
-    #[inline]
-    pub fn is_wide_char_spacer(&self) -> bool {
-        self.cell.flags.contains(Flags::WIDE_CHAR_SPACER)
-    }
-
-    #[inline]
-    pub fn is_dim(&self) -> bool {
-        self.cell.flags.intersects(Flags::DIM)
-    }
-
-    #[inline]
-    pub fn has_underline(&self) -> bool {
-        self.cell.flags.intersects(Flags::ALL_UNDERLINES)
-    }
-
-    #[inline]
-    pub fn has_undercurl(&self) -> bool {
-        self.cell.flags.contains(Flags::UNDERCURL)
-    }
-
-    #[inline]
-    pub fn has_strikeout(&self) -> bool {
-        self.cell.flags.intersects(Flags::STRIKEOUT)
-    }
-
-    #[inline]
-    pub fn is_bold(&self) -> bool {
-        self.cell.flags.intersects(Flags::BOLD)
-    }
-
-    #[inline]
-    pub fn is_italic(&self) -> bool {
-        self.cell.flags.intersects(Flags::ITALIC)
-    }
-
-    #[inline]
-    pub fn has_visible_style_modifier(&self) -> bool {
-        self.cell
-            .flags
-            .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
-    }
 }
 
 pub struct RenderableCells<'a> {
@@ -854,10 +721,6 @@ enum PtyEvent {
     Event(TerminalBackendEvent),
 }
 
-///A translation struct for Alacritty to communicate with us from their event loop
-#[derive(Clone)]
-pub struct ZedListener(UnboundedSender<PtyEvent>);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalBounds {
     pub cell_width: Pixels,
@@ -1106,7 +969,7 @@ impl TerminalBuilder {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
         #[cfg(not(windows))]
-        let child_signal_mask = match tty::SignalMask::current()
+        let child_signal_mask = match current_child_signal_mask()
             .context("failed to capture terminal child signal mask")
         {
             Ok(signal_mask) => Some(signal_mask),
@@ -1188,29 +1051,25 @@ impl TerminalBuilder {
             // supported remoting into windows.
             let shell_kind = shell.shell_kind(cfg!(windows));
 
-            let pty_options = {
-                let alac_shell = shell_params.as_ref().map(|params| {
-                    tty::Shell::new(
-                        params.program.clone(),
-                        params.args.clone().unwrap_or_default(),
-                    )
-                });
-
-                tty::Options {
-                    shell: alac_shell,
-                    working_directory: working_directory.clone(),
-                    drain_on_exit: true,
-                    env: env.clone().into_iter().collect(),
-                    // We pass in the foreground thread's signal mask to the child process via pty_options,
-                    // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
-                    // otherwise the terminal would inherit the background executor's signal mask which blocks
-                    // some terminal signals
-                    #[cfg(not(windows))]
-                    child_signal_mask,
-                    #[cfg(windows)]
-                    escape_args: shell_kind.tty_escape_args(),
-                }
-            };
+            let alacritty_shell = shell_params.as_ref().map(|params| {
+                (
+                    params.program.clone(),
+                    params.args.clone().unwrap_or_default(),
+                )
+            });
+            let pty_options = pty_options(
+                alacritty_shell,
+                working_directory.clone(),
+                env.clone(),
+                // We pass in the foreground thread's signal mask to the child process via pty_options,
+                // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
+                // otherwise the terminal would inherit the background executor's signal mask which blocks
+                // some terminal signals
+                #[cfg(not(windows))]
+                child_signal_mask,
+                #[cfg(windows)]
+                shell_kind.tty_escape_args(),
+            );
 
             let scrolling_history = if task.is_some() {
                 // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
@@ -1225,11 +1084,7 @@ impl TerminalBuilder {
             let config = pty_term_config(scrolling_history, cursor_shape);
 
             //Setup the pty...
-            let pty = match tty::new(
-                &pty_options,
-                window_size_from_terminal_bounds(TerminalBounds::default()),
-                window_id,
-            ) {
+            let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
                 Ok(pty) => pty,
                 Err(error) => {
                     bail!(TerminalError {
@@ -1836,7 +1691,7 @@ impl Terminal {
     }
 
     pub fn set_cursor_shape(&mut self, cursor_shape: SettingsCursorShape) {
-        self.term_config.default_cursor_style = alacritty_cursor_style(cursor_shape);
+        set_default_cursor_style(&mut self.term_config, cursor_shape);
         self.term.lock().set_options(self.term_config.clone());
     }
 
@@ -2558,12 +2413,8 @@ impl Terminal {
     pub fn find_matches(&self, searcher: Search, cx: &Context<Self>) -> Task<Vec<Range>> {
         let term = self.term.clone();
         cx.background_spawn(async move {
-            let mut searcher = searcher.into_alacritty();
             let term = term.lock();
-
-            all_search_matches(&term, &mut searcher)
-                .map(Range::from_alacritty)
-                .collect()
+            search_matches(&term, searcher)
         })
     }
 
