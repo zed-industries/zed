@@ -2,8 +2,9 @@ mod thread_switcher;
 
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
+use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, SUMMARIZE_THREAD_PROMPT};
 use agent_ui::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore,
 };
@@ -22,16 +23,21 @@ use agent_ui::{
     channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
+use futures::StreamExt as _;
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
     Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
     WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
+use language_model::{
+    CompletionIntent, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
+};
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
@@ -53,7 +59,7 @@ use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
     HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
     Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
-    prelude::*, render_modifiers,
+    prelude::*, render_modifiers, right_click_menu,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -3234,6 +3240,157 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
+    /// Loads the thread from the database, converts it to markdown, and
+    /// opens it as a new editor tab in the given workspace. Does not
+    /// touch the AgentPanel or change the active thread.
+    fn open_thread_as_markdown(
+        session_id: &acp::SessionId,
+        title: Option<SharedString>,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let thread_store = ThreadStore::global(cx);
+        let load_task =
+            thread_store.update(cx, |store, cx| store.load_thread(session_id.clone(), cx));
+
+        let thread_title = title
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.to_string());
+
+        let markdown_language_task = workspace
+            .read(cx)
+            .app_state()
+            .languages
+            .language_for_name("Markdown");
+
+        let project = workspace.read(cx).project().clone();
+        let workspace = workspace.clone();
+        window
+            .spawn(cx, async move |cx| {
+                let db_thread = load_task.await?;
+                let Some(db_thread) = db_thread else {
+                    anyhow::bail!("Thread not found in database");
+                };
+
+                // Build the markdown the same way Thread::to_markdown does.
+                let mut markdown = String::new();
+                for (ix, message) in db_thread.messages.iter().enumerate() {
+                    if ix > 0 {
+                        markdown.push('\n');
+                    }
+                    match &**message {
+                        agent::Message::User(_) => markdown.push_str("## User\n\n"),
+                        agent::Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
+                        agent::Message::Resume => {}
+                    }
+                    markdown.push_str(&message.to_markdown());
+                }
+
+                let markdown_language = markdown_language_task.await?;
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.create_buffer(Some(markdown_language), false, cx)
+                    })
+                    .await?;
+
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_text(markdown, cx);
+                    buffer.set_capability(language::Capability::ReadWrite, cx);
+                });
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let buffer = cx.new(|cx| {
+                        MultiBuffer::singleton(buffer, cx).with_title(thread_title.clone())
+                    });
+
+                    workspace.add_item_to_active_pane(
+                        Box::new(cx.new(|cx| {
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                            editor.set_breadcrumb_header(thread_title);
+                            editor.disable_mouse_wheel_zoom();
+                            editor
+                        })),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+    }
+
+    /// Loads the thread from the database, builds an LLM summarization
+    /// request, and regenerates the title — all without touching the
+    /// AgentPanel or changing the active thread.
+    fn regenerate_thread_title(session_id: &acp::SessionId, thread_id: ThreadId, cx: &mut App) {
+        let Some(configured_model) =
+            LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
+        else {
+            return;
+        };
+        let model = configured_model.model;
+
+        let thread_store = ThreadStore::global(cx);
+        let load_task =
+            thread_store.update(cx, |store, cx| store.load_thread(session_id.clone(), cx));
+
+        cx.spawn(async move |cx| {
+            let db_thread = load_task.await?;
+            let Some(db_thread) = db_thread else {
+                anyhow::bail!("Thread not found in database");
+            };
+
+            // Build the summarization request from the stored messages.
+            let temperature = cx.update(|cx| AgentSettings::temperature_for_model(&model, cx));
+            let mut request = LanguageModelRequest {
+                intent: Some(CompletionIntent::ThreadSummarization),
+                temperature,
+                ..Default::default()
+            };
+            for message in &db_thread.messages {
+                request.messages.extend(message.to_request());
+            }
+            request.messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![SUMMARIZE_THREAD_PROMPT.into()],
+                cache: false,
+                reasoning_details: None,
+            });
+
+            let mut title = String::new();
+            let mut messages = model.stream_completion(request, cx).await?;
+            while let Some(event) = messages.next().await {
+                let event = event?;
+                let text = match event {
+                    LanguageModelCompletionEvent::Text(text) => text,
+                    _ => continue,
+                };
+                let mut lines = text.lines();
+                title.extend(lines.next());
+                if lines.next().is_some() {
+                    break;
+                }
+            }
+
+            // Persist the new title via the metadata store.
+            cx.update(|cx| {
+                if let Some(store) = ThreadMetadataStore::try_global(cx) {
+                    store.update(cx, |store, cx| {
+                        store.set_title_override(thread_id, title.into(), cx);
+                    });
+                }
+            });
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn activate_thread_locally(
         &mut self,
         metadata: &ThreadMetadata,
@@ -5667,7 +5824,7 @@ impl Sidebar {
             (thread.icon, thread.icon_from_external_svg.clone())
         };
 
-        ThreadItem::new(id, title.clone())
+        let thread_item = ThreadItem::new(id, title.clone())
             .base_bg(sidebar_bg)
             .icon(icon)
             .when(is_draft, |this| {
@@ -5811,6 +5968,8 @@ impl Sidebar {
                 )
             })
             .on_click({
+                let thread_workspace = thread_workspace.clone();
+                let metadata = metadata.clone();
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
                     match &thread_workspace {
@@ -5831,6 +5990,78 @@ impl Sidebar {
                         }
                     }
                 })
+            });
+
+        // Wrap the thread item in a right-click context menu exposing
+        // thread-level actions that route through the AgentPanel.
+        if is_draft {
+            return thread_item.into_any_element();
+        }
+
+        let context_menu_id = SharedString::from(format!("thread-context-menu-{}", ix));
+        let sidebar = cx.weak_entity();
+
+        // For "Open as Markdown" we need a workspace to host the new editor
+        // tab. Use the thread's own workspace when open, otherwise fall back
+        // to the active workspace in the current window.
+        let workspace_for_markdown = match &thread_workspace {
+            ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
+            ThreadEntryWorkspace::Closed { .. } => self.active_workspace(cx),
+        };
+
+        right_click_menu(context_menu_id)
+            .trigger(move |_, _, _| thread_item)
+            .menu({
+                let session_id = thread.metadata.session_id.clone();
+                let thread_id = thread.metadata.thread_id;
+                let title = thread.metadata.title.clone();
+                move |_window, cx| {
+                    let session_id = session_id.clone();
+                    let sidebar = sidebar.clone();
+                    let workspace_for_markdown = workspace_for_markdown.clone();
+                    let title = title.clone();
+                    ContextMenu::build(_window, cx, move |menu, _window, _cx| {
+                        menu.entry("Regenerate Thread Title", None, {
+                            let session_id = session_id.clone();
+                            move |_window, cx| {
+                                if let Some(ref session_id) = session_id {
+                                    Self::regenerate_thread_title(session_id, thread_id, cx);
+                                }
+                            }
+                        })
+                        .entry("Open Thread as Markdown", None, {
+                            let session_id = session_id.clone();
+                            let title = title.clone();
+                            move |window, cx| {
+                                if let Some(ref session_id) = session_id {
+                                    if let Some(ref workspace) = workspace_for_markdown {
+                                        Self::open_thread_as_markdown(
+                                            session_id,
+                                            title.clone(),
+                                            workspace,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }
+                            }
+                        })
+                        .separator()
+                        .entry("Archive Thread", None, {
+                            let session_id = session_id.clone();
+                            let sidebar = sidebar.clone();
+                            move |window, cx| {
+                                sidebar
+                                    .update(cx, |sidebar, cx| {
+                                        if let Some(ref session_id) = session_id {
+                                            sidebar.archive_thread(session_id, window, cx);
+                                        }
+                                    })
+                                    .ok();
+                            }
+                        })
+                    })
+                }
             })
             .into_any_element()
     }
