@@ -100,8 +100,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, DeeplTranslate, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile,
-    OpenStatusPage, OpenZedUrl, Quit,
+    About, DeeplTranslate, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings,
+    OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
 };
 
 const DOCS_URL: &str = "https://zed.dev/docs/";

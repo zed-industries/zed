@@ -31,8 +31,8 @@ use crate::{
     },
     inlay_hint_settings,
     scroll::{
-        ActiveScrollbarState, ScrollOffset, ScrollPixelOffset, ScrollbarThumbState,
-        UpdateResponse, scroll_amount::ScrollAmount,
+        ActiveScrollbarState, ScrollOffset, ScrollPixelOffset, ScrollbarThumbState, UpdateResponse,
+        scroll_amount::ScrollAmount,
     },
     smooth_cursor::{SmoothCursorAnimationState, SmoothCursorTrail, cursor_bounds},
 };
@@ -283,9 +283,13 @@ impl EditorElement {
         register_action(editor, window, Editor::move_line_up);
         register_action(editor, window, Editor::move_line_down);
         register_action(editor, window, Editor::transpose);
-        register_action(editor, window, |editor, _: &crate::actions::Rewrap, _window, cx| {
-            editor.rewrap(crate::RewrapOptions::default(), cx)
-        });
+        register_action(
+            editor,
+            window,
+            |editor, _: &crate::actions::Rewrap, _window, cx| {
+                editor.rewrap(crate::RewrapOptions::default(), cx)
+            },
+        );
         register_action(editor, window, Editor::cut);
         register_action(editor, window, Editor::kill_ring_cut);
         register_action(editor, window, Editor::kill_ring_yank);
@@ -585,7 +589,7 @@ impl EditorElement {
             register_action(editor, window, Editor::convert_to_lower_case);
             register_action(editor, window, Editor::convert_to_title_case);
             register_action(editor, window, Editor::stop_all_language_servers);
-        register_action(editor, window, Editor::convert_to_snake_case);
+            register_action(editor, window, Editor::convert_to_snake_case);
             register_action(editor, window, Editor::convert_to_kebab_case);
             register_action(editor, window, Editor::convert_to_upper_camel_case);
             register_action(editor, window, Editor::convert_to_lower_camel_case);
@@ -1179,8 +1183,12 @@ impl EditorElement {
                         let mut state = previous_smooth_cursor_animations
                             .remove(&selection.id)
                             .unwrap_or_else(|| {
-                                let mut new_state =
-                                    SmoothCursorAnimationState::new(target_bounds, now, scroll_x, scroll_y);
+                                let mut new_state = SmoothCursorAnimationState::new(
+                                    target_bounds,
+                                    now,
+                                    scroll_x,
+                                    scroll_y,
+                                );
                                 if let Some(orphan_id) = nearest_orphan_animation(
                                     &previous_smooth_cursor_animations,
                                     target_origin,
@@ -1223,14 +1231,16 @@ impl EditorElement {
                             state.last_frame = now;
                         } else {
                             state.retarget(target_bounds);
-                            let smooth_frame =
-                                state.step(now, player_color.cursor, &smooth_cursor_settings, line_height);
+                            let smooth_frame = state.step(
+                                now,
+                                player_color.cursor,
+                                &smooth_cursor_settings,
+                                line_height,
+                            );
                             any_animated_cursor |= smooth_frame.animating;
                             smooth_trail = smooth_frame.trail;
                         }
-                        editor
-                            .smooth_cursor_animations
-                            .insert(selection.id, state);
+                        editor.smooth_cursor_animations.insert(selection.id, state);
                     }
 
                     if hide_local_cursor {
@@ -9750,7 +9760,7 @@ impl Element for EditorElement {
                         }
 
                         self.paint_text(layout, window, cx);
-                    self.paint_jump_labels(layout, layout.content_origin, window, cx);
+                        self.paint_jump_labels(layout, layout.content_origin, window, cx);
 
                         if !layout.spacer_blocks.is_empty() {
                             window.with_element_namespace("blocks", |window| {

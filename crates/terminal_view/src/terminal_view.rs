@@ -34,8 +34,8 @@ use std::{
 };
 use task::TaskId;
 use terminal::{
-    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, OpenScrollbackBuffer, Paste,
-   PasteText, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
+    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, OpenScrollbackBuffer, Paste, PasteText,
+    ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
     ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
     alacritty_terminal::{
         index::Point as AlacPoint,

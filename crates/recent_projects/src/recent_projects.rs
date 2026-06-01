@@ -591,21 +591,21 @@ pub fn init(cx: &mut App) {
             }
         }
     });
-        cx.on_action(|open_recent_zoxide: &OpenRecentZoxide, cx| {
-            let create_new_window = open_recent_zoxide.create_new_window;
-            with_active_or_new_workspace(cx, move |workspace, window, cx| {
-                let Some(recent_projects) = workspace.active_modal::<RecentProjectsZoxide>(cx) else {
-                    RecentProjectsZoxide::open(workspace, create_new_window, window, cx);
-                    return;
-                };
+    cx.on_action(|open_recent_zoxide: &OpenRecentZoxide, cx| {
+        let create_new_window = open_recent_zoxide.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let Some(recent_projects) = workspace.active_modal::<RecentProjectsZoxide>(cx) else {
+                RecentProjectsZoxide::open(workspace, create_new_window, window, cx);
+                return;
+            };
 
-                recent_projects.update(cx, |recent_projects, cx| {
-                    recent_projects
-                        .picker
-                        .update(cx, |picker, cx| picker.cycle_selection(window, cx))
-                });
+            recent_projects.update(cx, |recent_projects, cx| {
+                recent_projects
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
             });
         });
+    });
     cx.on_action(|open_remote: &OpenRemote, cx| {
         let from_existing_connection = open_remote.from_existing_connection;
         let create_new_window = open_remote.create_new_window;

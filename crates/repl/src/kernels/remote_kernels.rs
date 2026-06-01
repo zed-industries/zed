@@ -9,8 +9,8 @@ use smol::io::AsyncReadExt as _;
 use super::{KernelSession, RunningKernel};
 use anyhow::Result;
 use jupyter_websocket_client::{
-    JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
-    KernelSpecsResponse, RemoteServer,
+    JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest, KernelSpecsResponse,
+    RemoteServer,
 };
 use std::{fmt::Debug, sync::Arc};
 

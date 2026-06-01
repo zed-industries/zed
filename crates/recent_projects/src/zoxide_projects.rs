@@ -5,13 +5,8 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
     TaskExt, WeakEntity, Window,
 };
-use picker::{
-    Picker, PickerDelegate,
-    highlighted_match_with_paths::HighlightedMatch,
-};
-use ui::{
-    tooltip_container, Icon, IconName, ListItem, ListItemSpacing, prelude::*,
-};
+use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
+use ui::{Icon, IconName, ListItem, ListItemSpacing, prelude::*, tooltip_container};
 use workspace::{CloseIntent, ModalView, OpenMode, Workspace};
 
 use crate::match_strings_order_insensitive;
@@ -245,14 +240,24 @@ impl PickerDelegate for RecentProjectsZoxideDelegate {
                             if continue_replacing {
                                 workspace
                                     .update_in(cx, |workspace, window, cx| {
-                                        workspace.open_workspace_for_paths(OpenMode::Activate, paths, window, cx)
+                                        workspace.open_workspace_for_paths(
+                                            OpenMode::Activate,
+                                            paths,
+                                            window,
+                                            cx,
+                                        )
                                     })?
                                     .await?;
                             }
                             anyhow::Ok(())
                         })
                     } else {
-                        let task = workspace.open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx);
+                        let task = workspace.open_workspace_for_paths(
+                            OpenMode::NewWindow,
+                            paths,
+                            window,
+                            cx,
+                        );
                         cx.spawn_in(window, async move |_, _| {
                             task.await?;
                             Ok(())
@@ -361,8 +366,3 @@ impl Render for SimpleTooltip {
         tooltip_container(cx, |div, _| div.child(self.text.clone()))
     }
 }
-
-
-
-
-

@@ -282,14 +282,13 @@ pub struct EditorSettingsContent {
     /// Default: 100
     pub minimum_split_diff_width: Option<f32>,
 
-        /// How much to decrease the font size in the split diff view,
-        /// as a fraction of the original font size.
-        /// 0.0 means no change, 0.3 means 30% smaller.
-        ///
-        /// Default: 0.25
-        #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-        pub split_diff_font_decrease: Option<f32>,
-
+    /// How much to decrease the font size in the split diff view,
+    /// as a fraction of the original font size.
+    /// 0.0 means no change, 0.3 means 30% smaller.
+    ///
+    /// Default: 0.25
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub split_diff_font_decrease: Option<f32>,
 }
 
 #[with_fallible_options]

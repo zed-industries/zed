@@ -1,8 +1,8 @@
 use collections::HashMap;
 use editor::{
     Anchor as MultiBufferAnchor, CurrentLineHighlight, Editor, EditorEvent, EditorSettings,
-    HighlightKey, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, SelectionEffects,
-    ToOffset, scroll::Autoscroll,
+    HighlightKey, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, SelectionEffects, ToOffset,
+    scroll::Autoscroll,
 };
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
@@ -903,7 +903,10 @@ impl BufferSearchDelegate {
                         if !is_valid_range(range) {
                             return None;
                         }
-                        syntax_theme.get(*id).cloned().map(|style| (range.clone(), style))
+                        syntax_theme
+                            .get(*id)
+                            .cloned()
+                            .map(|style| (range.clone(), style))
                     })
                     .collect()
             })

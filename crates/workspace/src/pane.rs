@@ -22,7 +22,7 @@ use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, Render, ScrollHandle,
-    Subscription, Task, TaskExt,WeakEntity, WeakFocusHandle, Window, actions, anchored, deferred,
+    Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window, actions, anchored, deferred,
     prelude::*,
 };
 use itertools::Itertools;
@@ -361,7 +361,11 @@ impl fmt::Debug for Event {
                 .debug_struct("AddItem")
                 .field("item", &item.item_id())
                 .finish(),
-            Event::ActivateItem { local, focus_changed, is_transient } => f
+            Event::ActivateItem {
+                local,
+                focus_changed,
+                is_transient,
+            } => f
                 .debug_struct("ActivateItem")
                 .field("local", local)
                 .field("focus_changed", focus_changed)

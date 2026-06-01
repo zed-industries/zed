@@ -1,5 +1,5 @@
-pub mod confirmation_dialog;
 pub mod active_file_name;
+pub mod confirmation_dialog;
 pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
@@ -67,10 +67,10 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyEntity, AnyView, AnyWeakView, App, AsyncApp,
     AsyncWindowContext, Axis, Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext,
-    Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
-    ResizeEdge, Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling,
-    WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
-    ease_out_cubic, point, relative, size, transparent_black,
+    Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, ease_out_cubic, point,
+    relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{

@@ -179,7 +179,6 @@ impl Search {
         let matching_buffers = grab_buffer_snapshot_rx.clone();
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
-
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
                 let query = Arc::new(query);

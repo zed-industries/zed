@@ -98,7 +98,12 @@ impl Editor {
             .disjoint_anchors()
             .iter()
             .map(|selection| selection.id)
-            .chain(self.selections.pending_anchor().iter().map(|selection| selection.id))
+            .chain(
+                self.selections
+                    .pending_anchor()
+                    .iter()
+                    .map(|selection| selection.id),
+            )
             .collect()
     }
 
@@ -111,7 +116,12 @@ impl Editor {
             .disjoint_anchors()
             .iter()
             .map(|selection| selection.id)
-            .chain(self.selections.pending_anchor().iter().map(|selection| selection.id))
+            .chain(
+                self.selections
+                    .pending_anchor()
+                    .iter()
+                    .map(|selection| selection.id),
+            )
             .collect();
 
         if old_ids == new_ids.as_slice() {
