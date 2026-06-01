@@ -141,14 +141,19 @@ fn render_key(
     key: &str,
     color: Option<Color>,
     platform_style: PlatformStyle,
+    vim_mode: bool,
     size: impl Into<Option<AbsoluteLength>>,
 ) -> AnyElement {
     let key_icon = icon_for_key(key, platform_style);
     match key_icon {
         Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
         None => {
-            let key = capitalize(key);
-            Key::new(&key, color).size(size).into_any_element()
+            let display_key = if vim_mode {
+                key.to_string()
+            } else {
+                capitalize(key)
+            };
+            Key::new(&display_key, color).size(size).into_any_element()
         }
     }
 }
@@ -212,11 +217,10 @@ pub fn render_keybinding_keystroke(
     platform_style: PlatformStyle,
     vim_mode: bool,
 ) -> Vec<AnyElement> {
-    let use_text = vim_mode
-        || matches!(
-            platform_style,
-            PlatformStyle::Linux | PlatformStyle::Windows
-        );
+    let use_text = matches!(
+        platform_style,
+        PlatformStyle::Linux | PlatformStyle::Windows
+    );
     let size = size.into();
 
     if use_text {
@@ -241,7 +245,13 @@ pub fn render_keybinding_keystroke(
             size,
             true,
         ));
-        elements.push(render_key(keystroke.key(), color, platform_style, size));
+        elements.push(render_key(
+            keystroke.key(),
+            color,
+            platform_style,
+            vim_mode,
+            size,
+        ));
         elements
     }
 }
@@ -492,68 +502,79 @@ fn keystroke_text(
     vim_mode: bool,
 ) -> String {
     let mut text = String::new();
-    let delimiter = '-';
 
-    if modifiers.function {
-        match vim_mode {
-            false => text.push_str("Fn"),
-            true => text.push_str("fn"),
+    if platform_style == PlatformStyle::Mac {
+        if modifiers.function {
+            if vim_mode {
+                text.push_str("fn");
+            } else {
+                text.push_str("Fn");
+            }
         }
-
-        text.push(delimiter);
-    }
-
-    if modifiers.control {
-        match (platform_style, vim_mode) {
-            (PlatformStyle::Mac, false) => text.push_str("Control"),
-            (PlatformStyle::Linux | PlatformStyle::Windows, false) => text.push_str("Ctrl"),
-            (_, true) => text.push_str("ctrl"),
+        if modifiers.control {
+            text.push('^');
         }
-
-        text.push(delimiter);
-    }
-
-    if modifiers.platform {
-        match (platform_style, vim_mode) {
-            (PlatformStyle::Mac, false) => text.push_str("Command"),
-            (PlatformStyle::Mac, true) => text.push_str("cmd"),
-            (PlatformStyle::Linux, false) => text.push_str("Super"),
-            (PlatformStyle::Linux, true) => text.push_str("super"),
-            (PlatformStyle::Windows, false) => text.push_str("Win"),
-            (PlatformStyle::Windows, true) => text.push_str("win"),
+        if modifiers.alt {
+            text.push('⌥');
         }
-
-        text.push(delimiter);
-    }
-
-    if modifiers.alt {
-        match (platform_style, vim_mode) {
-            (PlatformStyle::Mac, false) => text.push_str("Option"),
-            (PlatformStyle::Mac, true) => text.push_str("option"),
-            (PlatformStyle::Linux | PlatformStyle::Windows, false) => text.push_str("Alt"),
-            (_, true) => text.push_str("alt"),
+        if modifiers.platform {
+            text.push('⌘');
         }
-
-        text.push(delimiter);
-    }
-
-    if modifiers.shift {
-        match (platform_style, vim_mode) {
-            (_, false) => text.push_str("Shift"),
-            (_, true) => text.push_str("shift"),
+        if modifiers.shift {
+            text.push('⇧');
         }
-        text.push(delimiter);
-    }
-
-    if vim_mode {
-        text.push_str(key)
+        if vim_mode {
+            text.push_str(key);
+        } else {
+            let display_key = match key {
+                "pageup" => "PageUp",
+                "pagedown" => "PageDown",
+                key => &capitalize(key),
+            };
+            text.push_str(display_key);
+        }
     } else {
-        let key = match key {
-            "pageup" => "PageUp",
-            "pagedown" => "PageDown",
-            key => &capitalize(key),
-        };
-        text.push_str(key);
+        let delimiter = '-';
+
+        if modifiers.function {
+            text.push_str(if vim_mode { "fn" } else { "Fn" });
+            text.push(delimiter);
+        }
+
+        if modifiers.control {
+            text.push_str(if vim_mode { "ctrl" } else { "Ctrl" });
+            text.push(delimiter);
+        }
+
+        if modifiers.alt {
+            text.push_str(if vim_mode { "alt" } else { "Alt" });
+            text.push(delimiter);
+        }
+
+        if modifiers.platform {
+            if platform_style == PlatformStyle::Linux {
+                text.push_str(if vim_mode { "super" } else { "Super" });
+            } else {
+                text.push_str(if vim_mode { "win" } else { "Win" });
+            }
+            text.push(delimiter);
+        }
+
+        if modifiers.shift {
+            text.push_str(if vim_mode { "shift" } else { "Shift" });
+            text.push(delimiter);
+        }
+
+        if vim_mode {
+            text.push_str(key)
+        } else {
+            let display_key = match key {
+                "pageup" => "PageUp",
+                "pagedown" => "PageDown",
+                key => &capitalize(key),
+            };
+            text.push_str(display_key);
+        }
     }
 
     text
@@ -649,89 +670,62 @@ mod tests {
     fn test_text_for_keystroke() {
         let keystroke = Keystroke::parse("cmd-c").unwrap();
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Mac,
-                false
-            ),
-            "Command-C".to_string()
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Mac, false),
+            "\u{2318}C".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Linux,
-                false
-            ),
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Linux, false),
             "Super-C".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Windows,
-                false
-            ),
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Windows, false),
             "Win-C".to_string()
         );
 
         let keystroke = Keystroke::parse("ctrl-alt-delete").unwrap();
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Mac,
-                false
-            ),
-            "Control-Option-Delete".to_string()
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Mac, false),
+            "^\u{2325}Delete".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Linux,
-                false
-            ),
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Linux, false),
             "Ctrl-Alt-Delete".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Windows,
-                false
-            ),
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Windows, false),
             "Ctrl-Alt-Delete".to_string()
         );
 
         let keystroke = Keystroke::parse("shift-pageup").unwrap();
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Mac,
-                false
-            ),
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Mac, false),
+            "\u{21E7}PageUp".to_string()
+        );
+        assert_eq!(
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Linux, false),
             "Shift-PageUp".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Linux,
-                false,
-            ),
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Windows, false),
             "Shift-PageUp".to_string()
         );
+
+        let keystroke = Keystroke::parse("cmd-shift-d").unwrap();
         assert_eq!(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                PlatformStyle::Windows,
-                false
-            ),
-            "Shift-PageUp".to_string()
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Mac, true),
+            "\u{2318}\u{21E7}d".to_string()
+        );
+
+        let keystroke = Keystroke::parse("g").unwrap();
+        assert_eq!(
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Mac, true),
+            "g".to_string()
+        );
+
+        let keystroke = Keystroke::parse("shift-g").unwrap();
+        assert_eq!(
+            keystroke_text(&keystroke.modifiers, &keystroke.key, PlatformStyle::Mac, true),
+            "\u{21E7}g".to_string()
         );
     }
 }
