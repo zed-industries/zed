@@ -106,7 +106,7 @@ Certain files are always excluded from edit predictions—regardless of opt-in s
       "**/id_{dsa,ecdsa,ed25519,rsa}*",
       "**/.zed/settings.json", // zed project settings
       "/**/zed/settings.json", // zed user settings
-      "/**/zed/keymap.json",
+      "/**/zed/keymap.json"
     ]
   }
 }
