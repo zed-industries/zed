@@ -58,6 +58,7 @@ mod editor_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+pub mod word_segmenter;
 
 mod clipboard;
 mod code_actions;

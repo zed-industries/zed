@@ -271,6 +271,18 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 100
     pub minimum_split_diff_width: Option<f32>,
+
+    /// Whether to use fine-grained word segmentation for natural-language text.
+    ///
+    /// When false (the default), the editor uses its code-oriented character
+    /// classifier for word navigation, selection, and deletion.
+    ///
+    /// When true, Zed first finds words with its existing classifier, then uses
+    /// ICU4X to split natural-language words into more precise segments where
+    /// ICU4X knows finer word boundaries.
+    ///
+    /// Default: false
+    pub use_fine_word_segmentation: Option<bool>,
 }
 
 #[derive(

@@ -382,10 +382,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    crate::word_segmenter::previous_word_start_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -414,10 +419,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    crate::word_segmenter::previous_word_start_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -446,9 +456,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    crate::word_segmenter::next_word_end_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -472,9 +490,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    crate::word_segmenter::next_word_end_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
+                    SelectionGoal::None,
+                )
             });
         })
     }

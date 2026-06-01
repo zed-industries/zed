@@ -68,6 +68,7 @@ pub struct EditorSettings {
     pub completion_menu_item_kind: CompletionMenuItemKind,
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
+    pub use_fine_word_segmentation: bool,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -311,6 +312,7 @@ impl Settings for EditorSettings {
             completion_menu_item_kind: editor.completion_menu_item_kind.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
+            use_fine_word_segmentation: editor.use_fine_word_segmentation.unwrap(),
         }
     }
 }

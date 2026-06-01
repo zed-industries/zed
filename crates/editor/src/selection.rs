@@ -500,7 +500,14 @@ impl Editor {
 
             if only_carets {
                 for selection in &mut selections {
-                    let (word_range, _) = buffer.surrounding_word(selection.start, None);
+                    let use_fine_word_segmentation =
+                        EditorSettings::get_global(cx).use_fine_word_segmentation;
+                    let (word_range, _) = crate::word_segmenter::surrounding_word(
+                        buffer,
+                        selection.start,
+                        None,
+                        use_fine_word_segmentation,
+                    );
                     selection.start = word_range.start;
                     selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;
@@ -1203,7 +1210,14 @@ impl Editor {
                 let position = display_map
                     .clip_point(position, Bias::Left)
                     .to_offset(&display_map, Bias::Left);
-                let (range, _) = buffer.surrounding_word(position, None);
+                let use_fine_word_segmentation =
+                    EditorSettings::get_global(cx).use_fine_word_segmentation;
+                let (range, _) = crate::word_segmenter::surrounding_word(
+                    buffer,
+                    position,
+                    None,
+                    use_fine_word_segmentation,
+                );
                 start = buffer.anchor_before(range.start);
                 end = buffer.anchor_before(range.end);
                 mode = SelectMode::Word(start..end);
@@ -1305,7 +1319,14 @@ impl Editor {
                     let head_offset = if buffer.is_inside_word(offset, None)
                         || original_range.contains(&offset)
                     {
-                        let (word_range, _) = buffer.surrounding_word(offset, None);
+                        let use_fine_word_segmentation =
+                            EditorSettings::get_global(cx).use_fine_word_segmentation;
+                        let (word_range, _) = crate::word_segmenter::surrounding_word(
+                            buffer,
+                            offset,
+                            None,
+                            use_fine_word_segmentation,
+                        );
                         if word_range.start < original_range.start {
                             word_range.start
                         } else {
@@ -2091,7 +2112,14 @@ impl Editor {
 
             if only_carets {
                 for selection in &mut selections {
-                    let (word_range, _) = buffer.surrounding_word(selection.start, None);
+                    let use_fine_word_segmentation =
+                        EditorSettings::get_global(cx).use_fine_word_segmentation;
+                    let (word_range, _) = crate::word_segmenter::surrounding_word(
+                        buffer,
+                        selection.start,
+                        None,
+                        use_fine_word_segmentation,
+                    );
                     selection.start = word_range.start;
                     selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;

@@ -962,13 +962,18 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::previous_word_start(map, selection.head())
+                            crate::word_segmenter::previous_word_start_with_segmenter(
+                                map,
+                                selection.head(),
+                                use_fine_word_segmentation,
+                            )
                         } else {
                             movement::previous_word_start_or_newline(map, selection.head())
                         };
@@ -1028,12 +1033,17 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::next_word_end(map, selection.head())
+                            crate::word_segmenter::next_word_end_with_segmenter(
+                                map,
+                                selection.head(),
+                                use_fine_word_segmentation,
+                            )
                         } else {
                             movement::next_word_end_or_newline(map, selection.head())
                         };
