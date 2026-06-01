@@ -409,6 +409,12 @@ pub fn show_link_definition(
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
+    // Record the position we're about to request for, so a subsequent mouse
+    // move on the same point short-circuits above instead of re-querying the
+    // language server (which may not return an `originSelectionRange` to build
+    // a `symbol_range` from).
+    hovered_link_state.last_trigger_point = trigger_point.clone();
+
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             // LSP document links take priority: the server explicitly
@@ -1066,6 +1072,8 @@ mod tests {
     use multi_buffer::MultiBufferOffset;
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use util::{assert_set_eq, path};
     use workspace::item::Item;
 
@@ -1236,6 +1244,78 @@ mod tests {
             struct «Aˇ»;
             let variable = A;
         "});
+    }
+
+    #[gpui::test]
+    async fn test_go_to_definition_link_dedup(cx: &mut gpui::TestAppContext) {
+        // Regression test for https://github.com/zed-industries/zed/issues/56193.
+        // Holding the go-to-definition modifier and jiggling the mouse must not
+        // re-issue a `textDocument/definition` request for a position that has
+        // already been queried. Language servers that answer with a bare
+        // `Location` (no `originSelectionRange`) used to trigger a request on
+        // every mouse-move event: `symbol_range` stays `None` and
+        // `last_trigger_point` is only recorded when the hovered-link state is
+        // first created, so the same-position check never matches afterwards.
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn ˇtest() { do_work(); }
+            fn do_work() { test(); }
+        "});
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let _requests = cx.set_request_handler::<GotoDefinition, _, _>({
+            let request_count = request_count.clone();
+            move |url, _, _| {
+                let request_count = request_count.clone();
+                async move {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    // Bare `Location` with no `originSelectionRange`, like phpactor.
+                    Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                        uri: url,
+                        range: lsp::Range::default(),
+                    })))
+                }
+            }
+        });
+
+        let first_point = cx.pixel_position(indoc! {"
+            fn test() { do_wˇork(); }
+            fn do_work() { test(); }
+        "});
+        let second_point = cx.pixel_position(indoc! {"
+            fn test() { do_woˇrk(); }
+            fn do_work() { test(); }
+        "});
+
+        // Hover the first position: exactly one definition request.
+        cx.simulate_mouse_move(first_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        // Move to a second position: exactly one more definition request.
+        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        // Jiggle the mouse without leaving the character: no new request expected.
+        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            2,
+            "expected one definition request per distinct hovered position, but the \
+             language server was queried repeatedly for the same position (issue #56193)"
+        );
     }
 
     #[gpui::test]

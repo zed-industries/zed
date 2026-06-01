@@ -297,6 +297,16 @@ fn show_hover(
     editor.hover_state.hiding_delay_task = None;
     editor.hover_state.closest_mouse_distance = None;
 
+    // Don't request again if the location is the same as the previous request.
+    // This must run before `hide_hover`, which clears `triggered_from`.
+    if let Some(triggered_from) = &editor.hover_state.triggered_from
+        && triggered_from
+            .cmp(&anchor, &snapshot.buffer_snapshot())
+            .is_eq()
+    {
+        return None;
+    }
+
     if !ignore_timeout {
         if same_info_hover(editor, &snapshot, anchor)
             || same_diagnostic_hover(editor, &snapshot, anchor)
@@ -307,15 +317,6 @@ fn show_hover(
         } else {
             hide_hover(editor, cx);
         }
-    }
-
-    // Don't request again if the location is the same as the previous request
-    if let Some(triggered_from) = &editor.hover_state.triggered_from
-        && triggered_from
-            .cmp(&anchor, &snapshot.buffer_snapshot())
-            .is_eq()
-    {
-        return None;
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
@@ -624,6 +625,7 @@ fn show_hover(
     });
 
     editor.hover_state.info_task = Some(task);
+    editor.hover_state.triggered_from = Some(anchor);
     None
 }
 
@@ -1603,6 +1605,64 @@ mod tests {
         cx.editor(|editor, _, _| {
             assert!(!editor.hover_state.visible());
         });
+    }
+
+    #[gpui::test]
+    async fn test_mouse_hover_dedup_null_response(cx: &mut gpui::TestAppContext) {
+        // Regression test for https://github.com/zed-industries/zed/issues/56193.
+        // When the language server answers `textDocument/hover` with `null`, no
+        // popover is shown, so moving the mouse within the same position must not
+        // re-issue the hover request every time. `HoverState::triggered_from` is
+        // meant to guard against this but is never recorded after a request.
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn ˇtest() { println!(); }
+        "});
+        let hover_point = cx.display_point(indoc! {"
+            fn test() { printˇln!(); }
+        "});
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>({
+            let request_count = request_count.clone();
+            move |_, _, _| {
+                let request_count = request_count.clone();
+                async move {
+                    request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                    Ok(None)
+                }
+            }
+        });
+
+        for _ in 0..2 {
+            cx.update_editor(|editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let anchor = snapshot
+                    .buffer_snapshot()
+                    .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+                hover_at(editor, Some(anchor), None, window, cx)
+            });
+            cx.background_executor
+                .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+            cx.run_until_parked();
+        }
+
+        assert_eq!(
+            request_count.load(atomic::Ordering::SeqCst),
+            1,
+            "hovering the same position twice should issue only one hover request, but \
+             the language server was queried again for a null response (issue #56193)"
+        );
     }
 
     #[gpui::test]
