@@ -1262,9 +1262,7 @@ impl LocalWorktree {
         // together as a single project in recent projects. See PR #55715.
         new_snapshot.root_repo_common_dir = new_snapshot
             .local_repo_for_work_directory_path(RelPath::empty())
-            .filter(|repo| {
-                !matches!(repo.work_directory, WorkDirectory::AboveProject { .. })
-            })
+            .filter(|repo| !matches!(repo.work_directory, WorkDirectory::AboveProject { .. }))
             .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
 
         let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir
