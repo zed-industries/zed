@@ -2854,8 +2854,6 @@ impl Thread {
     fn spawn_title_generation(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         self.title_generation_failed = false;
         log::debug!("Generating title with model: {:?}", model.name());
-        // Build the request synchronously so we don't borrow `self.messages`
-        // across the await point inside the spawned task.
         let temperature = AgentSettings::temperature_for_model(&model, cx);
         let request = build_thread_title_request(&self.messages, temperature);
         self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
@@ -3349,10 +3347,6 @@ impl RunningTurn {
     }
 }
 
-/// Renders a sequence of persisted messages as Markdown. Shared by
-/// `Thread::to_markdown` and `DbThread::to_markdown` so the in-memory and
-/// database-backed paths produce identical output; the only difference is that
-/// a live `Thread` may additionally append its pending (streaming) message.
 pub(crate) fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
     let mut markdown = String::new();
     for (ix, message) in messages.iter().enumerate() {

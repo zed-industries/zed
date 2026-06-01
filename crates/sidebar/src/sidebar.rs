@@ -2,7 +2,7 @@ mod thread_switcher;
 
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
-use agent::ThreadStore;
+use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
@@ -253,6 +253,29 @@ fn thread_metadata_would_render_sidebar_row(
 
     !hidden_draft_thread_ids.contains(&metadata.thread_id)
         && draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
+}
+
+fn is_native_thread(agent_id: &AgentId) -> bool {
+    *agent_id == ZED_AGENT_ID.clone()
+}
+
+fn should_render_thread_context_menu(is_draft: bool, session_id: Option<&acp::SessionId>) -> bool {
+    !is_draft && session_id.is_some()
+}
+
+fn should_show_thread_title_regeneration(agent_id: &AgentId) -> bool {
+    is_native_thread(agent_id)
+}
+
+fn should_show_open_thread_as_markdown(agent_id: &AgentId, is_open: bool) -> bool {
+    is_open || is_native_thread(agent_id)
+}
+
+fn start_title_regeneration(
+    regenerating_titles: &mut HashSet<ThreadId>,
+    thread_id: ThreadId,
+) -> bool {
+    regenerating_titles.insert(thread_id)
 }
 
 #[derive(Clone)]
@@ -3241,7 +3264,7 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
-    fn open_thread_as_markdown(
+    fn open_closed_native_thread_as_markdown(
         session_id: &acp::SessionId,
         title: Option<SharedString>,
         workspace: &Entity<Workspace>,
@@ -3280,33 +3303,41 @@ impl Sidebar {
             .detach_and_log_err(cx);
     }
 
-    fn show_no_thread_summary_model_toast(workspace: Entity<Workspace>, cx: &mut App) {
+    fn show_thread_title_toast(workspace: Entity<Workspace>, message: &'static str, cx: &mut App) {
         workspace.update(cx, |workspace, cx| {
-            let toast = StatusToast::new(
-                "No model is configured for summarizing thread titles.",
-                cx,
-                |this, _cx| {
-                    this.icon(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .dismiss_button(true)
-                },
-            );
+            let toast = StatusToast::new(message, cx, |this, _cx| {
+                this.icon(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .dismiss_button(true)
+            });
             workspace.toggle_status_toast(toast, cx);
         });
+    }
+
+    fn show_no_thread_summary_model_toast(workspace: Entity<Workspace>, cx: &mut App) {
+        Self::show_thread_title_toast(
+            workspace,
+            "No model is configured for summarizing thread titles.",
+            cx,
+        );
+    }
+
+    fn show_thread_title_regeneration_failed_toast(workspace: Entity<Workspace>, cx: &mut App) {
+        Self::show_thread_title_toast(workspace, "Failed to regenerate thread title.", cx);
     }
 
     fn regenerate_thread_title(
         &mut self,
         session_id: &acp::SessionId,
         thread_id: ThreadId,
+        folder_paths: PathList,
         open_workspace: Option<Entity<Workspace>>,
+        toast_workspace: Option<Entity<Workspace>>,
         cx: &mut Context<Self>,
     ) {
-        // Open threads must use their live state: the DB snapshot can be stale,
-        // and a title override from here could later be overwritten by the live thread.
         if let Some(workspace) = &open_workspace {
             if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                 match panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx)) {
@@ -3316,15 +3347,21 @@ impl Sidebar {
                         Self::show_no_thread_summary_model_toast(workspace.clone(), cx);
                         return;
                     }
-                    ThreadTitleRegenerationResult::NotOpen => {}
+                    ThreadTitleRegenerationResult::NotOpen => return,
                 }
             }
+            return;
+        }
+
+        if !start_title_regeneration(&mut self.regenerating_titles, thread_id) {
+            return;
         }
 
         let Some(configured_model) =
             LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
         else {
-            if let Some(workspace) = open_workspace.or_else(|| self.active_workspace(cx)) {
+            self.regenerating_titles.remove(&thread_id);
+            if let Some(workspace) = toast_workspace.or_else(|| self.active_workspace(cx)) {
                 Self::show_no_thread_summary_model_toast(workspace, cx);
             }
             return;
@@ -3336,39 +3373,44 @@ impl Sidebar {
         let thread_store = ThreadStore::global(cx);
         let load_task =
             thread_store.update(cx, |store, cx| store.load_thread(session_id.clone(), cx));
+        let session_id = session_id.clone();
 
-        // Start pulsing the title immediately.
-        self.regenerating_titles.insert(thread_id);
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            // Run the summarization in an inner block so we can always clear
-            // the regenerating flag afterwards, regardless of success/failure.
             let result: anyhow::Result<SharedString> = async {
-                let db_thread = load_task.await?;
-                let Some(db_thread) = db_thread else {
+                let Some(mut db_thread) = load_task.await? else {
                     anyhow::bail!("Thread not found in database");
                 };
 
-                // Reuse the agent crate's summarization helpers so the prompt
-                // and streaming behavior stay identical to the AgentPanel's
-                // live title generation.
                 let request = agent::build_thread_title_request(&db_thread.messages, temperature);
-                let title = agent::stream_thread_title(model, request, cx).await?;
+                let title =
+                    SharedString::from(agent::stream_thread_title(model, request, cx).await?);
+                db_thread.title = title.clone();
 
-                anyhow::Ok(SharedString::from(title))
+                thread_store
+                    .update(cx, |store, cx| {
+                        store.save_thread(session_id, db_thread, folder_paths, cx)
+                    })
+                    .await?;
+
+                anyhow::Ok(title)
             }
             .await;
 
-            // Clear the pulse and persist the new title together so the
-            // metadata-store notify and our own re-render land in the same
-            // effect cycle, swapping the row to the new title in one frame.
             this.update(cx, |this, cx| {
                 this.regenerating_titles.remove(&thread_id);
-                if let Ok(title) = &result {
-                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                        store.set_title_override(thread_id, title.clone(), cx);
-                    });
+                match &result {
+                    Ok(title) => {
+                        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                            store.set_generated_title(thread_id, title.clone(), cx);
+                        });
+                    }
+                    Err(_) => {
+                        if let Some(workspace) = toast_workspace {
+                            Self::show_thread_title_regeneration_failed_toast(workspace, cx);
+                        }
+                    }
                 }
                 cx.notify();
             })
@@ -5985,9 +6027,7 @@ impl Sidebar {
                 })
             });
 
-        // Wrap the thread item in a right-click context menu exposing
-        // thread-level actions that route through the AgentPanel.
-        if is_draft {
+        if !should_render_thread_context_menu(is_draft, thread.metadata.session_id.as_ref()) {
             return thread_item.into_any_element();
         }
 
@@ -5998,68 +6038,113 @@ impl Sidebar {
         let context_menu_id = SharedString::from(format!("thread-context-menu-{}", ix));
         let sidebar = cx.weak_entity();
 
-        // For "Open as Markdown" we need a workspace to host the new editor
-        // tab. Use the thread's own workspace when open, otherwise fall back
-        // to the active workspace in the current window.
         let workspace_for_markdown = match &thread_workspace {
             ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
             ThreadEntryWorkspace::Closed { .. } => self.active_workspace(cx),
         };
-
-        // For regeneration we only care whether the thread is genuinely open
-        // (so we can drive its live thread); closed threads take the
-        // database-backed path inside `regenerate_thread_title`.
         let open_workspace = match &thread_workspace {
             ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
             ThreadEntryWorkspace::Closed { .. } => None,
         };
+        let is_open = open_workspace.is_some();
+        let can_regenerate_title = should_show_thread_title_regeneration(&thread.metadata.agent_id);
+        let can_open_as_markdown =
+            should_show_open_thread_as_markdown(&thread.metadata.agent_id, is_open);
+        let folder_paths = thread.metadata.folder_paths().clone();
 
         right_click_menu(context_menu_id)
             .trigger(move |_, _, _| thread_item)
             .menu({
                 let thread_id = thread.metadata.thread_id;
-                let title = thread.metadata.title.clone();
+                let markdown_title = thread.metadata.title.clone();
+                let rename_title = title.clone();
                 move |_window, cx| {
                     let session_id = session_id.clone();
                     let sidebar = sidebar.clone();
                     let workspace_for_markdown = workspace_for_markdown.clone();
                     let open_workspace = open_workspace.clone();
-                    let title = title.clone();
-                    ContextMenu::build(_window, cx, move |menu, _window, _cx| {
-                        menu.entry("Regenerate Thread Title", None, {
-                            let session_id = session_id.clone();
+                    let markdown_title = markdown_title.clone();
+                    let rename_title = rename_title.clone();
+                    let folder_paths = folder_paths.clone();
+                    ContextMenu::build(_window, cx, move |mut menu, _window, _cx| {
+                        menu = menu.entry("Rename Title", None, {
                             let sidebar = sidebar.clone();
-                            let open_workspace = open_workspace.clone();
-                            move |_window, cx| {
+                            let rename_title = rename_title.clone();
+                            move |window, cx| {
                                 sidebar
                                     .update(cx, |sidebar, cx| {
-                                        sidebar.regenerate_thread_title(
-                                            &session_id,
+                                        sidebar.start_renaming_thread(
+                                            ix,
                                             thread_id,
-                                            open_workspace.clone(),
+                                            rename_title.clone(),
+                                            window,
                                             cx,
                                         );
                                     })
                                     .ok();
                             }
-                        })
-                        .entry("Open Thread as Markdown", None, {
-                            let session_id = session_id.clone();
-                            let title = title.clone();
-                            move |window, cx| {
-                                if let Some(ref workspace) = workspace_for_markdown {
-                                    Self::open_thread_as_markdown(
+                        });
+
+                        if can_regenerate_title {
+                            menu = menu.entry("Regenerate Thread Title", None, {
+                                let session_id = session_id.clone();
+                                let sidebar = sidebar.clone();
+                                let open_workspace = open_workspace.clone();
+                                let toast_workspace = workspace_for_markdown.clone();
+                                let folder_paths = folder_paths.clone();
+                                move |_window, cx| {
+                                    sidebar
+                                        .update(cx, |sidebar, cx| {
+                                            sidebar.regenerate_thread_title(
+                                                &session_id,
+                                                thread_id,
+                                                folder_paths.clone(),
+                                                open_workspace.clone(),
+                                                toast_workspace.clone(),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            });
+                        }
+
+                        if can_open_as_markdown {
+                            menu = menu.entry("Open Thread as Markdown", None, {
+                                let session_id = session_id.clone();
+                                let markdown_title = markdown_title.clone();
+                                let open_workspace = open_workspace.clone();
+                                move |window, cx| {
+                                    let Some(ref workspace) = workspace_for_markdown else {
+                                        return;
+                                    };
+                                    if let Some(open_workspace) = &open_workspace {
+                                        if let Some(panel) =
+                                            open_workspace.read(cx).panel::<AgentPanel>(cx)
+                                        {
+                                            panel.update(cx, |panel, cx| {
+                                                panel.open_thread_as_markdown(
+                                                    thread_id,
+                                                    workspace.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                        return;
+                                    }
+                                    Self::open_closed_native_thread_as_markdown(
                                         &session_id,
-                                        title.clone(),
+                                        markdown_title.clone(),
                                         workspace,
                                         window,
                                         cx,
                                     );
                                 }
-                            }
-                        })
-                        .separator()
-                        .entry("Archive Thread", None, {
+                            });
+                        }
+
+                        menu.separator().entry("Archive Thread", None, {
                             let session_id = session_id.clone();
                             let sidebar = sidebar.clone();
                             move |window, cx| {
@@ -7851,4 +7936,53 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
     }
 
     writeln!(output).ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_thread_context_menu_renders_for_persisted_threads() {
+        let session_id = acp::SessionId::new("session-1");
+
+        assert!(should_render_thread_context_menu(false, Some(&session_id)));
+        assert!(!should_render_thread_context_menu(true, Some(&session_id)));
+        assert!(!should_render_thread_context_menu(false, None));
+    }
+
+    #[test]
+    fn test_title_regeneration_only_shows_for_native_threads() {
+        let external_agent = AgentId::new("external-agent");
+
+        assert!(should_show_thread_title_regeneration(&ZED_AGENT_ID.clone()));
+        assert!(!should_show_thread_title_regeneration(&external_agent));
+    }
+
+    #[test]
+    fn test_open_markdown_shows_for_open_external_threads_and_closed_native_threads() {
+        let external_agent = AgentId::new("external-agent");
+
+        assert!(should_show_open_thread_as_markdown(&external_agent, true));
+        assert!(!should_show_open_thread_as_markdown(&external_agent, false));
+        assert!(should_show_open_thread_as_markdown(
+            &ZED_AGENT_ID.clone(),
+            false
+        ));
+    }
+
+    #[test]
+    fn test_start_title_regeneration_rejects_duplicate_thread() {
+        let thread_id = ThreadId::new();
+        let mut regenerating_titles = HashSet::default();
+
+        assert!(start_title_regeneration(
+            &mut regenerating_titles,
+            thread_id
+        ));
+        assert!(!start_title_regeneration(
+            &mut regenerating_titles,
+            thread_id
+        ));
+    }
 }

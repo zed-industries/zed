@@ -718,6 +718,26 @@ impl ThreadMetadataStore {
         self.save(metadata, cx);
     }
 
+    pub fn set_generated_title(
+        &mut self,
+        thread_id: ThreadId,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(existing) = self.entry(thread_id) else {
+            return;
+        };
+        if existing.title.as_ref() == Some(&title) && existing.title_override.is_none() {
+            return;
+        }
+        let metadata = ThreadMetadata {
+            title: Some(title),
+            title_override: None,
+            ..existing.clone()
+        };
+        self.save(metadata, cx);
+    }
+
     fn save_internal(&mut self, metadata: ThreadMetadata) {
         if let Some(thread) = self.threads.get(&metadata.thread_id) {
             if thread.folder_paths() != metadata.folder_paths() {
@@ -1982,6 +2002,39 @@ mod tests {
             assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
             assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
             assert_eq!(metadata.display_title().as_ref(), "User Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_store_set_generated_title_clears_title_override(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut metadata = make_metadata(
+            "session-1",
+            "Old Generated Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        metadata.title_override = Some("User Title".into());
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_generated_title(thread_id, "New Generated Title".into(), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(metadata.title.as_deref(), Some("New Generated Title"));
+            assert_eq!(metadata.title_override, None);
+            assert_eq!(metadata.display_title().as_ref(), "New Generated Title");
         });
     }
 
