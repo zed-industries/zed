@@ -117,6 +117,11 @@ impl FakeTerminalHandle {
         }
     }
 
+    pub(crate) fn with_output(mut self, output: acp::TerminalOutputResponse) -> Self {
+        self.output = output;
+        self
+    }
+
     pub(crate) fn was_killed(&self) -> bool {
         self.killed.load(Ordering::SeqCst)
     }
@@ -181,6 +186,7 @@ pub(crate) struct FakeThreadEnvironment {
     terminal_handle: Option<Rc<FakeTerminalHandle>>,
     subagent_handle: Option<Rc<FakeSubagentHandle>>,
     terminal_creations: Arc<AtomicUsize>,
+    terminal_output_limits: std::cell::RefCell<Vec<Option<u64>>>,
 }
 
 impl FakeThreadEnvironment {
@@ -194,6 +200,10 @@ impl FakeThreadEnvironment {
     pub(crate) fn terminal_creation_count(&self) -> usize {
         self.terminal_creations.load(Ordering::SeqCst)
     }
+
+    pub(crate) fn terminal_output_limits(&self) -> Vec<Option<u64>> {
+        self.terminal_output_limits.borrow().clone()
+    }
 }
 
 impl crate::ThreadEnvironment for FakeThreadEnvironment {
@@ -202,11 +212,14 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _command: String,
         _extra_env: Vec<acp::EnvVariable>,
         _cwd: Option<std::path::PathBuf>,
-        _output_byte_limit: Option<u64>,
+        output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
         self.terminal_creations.fetch_add(1, Ordering::SeqCst);
+        self.terminal_output_limits
+            .borrow_mut()
+            .push(output_byte_limit);
         let handle = self
             .terminal_handle
             .clone()
@@ -5848,6 +5861,95 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             "subagent tool should not be present at max depth"
         );
     });
+}
+
+#[gpui::test]
+async fn test_terminal_tail_tool_schema_gated_by_feature_flag(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry = cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let thread_without_flag = cx.new(|cx| {
+        let environment = Rc::new(
+            FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx)),
+        );
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone() as Arc<dyn LanguageModel>),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    thread_without_flag
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = model.pending_completions().pop().unwrap();
+    let terminal_tool = completion
+        .tools
+        .iter()
+        .find(|tool| tool.name == TerminalTool::NAME)
+        .expect("terminal tool should be present");
+    let schema_text = terminal_tool.input_schema.to_string();
+    assert!(!schema_text.contains("head_lines"));
+    assert!(!schema_text.contains("tail_lines"));
+    assert!(!terminal_tool.description.contains("head_lines"));
+    assert!(!terminal_tool.description.contains("tail_lines"));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        cx.update_flags(false, vec!["terminal-tail".to_string()]);
+    });
+
+    let thread_with_flag = cx.new(|cx| {
+        let environment = Rc::new(
+            FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx)),
+        );
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone() as Arc<dyn LanguageModel>),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    thread_with_flag
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = model.pending_completions().pop().unwrap();
+    let terminal_tool = completion
+        .tools
+        .iter()
+        .find(|tool| tool.name == TerminalTool::NAME)
+        .expect("terminal tool should be present");
+    let schema_text = terminal_tool.input_schema.to_string();
+    assert!(schema_text.contains("head_lines"));
+    assert!(schema_text.contains("tail_lines"));
+    assert!(terminal_tool.description.contains("head_lines"));
+    assert!(terminal_tool.description.contains("tail_lines"));
 }
 
 #[gpui::test]
