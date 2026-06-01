@@ -2778,13 +2778,23 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         // Use a per-thread temp directory for all terminal commands, even when
         // sandboxing is disabled, so the model can't infer sandbox state from
         // `$TMPDIR` changing between conversations.
+        //
+        // Only do this for local projects. For remote projects the temp
+        // directory would be created on the client, but the terminal runs on
+        // the remote host, so pointing `$TMPDIR` (and the sandbox writable
+        // scope) at a client-side path would leak client environment into the
+        // remote terminal and reference a directory that doesn't exist there.
         let mut extra_env = extra_env;
         let mut sandbox_wrap = sandbox_wrap;
-        match self
-            .thread
-            .update(cx, |thread, cx| thread.sandboxed_terminal_temp_dir(cx))
-        {
-            Ok(Ok(temp_dir)) => {
+        let temp_dir = self.thread.update(cx, |thread, cx| {
+            thread
+                .project()
+                .read(cx)
+                .is_local()
+                .then(|| thread.sandboxed_terminal_temp_dir(cx))
+        });
+        match temp_dir {
+            Ok(Some(Ok(temp_dir))) => {
                 // Canonicalize so the path matches what the sandbox resolves
                 // symlinks to (e.g. `/var` -> `/private/var` on macOS).
                 // `$TMPDIR` and the writable-scope entry below must agree, and
@@ -2804,7 +2814,8 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                     sandbox_wrap.writable_paths.push(temp_dir);
                 }
             }
-            Ok(Err(error)) => return Task::ready(Err(error)),
+            Ok(None) => {}
+            Ok(Some(Err(error))) => return Task::ready(Err(error)),
             Err(error) => return Task::ready(Err(error)),
         };
         let task = self.acp_thread.update(cx, |thread, cx| {

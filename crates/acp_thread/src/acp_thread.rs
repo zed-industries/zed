@@ -3330,8 +3330,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -3411,8 +3410,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -5026,8 +5024,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -5073,8 +5070,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -5134,8 +5130,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
