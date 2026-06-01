@@ -3,6 +3,7 @@ mod conflict_set;
 pub mod git_traversal;
 pub mod job_debug_queue;
 pub mod pending_op;
+mod structural_merge;
 
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
@@ -18,7 +19,14 @@ use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadT
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
-pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
+pub use conflict_set::{
+    AutoResolution, AutoResolvePattern, AutoResolveTakeSide, ConflictRegion, ConflictSet,
+    ConflictSetSnapshot, ConflictSetUpdate, DecompositionSegment, RegionSummary,
+    render_decomposed_region,
+};
+pub use structural_merge::{
+    ConflictSide, DeferReason, LanguageMergeContext, ResolveMethod, StructuralMergeOutcome,
+};
 use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, SinkExt, Stream, StreamExt,

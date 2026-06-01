@@ -110,6 +110,13 @@ actions!(
         AddToGitignore,
         /// Copies the current branch name to the clipboard.
         CopyBranchName,
+        /// Auto-resolves conflict regions in the current file where one side
+        /// matches the diff3 base, leaving genuine conflicts for manual
+        /// resolution. Requires merge.conflictStyle=diff3 (or zdiff3).
+        AutoResolveNonConflicting,
+        /// Auto-resolves conflict regions in every file in the project where
+        /// one side matches the diff3 base.
+        AutoResolveNonConflictingInProject,
     ]
 );
 

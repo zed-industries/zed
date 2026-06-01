@@ -41,7 +41,23 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
+    pub merges_config: Option<MergesConfig>,
     pub highlight_map: Mutex<HighlightMap>,
+}
+
+/// Configuration loaded from `merges.scm`. Each capture tags a node whose
+/// direct children form a mergeable container (set, ordered list, ...) for
+/// Auto-Resolve's structural merge pass, or — via `@merge.key` /
+/// `@merge.key.normalized` — identifies the part of an item that should be
+/// used as its identity key when detecting "same item, modified on both
+/// sides". `@merge.key.normalized` additionally instructs the engine to
+/// collapse whitespace before comparing.
+pub struct MergesConfig {
+    pub query: Query,
+    pub set_capture_ix: Option<u32>,
+    pub ordered_capture_ix: Option<u32>,
+    pub key_capture_ix: Option<u32>,
+    pub key_normalized_capture_ix: Option<u32>,
 }
 
 pub struct HighlightsConfig {
@@ -261,6 +277,7 @@ impl Grammar {
             runnable_config: None,
             error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
             debug_variables_config: None,
+            merges_config: None,
             ts_language,
             highlight_map: Default::default(),
         }
@@ -351,6 +368,45 @@ impl Grammar {
                 .with_debug_variables_query(query.as_ref(), name)
                 .context("Error loading debug variables query")?;
         }
+        if let Some(query) = queries.merges {
+            self = self
+                .with_merges_query(query.as_ref(), name)
+                .context("Error loading merges query")?;
+        }
+        Ok(self)
+    }
+
+    pub fn with_merges_query(
+        mut self,
+        source: &str,
+        language_name: &LanguageName,
+    ) -> Result<Self> {
+        let query = Query::new(&self.ts_language, source)?;
+        let capture_index = |name: &str| {
+            query
+                .capture_names()
+                .iter()
+                .position(|n| *n == name)
+                .map(|ix| ix as u32)
+        };
+        let set_capture_ix = capture_index("merge.set");
+        let ordered_capture_ix = capture_index("merge.ordered_list");
+        let key_capture_ix = capture_index("merge.key");
+        let key_normalized_capture_ix = capture_index("merge.key.normalized");
+        if set_capture_ix.is_none() && ordered_capture_ix.is_none() {
+            log::warn!(
+                "{} merges query has no @merge.set or @merge.ordered_list capture; ignoring",
+                language_name
+            );
+            return Ok(self);
+        }
+        self.merges_config = Some(MergesConfig {
+            query,
+            set_capture_ix,
+            ordered_capture_ix,
+            key_capture_ix,
+            key_normalized_capture_ix,
+        });
         Ok(self)
     }
 

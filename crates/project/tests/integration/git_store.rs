@@ -268,6 +268,1141 @@ mod conflict_set_tests {
         );
     }
 
+    #[test]
+    fn test_auto_resolution_take_ours() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            modified
+            ||||||| base
+            original
+            =======
+            original
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            Some(AutoResolution::TakeOurs)
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_take_theirs() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            original
+            ||||||| base
+            original
+            =======
+            modified
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            Some(AutoResolution::TakeTheirs)
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_identical() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            same edit
+            ||||||| base
+            original
+            =======
+            same edit
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            Some(AutoResolution::Identical)
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_genuine_conflict() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours edit
+            ||||||| base
+            original
+            =======
+            theirs edit
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_no_base() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None
+        );
+    }
+
+    #[test]
+    fn test_auto_resolve_applies_edits_in_one_transaction() {
+        // 3 conflicts: 1 take-ours, 1 take-theirs, 1 genuine.
+        // After auto-resolve, only the genuine conflict remains.
+        // A single undo restores all 3.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-only
+            ||||||| base
+            base
+            =======
+            base
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            base
+            ||||||| base
+            base
+            =======
+            theirs-only
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            ours
+            ||||||| base
+            original
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let initial_conflicts = ConflictSet::parse(&snapshot);
+        assert_eq!(initial_conflicts.conflicts.len(), 3);
+
+        let edits = initial_conflicts.auto_resolution_edits(&snapshot, &[], None);
+        assert!(!edits.is_empty());
+        buffer.edit(edits);
+
+        let after_conflicts = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(
+            after_conflicts.conflicts.len(),
+            1,
+            "only the genuine conflict should remain"
+        );
+
+        buffer
+            .undo()
+            .expect("auto-resolve should produce an undoable transaction");
+
+        let restored_conflicts = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(
+            restored_conflicts.conflicts.len(),
+            3,
+            "single undo should restore all 3 conflicts"
+        );
+    }
+
+    #[test]
+    fn test_auto_resolvable_mixed() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-only
+            ||||||| base
+            base
+            =======
+            base
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            base
+            ||||||| base
+            base
+            =======
+            theirs-only
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            same
+            ||||||| base
+            original
+            =======
+            same
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            ours
+            ||||||| base
+            original
+            =======
+            theirs
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 5);
+
+        let resolved: Vec<AutoResolution> = conflict_snapshot
+            .auto_resolvable(&snapshot)
+            .map(|(_, resolution)| resolution)
+            .collect();
+        assert_eq!(
+            resolved,
+            vec![
+                AutoResolution::TakeOurs,
+                AutoResolution::TakeTheirs,
+                AutoResolution::Identical,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_decompose_partial_only_ours() {
+        // Region surrounds 3 base lines. Only the middle line is changed on
+        // ours; theirs leaves the whole region equal to base. Decomposition
+        // should fold the entire region away.
+        let test_content = r#"
+            <<<<<<< HEAD
+            keep
+            CHANGED
+            also keep
+            ||||||| base
+            keep
+            old
+            also keep
+            =======
+            keep
+            old
+            also keep
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
+        assert!(
+            segments
+                .iter()
+                .all(|s| matches!(s, DecompositionSegment::Resolved(_))),
+            "fully resolvable but got {segments:?}"
+        );
+        let merged = match &segments[0] {
+            DecompositionSegment::Resolved(text) => text.clone(),
+            _ => unreachable!(),
+        };
+        assert_eq!(merged, "keep\nCHANGED\nalso keep\n");
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], None);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+    }
+
+    #[test]
+    fn test_decompose_interleaved_resolvable_subhunks() {
+        // Both sides touch the region, but in disjoint lines: ours changes
+        // line 1, theirs changes line 3. Decomposition merges both.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-line-1
+            shared
+            base-line-3
+            ||||||| base
+            base-line-1
+            shared
+            base-line-3
+            =======
+            base-line-1
+            shared
+            theirs-line-3
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        // Region-level check returns None: neither side matches base, and they
+        // are not identical to each other.
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None
+        );
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
+        assert!(
+            segments
+                .iter()
+                .all(|s| matches!(s, DecompositionSegment::Resolved(_))),
+            "interleaved disjoint changes should fully resolve, got {segments:?}"
+        );
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], None);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("ours-line-1\nshared\ntheirs-line-3"));
+    }
+
+    #[test]
+    fn test_decompose_leaves_smaller_subconflict() {
+        // The region contains both an auto-resolvable sub-hunk (line 1, only
+        // ours changed) and a genuine sub-conflict (line 3, both sides
+        // disagree). Decomposition should resolve line 1 and emit a smaller
+        // diff3 marker block for line 3.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-only
+            shared
+            ours-line-3
+            ||||||| base
+            base-line-1
+            shared
+            base-line-3
+            =======
+            base-line-1
+            shared
+            theirs-line-3
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert!(matches!(&segments[0], DecompositionSegment::Resolved(_)));
+        assert!(matches!(&segments[1], DecompositionSegment::Conflict { .. }));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], None);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(
+            parsed_after.conflicts.len(),
+            1,
+            "one smaller sub-conflict should remain"
+        );
+        let remaining = &parsed_after.conflicts[0];
+        assert!(remaining.base.is_some(), "smaller sub-conflict keeps base");
+
+        let text = buffer.snapshot().text();
+        assert!(text.contains("ours-only\nshared"));
+        assert!(text.contains("ours-line-3"));
+        assert!(text.contains("theirs-line-3"));
+        assert!(text.contains("base-line-3"));
+    }
+
+    #[test]
+    fn test_decompose_insertion_conflict() {
+        // Both sides insert a different line at the same base position.
+        // Decomposition must emit a sub-conflict for the insertion (with
+        // empty base) and leave the surrounding context as resolved.
+        let test_content = r#"
+            <<<<<<< HEAD
+            keep
+            ours-inserted
+            tail
+            ||||||| base
+            keep
+            tail
+            =======
+            keep
+            theirs-inserted
+            tail
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
+        let conflicts = segments
+            .iter()
+            .filter(|s| matches!(s, DecompositionSegment::Conflict { .. }))
+            .count();
+        assert_eq!(conflicts, 1, "exactly one sub-conflict for the insertion");
+        match segments
+            .iter()
+            .find(|s| matches!(s, DecompositionSegment::Conflict { .. }))
+            .unwrap()
+        {
+            DecompositionSegment::Conflict {
+                base,
+                ours,
+                theirs,
+            } => {
+                assert_eq!(base, "");
+                assert_eq!(ours, "ours-inserted\n");
+                assert_eq!(theirs, "theirs-inserted\n");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_decompose_no_base_returns_none() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert!(conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).is_none());
+    }
+
+    #[test]
+    fn test_decompose_regex_pattern_resolves_version_string() {
+        // Both sides bump a version-like line, which is a genuine line-level
+        // conflict at the diff level. With a matching regex pattern + take
+        // = theirs, decomposition should pick theirs and resolve fully.
+        let test_content = r#"
+            <<<<<<< HEAD
+            version = "1.2.3"
+            ||||||| base
+            version = "1.0.0"
+            =======
+            version = "1.5.0"
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None,
+            "without patterns this is a real conflict"
+        );
+
+        let patterns = vec![AutoResolvePattern {
+            regex: regex::Regex::new(r#"^version = ".*"$"#).unwrap(),
+            take: AutoResolveTakeSide::Theirs,
+        }];
+
+        let segments = conflict_snapshot.conflicts[0]
+            .decompose(&snapshot, &patterns)
+            .unwrap();
+        assert_eq!(segments.len(), 1);
+        assert!(matches!(
+            &segments[0],
+            DecompositionSegment::Resolved(text) if text == "version = \"1.5.0\"\n"
+        ));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &patterns, None);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+    }
+
+    #[test]
+    fn test_decompose_regex_pattern_skips_multiline_subconflict() {
+        // Regex auto-merge intentionally fires only when both sides are
+        // exactly one line, so multi-line conflicts are never silently
+        // picked by a too-broad pattern.
+        let test_content = r#"
+            <<<<<<< HEAD
+            version = "1.2.3"
+            extra = ours
+            ||||||| base
+            version = "1.0.0"
+            extra = base
+            =======
+            version = "1.5.0"
+            extra = theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let patterns = vec![AutoResolvePattern {
+            regex: regex::Regex::new(r#"^version = ".*"$"#).unwrap(),
+            take: AutoResolveTakeSide::Theirs,
+        }];
+
+        let segments = conflict_snapshot.conflicts[0]
+            .decompose(&snapshot, &patterns)
+            .unwrap();
+        // Both sides also disagree on `extra`, so that line stays as a
+        // sub-conflict even though the version line cluster is multi-line and
+        // would not match the regex on its own.
+        let any_conflict = segments
+            .iter()
+            .any(|s| matches!(s, DecompositionSegment::Conflict { .. }));
+        assert!(
+            any_conflict,
+            "multi-line cluster should not be regex-resolved: {segments:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_disjoint_rust_imports() {
+        // ours adds `use bar;`, theirs adds `use baz;`. Same enclosing
+        // source_file (@merge.set). Pure additions, disjoint keys → merged.
+        let test_content = r#"
+            use foo;
+            <<<<<<< HEAD
+            use bar;
+            ||||||| base
+            =======
+            use baz;
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .resolved_text()
+            .expect("disjoint additions should merge")
+            .to_string();
+        assert!(replacement.contains("use bar;"));
+        assert!(replacement.contains("use baz;"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("use foo;"));
+        assert!(final_text.contains("use bar;"));
+        assert!(final_text.contains("use baz;"));
+    }
+
+    #[test]
+    fn test_structural_merge_defers_when_same_import_added_differently() {
+        // Both sides add a `use bar` line but with different aliases. Same
+        // key would be `use bar...;` but the trimmed text differs, so they
+        // count as two distinct additions whose keys are disjoint — v1
+        // happily merges both. (Future: an @merge.item_key could detect that
+        // these are the same logical item.)
+        let test_content = r#"
+            use foo;
+            <<<<<<< HEAD
+            use bar as alpha;
+            ||||||| base
+            =======
+            use bar as beta;
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .resolved_text()
+            .expect("both additions are disjoint by trimmed text")
+            .to_string();
+        assert!(replacement.contains("use bar as alpha;"));
+        assert!(replacement.contains("use bar as beta;"));
+    }
+
+    #[test]
+    fn test_structural_merge_unilateral_deletion_is_taken() {
+        // Base has `use bar;`. ours keeps it and adds `use baz;`. theirs
+        // removes `use bar;` entirely. v2 takes the deletion because ours
+        // did not modify the deleted item.
+        let test_content = r#"
+            use foo;
+            <<<<<<< HEAD
+            use bar;
+            use baz;
+            ||||||| base
+            use bar;
+            =======
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .resolved_text()
+            .expect("v2 should accept unilateral deletion")
+            .to_string();
+        assert!(!replacement.contains("use bar;"));
+        assert!(replacement.contains("use baz;"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(!final_text.contains("use bar;"));
+        assert!(final_text.contains("use baz;"));
+        assert!(final_text.contains("use foo;"));
+    }
+
+    #[test]
+    fn test_structural_merge_defers_on_delete_modify_conflict() {
+        // Both sides touch the same base item by key: ours removes `fn foo`
+        // entirely while theirs modifies its body. The key links the two
+        // sides' versions, so v2 sees a delete-vs-modify and defers.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ||||||| base
+            fn foo() {
+                let x = 0;
+            }
+            =======
+            fn foo() {
+                let x = 2;
+            }
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        assert!(
+            !context
+                .try_merge_region(&conflict_snapshot.conflicts[0])
+                .is_resolved(),
+            "delete-vs-modify with overlapping keys must defer"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_same_function_modified_one_side() {
+        // Both sides touch the body of the same function `foo`. Base + ours
+        // share text; theirs modified it. v2 keys the function by name and
+        // takes theirs's version.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn foo() {
+                let x = 1;
+            }
+            ||||||| base
+            fn foo() {
+                let x = 1;
+            }
+            =======
+            fn foo() {
+                let x = 2;
+            }
+            >>>>>>> branch
+
+            fn bar() {}
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .resolved_text()
+            .expect("ours unchanged + theirs modified should take theirs")
+            .to_string();
+        assert!(replacement.contains("let x = 2;"));
+        assert!(!replacement.contains("let x = 1;"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("let x = 2;"));
+        assert!(!final_text.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn test_structural_merge_defers_when_same_function_modified_both_sides() {
+        // Both sides modify `fn foo`. Different bodies → real conflict.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn foo() {
+                let x = 1;
+            }
+            ||||||| base
+            fn foo() {
+                let x = 0;
+            }
+            =======
+            fn foo() {
+                let x = 2;
+            }
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        assert!(
+            !context
+                .try_merge_region(&conflict_snapshot.conflicts[0])
+                .is_resolved(),
+            "same key modified differently on both sides must defer"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_ordered_list_disjoint_match_arms() {
+        // Both sides add an arm to the same match, in disjoint positions
+        // relative to the base. Git's conflict markers always sit at
+        // column 0 regardless of the surrounding indentation.
+        let test_content = "fn handle(x: u32) -> u32 {
+    match x {
+<<<<<<< HEAD
+        1 => 10,
+        2 => 20,
+||||||| base
+        2 => 20,
+=======
+        2 => 20,
+        3 => 30,
+>>>>>>> branch
+        _ => 0,
+    }
+}
+";
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(
+                outcome,
+                StructuralMergeOutcome::Resolved {
+                    method: ResolveMethod::OrderedList,
+                    ..
+                }
+            ),
+            "expected OrderedList resolution, got {outcome:?}"
+        );
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("1 => 10"));
+        assert!(final_text.contains("2 => 20"));
+        assert!(final_text.contains("3 => 30"));
+    }
+
+    #[test]
+    fn test_structural_merge_cross_region_key_collision_defers() {
+        // ours adds `fn brand_new` in conflict #1; theirs adds `fn brand_new`
+        // (different body) in conflict #2. Auto-merging both regions would
+        // leave two definitions in the file, so both regions must defer.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn brand_new() { 1 }
+            ||||||| base
+            =======
+            >>>>>>> branch
+
+            fn untouched() {}
+
+            <<<<<<< HEAD
+            ||||||| base
+            =======
+            fn brand_new() { 2 }
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let outcome1 = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        let outcome2 = context.try_merge_region(&conflict_snapshot.conflicts[1]);
+        assert!(matches!(
+            outcome1,
+            StructuralMergeOutcome::Deferred(DeferReason::CrossRegionKeyCollision { .. })
+        ));
+        assert!(matches!(
+            outcome2,
+            StructuralMergeOutcome::Deferred(DeferReason::CrossRegionKeyCollision { .. })
+        ));
+    }
+
+    #[test]
+    fn test_structural_merge_both_sides_remove_same_item_takes_deletion() {
+        // Both sides agree to remove `fn old`. v2 takes the unanimous deletion.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn keeper() {}
+            ||||||| base
+            fn keeper() {}
+            fn old() {}
+            =======
+            fn keeper() {}
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .resolved_text()
+            .expect("unanimous deletion should resolve")
+            .to_string();
+        assert!(replacement.contains("fn keeper()"));
+        assert!(!replacement.contains("fn old()"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(!final_text.contains("fn old()"));
+    }
+
+    #[test]
+    fn test_structural_merge_no_grammar_returns_none() {
+        // A buffer without a language has no grammar; build should return None.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours
+            ||||||| base
+            base
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+
+        // Plain text buffer has no grammar; markdown does but has no merges.scm.
+        let language = language::markdown_lang();
+        assert!(
+            LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts).is_none(),
+            "markdown has no merges.scm so structural merge is unavailable"
+        );
+    }
+
+    fn build_lang_with_merges(
+        name: &'static str,
+        ts_language: tree_sitter::Language,
+        merges_scm: &'static str,
+    ) -> std::sync::Arc<language::Language> {
+        use std::borrow::Cow;
+        let language = language::Language::new(
+            language::LanguageConfig {
+                name: name.into(),
+                ..Default::default()
+            },
+            Some(ts_language),
+        )
+        .with_queries(language::LanguageQueries {
+            merges: Some(Cow::from(merges_scm)),
+            ..Default::default()
+        })
+        .expect("merges.scm parses");
+        std::sync::Arc::new(language)
+    }
+
+    #[test]
+    fn test_structural_merge_python_disjoint_functions() {
+        let test_content = "import os
+<<<<<<< HEAD
+def alpha():
+    return 1
+||||||| base
+=======
+def beta():
+    return 2
+>>>>>>> branch
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "Python",
+            tree_sitter_python::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/python/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("python merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_go_disjoint_functions() {
+        let test_content = "package main
+<<<<<<< HEAD
+func Alpha() int { return 1 }
+||||||| base
+=======
+func Beta() int { return 2 }
+>>>>>>> branch
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "Go",
+            tree_sitter_go::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/go/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("go merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_json_disjoint_keys() {
+        let test_content = "{
+    \"shared\": 1,
+<<<<<<< HEAD
+    \"ours_only\": true,
+||||||| base
+=======
+    \"theirs_only\": false,
+>>>>>>> branch
+    \"trailing\": null
+}
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "JSON",
+            tree_sitter_json::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/json/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("json merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_yaml_disjoint_keys() {
+        let test_content = "shared: 1
+<<<<<<< HEAD
+ours_only: true
+||||||| base
+=======
+theirs_only: false
+>>>>>>> branch
+trailing: null
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "YAML",
+            tree_sitter_yaml::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/yaml/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("yaml merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_key_normalized_matches_with_whitespace_diff() {
+        // Two function bodies that differ only in whitespace. The normalized
+        // key collapses that, so the engine sees them as the same item
+        // (unchanged) when both have identical text on ours and theirs.
+        // (For Rust we don't ship @merge.key.normalized by default; this
+        // test uses a custom query to exercise the path.)
+        let normalized_merges = "
+            (source_file) @merge.set
+            (function_item name: (identifier) @merge.key.normalized)
+        ";
+        let lang = build_lang_with_merges(
+            "RustForNormKey",
+            tree_sitter_rust::LANGUAGE.into(),
+            // Leak the string so it has 'static lifetime for include_str!-style use.
+            Box::leak(normalized_merges.to_string().into_boxed_str()),
+        );
+        let test_content = "<<<<<<< HEAD
+fn alpha() { 1 }
+||||||| base
+fn alpha() { 1 }
+=======
+fn  alpha()  { 1 }
+>>>>>>> branch
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("normalized merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        // The function name "alpha" is the normalized key; whitespace
+        // collapses to the same identifier; v2 treats both sides' versions
+        // as a modification of "the same item" — ours unchanged, theirs
+        // whitespace-only change — taking theirs.
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "normalized key should allow same-name match across whitespace difference, got {outcome:?}"
+        );
+    }
+
     #[gpui::test]
     async fn test_conflict_updates(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         zlog::init_test();

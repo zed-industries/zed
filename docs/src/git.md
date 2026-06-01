@@ -234,6 +234,110 @@ Click a button to resolve that conflict. The conflict markers are removed and re
 
 > **Tip:** For complex conflicts that need manual editing, you can edit the file directly. Remove the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and keep the content you want.
 
+### Auto-Resolving Non-Conflicting Changes
+
+When a merge or rebase produces conflicts, many regions often have changes on only one side — your branch made an edit, but the incoming branch did not, or vice versa. These are not real conflicts; they appear as conflict markers because Git couldn't auto-resolve them without the merge base. **Auto-Resolve** handles all of these unambiguous regions in one click, leaving only genuinely conflicting regions for you to resolve manually.
+
+#### Requirements
+
+Auto-Resolve needs `diff3` or `zdiff3` conflict markers, which include the merge base alongside your changes and the incoming changes. Enable this once per repository:
+
+```sh
+git config merge.conflictStyle zdiff3
+```
+
+This setting only affects future merges. Conflict markers from a merge already in progress cannot be retroactively populated with the base.
+
+#### Using Auto-Resolve
+
+When a file with conflicts is open, an Auto-Resolve banner appears at the top of the file. Clicking the banner auto-resolves all non-conflicting regions in that file in a single, undoable transaction. A toast confirms how many regions were resolved and how many genuine conflicts remain.
+
+You can also invoke Auto-Resolve from the Command Palette:
+
+- {#action git::AutoResolveNonConflicting} — auto-resolve conflicts in the current file
+- {#action git::AutoResolveNonConflictingInProject} — auto-resolve across every conflicted file currently open in the project
+
+A single undo reverts the entire batch.
+
+#### What Auto-Resolve handles
+
+For each conflict region, Auto-Resolve re-diffs the two sides against the merge base at line granularity and decides per cluster:
+
+- If only your side touched a cluster of lines, your change is kept
+- If only the incoming side touched it, the incoming change is kept
+- If both sides made the identical change to the same cluster, that change is kept
+- Otherwise the cluster is emitted as a smaller `<<<<<<< / ||||||| / ======= / >>>>>>>` block, leaving only the genuinely conflicting lines for manual resolution
+
+This means a single conflict region with disjoint edits on each side (your branch touched line 1, the incoming branch touched line 8) gets fully cleaned up, and a region that mixes resolvable and unresolvable edits keeps just the parts that need attention.
+
+#### Banner states
+
+The banner is shown whenever conflicts exist in the file. Its state depends on whether anything is auto-resolvable:
+
+- **Auto-Resolve — N non-conflicting changes • K will remain** — at least one region can be resolved automatically; click to apply
+- **Auto-Resolve — N fully + M partially • K will remain** — some regions resolve fully, others will be simplified into smaller sub-conflicts
+- **Auto-Resolve — no non-conflicting changes detected** — every conflict has changes on both sides, so manual resolution is required for all of them
+- **Auto-Resolve — requires diff3 conflict markers** — the markers don't include the merge base; enable `merge.conflictStyle = zdiff3` and re-run the merge to populate them
+
+#### Language-aware structural merge
+
+For supported languages, Auto-Resolve also runs a **structural pass** before line-level decomposition. It re-parses the file with the language's tree-sitter grammar and checks whether the conflict sits inside a container declared as "mergeable" by the language (e.g., a Rust `source_file`, a TypeScript `class_body`).
+
+For each container, items are compared by an identity key. If a language declares an `@merge.key` capture for an item kind, that capture's text is the key — so two branches that touch the same function `foo` are recognized as modifying the same item rather than as two separate additions. Without a key, the full trimmed text of the item is used.
+
+Auto-Resolve takes the following per-item decisions:
+
+- Same item, only one side changed it → take the change
+- Same item, both sides changed it identically → take the change
+- Same item, both sides changed it differently → defer
+- Both sides removed the same item → take the deletion
+- One side removed an item the other was modifying → defer
+- Both sides added an item with the same key → defer if texts differ, otherwise emit once
+- One side only added or removed → combine
+
+Anything ambiguous falls back to line-level decomposition.
+
+Out of the box, **Rust, TypeScript, Python, Go, JSON, and YAML** ship structural-merge rules covering top-level declarations, class/interface bodies, struct/enum fields, named functions/types, object pairs, and YAML mappings. To add a language, drop a `merges.scm` query file next to its `highlights.scm`:
+
+```scheme
+; The direct children of these nodes are mergeable as an unordered set.
+(source_file) @merge.set
+(declaration_list) @merge.set
+
+; For containers where order is semantically meaningful (e.g. match arms),
+; use @merge.ordered_list — the engine merges non-overlapping insertions
+; and deletions and defers when both sides edit overlapping positions.
+(match_block) @merge.ordered_list
+
+; Identify items by name so a same-name function modified on both sides is
+; treated as one item rather than two separate additions.
+(function_item name: (identifier) @merge.key)
+(struct_item name: (type_identifier) @merge.key)
+
+; @merge.key.normalized works like @merge.key but compares with whitespace
+; collapsed — useful when you want two cosmetically-different versions of an
+; identifier to be considered the same item.
+```
+
+After the run, the toast lists how each region resolved — e.g. *"Auto-resolved 5 of 7 conflicts (3 structural, 2 line); simplified 1 more; 2 remain — both branches modified `process_event`"*. Cross-region key collisions (ours adds `fn foo` in one region while theirs adds a different `fn foo` in another) are detected and both regions are deferred, because applying both would leave duplicate definitions in the file.
+
+#### Auto-Resolve regex patterns
+
+For lines that always change together but never really conflict — version numbers in `Cargo.toml`, build dates, lockfile hashes — you can teach Auto-Resolve to pick a side automatically:
+
+```json
+{
+  "git_panel": {
+    "auto_resolve_patterns": [
+      { "pattern": "^version = \".*\"$", "take": "theirs" },
+      { "pattern": "^\\s*\"buildNumber\":", "take": "theirs" }
+    ]
+  }
+}
+```
+
+A rule fires only when, after line-level decomposition, both sides of a sub-conflict consist of exactly one line and both lines match the same pattern. The `take` field selects `"ours"` or `"theirs"`. Multi-line sub-conflicts are intentionally left alone so a too-broad pattern can't silently discard real changes.
+
 ## Stashing
 
 Git stash allows you to temporarily save your uncommitted changes and revert your working directory to a clean state. This is particularly useful when you need to quickly switch branches or pull updates without committing incomplete work.
@@ -386,6 +490,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
 | {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
+| {#action git::AutoResolveNonConflicting}  | {#kb git::AutoResolveNonConflicting}  |
+| {#action git::AutoResolveNonConflictingInProject} | {#kb git::AutoResolveNonConflictingInProject} |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |
 | {#action git::StashApply}                 | {#kb git::StashApply}                 |

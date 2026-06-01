@@ -9,16 +9,23 @@ use gpui::{
     App, ClickEvent, Context, Empty, Entity, InteractiveElement as _, ParentElement as _,
     Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId};
+use language::{Anchor, Buffer, BufferId, BufferSnapshot};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, Project, ProjectItem as _,
+    git_store::{
+        AutoResolvePattern, AutoResolveTakeSide, GitStore, GitStoreEvent, LanguageMergeContext,
+        RepositoryEvent,
+    },
 };
-use settings::Settings;
+use settings::{AutoResolveTake, Settings};
 use std::{ops::Range, sync::Arc};
+
+use crate::git_panel_settings::GitPanelSettings;
 use ui::{ButtonLike, Divider, Tooltip, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
-use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{
+    HideStatusItem, StatusItemView, Workspace, item::ItemHandle, notifications::NotificationId,
+};
 use zed_actions::agent::{
     ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
 };
@@ -37,9 +44,24 @@ impl ConflictAddon {
 
 struct BufferConflicts {
     block_ids: Vec<(Range<Anchor>, CustomBlockId)>,
+    banner_block_id: Option<CustomBlockId>,
+    resolution_hint_block_ids: Vec<CustomBlockId>,
     conflict_set: Entity<ConflictSet>,
     _subscription: Subscription,
 }
+
+#[derive(Debug, Clone, Copy)]
+enum BannerState {
+    Resolvable {
+        fully_resolvable: usize,
+        partially_resolvable: usize,
+        total: usize,
+    },
+    NoneResolvable,
+    NoBase,
+}
+
+struct AutoResolveToast;
 
 impl editor::Addon for ConflictAddon {
     fn to_any(&self) -> &dyn std::any::Any {
@@ -100,6 +122,8 @@ fn buffer_ranges_updated(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut C
             let subscription = cx.subscribe(&conflict_set, conflicts_updated);
             BufferConflicts {
                 block_ids: Vec::new(),
+                banner_block_id: None,
+                resolution_hint_block_ids: Vec::new(),
                 conflict_set,
                 _subscription: subscription,
             }
@@ -240,6 +264,91 @@ fn conflicts_updated(
                 .zip(new_block_ids),
         );
     }
+
+    update_auto_resolve_banner(editor, buffer_id, &conflict_set, &snapshot, cx);
+}
+
+fn update_auto_resolve_banner(
+    editor: &mut Editor,
+    buffer_id: BufferId,
+    conflict_snapshot: &ConflictSetSnapshot,
+    multibuffer_snapshot: &editor::MultiBufferSnapshot,
+    cx: &mut Context<Editor>,
+) {
+    let existing_banner = editor
+        .addon_mut::<ConflictAddon>()
+        .unwrap()
+        .buffers
+        .get_mut(&buffer_id)
+        .and_then(|bc| bc.banner_block_id.take());
+    if let Some(block_id) = existing_banner {
+        editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+    }
+
+    if conflict_snapshot.conflicts.is_empty() {
+        return;
+    }
+
+    let Some(buffer_entity) = editor.buffer().read(cx).buffer(buffer_id) else {
+        return;
+    };
+    let buffer_snapshot = buffer_entity.read(cx).snapshot();
+    let patterns = compile_auto_resolve_patterns(cx);
+    let language = buffer_entity.read(cx).language().cloned();
+    let structural = language.and_then(|language| {
+        LanguageMergeContext::build(&buffer_snapshot, language, &conflict_snapshot.conflicts)
+    });
+    let Some(state) = banner_state_for(
+        conflict_snapshot,
+        &buffer_snapshot,
+        &patterns,
+        structural.as_ref(),
+    ) else {
+        return;
+    };
+
+    // Anchor at the buffer's first position so the banner is the first thing
+    // the user sees when opening a conflicted file, decoupled from any single
+    // conflict region. In multibuffer views (e.g. project diff) the buffer's
+    // first position may sit before the first excerpt, in which case we fall
+    // back to the first conflict's start so the banner is at least visible
+    // somewhere within the multibuffer.
+    let buffer_start = buffer_snapshot.anchor_before(0);
+    let anchor = multibuffer_snapshot
+        .anchor_in_excerpt(buffer_start)
+        .or_else(|| {
+            conflict_snapshot
+                .conflicts
+                .first()
+                .and_then(|conflict| multibuffer_snapshot.anchor_in_excerpt(conflict.range.start))
+        });
+    let Some(anchor) = anchor else {
+        return;
+    };
+
+    let editor_handle = cx.weak_entity();
+    let buffer_handle = buffer_entity.downgrade();
+
+    let block = BlockProperties {
+        placement: BlockPlacement::Above(anchor),
+        height: Some(1),
+        style: BlockStyle::Sticky,
+        render: Arc::new(move |cx| {
+            render_auto_resolve_banner(state, buffer_handle.clone(), editor_handle.clone(), cx)
+        }),
+        priority: 0,
+    };
+
+    let new_block_ids = editor.insert_blocks(vec![block], None, cx);
+    if let Some(banner_id) = new_block_ids.into_iter().next()
+        && let Some(buffer_conflicts) = editor
+            .addon_mut::<ConflictAddon>()
+            .unwrap()
+            .buffers
+            .get_mut(&buffer_id)
+    {
+        buffer_conflicts.banner_block_id = Some(banner_id);
+    }
 }
 
 #[ztracing::instrument(skip_all)]
@@ -289,6 +398,20 @@ fn update_conflict_highlighting(
     Some(())
 }
 
+fn resolve_conflict_button(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    conflict: ConflictRegion,
+    ranges: Vec<Range<Anchor>>,
+    editor: WeakEntity<Editor>,
+) -> Button {
+    Button::new(id, label)
+        .label_size(LabelSize::Small)
+        .on_click(move |_, window, cx| {
+            resolve_conflict(editor.clone(), conflict.clone(), ranges.clone(), window, cx).detach()
+        })
+}
+
 fn render_conflict_buttons(
     conflict: &ConflictRegion,
     editor: WeakEntity<Editor>,
@@ -302,64 +425,27 @@ fn render_conflict_buttons(
         .ml(cx.margins.gutter.width)
         .gap_1()
         .bg(cx.theme().colors().editor_background)
-        .child(
-            Button::new("head", format!("Use {}", conflict.ours_branch_name))
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let ours = conflict.ours.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![ours.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
-        )
-        .child(
-            Button::new("origin", format!("Use {}", conflict.theirs_branch_name))
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let theirs = conflict.theirs.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![theirs.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
-        )
-        .child(
-            Button::new("both", "Use Both")
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let ours = conflict.ours.clone();
-                    let theirs = conflict.theirs.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![ours.clone(), theirs.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
-        )
+        .child(resolve_conflict_button(
+            "head",
+            format!("Use {}", conflict.ours_branch_name),
+            conflict.clone(),
+            vec![conflict.ours.clone()],
+            editor.clone(),
+        ))
+        .child(resolve_conflict_button(
+            "origin",
+            format!("Use {}", conflict.theirs_branch_name),
+            conflict.clone(),
+            vec![conflict.theirs.clone()],
+            editor.clone(),
+        ))
+        .child(resolve_conflict_button(
+            "both",
+            "Use Both",
+            conflict.clone(),
+            vec![conflict.ours.clone(), conflict.theirs.clone()],
+            editor.clone(),
+        ))
         .when(is_ai_enabled, |this| {
             this.child(Divider::vertical()).child(
                 Button::new("resolve-with-agent", "Resolve with Agent")
@@ -409,6 +495,451 @@ fn render_conflict_buttons(
             )
         })
         .into_any()
+}
+
+fn compile_auto_resolve_patterns(cx: &App) -> Vec<AutoResolvePattern> {
+    GitPanelSettings::get_global(cx)
+        .auto_resolve_patterns
+        .iter()
+        .filter_map(|raw| {
+            let regex = regex::Regex::new(&raw.pattern).log_err()?;
+            let take = match raw.take {
+                AutoResolveTake::Ours => AutoResolveTakeSide::Ours,
+                AutoResolveTake::Theirs => AutoResolveTakeSide::Theirs,
+            };
+            Some(AutoResolvePattern { regex, take })
+        })
+        .collect()
+}
+
+fn banner_state_for(
+    conflict_snapshot: &ConflictSetSnapshot,
+    buffer_snapshot: &BufferSnapshot,
+    patterns: &[AutoResolvePattern],
+    structural: Option<&LanguageMergeContext>,
+) -> Option<BannerState> {
+    let total = conflict_snapshot.conflicts.len();
+    if total == 0 {
+        return None;
+    }
+    let any_with_base = conflict_snapshot
+        .conflicts
+        .iter()
+        .any(|conflict| conflict.base.is_some());
+    if !any_with_base {
+        return Some(BannerState::NoBase);
+    }
+    let (mut fully_resolvable, mut partially_resolvable) = (0, 0);
+    for (_conflict, summary) in
+        conflict_snapshot.decomposition_summary(buffer_snapshot, patterns, structural)
+    {
+        if summary.fully_resolved {
+            fully_resolvable += 1;
+        } else {
+            partially_resolvable += 1;
+        }
+    }
+    if fully_resolvable == 0 && partially_resolvable == 0 {
+        return Some(BannerState::NoneResolvable);
+    }
+    Some(BannerState::Resolvable {
+        fully_resolvable,
+        partially_resolvable,
+        total,
+    })
+}
+
+fn render_auto_resolve_banner(
+    state: BannerState,
+    buffer: WeakEntity<Buffer>,
+    editor: WeakEntity<Editor>,
+    cx: &mut BlockContext,
+) -> AnyElement {
+    let label: SharedString = match state {
+        BannerState::Resolvable {
+            fully_resolvable,
+            partially_resolvable,
+            total,
+        } => {
+            let remaining = total.saturating_sub(fully_resolvable);
+            if partially_resolvable == 0 {
+                format!(
+                    "Auto-Resolve — {} non-conflicting change{} • {} will remain",
+                    fully_resolvable,
+                    if fully_resolvable == 1 { "" } else { "s" },
+                    remaining,
+                )
+                .into()
+            } else {
+                format!(
+                    "Auto-Resolve — {} fully + {} partially • {} will remain",
+                    fully_resolvable, partially_resolvable, remaining,
+                )
+                .into()
+            }
+        }
+        BannerState::NoneResolvable => {
+            "Auto-Resolve — no non-conflicting changes detected".into()
+        }
+        BannerState::NoBase => {
+            "Auto-Resolve — requires diff3 conflict markers (run `git config merge.conflictStyle zdiff3`)"
+                .into()
+        }
+    };
+
+    let tooltip_text: Option<SharedString> = match state {
+        BannerState::Resolvable { .. } => None,
+        BannerState::NoneResolvable => {
+            Some("All conflicts have changes on both sides; manual resolution required.".into())
+        }
+        BannerState::NoBase => Some(
+            "Run `git config merge.conflictStyle zdiff3` in your terminal to enable diff3 markers for future merges."
+                .into(),
+        ),
+    };
+
+    let enabled = matches!(state, BannerState::Resolvable { .. });
+    let mut button = Button::new("auto-resolve", label)
+        .label_size(LabelSize::Small)
+        .disabled(!enabled);
+
+    if enabled {
+        button = button.on_click(move |_, window, cx| {
+            auto_resolve_buffer(buffer.clone(), editor.clone(), window, cx);
+        });
+    }
+
+    if let Some(tooltip_text) = tooltip_text {
+        button = button.tooltip(move |_, cx| Tooltip::simple(tooltip_text.clone(), cx));
+    }
+
+    h_flex()
+        .id(cx.block_id)
+        .h(cx.line_height)
+        .ml(cx.margins.gutter.width)
+        .gap_1()
+        .bg(cx.theme().colors().editor_background)
+        .child(button)
+        .into_any()
+}
+
+pub(crate) fn auto_resolve_buffer(
+    buffer: WeakEntity<Buffer>,
+    editor: WeakEntity<Editor>,
+    _window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(buffer) = buffer.upgrade() else {
+        return;
+    };
+    let Some(editor) = editor.upgrade() else {
+        return;
+    };
+
+    let buffer_id = buffer.read(cx).remote_id();
+    let conflict_set = editor
+        .read(cx)
+        .addon::<ConflictAddon>()
+        .and_then(|addon| addon.conflict_set(buffer_id));
+    let Some(conflict_set) = conflict_set else {
+        return;
+    };
+
+    let conflict_snapshot = conflict_set.read(cx).snapshot();
+    let total = conflict_snapshot.conflicts.len();
+
+    let patterns = compile_auto_resolve_patterns(cx);
+    let language = buffer.read(cx).language().cloned();
+    let (edits, breakdown, hints) = {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let structural = language.and_then(|language| {
+            LanguageMergeContext::build(&buffer_snapshot, language, &conflict_snapshot.conflicts)
+        });
+        classify_outcomes(&conflict_snapshot, &buffer_snapshot, &patterns, structural.as_ref())
+    };
+    if edits.is_empty() {
+        return;
+    }
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(edits, None, cx);
+    });
+
+    // Replace any earlier hint annotations for this buffer with fresh ones.
+    let old_hint_ids: HashSet<CustomBlockId> = editor
+        .update(cx, |editor, _cx| {
+            let addon = editor.addon_mut::<ConflictAddon>()?;
+            let entry = addon.buffers.get_mut(&buffer_id)?;
+            Some(entry.resolution_hint_block_ids.drain(..).collect())
+        })
+        .unwrap_or_default();
+    if !old_hint_ids.is_empty() {
+        editor.update(cx, |editor, cx| {
+            editor.remove_blocks(old_hint_ids, None, cx);
+        });
+    }
+    editor.update(cx, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let editor_handle = cx.weak_entity();
+        let blocks: Vec<_> = hints
+            .iter()
+            .filter_map(|hint| {
+                let anchor = snapshot.anchor_in_excerpt(hint.anchor)?;
+                let label = hint.label.clone();
+                let editor_handle = editor_handle.clone();
+                Some(BlockProperties {
+                    placement: BlockPlacement::Above(anchor),
+                    height: Some(1),
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(move |cx| {
+                        render_resolution_hint(label.clone(), editor_handle.clone(), cx)
+                    }),
+                    priority: 0,
+                })
+            })
+            .collect();
+        let new_ids = editor.insert_blocks(blocks, None, cx);
+        if let Some(addon) = editor.addon_mut::<ConflictAddon>()
+            && let Some(entry) = addon.buffers.get_mut(&buffer_id)
+        {
+            entry.resolution_hint_block_ids = new_ids;
+        }
+    });
+
+    if let Some(workspace) = editor.read(cx).workspace() {
+        let message = breakdown.toast_message(total);
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                workspace::Toast::new(NotificationId::unique::<AutoResolveToast>(), message),
+                cx,
+            );
+        });
+    }
+}
+
+fn render_resolution_hint(
+    label: SharedString,
+    editor: WeakEntity<Editor>,
+    cx: &mut BlockContext,
+) -> AnyElement {
+    let block_id = cx.block_id;
+    let custom_block_id = match block_id {
+        editor::display_map::BlockId::Custom(id) => Some(id),
+        _ => None,
+    };
+    h_flex()
+        .id(block_id)
+        .h(cx.line_height)
+        .ml(cx.margins.gutter.width)
+        .gap_1()
+        .bg(cx.theme().colors().editor_background)
+        .child(
+            Icon::new(IconName::Check)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+        )
+        .child(
+            Label::new(label)
+                .size(LabelSize::XSmall)
+                .color(Color::Muted),
+        )
+        .child(
+            IconButton::new("dismiss-resolution-hint", IconName::Close)
+                .icon_size(IconSize::XSmall)
+                .on_click(move |_, _, cx| {
+                    let Some(custom_block_id) = custom_block_id else {
+                        return;
+                    };
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.remove_blocks(
+                                HashSet::from_iter([custom_block_id]),
+                                None,
+                                cx,
+                            );
+                            if let Some(addon) = editor.addon_mut::<ConflictAddon>() {
+                                for entry in addon.buffers.values_mut() {
+                                    entry
+                                        .resolution_hint_block_ids
+                                        .retain(|id| *id != custom_block_id);
+                                }
+                            }
+                        })
+                        .ok();
+                }),
+        )
+        .into_any()
+}
+
+#[derive(Default)]
+struct OutcomeBreakdown {
+    fully_structural: usize,
+    fully_line: usize,
+    simplified: usize,
+    deferred_with_reason: Vec<project::git_store::DeferReason>,
+}
+
+impl OutcomeBreakdown {
+    fn toast_message(&self, total: usize) -> String {
+        let resolved = self.fully_structural + self.fully_line;
+        let remaining = total.saturating_sub(resolved);
+        let mut message = String::new();
+        message.push_str(&format!(
+            "Auto-resolved {} of {} conflict{}",
+            resolved,
+            total,
+            if total == 1 { "" } else { "s" },
+        ));
+        if self.fully_structural > 0 && self.fully_line > 0 {
+            message.push_str(&format!(
+                " ({} structural, {} line)",
+                self.fully_structural, self.fully_line,
+            ));
+        } else if self.fully_structural > 0 {
+            message.push_str(&format!(" ({} structural)", self.fully_structural));
+        }
+        if self.simplified > 0 {
+            message.push_str(&format!(
+                "; simplified {} more",
+                self.simplified,
+            ));
+        }
+        message.push_str(&format!("; {} remain", remaining));
+        if let Some(reason) = self.deferred_with_reason.first() {
+            if let Some(snippet) = describe_defer_reason(reason) {
+                message.push_str(&format!(" \u{2014} {}", snippet));
+            }
+        }
+        message
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedRegionHint {
+    anchor: language::Anchor,
+    label: SharedString,
+}
+
+/// Walk every conflict once and produce both the buffer edits to apply and
+/// the classification used to render hints / the toast. Combining these in
+/// a single pass avoids re-running tree-sitter / line decomposition twice
+/// per Auto-Resolve click.
+fn classify_outcomes(
+    snapshot: &ConflictSetSnapshot,
+    buffer: &language::BufferSnapshot,
+    patterns: &[AutoResolvePattern],
+    structural: Option<&LanguageMergeContext>,
+) -> (Vec<(Range<usize>, String)>, OutcomeBreakdown, Vec<ResolvedRegionHint>) {
+    use language::OffsetRangeExt as _;
+    use project::git_store::{ResolveMethod, StructuralMergeOutcome, render_decomposed_region};
+    let mut edits = Vec::new();
+    let mut out = OutcomeBreakdown::default();
+    let mut hints = Vec::new();
+    for conflict in snapshot.conflicts.iter() {
+        if let Some(structural) = structural {
+            match structural.try_merge_region(conflict) {
+                StructuralMergeOutcome::Resolved { text, method } => {
+                    let outer = conflict.range.to_offset(buffer);
+                    edits.push((outer, text));
+                    out.fully_structural += 1;
+                    hints.push(ResolvedRegionHint {
+                        anchor: conflict.range.start,
+                        label: match method {
+                            ResolveMethod::Set => {
+                                "Auto-Resolve · structural set merge".into()
+                            }
+                            ResolveMethod::OrderedList => {
+                                "Auto-Resolve · structural ordered merge".into()
+                            }
+                        },
+                    });
+                    continue;
+                }
+                StructuralMergeOutcome::Deferred(reason) => {
+                    out.deferred_with_reason.push(reason);
+                }
+            }
+        }
+        let Some(segments) = conflict.decompose(buffer, patterns) else {
+            continue;
+        };
+        let summary = project::RegionSummary::from_segments(&segments);
+        if !summary.is_improvement {
+            continue;
+        }
+        let outer = conflict.range.to_offset(buffer);
+        let replacement = render_decomposed_region(
+            &segments,
+            &conflict.ours_branch_name,
+            &conflict.theirs_branch_name,
+        );
+        edits.push((outer, replacement));
+        if summary.fully_resolved {
+            out.fully_line += 1;
+            hints.push(ResolvedRegionHint {
+                anchor: conflict.range.start,
+                label: "Auto-Resolve · line-level merge".into(),
+            });
+        } else {
+            out.simplified += 1;
+            hints.push(ResolvedRegionHint {
+                anchor: conflict.range.start,
+                label: "Auto-Resolve · partially simplified".into(),
+            });
+        }
+    }
+    (edits, out, hints)
+}
+
+fn describe_defer_reason(reason: &project::git_store::DeferReason) -> Option<String> {
+    use project::git_store::DeferReason;
+    Some(match reason {
+        DeferReason::BothModifiedDifferently { key } => {
+            format!("both branches modified `{}`", key)
+        }
+        DeferReason::DeleteVsModify { key, .. } => {
+            format!("`{}` deleted on one side, modified on the other", key)
+        }
+        DeferReason::BothAddedDifferently { key } => {
+            format!("both branches added `{}` differently", key)
+        }
+        DeferReason::CrossRegionKeyCollision { key, .. } => {
+            format!("`{}` was added in multiple regions", key)
+        }
+        DeferReason::OrderedHunksOverlap => "ordered-list edits overlap".into(),
+        _ => return None,
+    })
+}
+
+pub(crate) fn auto_resolve_in_editor(
+    editor: Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let buffer_ids: Vec<BufferId> = editor
+        .read(cx)
+        .addon::<ConflictAddon>()
+        .map(|addon| addon.buffers.keys().copied().collect())
+        .unwrap_or_default();
+
+    let multibuffer = editor.read(cx).buffer().clone();
+    for buffer_id in buffer_ids {
+        let Some(buffer) = multibuffer.read(cx).buffer(buffer_id) else {
+            continue;
+        };
+        auto_resolve_buffer(buffer.downgrade(), editor.downgrade(), window, cx);
+    }
+}
+
+pub(crate) fn auto_resolve_in_project(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let editors: Vec<Entity<Editor>> = workspace.items_of_type::<Editor>(cx).collect();
+    for editor in editors {
+        auto_resolve_in_editor(editor, window, cx);
+    }
 }
 
 fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {

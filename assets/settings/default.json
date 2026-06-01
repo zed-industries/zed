@@ -1000,6 +1000,12 @@
     //
     // Default: 72
     "commit_title_max_length": 72,
+    // Regex patterns that Auto-Resolve will use to settle sub-conflicts whose
+    // ours and theirs sides both consist of a single line matching the
+    // pattern. The "take" field controls which side wins ("ours" or "theirs").
+    //
+    // Default: []
+    "auto_resolve_patterns": []
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

@@ -211,6 +211,19 @@ pub fn init(cx: &mut App) {
                 });
             });
         }
+        workspace.register_action(
+            |workspace, _: &git::AutoResolveNonConflicting, window, cx| {
+                let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
+                    return;
+                };
+                conflict_view::auto_resolve_in_editor(editor, window, cx);
+            },
+        );
+        workspace.register_action(
+            |workspace, _: &git::AutoResolveNonConflictingInProject, window, cx| {
+                conflict_view::auto_resolve_in_project(workspace, window, cx);
+            },
+        );
         workspace.register_action(|workspace, action: &git::StashAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;

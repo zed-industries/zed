@@ -61,6 +61,7 @@ gpui.workspace = true
 http_client.workspace = true
 image.workspace = true
 itertools.workspace = true
+imara-diff.workspace = true
 indexmap.workspace = true
 language.workspace = true
 log.workspace = true
@@ -93,6 +94,7 @@ tempfile.workspace = true
 terminal.workspace = true
 text.workspace = true
 toml.workspace = true
+tree-sitter.workspace = true
 url.workspace = true
 percent-encoding.workspace = true
 util.workspace = true
@@ -110,6 +112,11 @@ tracing.workspace = true
 client = { workspace = true, features = ["test-support"] }
 encoding_rs.workspace = true
 collections = { workspace = true, features = ["test-support"] }
+tree-sitter-go.workspace = true
+tree-sitter-json.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-yaml.workspace = true
 context_server = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
