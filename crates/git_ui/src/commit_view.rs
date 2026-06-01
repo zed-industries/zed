@@ -15,7 +15,7 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, Styled, Task, WeakEntity, Window, actions,
+    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -82,7 +82,6 @@ pub struct CommitView {
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
-    commit_message_scroll_handle: ScrollHandle,
 }
 
 struct GitBlob {
@@ -468,7 +467,6 @@ impl CommitView {
             repository,
             workspace,
             remote,
-            commit_message_scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -725,32 +723,6 @@ impl CommitView {
                         .child(MarkdownElement::new(self.message.clone(), markdown_style)),
                 ),
         )
-    }
-
-    fn render_message(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let line_height = window.line_height();
-        let max_height = line_height * 8;
-
-        v_flex()
-            .id("commit-message")
-            .w_full()
-            .px_8()
-            .py_4()
-            .max_h(max_height)
-            .overflow_y_scroll()
-            .track_scroll(&self.commit_message_scroll_handle)
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .font_buffer(cx)
-            .text_buffer(cx)
-            .text_color(cx.theme().colors().text)
-            .children(self.commit.message.lines().map(|line| {
-                div()
-                    .min_h(line_height)
-                    .line_height(line_height)
-                    .child(line.to_string())
-            }))
-            .into_any_element()
     }
 
     fn apply_stash(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
@@ -1233,7 +1205,6 @@ impl Item for CommitView {
                 repository: self.repository.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
-                commit_message_scroll_handle: ScrollHandle::new(),
             }
         })))
     }
@@ -1249,7 +1220,6 @@ impl Render for CommitView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
-            .child(self.render_message(window, cx))
             .when(
                 !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
                 |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
