@@ -96,12 +96,17 @@ Certain files are always excluded from edit predictions—regardless of opt-in s
 {
   "edit_predictions": {
     "disabled_globs": [
+      "**/.dev.vars",
       "**/.env*",
-      "**/*.pem",
+      "**/*.{cert,crt}",
       "**/*.key",
-      "**/*.cert",
-      "**/*.crt",
-      "**/secrets.yml"
+      "**/*.pem",
+      "**/*.tfstate",
+      "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}", // secrets.tfvars and similar files
+      "**/id_{dsa,ecdsa,ed25519,rsa}*",
+      "**/.zed/settings.json", // zed project settings
+      "/**/zed/settings.json", // zed user settings
+      "/**/zed/keymap.json"
     ]
   }
 }

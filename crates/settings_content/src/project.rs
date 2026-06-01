@@ -121,7 +121,15 @@ pub struct WorktreeSettingsContent {
     pub file_scan_inclusions: Option<Vec<String>>,
 
     /// Treat the files matching these globs as `.env` files.
-    /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
+    /// Default: [
+    ///   "**/.env*",
+    ///   "**/*.pem",
+    ///   "**/*.key",
+    ///   "**/*.{cert,crt}",
+    ///   "**/*.tfstate",
+    ///   "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}", // secrets.tfvars and similar files
+    ///   "**/id_{dsa,ecdsa,ed25519,rsa}*",
+    /// ]
     pub private_files: Option<ExtendingVec<String>>,
 
     /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
