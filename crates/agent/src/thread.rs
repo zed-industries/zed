@@ -4291,6 +4291,7 @@ impl ToolCallEventStream {
         let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
             network: request.network,
             allow_fs_write_all: request.allow_fs_write_all,
+            unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
@@ -4450,6 +4451,9 @@ impl ToolCallEventStream {
                 }
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
+                }
+                if request.unsandboxed {
+                    agent.allow_sandbox_unsandboxed();
                 }
                 for path in request.write_paths {
                     agent.add_sandbox_write_path(path);
@@ -5240,6 +5244,7 @@ mod tests {
         let request = SandboxRequest {
             network: false,
             allow_fs_write_all: false,
+            unsandboxed: false,
             write_paths: vec![
                 PathBuf::from("/tmp/build"),
                 PathBuf::from("/tmp/cache"),
@@ -5257,6 +5262,7 @@ mod tests {
                 .expect("sandbox authorization should include request details");
         assert_eq!(details.network, request.network);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
+        assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
         assert!(authorization.tool_call.fields.content.is_none());
 

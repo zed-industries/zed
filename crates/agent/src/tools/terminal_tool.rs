@@ -340,30 +340,21 @@ async fn run_terminal_tool(
     };
 
     let request = crate::sandboxing::SandboxRequest {
-        network: want_network,
-        allow_fs_write_all: want_fs_write_all,
+        network: !want_unsandboxed && want_network,
+        allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
+        unsandboxed: want_unsandboxed,
         write_paths,
     };
 
-    if want_unsandboxed {
-        let approve = cx.update(|cx| {
-            let context =
-                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
-            event_stream.authorize_always_prompt(
-                "Allow this command to run outside the sandbox?",
-                context,
-                cx,
-            )
-        });
-        if let Err(error) = approve.await {
-            return Ok(format!(
-                "Command cancelled: user denied permission to run outside the sandbox ({error})."
-            ));
-        }
-    } else if request.needs_escalation() {
+    if request.needs_escalation() {
         let title = sandbox_approval_title(&request);
         let approve = cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
         if let Err(error) = approve.await {
+            if want_unsandboxed {
+                return Ok(format!(
+                    "Command cancelled: user denied permission to run outside the sandbox ({error})."
+                ));
+            }
             return Ok(format!(
                 "Command cancelled: user denied the requested sandbox permissions ({error})."
             ));
@@ -516,6 +507,10 @@ fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
 /// when the request actually asks for something (see
 /// [`crate::sandboxing::SandboxRequest::needs_escalation`]).
 fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String {
+    if request.unsandboxed {
+        return "Allow this command to run outside the sandbox?".to_string();
+    }
+
     let mut parts: Vec<String> = Vec::new();
     if request.network {
         parts.push("network access".to_string());
@@ -1582,7 +1577,6 @@ mod tests {
                     timeout_ms: None,
                     head_lines: Some(1),
                     tail_lines: Some(1),
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -2258,6 +2252,7 @@ mod tests {
         crate::sandboxing::SandboxRequest {
             network,
             allow_fs_write_all: all,
+            unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
         }
     }
@@ -2303,6 +2298,16 @@ mod tests {
         };
         let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
         assert_eq!(joined, vec![PathBuf::from(abs)]);
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_unsandboxed() {
+        let mut request = sandbox_request(true, true, &["/tmp/build"]);
+        request.unsandboxed = true;
+        assert_eq!(
+            sandbox_approval_title(&request),
+            "Allow this command to run outside the sandbox?"
+        );
     }
 
     #[test]
@@ -2447,6 +2452,7 @@ mod tests {
                 .expect("legacy allow_fs_write should request sandbox authorization details");
         assert!(!details.network);
         assert!(details.allow_fs_write_all);
+        assert!(!details.unsandboxed);
         assert!(details.write_paths.is_empty());
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
@@ -2492,6 +2498,102 @@ mod tests {
             .await
             .expect("denied sandbox request returns model-readable output");
         assert!(result.contains("user denied the requested sandbox permissions"));
+        assert_eq!(environment.terminal_creation_count(), 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_unsandboxed_uses_sandbox_permission_options(cx: &mut gpui::TestAppContext) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let (event_stream, mut receiver) = crate::ToolCallEventStream::test();
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": "root",
+            "allow_network": true,
+            "allow_fs_write_all": true,
+            "unsandboxed": true,
+        }))
+        .expect("unsandboxed input should deserialize");
+
+        let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
+
+        let authorization = receiver.expect_authorization().await;
+        assert_eq!(
+            authorization.tool_call.fields.title.as_deref(),
+            Some("Allow this command to run outside the sandbox?")
+        );
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+                .expect("unsandboxed should request sandbox authorization details");
+        assert!(!details.network);
+        assert!(!details.allow_fs_write_all);
+        assert!(details.unsandboxed);
+        assert!(details.write_paths.is_empty());
+
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat sandbox permission options");
+        };
+        let options = options
+            .iter()
+            .map(|option| {
+                (
+                    option.option_id.0.as_ref(),
+                    option.name.as_ref(),
+                    option.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            vec![
+                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow_thread",
+                    "Allow for this thread",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                (
+                    "allow_always",
+                    "Allow always",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+            ]
+        );
+
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task
+            .await
+            .expect("denied sandbox request returns model-readable output");
+        assert!(result.contains("user denied permission to run outside the sandbox"));
         assert_eq!(environment.terminal_creation_count(), 0);
     }
 }

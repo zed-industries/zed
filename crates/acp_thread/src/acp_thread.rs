@@ -81,8 +81,13 @@ pub const SANDBOX_AUTHORIZATION_META_KEY: &str = "sandbox_authorization";
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
+    #[serde(default)]
     pub network: bool,
+    #[serde(default)]
     pub allow_fs_write_all: bool,
+    #[serde(default)]
+    pub unsandboxed: bool,
+    #[serde(default)]
     pub write_paths: Vec<PathBuf>,
 }
 

@@ -38,6 +38,8 @@ pub(crate) struct SandboxRequest {
     pub network: bool,
     /// Allow unrestricted filesystem writes (the broad escape hatch).
     pub allow_fs_write_all: bool,
+    /// Run the command fully outside the sandbox.
+    pub unsandboxed: bool,
     /// Concrete paths the command needs to write to. Each grants its whole
     /// subtree. These are never globs — write access is always a concrete path subtree
     pub write_paths: Vec<PathBuf>,
@@ -47,7 +49,7 @@ impl SandboxRequest {
     /// Whether this request asks for anything beyond the default sandbox
     /// scope, and therefore needs user approval.
     pub fn needs_escalation(&self) -> bool {
-        self.network || self.allow_fs_write_all || !self.write_paths.is_empty()
+        self.network || self.allow_fs_write_all || self.unsandboxed || !self.write_paths.is_empty()
     }
 }
 
@@ -62,6 +64,7 @@ impl SandboxRequest {
 pub(crate) struct ThreadSandboxGrants {
     network: bool,
     allow_fs_write_all: bool,
+    unsandboxed: bool,
     /// Canonicalized paths granted write access for the thread. Each covers its
     /// whole subtree; redundant children are pruned on insert.
     write_paths: Vec<PathBuf>,
@@ -80,6 +83,9 @@ impl ThreadSandboxGrants {
         request: &SandboxRequest,
         persistent: &SandboxPermissions,
     ) -> bool {
+        if request.unsandboxed {
+            return self.unsandboxed || persistent.allow_unsandboxed;
+        }
         if request.network && !(self.network || persistent.allow_network) {
             return false;
         }
@@ -104,6 +110,7 @@ impl ThreadSandboxGrants {
     pub fn record(&mut self, request: &SandboxRequest) {
         self.network |= request.network;
         self.allow_fs_write_all |= request.allow_fs_write_all;
+        self.unsandboxed |= request.unsandboxed;
         for path in &request.write_paths {
             add_write_path(&mut self.write_paths, path);
         }
@@ -135,6 +142,7 @@ impl ThreadSandboxGrants {
             allow_fs_write_all: persistent.allow_fs_write_all
                 || self.allow_fs_write_all
                 || request.allow_fs_write_all,
+            unsandboxed: request.unsandboxed,
             write_paths,
         }
     }
@@ -159,7 +167,17 @@ mod tests {
         SandboxRequest {
             network,
             allow_fs_write_all: all,
+            unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
+        }
+    }
+
+    fn unsandboxed_request() -> SandboxRequest {
+        SandboxRequest {
+            network: false,
+            allow_fs_write_all: false,
+            unsandboxed: true,
+            write_paths: Vec::new(),
         }
     }
 
@@ -176,6 +194,7 @@ mod tests {
         let grants = ThreadSandboxGrants::default();
         assert!(!covers(&grants, &request(true, false, &[])));
         assert!(!covers(&grants, &request(false, true, &[])));
+        assert!(!covers(&grants, &unsandboxed_request()));
         assert!(!covers(&grants, &request(false, false, &["/tmp/build"])));
     }
 
@@ -232,12 +251,22 @@ mod tests {
     }
 
     #[test]
+    fn unsandboxed_grant_tracked_independently() {
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&unsandboxed_request());
+        assert!(covers(&grants, &unsandboxed_request()));
+        assert!(!covers(&grants, &request(true, false, &[])));
+        assert!(!covers(&grants, &request(false, true, &[])));
+    }
+
+    #[test]
     fn persistent_grants_combine_with_thread_grants() {
         let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(true, false, &[]));
         let persistent = SandboxPermissions {
             allow_network: false,
             allow_fs_write_all: false,
+            allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/build")],
         };
 
@@ -256,12 +285,28 @@ mod tests {
         let persistent = SandboxPermissions {
             allow_network: false,
             allow_fs_write_all: true,
+            allow_unsandboxed: false,
             write_paths: Vec::new(),
         };
 
         assert!(grants.covers_with_persistent(&request(false, false, &["/anywhere"]), &persistent));
         assert!(grants.covers_with_persistent(&request(false, true, &[]), &persistent));
         assert!(!grants.covers_with_persistent(&request(true, false, &[]), &persistent));
+    }
+
+    #[test]
+    fn persistent_unsandboxed_covers_unsandboxed_requests_only() {
+        let grants = ThreadSandboxGrants::default();
+        let persistent = SandboxPermissions {
+            allow_network: false,
+            allow_fs_write_all: false,
+            allow_unsandboxed: true,
+            write_paths: Vec::new(),
+        };
+
+        assert!(grants.covers_with_persistent(&unsandboxed_request(), &persistent));
+        assert!(!grants.covers_with_persistent(&request(true, false, &[]), &persistent));
+        assert!(!grants.covers_with_persistent(&request(false, true, &[]), &persistent));
     }
 
     #[test]
@@ -296,6 +341,7 @@ mod tests {
         let persistent = SandboxPermissions {
             allow_network: true,
             allow_fs_write_all: false,
+            allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/always")],
         };
 
