@@ -752,9 +752,7 @@ mod tests {
         let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
 
         let remote_fs = FakeFs::new(server_cx.executor());
-        let remote_home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .expect("HOME should be set in remote path reuse tests");
+        let remote_home = paths::home_dir();
         let canonical_project_path = remote_home.join("remote-reopen-root-project");
         remote_fs
             .insert_tree(
