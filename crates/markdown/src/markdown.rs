@@ -166,15 +166,19 @@ impl MarkdownStyle {
         let is_preview = matches!(font, MarkdownFont::Preview);
 
         let buffer_font_weight = theme_settings.buffer_font.weight;
-        let (buffer_font_size, ui_font_size) = match font {
+        let (buffer_font_size, body_font_size) = match font {
             MarkdownFont::Agent => (
                 theme_settings.agent_buffer_font_size(cx),
                 theme_settings.agent_ui_font_size(cx),
             ),
-            MarkdownFont::Editor | MarkdownFont::Preview => (
+            MarkdownFont::Editor => (
                 theme_settings.buffer_font_size(cx),
                 theme_settings.ui_font_size(cx),
             ),
+            MarkdownFont::Preview => {
+                let buffer_font_size = theme_settings.buffer_font_size(cx);
+                (buffer_font_size, buffer_font_size)
+            }
         };
 
         let body_font_family = if is_preview {
@@ -197,7 +201,7 @@ impl MarkdownStyle {
             font_family: Some(body_font_family),
             font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
             font_features: Some(theme_settings.ui_font.features.clone()),
-            font_size: Some(ui_font_size.into()),
+            font_size: Some(body_font_size.into()),
             line_height: Some(line_height.into()),
             color: Some(text_color),
             ..Default::default()
@@ -4713,6 +4717,43 @@ mod tests {
             );
             row_top += line_height;
         }
+    }
+
+    #[gpui::test]
+    fn test_preview_body_font_size_tracks_buffer_font_size(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(settings::FontSize(22.0));
+                    settings.theme.ui_font_size = Some(settings::FontSize(11.0));
+                });
+            });
+        });
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+
+            assert_eq!(
+                style.base_text_style.font_size.to_pixels(window.rem_size()),
+                px(22.0)
+            );
+            assert_eq!(
+                style
+                    .inline_code
+                    .font_size
+                    .map(|font_size| font_size.to_pixels(window.rem_size())),
+                Some(px(22.0))
+            );
+        });
     }
 
     #[gpui::test]

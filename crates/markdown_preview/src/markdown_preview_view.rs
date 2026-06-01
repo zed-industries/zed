@@ -20,7 +20,7 @@ use markdown::{
 };
 use project::Project;
 use project::search::SearchQuery;
-use settings::{SeedQuerySetting, Settings};
+use settings::{SeedQuerySetting, Settings, SettingsStore};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
@@ -45,6 +45,7 @@ pub struct MarkdownPreviewView {
     focus_handle: FocusHandle,
     markdown: Entity<Markdown>,
     _markdown_subscription: Subscription,
+    _settings_subscription: Subscription,
     active_source_index: Option<usize>,
     scroll_handle: ScrollHandle,
     image_cache: Entity<RetainAllImageCache>,
@@ -239,6 +240,8 @@ impl MarkdownPreviewView {
                         this.sync_active_root_block(cx);
                     },
                 ),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(|_: &mut Self, cx| cx.notify()),
                 markdown,
                 active_source_index: None,
                 scroll_handle: ScrollHandle::new(),
