@@ -4884,13 +4884,32 @@ mod tests {
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
             panic!("expected flat sandbox permission options");
         };
-        let option_ids = options
+        let options = options
             .iter()
-            .map(|option| option.option_id.0.as_ref())
+            .map(|option| {
+                (
+                    option.option_id.0.as_ref(),
+                    option.name.as_ref(),
+                    option.kind,
+                )
+            })
             .collect::<Vec<_>>();
         assert_eq!(
-            option_ids,
-            vec!["allow", "allow_thread", "allow_always", "deny"]
+            options,
+            vec![
+                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow_thread",
+                    "Allow for this thread",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                (
+                    "allow_always",
+                    "Allow always",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+            ]
         );
 
         let send_result = authorization
