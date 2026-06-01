@@ -3,16 +3,16 @@ use crate::{
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool,
-    SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ToolPermissionDecision, UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    SandboxedTerminalTool, SandboxedTerminalToolWithoutTail, SpawnAgentTool, SystemPromptTemplate,
+    Template, Templates, TerminalTool, TerminalToolWithoutTail, ToolPermissionDecision,
+    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
-    UpdateTitleToolFeatureFlag,
+    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, TerminalTailFeatureFlag,
+    UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
 };
 
 use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
@@ -42,8 +42,8 @@ use language_model::{
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason,
-    TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
+    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -70,6 +70,9 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+
+// Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
+const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
@@ -126,11 +129,39 @@ enum RetryStrategy {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
     Resume,
+    Compaction(CompactionInfo),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub enum CompactionInfo {
+    Summary(SharedString),
+    ProviderNative {
+        provider: LanguageModelProviderId,
+        items: Vec<serde_json::Value>,
+    },
+}
+
+impl CompactionInfo {
+    fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+        match self {
+            Self::Summary(summary) => vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![format!(
+                    "The previous conversation was compacted. Use this summary as context:\n\n{}",
+                    summary
+                )
+                .into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            Self::ProviderNative { .. } => Vec::new(),
+        }
+    }
 }
 
 impl Message {
@@ -151,6 +182,7 @@ impl Message {
                 }
             }
             Message::Agent(message) => message.to_request(),
+            Message::Compaction(info) => info.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
@@ -165,12 +197,13 @@ impl Message {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
             Message::Resume => "[resume]\n".into(),
+            Message::Compaction(_) => "--- Context Compacted ---\n".into(),
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
-            Message::User(_) | Message::Resume => Role::User,
+            Message::User(_) | Message::Resume | Message::Compaction(_) => Role::User,
             Message::Agent(_) => Role::Assistant,
         }
     }
@@ -318,17 +351,6 @@ impl UserMessage {
                         }
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::Rule { .. } => {
-                            write!(
-                                &mut rules_context,
-                                "\n{}",
-                                MarkdownCodeBlock {
-                                    tag: "",
-                                    text: content
-                                }
-                            )
-                            .ok();
                         }
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
@@ -702,6 +724,7 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
+    ContextCompaction,
     Stop(acp::StopReason),
 }
 
@@ -1245,6 +1268,7 @@ impl Thread {
                     }
                 }
                 Message::Resume => {}
+                Message::Compaction(_) => stream.send_context_compaction(),
             }
         }
         rx
@@ -1738,10 +1762,19 @@ impl Thread {
             self.action_log.clone(),
             update_agent_location,
         ));
-        // Register both terminal tool variants; `enabled_tools` exposes the
-        // one matching the current sandbox state to the model as `terminal`.
+        // Register all terminal tool variants; `enabled_tools` exposes the
+        // one matching the current sandbox and terminal-tail feature state to
+        // the model as `terminal`.
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(TerminalToolWithoutTail::new(
+            self.project.clone(),
+            environment.clone(),
+        ));
         self.add_tool(SandboxedTerminalTool::new(
+            self.project.clone(),
+            environment.clone(),
+        ));
+        self.add_tool(SandboxedTerminalToolWithoutTail::new(
             self.project.clone(),
             environment.clone(),
         ));
@@ -1862,7 +1895,7 @@ impl Thread {
                 Message::User(message) => {
                     self.request_token_usage.remove(&message.id);
                 }
-                Message::Agent(_) | Message::Resume => {}
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => {}
             }
         }
         self.clear_summary();
@@ -2948,8 +2981,7 @@ impl Thread {
             .rev()
             .find_map(|message| match &**message {
                 Message::User(user_message) => Some(user_message),
-                Message::Agent(_) => None,
-                Message::Resume => None,
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => None,
             })
     }
 
@@ -3073,20 +3105,24 @@ impl Thread {
             }
         }
 
-        // When sandboxing is enabled we expose the sandboxed terminal tool
-        // (which advertises the sandbox-escalation params) to the model under
-        // the canonical `terminal` name; otherwise we expose the plain one.
-        // Both are always registered, so we drop whichever variant isn't
-        // selected here.
+        // Terminal variants are configured by users under the canonical
+        // `terminal` name. Expose the one matching the current sandbox and
+        // terminal-tail feature state to the model under that name.
         let use_sandboxed_terminal = sandboxing_enabled(cx);
+        let use_terminal_tail = cx.has_flag::<TerminalTailFeatureFlag>();
 
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                // The sandboxed terminal tool is configured by users under the
-                // canonical `terminal` name, so check the profile against that.
-                let profile_tool_name = if tool_name == SandboxedTerminalTool::NAME {
+                let terminal_variant = matches!(
+                    tool_name.as_ref(),
+                    TerminalTool::NAME
+                        | TerminalToolWithoutTail::NAME
+                        | SandboxedTerminalTool::NAME
+                        | SandboxedTerminalToolWithoutTail::NAME
+                );
+                let profile_tool_name = if terminal_variant {
                     TerminalTool::NAME
                 } else {
                     tool_name.as_ref()
@@ -3095,12 +3131,25 @@ impl Thread {
                 if tool.supports_provider(&model.provider_id())
                     && profile.is_tool_enabled(profile_tool_name)
                 {
-                    match (tool_name.as_ref(), use_sandboxed_terminal) {
-                        (SandboxedTerminalTool::NAME, false) | (TerminalTool::NAME, true) => None,
-                        (SandboxedTerminalTool::NAME, true) => {
-                            // Expose the sandboxed terminal tool as `terminal`.
+                    match (
+                        tool_name.as_ref(),
+                        use_sandboxed_terminal,
+                        use_terminal_tail,
+                    ) {
+                        (TerminalTool::NAME, false, true)
+                        | (TerminalToolWithoutTail::NAME, false, false)
+                        | (SandboxedTerminalTool::NAME, true, true)
+                        | (SandboxedTerminalToolWithoutTail::NAME, true, false) => {
                             Some((SharedString::from(TerminalTool::NAME), tool.clone()))
                         }
+                        (
+                            TerminalTool::NAME
+                            | TerminalToolWithoutTail::NAME
+                            | SandboxedTerminalTool::NAME
+                            | SandboxedTerminalToolWithoutTail::NAME,
+                            _,
+                            _,
+                        ) => None,
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
                 } else {
@@ -3252,9 +3301,7 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        for message in &self.messages {
-            messages.extend(message.to_request());
-        }
+        self.extend_request_history(&mut messages);
 
         if let Some(last_message) = messages.last_mut() {
             last_message.cache = true;
@@ -3267,6 +3314,67 @@ impl Thread {
         messages
     }
 
+    fn extend_request_history(&self, messages: &mut Vec<LanguageModelRequestMessage>) {
+        let Some(compaction_ix) = self.latest_compaction_message_ix() else {
+            for message in &self.messages {
+                messages.extend(message.to_request());
+            }
+            return;
+        };
+
+        if matches!(
+            &*self.messages[compaction_ix],
+            Message::Compaction(CompactionInfo::Summary(_))
+        ) {
+            messages.extend(self.retained_user_request_messages_before(compaction_ix));
+        }
+
+        for message in &self.messages[compaction_ix..] {
+            messages.extend(message.to_request());
+        }
+    }
+
+    fn latest_compaction_message_ix(&self) -> Option<usize> {
+        self.messages
+            .iter()
+            .rposition(|message| matches!(&**message, Message::Compaction(_)))
+    }
+
+    fn retained_user_request_messages_before(
+        &self,
+        compaction_ix: usize,
+    ) -> Vec<LanguageModelRequestMessage> {
+        let mut remaining_bytes = COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
+        let mut retained_messages = Vec::new();
+
+        for message in self.messages[..compaction_ix].iter().rev() {
+            let Message::User(user_message) = &**message else {
+                continue;
+            };
+            if user_message.content.is_empty() {
+                continue;
+            }
+
+            let request_message = user_message.to_request();
+            let byte_count = user_message_byte_len(&request_message);
+            if let Some(bytes) = remaining_bytes.checked_sub(byte_count) {
+                remaining_bytes = bytes;
+                retained_messages.push(request_message);
+            } else {
+                if remaining_bytes > 0
+                    && let Some(request_message) =
+                        truncate_user_message_to_byte_budget(request_message, remaining_bytes)
+                {
+                    retained_messages.push(request_message);
+                }
+                break;
+            }
+        }
+
+        retained_messages.reverse();
+        retained_messages
+    }
+
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
         for (ix, message) in self.messages.iter().enumerate() {
@@ -3276,7 +3384,7 @@ impl Thread {
             match &**message {
                 Message::User(_) => markdown.push_str("## User\n\n"),
                 Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
-                Message::Resume => {}
+                Message::Resume | Message::Compaction(_) => {}
             }
             markdown.push_str(&message.to_markdown());
         }
@@ -3403,6 +3511,83 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
+    message
+        .content
+        .iter()
+        .map(|content| match content {
+            MessageContent::Text(text) => text.len(),
+            MessageContent::Image(image) => image.len(),
+            // These can never occur in a user message
+            MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_)
+            | MessageContent::ToolResult(_)
+            | MessageContent::ToolUse(_) => 0,
+        })
+        .sum()
+}
+
+fn truncate_user_message_to_byte_budget(
+    mut message: LanguageModelRequestMessage,
+    byte_budget: usize,
+) -> Option<LanguageModelRequestMessage> {
+    let mut remaining_bytes = byte_budget;
+    let mut content = Vec::with_capacity(message.content.len());
+
+    for item in message.content {
+        match item {
+            MessageContent::Text(text) => {
+                let fits = text.len() <= remaining_bytes;
+                if let Some(text) = take_text_within_byte_budget(text, &mut remaining_bytes) {
+                    content.push(MessageContent::Text(text));
+                }
+                if !fits {
+                    break;
+                }
+            }
+            MessageContent::Image(image) => {
+                let byte_len = image.len();
+                if let Some(bytes) = remaining_bytes.checked_sub(byte_len) {
+                    remaining_bytes = bytes;
+                    content.push(MessageContent::Image(image));
+                } else {
+                    break;
+                }
+            }
+            // These can never occur in a user message
+            MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_)
+            | MessageContent::ToolResult(_)
+            | MessageContent::ToolUse(_) => {}
+        }
+    }
+
+    if content.is_empty() {
+        None
+    } else {
+        message.content = content;
+        Some(message)
+    }
+}
+
+fn take_text_within_byte_budget(text: String, remaining_bytes: &mut usize) -> Option<String> {
+    if text.is_empty() || *remaining_bytes == 0 {
+        return None;
+    }
+
+    if let Some(bytes) = remaining_bytes.checked_sub(text.len()) {
+        *remaining_bytes = bytes;
+        return Some(text);
+    }
+
+    let end = text.floor_char_boundary((*remaining_bytes).min(text.len()));
+    *remaining_bytes = 0;
+
+    let text = text[..end].to_string();
+
+    if text.is_empty() { None } else { Some(text) }
 }
 
 struct RunningTurn {
@@ -3850,6 +4035,12 @@ impl ThreadEventStream {
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
+    }
+
+    fn send_context_compaction(&self) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompaction))
+            .ok();
     }
 
     fn send_stop(&self, reason: acp::StopReason) {
@@ -4803,6 +4994,221 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    #[test]
+    fn test_summary_compaction_renders_for_request_and_markdown() {
+        let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
+
+        assert_eq!(message.role(), Role::User);
+        assert_eq!(message.to_markdown(), "--- Context Compacted ---\n");
+
+        let request_messages = message.to_request();
+        assert_eq!(request_messages.len(), 1);
+        assert_eq!(request_messages[0].role, Role::User);
+        assert!(!request_messages[0].cache);
+        assert_eq!(request_messages[0].reasoning_details, None);
+        assert_eq!(request_messages[0].content.len(), 1);
+        let language_model::MessageContent::Text(text) = &request_messages[0].content[0] else {
+            panic!("expected text summary context");
+        };
+        assert_eq!(
+            text.as_str(),
+            "The previous conversation was compacted. Use this summary as context:\n\nOlder context"
+        );
+    }
+
+    fn user_text_message(id: UserMessageId, text: &str) -> Arc<Message> {
+        Arc::new(Message::User(UserMessage {
+            id,
+            content: vec![UserMessageContent::Text(text.to_string())].into(),
+        }))
+    }
+
+    fn agent_text_message(text: &str) -> Arc<Message> {
+        Arc::new(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(text.to_string())],
+            ..Default::default()
+        }))
+    }
+
+    fn summary_compaction(summary: &str) -> Arc<Message> {
+        Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())))
+    }
+
+    fn summary_request_text(summary: &str) -> String {
+        format!(
+            "The previous conversation was compacted. Use this summary as context:\n\n{summary}"
+        )
+    }
+
+    fn request_texts_after_system(messages: &[LanguageModelRequestMessage]) -> Vec<String> {
+        messages
+            .iter()
+            .skip(1)
+            .map(LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let user_message_id = UserMessageId::new();
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "before"));
+                thread.messages.push(summary_compaction("summary"));
+                thread.messages.push(agent_text_message("after"));
+
+                thread.replay(cx)
+            })
+        });
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(
+                &event,
+                Some(Ok(ThreadEvent::UserMessage(UserMessage { id, .. }))) if id == &user_message_id
+            ),
+            "expected replayed user message, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::ContextCompaction))),
+            "expected context compaction event, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::AgentText(text))) if text == "after"),
+            "expected replayed agent text, got {event:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_compaction_boundary(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let request_messages = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "before native"));
+                thread.messages.push(Arc::new(Message::Compaction(
+                    CompactionInfo::ProviderNative {
+                        provider: LanguageModelProviderId::from("openai".to_string()),
+                        items: vec![json!({"type": "compaction"})],
+                    },
+                )));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "after native"));
+
+                thread.build_request_messages(Vec::new(), cx)
+            })
+        });
+
+        assert_eq!(
+            request_texts_after_system(&request_messages),
+            vec!["after native".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_retained_users_truncate_oldest(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let mut long_text = "START".to_string();
+        long_text.push_str(&"x".repeat(COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET));
+        long_text.push_str("END");
+
+        let request_messages = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.messages.push(user_text_message(
+                    UserMessageId::new(),
+                    "dropped older user",
+                ));
+                thread
+                    .messages
+                    .push(agent_text_message("dropped assistant"));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), &long_text));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "new"));
+                thread.messages.push(summary_compaction("summary context"));
+                thread.messages.push(agent_text_message("after assistant"));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "after user"));
+
+                thread.build_request_messages(Vec::new(), cx)
+            })
+        });
+
+        let request_texts = request_texts_after_system(&request_messages);
+        assert_eq!(request_texts.len(), 5);
+        assert_eq!(
+            request_texts[0],
+            format!(
+                "START{}",
+                "x".repeat(
+                    COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET - "START".len() - "new".len()
+                )
+            )
+        );
+        assert_eq!(request_texts[1], "new");
+        assert_eq!(request_texts[2], summary_request_text("summary context"));
+        assert_eq!(request_texts[3], "after assistant");
+        assert_eq!(request_texts[4], "after user");
+        assert!(request_texts.iter().all(
+            |text| !text.contains("dropped older user") && !text.contains("dropped assistant")
+        ));
+    }
+
+    #[test]
+    fn test_truncate_text_utf8_boundary() {
+        let message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("hello 👋 world".to_string())],
+            cache: false,
+            reasoning_details: None,
+        };
+
+        let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();
+        assert_eq!(
+            truncated.content,
+            vec![MessageContent::Text("hello ".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_truncate_keeps_fitting_images() {
+        let image = LanguageModelImage {
+            source: "image".into(),
+        };
+        let message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                MessageContent::Text("abc".to_string()),
+                MessageContent::Image(image.clone()),
+            ],
+            cache: false,
+            reasoning_details: None,
+        };
+
+        let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();
+        assert_eq!(
+            truncated.content,
+            vec![
+                MessageContent::Text("abc".to_string()),
+                MessageContent::Image(image),
+            ]
+        );
     }
 
     fn setup_parent_with_subagents(

@@ -249,7 +249,7 @@ Most of the servers would rely on this way of configuring only.
 }
 ```
 
-Apart of the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
+Apart from the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
 
 Language servers are automatically downloaded or launched if found in your path, if you wish to specify an explicit alternate binary you can specify that in settings:
 

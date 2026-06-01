@@ -981,7 +981,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1006,7 +1006,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1561,7 +1561,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             h_flex()
                                 .id("project_info_container")
                                 .gap_2p5()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .when(self.has_any_non_local_projects, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })

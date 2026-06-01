@@ -28,6 +28,8 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
 ///
+/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
@@ -41,7 +43,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
@@ -49,6 +51,12 @@ pub struct TerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
+    /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub head_lines: Option<usize>,
+    /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
 }
 
 /// Executes a shell one-liner and returns the combined output.
@@ -59,7 +67,54 @@ pub struct TerminalToolInput {
 ///
 /// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
 ///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values before calling this tool, or ask the user for the literal value to use.
+///
+/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
+///
+/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
+///
+/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+///
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
+///
+/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
+/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalToolInputWithoutTail {
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
+    ///
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
+    pub command: String,
+    /// Working directory for the command. This must be one of the root directories of the project.
+    pub cd: String,
+    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    pub timeout_ms: Option<u64>,
+}
+
+impl From<TerminalToolInputWithoutTail> for TerminalToolInput {
+    fn from(input: TerminalToolInputWithoutTail) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            head_lines: None,
+            tail_lines: None,
+        }
+    }
+}
+
+/// Executes a shell one-liner and returns the combined output.
+///
+/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
+///
+/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
+///
+/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+///
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
+///
+/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
 ///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
@@ -74,7 +129,7 @@ pub struct TerminalToolInput {
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxedTerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
@@ -82,6 +137,12 @@ pub struct SandboxedTerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
+    /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub head_lines: Option<usize>,
+    /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
     /// Set to `true` only if the command needs outbound network access.
     ///
     /// Sandboxed commands cannot reach the network by default, so set this
@@ -121,12 +182,178 @@ pub struct SandboxedTerminalToolInput {
     pub unsandboxed: Option<bool>,
 }
 
+/// Executes a shell one-liner and returns the combined output.
+///
+/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
+///
+/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
+///
+/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+///
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
+///
+/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
+///
+/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
+///
+/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+///
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
+///
+/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
+/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SandboxedTerminalToolInputWithoutTail {
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
+    ///
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
+    pub command: String,
+    /// Working directory for the command. This must be one of the root directories of the project.
+    pub cd: String,
+    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    pub timeout_ms: Option<u64>,
+    /// Set to `true` only if the command needs outbound network access.
+    #[serde(default)]
+    pub allow_network: Option<bool>,
+    /// Paths the command needs to write to outside the default-writable locations.
+    #[serde(default)]
+    pub fs_write_paths: Vec<String>,
+    /// Set to `true` only when the command needs to write outside the default-writable locations but the specific paths cannot be enumerated up front.
+    #[serde(default, alias = "allow_fs_write")]
+    pub allow_fs_write_all: Option<bool>,
+    /// Set to `true` only as a last resort, to run the command fully outside the sandbox.
+    #[serde(default)]
+    pub unsandboxed: Option<bool>,
+}
+
+impl From<SandboxedTerminalToolInputWithoutTail> for SandboxedTerminalToolInput {
+    fn from(input: SandboxedTerminalToolInputWithoutTail) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            head_lines: None,
+            tail_lines: None,
+            allow_network: input.allow_network,
+            fs_write_paths: input.fs_write_paths,
+            allow_fs_write_all: input.allow_fs_write_all,
+            unsandboxed: input.unsandboxed,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct TerminalSandboxInput {
+    allow_network: Option<bool>,
+    fs_write_paths: Vec<String>,
+    allow_fs_write_all: Option<bool>,
+    unsandboxed: Option<bool>,
+}
+
+struct TerminalToolRequest {
+    command: String,
+    cd: String,
+    timeout_ms: Option<u64>,
+    selection: TerminalOutputSelection,
+    sandbox: Option<TerminalSandboxInput>,
+}
+
+impl From<TerminalToolInput> for TerminalToolRequest {
+    fn from(input: TerminalToolInput) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            selection: TerminalOutputSelection {
+                head_lines: input.head_lines,
+                tail_lines: input.tail_lines,
+            },
+            sandbox: None,
+        }
+    }
+}
+
+impl From<TerminalToolInputWithoutTail> for TerminalToolRequest {
+    fn from(input: TerminalToolInputWithoutTail) -> Self {
+        TerminalToolInput::from(input).into()
+    }
+}
+
+impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
+    fn from(input: SandboxedTerminalToolInput) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            selection: TerminalOutputSelection {
+                head_lines: input.head_lines,
+                tail_lines: input.tail_lines,
+            },
+            sandbox: Some(TerminalSandboxInput {
+                allow_network: input.allow_network,
+                fs_write_paths: input.fs_write_paths,
+                allow_fs_write_all: input.allow_fs_write_all,
+                unsandboxed: input.unsandboxed,
+            }),
+        }
+    }
+}
+
+impl From<SandboxedTerminalToolInputWithoutTail> for TerminalToolRequest {
+    fn from(input: SandboxedTerminalToolInputWithoutTail) -> Self {
+        SandboxedTerminalToolInput::from(input).into()
+    }
+}
+
 pub struct TerminalTool {
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
 }
 
 impl TerminalTool {
+    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+        Self {
+            project,
+            environment,
+        }
+    }
+}
+
+pub struct TerminalToolWithoutTail {
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+}
+
+impl TerminalToolWithoutTail {
+    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+        Self {
+            project,
+            environment,
+        }
+    }
+}
+
+pub struct SandboxedTerminalTool {
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+}
+
+impl SandboxedTerminalTool {
+    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+        Self {
+            project,
+            environment,
+        }
+    }
+}
+
+pub struct SandboxedTerminalToolWithoutTail {
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+}
+
+impl SandboxedTerminalToolWithoutTail {
     pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
         Self {
             project,
@@ -150,11 +377,7 @@ impl AgentTool for TerminalTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        if let Ok(input) = input {
-            input.command.into()
-        } else {
-            "".into()
-        }
+        terminal_initial_title(input.map(|input| input.command))
     }
 
     fn run(
@@ -165,28 +388,11 @@ impl AgentTool for TerminalTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
-
-            let (working_dir, authorize) = cx.update(|cx| {
-                let working_dir =
-                    working_dir(&input.cd, &self.project, cx).map_err(|err| err.to_string())?;
-                let context =
-                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
-                let authorize =
-                    event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
-                Result::<_, String>::Ok((working_dir, authorize))
-            })?;
-
-            authorize.await.map_err(|e| e.to_string())?;
-
-            // This tool is only handed to the model when sandboxing is off, so
-            // commands run without any sandbox wrap.
-            run_terminal_command(
-                &self.environment,
-                input.command,
-                working_dir,
-                input.timeout_ms,
-                None,
-                &event_stream,
+            run_terminal_tool(
+                self.project.clone(),
+                self.environment.clone(),
+                input.into(),
+                event_stream,
                 cx,
             )
             .await
@@ -194,17 +400,41 @@ impl AgentTool for TerminalTool {
     }
 }
 
-pub struct SandboxedTerminalTool {
-    project: Entity<Project>,
-    environment: Rc<dyn ThreadEnvironment>,
-}
+impl AgentTool for TerminalToolWithoutTail {
+    type Input = TerminalToolInputWithoutTail;
+    type Output = String;
 
-impl SandboxedTerminalTool {
-    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
-        Self {
-            project,
-            environment,
-        }
+    const NAME: &'static str = "terminal_without_tail";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        terminal_initial_title(input.map(|input| input.command))
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |cx| {
+            let input = input.recv().await.map_err(|e| e.to_string())?;
+            run_terminal_tool(
+                self.project.clone(),
+                self.environment.clone(),
+                input.into(),
+                event_stream,
+                cx,
+            )
+            .await
+        })
     }
 }
 
@@ -212,9 +442,6 @@ impl AgentTool for SandboxedTerminalTool {
     type Input = SandboxedTerminalToolInput;
     type Output = String;
 
-    // Distinct internal registry name so both terminal tool variants can be
-    // registered at once; `Thread::enabled_tools` exposes the selected variant
-    // to the model under the canonical `terminal` name.
     const NAME: &'static str = "sandboxed_terminal";
 
     fn kind() -> acp::ToolKind {
@@ -226,11 +453,7 @@ impl AgentTool for SandboxedTerminalTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        if let Ok(input) = input {
-            input.command.into()
-        } else {
-            "".into()
-        }
+        terminal_initial_title(input.map(|input| input.command))
     }
 
     fn run(
@@ -241,138 +464,11 @@ impl AgentTool for SandboxedTerminalTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
-
-            let (working_dir, authorize, sandboxing) = cx.update(|cx| {
-                let working_dir =
-                    working_dir(&input.cd, &self.project, cx).map_err(|err| err.to_string())?;
-                // Authorize under the canonical `terminal` name so the
-                // terminal-specific permission rules and UI apply, regardless
-                // of this tool's internal registry name.
-                let context = crate::ToolPermissionContext::new(
-                    TerminalTool::NAME,
-                    vec![input.command.clone()],
-                );
-                let authorize =
-                    event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
-                let sandboxing = sandboxing_enabled(cx);
-                Result::<_, String>::Ok((working_dir, authorize, sandboxing))
-            })?;
-
-            authorize.await.map_err(|e| e.to_string())?;
-
-            // Sandbox flags only do anything when sandboxing is on. This tool
-            // is normally only exposed to the model while sandboxing is
-            // enabled, but the flag could flip between selection and
-            // execution, so we re-check here. When off, we treat the flags as
-            // `None` so the model can't surreptitiously change runtime
-            // behavior by setting flags described as a no-op in the system
-            // prompt.
-            let want_network = sandboxing && input.allow_network == Some(true);
-            let want_fs_write_all = sandboxing && input.allow_fs_write_all == Some(true);
-            let want_unsandboxed = sandboxing && input.unsandboxed == Some(true);
-
-            // Resolve the requested write paths against the project up front:
-            // we need them both for the approval prompt and the sandbox
-            // policy. Skipped when running unsandboxed (no wrap is applied)
-            // or when sandboxing is off (the flags are a no-op). Resolution
-            // is done against the project worktrees / working directory, and
-            // the user approves the concrete resolved paths.
-            let write_paths: Vec<PathBuf> = if sandboxing && !want_unsandboxed {
-                cx.update(|cx| {
-                    resolve_write_paths(
-                        &input.fs_write_paths,
-                        working_dir.as_deref(),
-                        &self.project,
-                        cx,
-                    )
-                })
-            } else {
-                Vec::new()
-            };
-
-            let request = crate::sandboxing::SandboxRequest {
-                network: want_network,
-                allow_fs_write_all: want_fs_write_all,
-                write_paths,
-            };
-
-            // `unsandboxed: true` bypasses the wrap entirely, so the
-            // per-permission requests are moot — it gets its own,
-            // always-prompt confirmation as the strongest trust boundary.
-            if want_unsandboxed {
-                let approve = cx.update(|cx| {
-                    let context = crate::ToolPermissionContext::new(
-                        TerminalTool::NAME,
-                        vec![input.command.clone()],
-                    );
-                    event_stream.authorize_always_prompt(
-                        "Allow this command to run outside the sandbox?",
-                        context,
-                        cx,
-                    )
-                });
-                if let Err(error) = approve.await {
-                    return Ok(format!(
-                        "Command cancelled: user denied permission to run outside the sandbox ({error})."
-                    ));
-                }
-            } else if request.needs_escalation() {
-                let title = sandbox_approval_title(&request);
-                // Sandbox escalations always prompt (unless already granted
-                // for the thread), independent of any `always_allow`
-                // tool-permission rules — the escalation is a stronger trust
-                // boundary than the baseline command approval.
-                let approve =
-                    cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
-                if let Err(error) = approve.await {
-                    return Ok(format!(
-                        "Command cancelled: user denied the requested sandbox permissions ({error})."
-                    ));
-                }
-            }
-
-            // Build the writable scope from the project's worktrees. The
-            // per-thread temp directory is appended by the thread environment
-            // (which owns it and points `$TMPDIR` at it). Crucially we do
-            // *not* include the resolved `cd` working directory — that's
-            // model-controlled, and using it as the writable scope would
-            // let the model widen its own write permissions outside the
-            // project.
-            let sandbox_wrap = if sandboxing && !want_unsandboxed {
-                // Apply standing grants on top of this command's request, so
-                // a path approved "for the rest of the thread" or "always"
-                // stays writable for later commands even when the model
-                // doesn't re-request it.
-                let sandbox_permissions = cx.update(|cx| {
-                    agent_settings::AgentSettings::get_global(cx)
-                        .sandbox_permissions
-                        .clone()
-                });
-                let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
-                let writable_paths: Vec<PathBuf> = cx.update(|cx| {
-                    self.project
-                        .read(cx)
-                        .worktrees(cx)
-                        .map(|w| w.read(cx).abs_path().to_path_buf())
-                        .collect::<Vec<_>>()
-                });
-                Some(acp_thread::SandboxWrap {
-                    writable_paths,
-                    extra_write_paths: effective.write_paths,
-                    allow_network: effective.network,
-                    allow_fs_write: effective.allow_fs_write_all,
-                })
-            } else {
-                None
-            };
-
-            run_terminal_command(
-                &self.environment,
-                input.command,
-                working_dir,
-                input.timeout_ms,
-                sandbox_wrap,
-                &event_stream,
+            run_terminal_tool(
+                self.project.clone(),
+                self.environment.clone(),
+                input.into(),
+                event_stream,
                 cx,
             )
             .await
@@ -380,37 +476,160 @@ impl AgentTool for SandboxedTerminalTool {
     }
 }
 
-/// Shared execution path for both terminal tool variants: create the terminal,
-/// surface it to the UI, wait for it to exit (honoring an optional timeout and
-/// user cancellation), then format the captured output.
-///
-/// Callers are responsible for having already authorized the command and, for
-/// the sandboxed variant, resolved any `sandbox_wrap`. A `None` wrap runs the
-/// command without an OS-level sandbox.
-async fn run_terminal_command(
-    environment: &Rc<dyn ThreadEnvironment>,
-    command: String,
-    working_dir: Option<PathBuf>,
-    timeout_ms: Option<u64>,
-    sandbox_wrap: Option<acp_thread::SandboxWrap>,
-    event_stream: &ToolCallEventStream,
+impl AgentTool for SandboxedTerminalToolWithoutTail {
+    type Input = SandboxedTerminalToolInputWithoutTail;
+    type Output = String;
+
+    const NAME: &'static str = "sandboxed_terminal_without_tail";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        terminal_initial_title(input.map(|input| input.command))
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |cx| {
+            let input = input.recv().await.map_err(|e| e.to_string())?;
+            run_terminal_tool(
+                self.project.clone(),
+                self.environment.clone(),
+                input.into(),
+                event_stream,
+                cx,
+            )
+            .await
+        })
+    }
+}
+
+fn terminal_initial_title(input: Result<String, serde_json::Value>) -> SharedString {
+    if let Ok(command) = input {
+        command.into()
+    } else {
+        "".into()
+    }
+}
+
+async fn run_terminal_tool(
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+    input: TerminalToolRequest,
+    event_stream: ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    // The per-thread scratch directory (and the `$TMPDIR`/`TMP`/`TEMP`
-    // environment variables pointing at it) is provisioned by the thread
-    // environment in `create_terminal`, which also adds it to the sandbox's
-    // writable scope. We must not set `$TMPDIR` here: the environment
-    // overrides it with the per-thread directory, so a per-command directory
-    // set here would never be the `$TMPDIR` the command actually sees and
-    // would be left out of the writable scope, breaking writes into `$TMPDIR`.
+    let selection = input.selection;
+    let sandbox_input = input.sandbox.clone().unwrap_or_default();
+
+    let (working_dir, authorize, sandboxing) = cx.update(|cx| {
+        let working_dir = working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+        let context =
+            crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+        let authorize =
+            event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
+        let sandboxing = input.sandbox.is_some() && sandboxing_enabled(cx);
+        Result::<_, String>::Ok((working_dir, authorize, sandboxing))
+    })?;
+
+    authorize.await.map_err(|e| e.to_string())?;
+
+    let want_network = sandboxing && sandbox_input.allow_network == Some(true);
+    let want_fs_write_all = sandboxing && sandbox_input.allow_fs_write_all == Some(true);
+    let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
+
+    let write_paths: Vec<PathBuf> = if sandboxing && !want_unsandboxed {
+        cx.update(|cx| {
+            resolve_write_paths(
+                &sandbox_input.fs_write_paths,
+                working_dir.as_deref(),
+                &project,
+                cx,
+            )
+        })
+    } else {
+        Vec::new()
+    };
+
+    let request = crate::sandboxing::SandboxRequest {
+        network: want_network,
+        allow_fs_write_all: want_fs_write_all,
+        write_paths,
+    };
+
+    if want_unsandboxed {
+        let approve = cx.update(|cx| {
+            let context =
+                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+            event_stream.authorize_always_prompt(
+                "Allow this command to run outside the sandbox?",
+                context,
+                cx,
+            )
+        });
+        if let Err(error) = approve.await {
+            return Ok(format!(
+                "Command cancelled: user denied permission to run outside the sandbox ({error})."
+            ));
+        }
+    } else if request.needs_escalation() {
+        let title = sandbox_approval_title(&request);
+        let approve = cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
+        if let Err(error) = approve.await {
+            return Ok(format!(
+                "Command cancelled: user denied the requested sandbox permissions ({error})."
+            ));
+        }
+    }
+
     let extra_env = Vec::new();
+
+    let sandbox_wrap = if sandboxing && !want_unsandboxed {
+        let sandbox_permissions = cx.update(|cx| {
+            agent_settings::AgentSettings::get_global(cx)
+                .sandbox_permissions
+                .clone()
+        });
+        let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
+        let writable_paths: Vec<PathBuf> = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .map(|w| w.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>()
+        });
+        Some(acp_thread::SandboxWrap {
+            writable_paths,
+            extra_write_paths: effective.write_paths,
+            allow_network: effective.network,
+            allow_fs_write: effective.allow_fs_write_all,
+        })
+    } else {
+        None
+    };
+
+    let output_byte_limit = if selection.is_enabled() {
+        None
+    } else {
+        Some(COMMAND_OUTPUT_LIMIT)
+    };
 
     let terminal = environment
         .create_terminal(
-            command.clone(),
+            input.command.clone(),
             extra_env,
             working_dir,
-            Some(COMMAND_OUTPUT_LIMIT),
+            output_byte_limit,
             sandbox_wrap,
             cx,
         )
@@ -422,7 +641,7 @@ async fn run_terminal_command(
         acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
     ]));
 
-    let timeout = timeout_ms.map(Duration::from_millis);
+    let timeout = input.timeout_ms.map(Duration::from_millis);
 
     let mut timed_out = false;
     let mut user_stopped_via_signal = false;
@@ -458,18 +677,19 @@ async fn run_terminal_command(
         }
     };
 
-    // Check if user stopped - we check both:
-    // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)
-    // 2. The terminal's user_stopped flag (e.g. user clicked Stop on the terminal card)
-    // Note: user_stopped_via_signal is already set above if we detected cancellation in the select!
-    // but we also check was_cancelled_by_user() for cases where cancellation happened after wait_for_exit completed
     let user_stopped_via_signal = user_stopped_via_signal || event_stream.was_cancelled_by_user();
     let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
     let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
 
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
-    Ok(process_content(output, &command, timed_out, user_stopped))
+    Ok(process_content(
+        output,
+        &input.command,
+        timed_out,
+        user_stopped,
+        selection,
+    ))
 }
 
 /// Resolve model-requested write paths into absolute paths.
@@ -531,8 +751,6 @@ fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String
         ));
     }
     match parts.as_slice() {
-        // Unreachable in practice: the caller only prompts when at least one
-        // permission is requested.
         [] => "Allow this command extra permissions?".to_string(),
         [only] => format!("Allow {only}?"),
         [first, second] => format!("Allow {first} and {second}?"),
@@ -548,13 +766,55 @@ fn write_path_summary(paths: &[PathBuf]) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct TerminalOutputSelection {
+    head_lines: Option<usize>,
+    tail_lines: Option<usize>,
+}
+
+impl TerminalOutputSelection {
+    fn is_enabled(self) -> bool {
+        self.head_lines.is_some() || self.tail_lines.is_some()
+    }
+}
+
+fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection) -> String {
+    match (selection.head_lines, selection.tail_lines) {
+        (None, None) => output.to_string(),
+        (Some(head_lines), None) => output
+            .lines()
+            .take(head_lines)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        (None, Some(tail_lines)) => {
+            let lines = output.lines().collect::<Vec<_>>();
+            let start = lines.len().saturating_sub(tail_lines);
+            lines[start..].join("\n")
+        }
+        (Some(head_lines), Some(tail_lines)) => {
+            let lines = output.lines().collect::<Vec<_>>();
+            let head = lines
+                .iter()
+                .take(head_lines)
+                .copied()
+                .collect::<Vec<_>>()
+                .join("\n");
+            let tail_start = lines.len().saturating_sub(tail_lines);
+            let tail = lines[tail_start..].join("\n");
+            format!("{head}\n\n{tail}")
+        }
+    }
+}
+
 fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
     timed_out: bool,
     user_stopped: bool,
+    selection: TerminalOutputSelection,
 ) -> String {
     let content = output.output.trim();
+    let content = select_terminal_output_lines(content, selection);
     let is_empty = content.is_empty();
 
     let content = format!("```\n{content}\n```");
@@ -628,7 +888,6 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
     let project = project.read(cx);
 
     if cd == "." || cd.is_empty() {
-        // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
         match worktrees.next() {
@@ -645,7 +904,6 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
         let input_path = Path::new(cd);
 
         if input_path.is_absolute() {
-            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
             if project
                 .worktrees(cx)
                 .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
@@ -671,7 +929,8 @@ mod tests {
                 .to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
-        };
+                ..Default::default()
+            };
 
         let title = format_initial_title(Ok(input));
 
@@ -697,7 +956,13 @@ mod tests {
     fn test_process_content_user_stopped() {
         let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
 
-        let result = process_content(output, "cargo build", false, true);
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            true,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("user stopped"),
@@ -730,6 +995,7 @@ mod tests {
                 command: cmd.to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
+                ..Default::default()
             };
 
             let title = format_initial_title(Ok(input));
@@ -767,6 +1033,7 @@ mod tests {
             command: "echo 'hello world'".to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -796,6 +1063,7 @@ mod tests {
             command: long_command,
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -815,10 +1083,227 @@ mod tests {
     }
 
     #[test]
+    fn test_select_terminal_output_head_lines() {
+        let output = "one\ntwo\nthree\nfour";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: Some(2),
+                tail_lines: None,
+            },
+        );
+
+        assert_eq!(result, "one\ntwo");
+    }
+
+    #[test]
+    fn test_select_terminal_output_tail_lines() {
+        let output = "one\ntwo\nthree\nfour";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "three\nfour");
+    }
+
+    #[test]
+    fn test_select_terminal_output_head_and_tail_lines() {
+        let output = "one\ntwo\nthree\nfour\nfive";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: Some(2),
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "one\ntwo\n\nfour\nfive");
+    }
+
+    #[test]
+    fn test_select_terminal_output_head_and_tail_lines_overlap() {
+        let output = "one\ntwo\nthree";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: Some(2),
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "one\ntwo\n\ntwo\nthree");
+    }
+
+    #[test]
+    fn test_select_terminal_output_allows_zero_lines() {
+        let output = "one\ntwo\nthree";
+
+        assert_eq!(
+            select_terminal_output_lines(
+                output,
+                TerminalOutputSelection {
+                    head_lines: Some(0),
+                    tail_lines: None,
+                },
+            ),
+            ""
+        );
+        assert_eq!(
+            select_terminal_output_lines(
+                output,
+                TerminalOutputSelection {
+                    head_lines: None,
+                    tail_lines: Some(0),
+                },
+            ),
+            ""
+        );
+        assert_eq!(
+            select_terminal_output_lines(
+                output,
+                TerminalOutputSelection {
+                    head_lines: Some(0),
+                    tail_lines: Some(0),
+                },
+            ),
+            "\n\n"
+        );
+    }
+
+    #[test]
+    fn test_select_terminal_output_handles_unicode_without_trailing_newline() {
+        let output = "α\nβ\nγ";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "β\nγ");
+    }
+
+    #[test]
+    fn test_process_content_filters_success_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+
+        let result = process_content(
+            output,
+            "printf lines",
+            false,
+            false,
+            TerminalOutputSelection {
+                head_lines: Some(1),
+                tail_lines: Some(1),
+            },
+        );
+
+        assert_eq!(result, "```\none\n\nfour\n```");
+    }
+
+    #[test]
+    fn test_process_content_filters_failure_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+
+        let result = process_content(
+            output,
+            "failing command",
+            false,
+            false,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(1),
+            },
+        );
+
+        assert!(result.contains("failed with exit code 1"));
+        assert!(result.contains("three"));
+        assert!(!result.contains("one"));
+        assert!(!result.contains("two"));
+    }
+
+    #[test]
+    fn test_process_content_filters_timeout_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+
+        let result = process_content(
+            output,
+            "slow command",
+            true,
+            false,
+            TerminalOutputSelection {
+                head_lines: Some(1),
+                tail_lines: None,
+            },
+        );
+
+        assert!(result.contains("timed out"));
+        assert!(result.contains("one"));
+        assert!(!result.contains("two"));
+        assert!(!result.contains("three"));
+    }
+
+    #[test]
+    fn test_process_content_filters_user_stopped_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+
+        let result = process_content(
+            output,
+            "stopped command",
+            false,
+            true,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(1),
+            },
+        );
+
+        assert!(result.contains("user stopped"));
+        assert!(result.contains("ask them what they would like to do"));
+        assert!(result.contains("three"));
+        assert!(!result.contains("one"));
+        assert!(!result.contains("two"));
+    }
+
+    #[test]
+    fn test_process_content_selected_output_has_no_explanatory_note() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+
+        let result = process_content(
+            output,
+            "printf lines",
+            false,
+            false,
+            TerminalOutputSelection {
+                head_lines: Some(1),
+                tail_lines: Some(1),
+            },
+        );
+
+        assert!(!result.contains("Showing"));
+        assert!(!result.contains("first"));
+        assert!(!result.contains("last"));
+    }
+
+    #[test]
     fn test_process_content_user_stopped_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
 
-        let result = process_content(output, "cargo build", false, true);
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            true,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("user stopped"),
@@ -836,7 +1321,13 @@ mod tests {
     fn test_process_content_timed_out() {
         let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
 
-        let result = process_content(output, "cargo build", true, false);
+        let result = process_content(
+            output,
+            "cargo build",
+            true,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("timed out"),
@@ -854,7 +1345,13 @@ mod tests {
     fn test_process_content_timed_out_with_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
 
-        let result = process_content(output, "sleep 1000", true, false);
+        let result = process_content(
+            output,
+            "sleep 1000",
+            true,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("timed out"),
@@ -873,7 +1370,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("success output".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(0));
 
-        let result = process_content(output, "echo hello", false, false);
+        let result = process_content(
+            output,
+            "echo hello",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("success output"),
@@ -892,7 +1395,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(0));
 
-        let result = process_content(output, "true", false, false);
+        let result = process_content(
+            output,
+            "true",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("executed successfully"),
@@ -906,7 +1415,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("error output".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(1));
 
-        let result = process_content(output, "false", false, false);
+        let result = process_content(
+            output,
+            "false",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("failed with exit code 1"),
@@ -925,7 +1440,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(1));
 
-        let result = process_content(output, "false", false, false);
+        let result = process_content(
+            output,
+            "false",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("failed with exit code 1"),
@@ -938,7 +1459,13 @@ mod tests {
     fn test_process_content_unexpected_termination() {
         let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
 
-        let result = process_content(output, "some_command", false, false);
+        let result = process_content(
+            output,
+            "some_command",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("terminated unexpectedly"),
@@ -956,7 +1483,13 @@ mod tests {
     fn test_process_content_unexpected_termination_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
 
-        let result = process_content(output, "some_command", false, false);
+        let result = process_content(
+            output,
+            "some_command",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("terminated unexpectedly"),
@@ -1002,6 +1535,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1069,6 +1603,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1130,6 +1665,7 @@ mod tests {
                     command: "echo $(rm -rf /)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1199,6 +1735,7 @@ mod tests {
                     command: "PAGER=blah git log --oneline".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1225,6 +1762,119 @@ mod tests {
         assert!(
             result.contains("command output") || result.contains("Command executed successfully."),
             "unexpected terminal result: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_filters_model_output_and_bypasses_byte_limit_when_head_or_tail_is_set(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let output =
+            acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
+                .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
+                    .with_output(output),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "printf lines".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    head_lines: Some(1),
+                    tail_lines: Some(1),
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content update"
+        );
+
+        let result = task.await.expect("terminal command should succeed");
+        assert_eq!(result, "```\none\n\nfive\n```");
+        assert_eq!(environment.terminal_output_limits(), vec![None]);
+    }
+
+    #[gpui::test]
+    async fn test_run_uses_byte_limit_when_head_and_tail_are_not_set(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let output = acp::TerminalOutputResponse::new("command output".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
+                    .with_output(output),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo output".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        rx.expect_update_fields().await;
+        let result = task.await.expect("terminal command should succeed");
+        assert_eq!(result, "```\ncommand output\n```");
+        assert_eq!(
+            environment.terminal_output_limits(),
+            vec![Some(COMMAND_OUTPUT_LIMIT)]
         );
     }
 
@@ -1272,6 +1922,7 @@ mod tests {
                     command: "PAGER=blah git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1349,6 +2000,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_terminal_tool_description_mentions_head_and_tail_parameters() {
+        let description = <TerminalTool as crate::AgentTool>::description().to_string();
+
+        assert!(description.contains("head_lines"));
+        assert!(description.contains("tail_lines"));
+        assert!(description.contains("Do not pipe output to `head`, `tail`, or similar"));
+        assert!(description.contains("visible to the user in real time"));
+        assert!(description.contains("waste tokens or exceed the context window"));
+    }
+
+    #[test]
+    fn test_terminal_tool_input_schema_mentions_head_and_tail_parameters() {
+        let schema = <TerminalTool as crate::AgentTool>::input_schema(
+            language_model::LanguageModelToolSchemaFormat::JsonSchema,
+        );
+        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_text = schema_json.to_string();
+
+        assert!(schema_text.contains("head_lines"));
+        assert!(schema_text.contains("tail_lines"));
+        assert!(schema_text.contains("Do not pipe output to `head`"));
+        assert!(schema_text.contains("Do not pipe output to `tail`"));
+        assert!(schema_text.contains("waste tokens or exceed the context window"));
+    }
+
+    #[test]
+    fn test_terminal_tool_without_tail_schema_omits_head_and_tail_parameters() {
+        let description = <TerminalToolWithoutTail as crate::AgentTool>::description().to_string();
+        let schema = <TerminalToolWithoutTail as crate::AgentTool>::input_schema(
+            language_model::LanguageModelToolSchemaFormat::JsonSchema,
+        );
+        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_text = schema_json.to_string();
+
+        assert!(!description.contains("head_lines"));
+        assert!(!description.contains("tail_lines"));
+        assert!(!schema_text.contains("head_lines"));
+        assert!(!schema_text.contains("tail_lines"));
+    }
+
     async fn assert_rejected_before_terminal_creation(
         command: &str,
         cx: &mut gpui::TestAppContext,
@@ -1379,6 +2071,7 @@ mod tests {
                     command: command.to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1546,6 +2239,7 @@ mod tests {
                     command: "echo $(whoami)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1618,6 +2312,7 @@ mod tests {
                     command: "PAGER=other git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1684,6 +2379,7 @@ mod tests {
                     command: "A=1 B=2 git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1761,6 +2457,7 @@ mod tests {
                     command: "PAGER=\"less -R\" git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,

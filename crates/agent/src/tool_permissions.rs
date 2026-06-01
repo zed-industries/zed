@@ -580,6 +580,7 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
