@@ -5306,6 +5306,7 @@ impl Sidebar {
     fn mru_entries_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {
         let mut current_header_label: Option<SharedString> = None;
         let mut current_header_key: Option<ProjectGroupKey> = None;
+        let mut seen_thread_ids: HashSet<ThreadId> = HashSet::new();
         let mut entries: Vec<ThreadSwitcherEntry> = self
             .contents
             .entries
@@ -5334,6 +5335,7 @@ impl Sidebar {
                             })
                         }
                     }?;
+                    seen_thread_ids.insert(thread.metadata.thread_id);
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
                     let timestamp: SharedString =
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
@@ -5386,6 +5388,68 @@ impl Sidebar {
                 }
             })
             .collect();
+
+        // Also include archived threads whose project is currently open, so the
+        // switcher can reach archived/closed agent threads, not just active
+        // ones. Without this they're invisible to the dropdown even though
+        // they're still real history.
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            let open_workspaces: Vec<Entity<Workspace>> =
+                multi_workspace.read(cx).workspaces().cloned().collect();
+            let workspace_for_paths = |folder_paths: &PathList| -> Option<Entity<Workspace>> {
+                open_workspaces
+                    .iter()
+                    .find(|ws| workspace_path_list(ws, cx) == *folder_paths)
+                    .cloned()
+            };
+            for metadata in ThreadMetadataStore::global(cx).read(cx).archived_entries() {
+                if !seen_thread_ids.insert(metadata.thread_id) {
+                    continue;
+                }
+                let Some(workspace) = workspace_for_paths(metadata.folder_paths()) else {
+                    continue;
+                };
+                let project_name = workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .next()
+                    .map(|wt| SharedString::from(wt.read(cx).root_name_str().to_string()));
+                let timestamp: SharedString =
+                    format_history_entry_timestamp(Self::thread_display_time(metadata)).into();
+                // Inline icon resolution: the full `resolve_agent_icon` closure
+                // in `rebuild_contents` also surfaces custom-agent SVG icons via
+                // the agent_server_store, but that's only worth the plumbing if
+                // the archived-switcher rows visibly need it. Stick to a
+                // built-in icon by Agent kind.
+                let icon = match Agent::from(metadata.agent_id.clone()) {
+                    Agent::NativeAgent => IconName::ZedAgent,
+                    Agent::Custom { .. } => IconName::Terminal,
+                    _ => IconName::ZedAgent,
+                };
+                let icon_from_external_svg: Option<SharedString> = None;
+                let worktrees = worktree_info_from_thread_paths(
+                    &metadata.worktree_paths,
+                    &HashMap::new(),
+                );
+                entries.push(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
+                    title: metadata.display_title(),
+                    icon,
+                    icon_from_external_svg,
+                    status: AgentThreadStatus::Completed,
+                    metadata: metadata.clone(),
+                    workspace,
+                    project_name,
+                    worktrees,
+                    diff_stats: DiffStats::default(),
+                    is_draft: false,
+                    is_title_generating: false,
+                    notified: false,
+                    timestamp,
+                }));
+            }
+        }
 
         entries.sort_by(|a, b| self.switcher_entry_cmp(a, b));
 
