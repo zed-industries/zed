@@ -20,6 +20,7 @@ pub struct ProjectPanelSettings {
     pub entry_spacing: ProjectPanelEntrySpacing,
     pub file_icons: bool,
     pub folder_icons: bool,
+    pub language_based_file_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
@@ -105,6 +106,7 @@ impl Settings for ProjectPanelSettings {
             entry_spacing: project_panel.entry_spacing.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
             folder_icons: project_panel.folder_icons.unwrap(),
+            language_based_file_icons: project_panel.language_based_file_icons.unwrap(),
             git_status: project_panel.git_status.unwrap()
                 && content
                     .git

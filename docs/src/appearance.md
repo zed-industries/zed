@@ -61,6 +61,16 @@ Like color themes, icon themes support separate light and dark variants:
 }
 ```
 
+By default, file icons are determined by file name and extension. You can also have the project panel resolve file icons based on Zed's language detection, which respects custom [`file_types`](./configuring-languages.md#file-associations) mappings:
+
+```json [settings]
+{
+  "project_panel": {
+    "language_based_file_icons": true
+  }
+}
+```
+
 → [Icon Themes documentation](./icon-themes.md)
 
 ## Fonts

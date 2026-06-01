@@ -5297,7 +5297,12 @@ impl ProjectPanel {
         if settings.file_icons && show_editor && details.kind.is_file() {
             let filename = self.filename_editor.read(cx).text(cx);
             if filename.len() > 2 {
-                icon = FileIcons::get_icon(Path::new(&filename), cx);
+                icon = if settings.language_based_file_icons {
+                    self.get_language_based_icon(Path::new(&filename), cx)
+                } else {
+                    None
+                }
+                .or_else(|| FileIcons::get_icon(Path::new(&filename), cx));
             }
         }
 
@@ -6148,6 +6153,12 @@ impl ProjectPanel {
             )
     }
 
+    fn get_language_based_icon(&self, path: &Path, cx: &App) -> Option<SharedString> {
+        let languages = self.project.read(cx).languages();
+        let language = languages.language_for_file_path_with_settings(path, cx)?;
+        FileIcons::get_icon_for_language(language.name().as_ref(), cx)
+    }
+
     fn details_for_entry(
         &self,
         entry: &Entry,
@@ -6159,9 +6170,13 @@ impl ProjectPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EntryDetails {
-        let (show_file_icons, show_folder_icons) = {
+        let (show_file_icons, show_folder_icons, language_based_file_icons) = {
             let settings = ProjectPanelSettings::get_global(cx);
-            (settings.file_icons, settings.folder_icons)
+            (
+                settings.file_icons,
+                settings.folder_icons,
+                settings.language_based_file_icons,
+            )
         };
 
         let expanded_entry_ids = self
@@ -6175,7 +6190,12 @@ impl ProjectPanel {
         let icon = match entry.kind {
             EntryKind::File => {
                 if show_file_icons {
-                    FileIcons::get_icon(entry.path.as_std_path(), cx)
+                    if language_based_file_icons {
+                        self.get_language_based_icon(entry.path.as_std_path(), cx)
+                    } else {
+                        None
+                    }
+                    .or_else(|| FileIcons::get_icon(entry.path.as_std_path(), cx))
                 } else {
                     None
                 }
