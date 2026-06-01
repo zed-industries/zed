@@ -3943,10 +3943,15 @@ impl Workspace {
             return;
         };
 
-        multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace
-                .open_project(vec![expanded], OpenMode::Activate, window, cx)
-                .detach_and_log_err(cx);
+        // Defer entering MultiWorkspace until the Workspace listener returns
+        // and releases its mutable lease; otherwise MultiWorkspace::open_project
+        // panics when it tries to read the Workspace entity.
+        window.defer(cx, move |window, cx| {
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .open_project(vec![expanded], OpenMode::Activate, window, cx)
+                    .detach_and_log_err(cx);
+            });
         });
     }
 
