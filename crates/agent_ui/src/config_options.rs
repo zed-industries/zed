@@ -342,6 +342,14 @@ impl ConfigOptionSelector {
         }
     }
 
+    fn handles_category_keybindings(&self, category: &acp::SessionConfigOptionCategory) -> bool {
+        self.config_options
+            .config_options()
+            .into_iter()
+            .find(|option| option.category.as_ref() == Some(category))
+            .is_some_and(|option| option.id == self.config_id)
+    }
+
     fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
         let Some(option) = self.current_option() else {
             return Button::new("config-option-trigger", "Unknown")
@@ -375,6 +383,11 @@ impl Render for ConfigOptionSelector {
 
         let trigger_button = self.render_trigger_button(window, cx);
 
+        let show_category_keybindings = option
+            .category
+            .as_ref()
+            .is_some_and(|category| self.handles_category_keybindings(category));
+        let option_category = option.category.clone();
         let option_name = option.name.clone();
         let option_description: Option<SharedString> = option.description.map(Into::into);
 
@@ -399,7 +412,7 @@ impl Render for ConfigOptionSelector {
                     .child(keybinding)
             };
 
-            if let Some(category) = &option.category {
+            if show_category_keybindings && let Some(category) = &option_category {
                 match category {
                     acp::SessionConfigOptionCategory::Mode => {
                         content = content
