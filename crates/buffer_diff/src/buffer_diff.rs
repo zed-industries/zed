@@ -22,6 +22,8 @@ pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
+    /// Invariant: If you have any hunks they point to
+    /// valid places in the base and new text
     hunks: SumTree<InternalDiffHunk>,
     pending_hunks: SumTree<PendingHunk>,
     base_text_buffer: Entity<language::Buffer>,
@@ -1544,6 +1546,7 @@ impl BufferDiff {
         base_text_exists: bool,
         cx: &mut App,
     ) -> Self {
+        // FIXME this is wrong??
         let base_text = base_text_buffer.read(cx).snapshot();
 
         BufferDiff {
@@ -1730,6 +1733,7 @@ impl BufferDiff {
         })
     }
 
+    // FIXME get rid of this
     #[ztracing::instrument(skip_all)]
     pub fn language_changed(
         &mut self,

@@ -1,3 +1,4 @@
+use crate::file_diff_view::build_buffer_diff;
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};
@@ -138,42 +139,6 @@ fn common_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
     }
 
     Some(prefix)
-}
-
-async fn build_buffer_diff(
-    old_buffer: &Entity<Buffer>,
-    new_buffer: &Entity<Buffer>,
-    cx: &mut AsyncApp,
-) -> Result<Entity<BufferDiff>> {
-    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let base_text = Arc::<str>::from(old_buffer_snapshot.text());
-    let base_text_buffer = cx.new(|cx| {
-        let mut buffer = Buffer::local(base_text.to_string(), cx);
-        buffer.set_capability(Capability::ReadOnly, cx);
-        buffer
-    });
-    let base_text_snapshot = base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-
-    let diff = cx.new(|cx| {
-        BufferDiff::new_with_base_text_buffer(&new_buffer_snapshot.text, base_text_buffer, true, cx)
-    });
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                new_buffer_snapshot.text.clone(),
-                &base_text_snapshot,
-                Some(base_text.clone()),
-                new_buffer_snapshot.language().cloned(),
-                cx,
-            )
-        })
-        .await;
-
-    diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));
-
-    Ok(diff)
 }
 
 impl MultiDiffView {

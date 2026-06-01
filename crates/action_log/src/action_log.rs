@@ -7,7 +7,7 @@ use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferEvent, Capability, Point, ToOffset, ToPoint};
+use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{
     cmp,
@@ -159,37 +159,24 @@ impl ActionLog {
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let language = buffer.read(cx).language().cloned();
                 let language_registry = buffer.read(cx).language_registry();
+                let diff = cx.new(|cx| {
+                    let mut diff = BufferDiff::new(&text_snapshot, cx);
+                    diff.language_changed(language, language_registry, cx);
+                    diff
+                });
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
-                let base_text_exists;
                 if is_created {
                     diff_base = Rope::default();
                     unreviewed_edits = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
-                    }]);
-                    base_text_exists = false;
+                    }])
                 } else {
                     diff_base = buffer.read(cx).as_rope().clone();
                     unreviewed_edits = Patch::default();
-                    base_text_exists = true;
                 }
-                let base_text_buffer = cx.new(|cx| {
-                    let mut buffer = Buffer::local(diff_base.to_string(), cx);
-                    buffer.set_capability(Capability::ReadOnly, cx);
-                    buffer
-                });
-                let diff = cx.new(|cx| {
-                    let mut diff = BufferDiff::new_with_base_text_buffer(
-                        &text_snapshot,
-                        base_text_buffer,
-                        base_text_exists,
-                        cx,
-                    );
-                    diff.language_changed(language, language_registry, cx);
-                    diff
-                });
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     diff_base,
@@ -478,54 +465,20 @@ impl ActionLog {
         new_diff_base: Rope,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (diff, base_text_buffer, base_text_exists, language) =
-            this.read_with(cx, |this, cx| {
-                let tracked_buffer = this
-                    .tracked_buffers
-                    .get(buffer)
-                    .context("buffer not tracked")?;
-                anyhow::Ok((
-                    tracked_buffer.diff.clone(),
-                    tracked_buffer.diff.read(cx).base_text_buffer().clone(),
-                    !matches!(tracked_buffer.status, TrackedBufferStatus::Created { .. }),
-                    buffer.read(cx).language().cloned(),
-                ))
-            })??;
-        let base_text_diff = base_text_buffer.update(cx, |base_text_buffer, cx| {
-            base_text_buffer.diff(new_base_text.clone(), cx)
-        });
-        let base_text_diff = base_text_diff.await;
-        let edited_base_text = base_text_buffer.update(cx, |base_text_buffer, cx| {
-            base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
-            let edits = if base_text_buffer.version() == base_text_diff.base_version {
-                base_text_diff.edits
-            } else {
-                vec![(
-                    0..base_text_buffer.len(),
-                    text::LineEnding::normalize_arc(new_base_text.clone()),
-                )]
-            };
-            base_text_buffer.snapshot_with_edits(edits, cx)
-        });
-        let edited_base_text = edited_base_text.await;
-        let base_text_snapshot = edited_base_text.snapshot().clone();
-        let update = diff
-            .update(cx, |diff, cx| {
-                diff.update_diff(
-                    buffer_snapshot.clone(),
-                    &base_text_snapshot,
-                    base_text_exists.then(|| new_base_text.clone()),
-                    language,
-                    cx,
-                )
-            })
-            .await;
+        let (diff, language) = this.read_with(cx, |this, cx| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get(buffer)
+                .context("buffer not tracked")?;
+            anyhow::Ok((
+                tracked_buffer.diff.clone(),
+                buffer.read(cx).language().cloned(),
+            ))
+        })??;
         diff.update(cx, |diff, cx| {
-            base_text_buffer.update(cx, |base_text_buffer, cx| {
-                base_text_buffer.fast_forward(edited_base_text, cx)
-            });
-            diff.set_snapshot(update.clone(), cx)
-        });
+            diff.set_base_text(Some(new_base_text), language, buffer_snapshot.clone(), cx)
+        })
+        .await?;
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
 
         let unreviewed_edits = cx

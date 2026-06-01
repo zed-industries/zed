@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, Capability, HighlightedText, LanguageRegistry};
+use language::{Buffer, HighlightedText};
 use project::Project;
 use settings::Settings;
 use std::{
@@ -53,9 +53,8 @@ impl FileDiffView {
             let new_buffer = project
                 .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))
                 .await?;
-            let languages = project.update(cx, |project, _| project.languages().clone());
 
-            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, languages, cx).await?;
+            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_entity = cx.entity();
@@ -170,46 +169,25 @@ impl FileDiffView {
 }
 
 #[ztracing::instrument(skip_all)]
-async fn build_buffer_diff(
+pub(crate) async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
-    language_registry: Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
     let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let base_text = Arc::<str>::from(old_buffer_snapshot.text());
-    let base_text_buffer = cx.new(|cx| {
-        let mut buffer = Buffer::local(base_text.to_string(), cx);
-        buffer.set_capability(Capability::ReadOnly, cx);
-        buffer
-    });
-    let base_text_snapshot = base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-    let diff = cx.new(|cx| {
-        BufferDiff::new_with_base_text_buffer(&new_buffer_snapshot.text, base_text_buffer, true, cx)
-    });
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                new_buffer_snapshot.text.clone(),
-                &base_text_snapshot,
-                Some(base_text.clone()),
-                new_buffer_snapshot.language().cloned(),
-                cx,
-            )
-        })
-        .await;
+    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(
+        diff.set_base_text(
+            Some(old_buffer_snapshot.text().into()),
             new_buffer_snapshot.language().cloned(),
-            Some(language_registry),
+            new_buffer_snapshot.text.clone(),
             cx,
-        );
-        diff.set_snapshot(update, cx)
-    });
+        )
+    })
+    .await?;
 
     Ok(diff)
 }

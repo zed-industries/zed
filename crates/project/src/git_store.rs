@@ -1000,50 +1000,23 @@ impl GitStore {
                             content.into()
                         }),
                     };
-                    let base_text_exists = content.is_some();
-                    let base_text = content.as_deref().unwrap_or_default().to_owned();
-                    let base_text_buffer = cx.new(|cx| {
-                        let mut buffer = Buffer::local(base_text, cx);
-                        buffer.set_capability(Capability::ReadOnly, cx);
-                        buffer
-                    });
-                    base_text_buffer.update(cx, |base_text_buffer, cx| {
-                        if let Some(language_registry) = language_registry.clone() {
-                            base_text_buffer.set_language_registry(language_registry);
-                        }
-                        base_text_buffer
-                            .set_language_async(buffer_snapshot.language().cloned(), cx);
-                    });
-                    let base_text_snapshot =
-                        base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                    let buffer_diff = cx.new(|cx| {
-                        BufferDiff::new_with_base_text_buffer(
-                            &buffer_snapshot.text,
-                            base_text_buffer.clone(),
-                            base_text_exists,
-                            cx,
-                        )
-                    });
+                    let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
 
-                    let update = buffer_diff
+                    buffer_diff
                         .update(cx, |buffer_diff, cx| {
-                            buffer_diff.update_diff(
-                                buffer_snapshot.text.clone(),
-                                &base_text_snapshot,
+                            buffer_diff.language_changed(
+                                buffer_snapshot.language().cloned(),
+                                language_registry,
+                                cx,
+                            );
+                            buffer_diff.set_base_text(
                                 content.clone(),
                                 buffer_snapshot.language().cloned(),
+                                buffer_snapshot.text,
                                 cx,
                             )
                         })
-                        .await;
-                    buffer_diff.update(cx, |buffer_diff, cx| {
-                        buffer_diff.language_changed(
-                            buffer_snapshot.language().cloned(),
-                            language_registry,
-                            cx,
-                        );
-                        buffer_diff.set_snapshot(update, cx)
-                    });
+                        .await?;
                     let unstaged_diff = this
                         .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
                         .await?;
@@ -1064,12 +1037,11 @@ impl GitStore {
                             .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
 
                         diff_state.update(cx, |state, _| {
-                            if let Some(oid) = oid
-                                && let Some(content) = content
-                            {
-                                state.oid_texts.insert(oid, content);
+                            if let Some(oid) = oid {
+                                if let Some(content) = content {
+                                    state.oid_texts.insert(oid, content);
+                                }
                             }
-                            state.oid_text_buffers.insert(oid, base_text_buffer.clone());
                             state.oid_diffs.insert(oid, buffer_diff.downgrade());
                         });
                     })?;

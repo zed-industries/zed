@@ -15,8 +15,8 @@ use gpui::{
     PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
-    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
-    Point, ReplicaId, Rope, TextBuffer,
+    Anchor, Buffer, Capability, DiskState, File, LineEnding, OffsetRangeExt as _, Point, ReplicaId,
+    Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
@@ -389,7 +389,7 @@ impl CommitView {
                 let buffer_diff = if is_binary {
                     None
                 } else {
-                    Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await?)
+                    Some(build_buffer_diff(old_text, &buffer, cx).await?)
                 };
 
                 this.update(cx, |this, cx| {
@@ -872,44 +872,26 @@ async fn build_buffer(
 async fn build_buffer_diff(
     mut old_text: Option<String>,
     buffer: &Entity<Buffer>,
-    language_registry: &Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
     if let Some(old_text) = &mut old_text {
         LineEnding::normalize(old_text);
     }
 
-    let base_text = old_text.map(Arc::<str>::from);
-    let base_text_exists = base_text.is_some();
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
     let buffer = cx.update(|cx| buffer.read(cx).snapshot());
-    let base_text_buffer = cx.new(|cx| {
-        let mut buffer = Buffer::local(base_text.as_deref().unwrap_or_default().to_owned(), cx);
-        buffer.set_capability(Capability::ReadOnly, cx);
-        buffer
-    });
-    let base_text_snapshot = base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-    let diff = cx.new(|cx| {
-        BufferDiff::new_with_base_text_buffer(&buffer.text, base_text_buffer, base_text_exists, cx)
-    });
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.text.clone(),
-                &base_text_snapshot,
-                base_text.clone(),
-                language.clone(),
-                cx,
-            )
-        })
-        .await;
+    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, cx)
-    });
+        diff.set_base_text(
+            old_text.map(|old_text| Arc::from(old_text.as_str())),
+            language,
+            buffer.text.clone(),
+            cx,
+        )
+    })
+    .await?;
 
     Ok(diff)
 }
