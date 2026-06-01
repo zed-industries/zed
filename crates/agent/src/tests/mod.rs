@@ -3560,7 +3560,6 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     assert_eq!(
         listed_models[&AgentModelGroupName("Fake".into())][0]
             .id
-            .0
             .as_ref(),
         "fake/fake"
     );
