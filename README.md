@@ -14,16 +14,9 @@ In `crates/zed/src/main.rs` and `crates/remote_server/src/server.rs`, I changed 
 
 ## Development note
 
-To have easier Zed's `main` branch merges, I am not really adding or modifying existing unit tests to my own functionality, so some are failing. I try to satisfy `./script/clippy`, though.
+To have easier Zed's `main` branch merges, I am not really adding or modifying existing unit tests to my own functionality, so some are failing. I try to satisfy `./script/clippy`, though, when I feel like it.
 
----
-
-AI is heavily used for pretty much every feature implemented. I use a mix of those models, all free:
-- Google's Gemini 3 Pro (https://aistudio.google.com/prompts/new_chat)
-- OpenCode (which often has free models)
-- Windsurf's free models (usually SWE)
-
-For anything more complicated, I use the Architect + Editor pattern (see https://aider.chat/2024/09/26/architect.html) with Gemini 3 Pro being the Architect and the other models being the Editor.
+And yes, AI is heavily used for pretty much every feature implemented.
 
 ## Sync this fork's main branch with Zed's main branch and merge into my custom dima branch
 
