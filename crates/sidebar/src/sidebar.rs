@@ -6003,7 +6003,6 @@ impl Sidebar {
             })
             .on_click({
                 let thread_workspace = thread_workspace.clone();
-                let metadata = metadata.clone();
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
                     match &thread_workspace {
@@ -6057,7 +6056,7 @@ impl Sidebar {
             .menu({
                 let thread_id = thread.metadata.thread_id;
                 let markdown_title = Some(thread.metadata.display_title());
-                let rename_title = title.clone();
+                let rename_title = title;
                 move |_window, cx| {
                     let session_id = session_id.clone();
                     let sidebar = sidebar.clone();
@@ -6147,7 +6146,6 @@ impl Sidebar {
 
                         menu.separator().entry("Archive Thread", None, {
                             let session_id = session_id.clone();
-                            let sidebar = sidebar.clone();
                             move |window, cx| {
                                 sidebar
                                     .update(cx, |sidebar, cx| {
