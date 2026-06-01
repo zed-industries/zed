@@ -5,11 +5,14 @@ use settings::RegisterSetting;
 
 use crate::provider::{
     anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
-    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    opencode::OpenCodeSettings, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    deepseek::DeepSeekSettings, google::GoogleSettings, kimi::KimiSettings,
+    lmstudio::LmStudioSettings, mistral::MistralSettings, ollama::OllamaSettings,
+    open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router::OpenRouterSettings, opencode::OpenCodeSettings,
+    vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
+
+const DEFAULT_KIMI_MAX_OUTPUT_TOKENS: u64 = 32_000;
 
 #[derive(Debug, RegisterSetting)]
 pub struct AllLanguageModelSettings {
@@ -17,6 +20,7 @@ pub struct AllLanguageModelSettings {
     pub bedrock: AmazonBedrockSettings,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
+    pub kimi: KimiSettings,
     pub lmstudio: LmStudioSettings,
     pub mistral: MistralSettings,
     pub ollama: OllamaSettings,
@@ -38,6 +42,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let bedrock = language_models.bedrock.unwrap();
         let deepseek = language_models.deepseek.unwrap();
         let google = language_models.google.unwrap();
+        let kimi = language_models.kimi.unwrap();
         let lmstudio = language_models.lmstudio.unwrap();
         let mistral = language_models.mistral.unwrap();
         let ollama = language_models.ollama.unwrap();
@@ -71,6 +76,13 @@ impl settings::Settings for AllLanguageModelSettings {
             google: GoogleSettings {
                 api_url: google.api_url.unwrap(),
                 available_models: google.available_models.unwrap_or_default(),
+            },
+            kimi: KimiSettings {
+                api_url: kimi.api_url.unwrap(),
+                available_models: kimi.available_models.unwrap_or_default(),
+                max_output_tokens: kimi
+                    .max_output_tokens
+                    .unwrap_or(DEFAULT_KIMI_MAX_OUTPUT_TOKENS),
             },
             lmstudio: LmStudioSettings {
                 api_url: lmstudio.api_url.unwrap(),

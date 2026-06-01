@@ -270,10 +270,9 @@ impl LanguageModels {
                             // that we know are safe to ignore here, like what we do
                             // with `CredentialsNotFound` above.
                             match provider_id.0.as_ref() {
-                                "lmstudio" | "ollama" => {
-                                    // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
-                                    //
-                                    // These fail noisily, so we don't log them.
+                                "kimi" | "lmstudio" | "ollama" => {
+                                    // Kimi, LM Studio and Ollama return errors when not authenticated.
+                                    // These fail noisily during background startup auth, so we don't log them.
                                 }
                                 "copilot_chat" => {
                                     // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.

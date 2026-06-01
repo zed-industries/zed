@@ -14,6 +14,7 @@ pub struct AllLanguageModelSettingsContent {
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub kimi: Option<KimiSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
@@ -95,6 +96,25 @@ pub enum BedrockAuthMethodContent {
     /// IMDSv2, PodIdentity, env vars, etc.
     #[serde(rename = "default")]
     Automatic,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct KimiSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<KimiAvailableModel>>,
+    /// Maximum output tokens for Kimi models. Default is 32000.
+    pub max_output_tokens: Option<u64>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KimiAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub supports_images: Option<bool>,
 }
 
 #[with_fallible_options]

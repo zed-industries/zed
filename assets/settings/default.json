@@ -2366,6 +2366,9 @@
     "google": {
       "api_url": "https://generativelanguage.googleapis.com",
     },
+    "kimi": {
+      "api_url": "https://api.kimi.com/coding/v1",
+    },
     "ollama": {
       "api_url": "http://localhost:11434",
     },
