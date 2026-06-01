@@ -5,7 +5,7 @@ use action_log::DiffStats;
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
-    TerminalThreadMetadata, TerminalThreadMetadataStore,
+    TerminalThreadMetadata, TerminalThreadMetadataStore, terminal_title_prefix,
 };
 use agent_ui::thread_metadata_store::{
     ThreadMetadata, ThreadMetadataStore, WorktreePaths, worktree_info_from_thread_paths,
@@ -55,6 +55,7 @@ use ui::{
     Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
     prelude::*, render_modifiers,
 };
+use unicode_segmentation::UnicodeSegmentation as _;
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
@@ -226,24 +227,23 @@ impl ThreadEntryWorkspace {
     }
 }
 
-/// If the title begins with a non-letter, non-whitespace character (such as a
-/// leading emoji or symbol the user prefixed their title with), splits that
-/// character out so it can be displayed in place of the entry's icon
+/// If the title begins with a decorative prefix (such as a leading emoji,
+/// spinner glyph, or symbol the agent prefixed the title with), splits that
+/// prefix off so a single representative glyph can be displayed in place of the
+/// entry's icon.
 fn split_leading_icon_char(
     title: &SharedString,
     highlight_positions: &[usize],
 ) -> Option<(SharedString, SharedString, Vec<usize>)> {
-    let first_char = title.chars().next()?;
-    if first_char.is_alphabetic() || first_char.is_whitespace() {
-        return None;
-    }
+    let prefix = terminal_title_prefix(title)?;
+    let icon_char = pick_icon_glyph(prefix)?;
 
-    let trimmed_title = title[first_char.len_utf8()..].trim_start();
+    let stripped_len = prefix.len();
+    let trimmed_title = &title[stripped_len..];
     if trimmed_title.is_empty() {
         return None;
     }
 
-    let stripped_len = title.len() - trimmed_title.len();
     let adjusted_positions = highlight_positions
         .iter()
         .filter(|&&position| position >= stripped_len)
@@ -251,10 +251,51 @@ fn split_leading_icon_char(
         .collect();
 
     Some((
-        first_char.to_string().into(),
+        icon_char,
         trimmed_title.to_string().into(),
         adjusted_positions,
     ))
+}
+
+/// Picks a single glyph to render as the icon from a detected title prefix.
+///
+/// We only ever show one glyph, so this makes a best effort to choose a
+/// meaningful one by glancing at the leading characters of the prefix:
+/// runs of `.` are condensed into a single ellipsis, surrounding ASCII brackets
+/// are stripped (so `[!]` yields `!`), and a leading run of the same character
+/// is collapsed (so `>>>` yields `>`). The result is the first grapheme cluster
+/// of whatever remains, keeping multi-codepoint emoji intact.
+fn pick_icon_glyph(prefix: &str) -> Option<SharedString> {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return None;
+    }
+
+    // Condense a leading run of dots (`...`) into a single ellipsis.
+    if prefix.starts_with("..") {
+        return Some("\u{2026}".into());
+    }
+
+    // Strip a single pair of surrounding ASCII brackets, e.g. `[!]` -> `!`.
+    let unwrapped = match prefix.chars().next() {
+        Some('[') => prefix.strip_prefix('[').and_then(|s| s.strip_suffix(']')),
+        Some('(') => prefix.strip_prefix('(').and_then(|s| s.strip_suffix(')')),
+        Some('{') => prefix.strip_prefix('{').and_then(|s| s.strip_suffix('}')),
+        Some('<') => prefix.strip_prefix('<').and_then(|s| s.strip_suffix('>')),
+        _ => None,
+    };
+    let prefix = unwrapped
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(prefix);
+
+    // Take the first grapheme cluster so multi-codepoint emoji stay intact.
+    let first_grapheme = prefix.graphemes(true).next()?;
+    if first_grapheme.trim().is_empty() {
+        return None;
+    }
+
+    Some(first_grapheme.to_string().into())
 }
 
 fn draft_display_label_for_thread_metadata(
