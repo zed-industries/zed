@@ -1507,9 +1507,9 @@ impl FileFinderDelegate {
 
         let open_task = workspace.update(cx, |workspace, cx| {
             let split_or_open = |workspace: &mut Workspace,
-                                  project_path,
-                                  window: &mut Window,
-                                  cx: &mut Context<Workspace>| {
+                                 project_path,
+                                 window: &mut Window,
+                                 cx: &mut Context<Workspace>| {
                 let allow_preview =
                     PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                 if secondary {
@@ -1530,13 +1530,7 @@ impl FileFinderDelegate {
             match &m {
                 Match::CreateNew(project_path) => {
                     if secondary {
-                        workspace.split_path_preview(
-                            project_path.clone(),
-                            false,
-                            None,
-                            window,
-                            cx,
-                        )
+                        workspace.split_path_preview(project_path.clone(), false, None, window, cx)
                     } else {
                         workspace.open_path_preview(
                             project_path.clone(),

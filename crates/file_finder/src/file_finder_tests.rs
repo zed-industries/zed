@@ -4015,7 +4015,11 @@ async fn test_open_without_dismiss_opens_multiple_files(cx: &mut TestAppContext)
     });
     cx.read(|cx| {
         let pane = workspace.read(cx).active_pane().read(cx);
-        assert_eq!(pane.items().count(), 1, "One file open after first OpenWithoutDismiss");
+        assert_eq!(
+            pane.items().count(),
+            1,
+            "One file open after first OpenWithoutDismiss"
+        );
     });
 
     // Navigate to the next result and open it too.
@@ -4031,7 +4035,11 @@ async fn test_open_without_dismiss_opens_multiple_files(cx: &mut TestAppContext)
     });
     cx.read(|cx| {
         let pane = workspace.read(cx).active_pane().read(cx);
-        assert_eq!(pane.items().count(), 2, "Two files open after second OpenWithoutDismiss");
+        assert_eq!(
+            pane.items().count(),
+            2,
+            "Two files open after second OpenWithoutDismiss"
+        );
         // The second opened file should now be the active tab.
         let active_index = pane.active_item_index();
         assert_eq!(active_index, 1, "Second file should be the active tab");
