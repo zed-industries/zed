@@ -52,25 +52,25 @@ impl SandboxRequest {
 }
 
 /// In-memory record of the sandbox permissions the user approved "for the
-/// rest of the conversation".
+/// rest of the thread".
 ///
 /// Lives on the `Thread` and is shared (via `Rc<RefCell<…>>`) with each tool
 /// call's event stream so a later command requesting an already-granted
 /// permission can skip the approval prompt. Persistent "allow always" grants
 /// are stored separately in [`SandboxPermissions`].
 #[derive(Default)]
-pub(crate) struct ConversationSandboxGrants {
+pub(crate) struct ThreadSandboxGrants {
     network: bool,
     allow_fs_write_all: bool,
-    /// Canonicalized paths granted write access for the conversation. Each
-    /// covers its whole subtree; redundant children are pruned on insert.
+    /// Canonicalized paths granted write access for the thread. Each covers its
+    /// whole subtree; redundant children are pruned on insert.
     write_paths: Vec<PathBuf>,
 }
 
-impl ConversationSandboxGrants {
-    /// Whether the union of conversation grants and persistent "allow always"
-    /// grants covers everything `request` asks for, so the command can run
-    /// without prompting again.
+impl ThreadSandboxGrants {
+    /// Whether the union of thread grants and persistent "allow always" grants
+    /// covers everything `request` asks for, so the command can run without
+    /// prompting again.
     ///
     /// Write coverage is pure subtree containment: every requested path must
     /// sit under some granted path. This is fully deterministic and never
@@ -99,8 +99,8 @@ impl ConversationSandboxGrants {
         })
     }
 
-    /// Record everything in `request` as granted for the rest of the
-    /// conversation, pruning paths that become redundant.
+    /// Record everything in `request` as granted for the rest of the thread,
+    /// pruning paths that become redundant.
     pub fn record(&mut self, request: &SandboxRequest) {
         self.network |= request.network;
         self.allow_fs_write_all |= request.allow_fs_write_all;
@@ -110,14 +110,14 @@ impl ConversationSandboxGrants {
     }
 
     /// Compute the effective sandbox permissions to enforce for a command: the
-    /// union of persistent "allow always" grants, conversation grants, and this
+    /// union of persistent "allow always" grants, thread grants, and this
     /// specific command's request.
     ///
     /// This is what makes standing grants "stick": every sandboxed command
     /// applies the accumulated grants, so the model can write to a previously
     /// approved path without re-requesting it. Passing the current `request` in
     /// also covers "allow once" grants, which are enforced for this command
-    /// without being recorded for the conversation.
+    /// without being recorded for the thread.
     pub fn effective_with_persistent(
         &self,
         request: &SandboxRequest,
@@ -163,17 +163,17 @@ mod tests {
         }
     }
 
-    fn covers(grants: &ConversationSandboxGrants, request: &SandboxRequest) -> bool {
+    fn covers(grants: &ThreadSandboxGrants, request: &SandboxRequest) -> bool {
         grants.covers_with_persistent(request, &SandboxPermissions::default())
     }
 
-    fn effective(grants: &ConversationSandboxGrants, request: &SandboxRequest) -> SandboxRequest {
+    fn effective(grants: &ThreadSandboxGrants, request: &SandboxRequest) -> SandboxRequest {
         grants.effective_with_persistent(request, &SandboxPermissions::default())
     }
 
     #[test]
     fn empty_grants_cover_nothing() {
-        let grants = ConversationSandboxGrants::default();
+        let grants = ThreadSandboxGrants::default();
         assert!(!covers(&grants, &request(true, false, &[])));
         assert!(!covers(&grants, &request(false, true, &[])));
         assert!(!covers(&grants, &request(false, false, &["/tmp/build"])));
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn subtree_containment_covers_children() {
-        let mut grants = ConversationSandboxGrants::default();
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(false, false, &["/tmp/build"]));
 
         // Exact match and any descendant are covered.
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn record_prunes_redundant_children() {
-        let mut grants = ConversationSandboxGrants::default();
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(false, false, &["/tmp/build/cache"]));
         grants.record(&request(false, false, &["/tmp/build"]));
         assert_eq!(grants.write_paths, vec![PathBuf::from("/tmp/build")]);
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn record_keeps_existing_broader_grant() {
-        let mut grants = ConversationSandboxGrants::default();
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(false, false, &["/tmp/build"]));
         grants.record(&request(false, false, &["/tmp/build/cache"]));
         assert_eq!(grants.write_paths, vec![PathBuf::from("/tmp/build")]);
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn all_access_covers_any_concrete_write() {
-        let mut grants = ConversationSandboxGrants::default();
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(false, true, &[]));
         assert!(covers(
             &grants,
@@ -225,15 +225,15 @@ mod tests {
 
     #[test]
     fn network_grant_tracked_independently() {
-        let mut grants = ConversationSandboxGrants::default();
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(true, false, &[]));
         assert!(covers(&grants, &request(true, false, &[])));
         assert!(!covers(&grants, &request(true, false, &["/tmp/build"])));
     }
 
     #[test]
-    fn persistent_grants_combine_with_conversation_grants() {
-        let mut grants = ConversationSandboxGrants::default();
+    fn persistent_grants_combine_with_thread_grants() {
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(true, false, &[]));
         let persistent = SandboxPermissions {
             allow_network: false,
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn persistent_all_access_covers_concrete_writes() {
-        let grants = ConversationSandboxGrants::default();
+        let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
             allow_network: false,
             allow_fs_write_all: true,
@@ -265,10 +265,10 @@ mod tests {
     }
 
     #[test]
-    fn effective_applies_conversation_grants_to_empty_request() {
+    fn effective_applies_thread_grants_to_empty_request() {
         // The core fix: a command that requests nothing still gets the
-        // conversation's granted write paths in its enforced policy.
-        let mut grants = ConversationSandboxGrants::default();
+        // thread's granted write paths in its enforced policy.
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(false, false, &["/tmp/build"]));
 
         let effective = effective(&grants, &request(false, false, &[]));
@@ -279,7 +279,7 @@ mod tests {
     fn effective_unions_grants_with_once_request() {
         // An "allow once" path (passed via `request`, never recorded) is
         // enforced for this command alongside the standing grants.
-        let mut grants = ConversationSandboxGrants::default();
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(true, false, &["/tmp/build"]));
 
         let effective = effective(&grants, &request(false, false, &["/tmp/once"]));
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn effective_applies_persistent_grants_to_empty_request() {
-        let grants = ConversationSandboxGrants::default();
+        let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
             allow_network: true,
             allow_fs_write_all: false,
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn effective_dedupes_request_already_covered_by_grant() {
-        let mut grants = ConversationSandboxGrants::default();
+        let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(false, false, &["/tmp/build"]));
 
         let effective = effective(&grants, &request(false, false, &["/tmp/build/cache"]));

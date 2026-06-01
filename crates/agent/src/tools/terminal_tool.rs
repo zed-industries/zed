@@ -319,7 +319,7 @@ impl AgentTool for SandboxedTerminalTool {
             } else if request.needs_escalation() {
                 let title = sandbox_approval_title(&request);
                 // Sandbox escalations always prompt (unless already granted
-                // for the conversation), independent of any `always_allow`
+                // for the thread), independent of any `always_allow`
                 // tool-permission rules — the escalation is a stronger trust
                 // boundary than the baseline command approval.
                 let approve =
@@ -340,9 +340,9 @@ impl AgentTool for SandboxedTerminalTool {
             // project.
             let sandbox_wrap = if sandboxing && !want_unsandboxed {
                 // Apply standing grants on top of this command's request, so
-                // a path approved "for the rest of the conversation" or
-                // "always" stays writable for later commands even when the
-                // model doesn't re-request it.
+                // a path approved "for the rest of the thread" or "always"
+                // stays writable for later commands even when the model
+                // doesn't re-request it.
                 let sandbox_permissions = cx.update(|cx| {
                     agent_settings::AgentSettings::get_global(cx)
                         .sandbox_permissions

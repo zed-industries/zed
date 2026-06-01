@@ -7560,8 +7560,8 @@ pub(crate) mod tests {
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new("allow_conversation"),
-                "Allow for this conversation",
+                acp::PermissionOptionId::new("allow_thread"),
+                "Allow for this thread",
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(

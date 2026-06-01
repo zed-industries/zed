@@ -15,7 +15,7 @@ use feature_flags::{
     UpdateTitleToolFeatureFlag,
 };
 
-use crate::sandboxing::{ConversationSandboxGrants, SandboxRequest, sandboxing_enabled};
+use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
@@ -1011,11 +1011,11 @@ pub struct Thread {
     running_subagents: Vec<WeakEntity<Thread>>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
-    /// Sandbox permissions the user approved "for the rest of the
-    /// conversation". Shared with each tool call's event stream so repeated
-    /// requests for already-granted permissions skip the approval prompt.
+    /// Sandbox permissions the user approved "for the rest of the thread".
+    /// Shared with each tool call's event stream so repeated requests for
+    /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
-    sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
+    sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
 }
 
 impl Thread {
@@ -1143,7 +1143,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
-            sandbox_grants: Rc::new(RefCell::new(ConversationSandboxGrants::default())),
+            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         }
     }
 
@@ -1488,7 +1488,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
-            sandbox_grants: Rc::new(RefCell::new(ConversationSandboxGrants::default())),
+            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         }
     }
 
@@ -3873,8 +3873,8 @@ pub struct ToolCallEventStream {
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
     cancellation_rx: watch::Receiver<bool>,
-    /// Shared, conversation-scoped sandbox grants (see [`Thread::sandbox_grants`]).
-    sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
+    /// Shared, thread-scoped sandbox grants (see [`Thread::sandbox_grants`]).
+    sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
 }
 
 impl ToolCallEventStream {
@@ -3894,7 +3894,7 @@ impl ToolCallEventStream {
             ThreadEventStream(events_tx),
             None,
             cancellation_rx,
-            Rc::new(RefCell::new(ConversationSandboxGrants::default())),
+            Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         );
 
         (
@@ -3915,7 +3915,7 @@ impl ToolCallEventStream {
         stream: ThreadEventStream,
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
-        sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
+        sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
     ) -> Self {
         Self {
             tool_use_id,
@@ -4109,10 +4109,10 @@ impl ToolCallEventStream {
     /// filesystem write access) on user approval.
     ///
     /// Offers the user three grant lifetimes — "once", "for the rest of this
-    /// conversation", and "always". Conversation grants live in the shared,
-    /// in-memory [`ConversationSandboxGrants`]. Always grants are persisted in
-    /// agent settings and are also observed while a prompt is pending, matching
-    /// the settings-driven authorization flow for regular tools.
+    /// thread", and "always". Thread grants live in the shared, in-memory
+    /// [`ThreadSandboxGrants`]. Always grants are persisted in agent settings
+    /// and are also observed while a prompt is pending, matching the
+    /// settings-driven authorization flow for regular tools.
     pub(crate) fn authorize_sandbox(
         &self,
         title: impl Into<String>,
@@ -4136,8 +4136,8 @@ impl ToolCallEventStream {
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new("allow_conversation"),
-                "Allow for this conversation",
+                acp::PermissionOptionId::new("allow_thread"),
+                "Allow for this thread",
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
@@ -4228,7 +4228,7 @@ impl ToolCallEventStream {
 
     fn sandbox_request_covered_by_grants(
         request: &SandboxRequest,
-        sandbox_grants: &Rc<RefCell<ConversationSandboxGrants>>,
+        sandbox_grants: &Rc<RefCell<ThreadSandboxGrants>>,
         cx: &App,
     ) -> bool {
         let settings = AgentSettings::get_global(cx);
@@ -4240,7 +4240,7 @@ impl ToolCallEventStream {
     fn handle_sandbox_permission_outcome(
         outcome: &acp_thread::SelectedPermissionOutcome,
         request: &SandboxRequest,
-        sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
+        sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
         fs: Option<Arc<dyn Fs>>,
         cx: &AsyncApp,
     ) -> Result<()> {
@@ -4251,7 +4251,7 @@ impl ToolCallEventStream {
 
         match outcome.option_id.0.as_ref() {
             "allow" => Ok(()),
-            "allow_conversation" => {
+            "allow_thread" => {
                 sandbox_grants.borrow_mut().record(request);
                 Ok(())
             }
@@ -4890,7 +4890,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             option_ids,
-            vec!["allow", "allow_conversation", "allow_always", "deny"]
+            vec!["allow", "allow_thread", "allow_always", "deny"]
         );
 
         let send_result = authorization

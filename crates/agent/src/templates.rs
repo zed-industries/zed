@@ -44,7 +44,7 @@ pub struct SystemPromptTemplate<'a> {
     /// platform equivalent), if present and non-empty.
     pub user_agents_md: Option<SharedString>,
     /// Whether agent-run terminal commands are wrapped in an OS-level
-    /// sandbox for this conversation. When `true`, the rendered prompt
+    /// sandbox for this thread. When `true`, the rendered prompt
     /// describes the sandbox's read/write/network rules and the
     /// per-command flags the model can request to relax them. When
     /// `false`, the prompt omits the sandbox section entirely.
@@ -196,7 +196,7 @@ mod tests {
         assert!(rendered.contains("fs_write_paths"));
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));
-        assert!(rendered.contains("remain in effect for the entire duration"));
+        assert!(rendered.contains("for the rest of the thread"));
     }
 
     #[test]
