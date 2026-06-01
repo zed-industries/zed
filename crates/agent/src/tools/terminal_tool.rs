@@ -2026,21 +2026,6 @@ mod tests {
         assert!(schema_text.contains("waste tokens or exceed the context window"));
     }
 
-    #[test]
-    fn test_terminal_tool_without_tail_schema_omits_head_and_tail_parameters() {
-        let description = <TerminalToolWithoutTail as crate::AgentTool>::description().to_string();
-        let schema = <TerminalToolWithoutTail as crate::AgentTool>::input_schema(
-            language_model::LanguageModelToolSchemaFormat::JsonSchema,
-        );
-        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
-        let schema_text = schema_json.to_string();
-
-        assert!(!description.contains("head_lines"));
-        assert!(!description.contains("tail_lines"));
-        assert!(!schema_text.contains("head_lines"));
-        assert!(!schema_text.contains("tail_lines"));
-    }
-
     async fn assert_rejected_before_terminal_creation(
         command: &str,
         cx: &mut gpui::TestAppContext,

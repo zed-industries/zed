@@ -11,8 +11,8 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, TerminalTailFeatureFlag,
-    UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
+    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+    UpdateTitleToolFeatureFlag,
 };
 
 use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};

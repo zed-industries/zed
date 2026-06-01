@@ -162,15 +162,3 @@ impl FeatureFlag for SandboxingFeatureFlag {
     }
 }
 register_feature_flag!(SandboxingFeatureFlag);
-
-pub struct TerminalTailFeatureFlag;
-
-impl FeatureFlag for TerminalTailFeatureFlag {
-    const NAME: &'static str = "terminal-tail";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(TerminalTailFeatureFlag);
