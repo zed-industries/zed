@@ -70,7 +70,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ViewId,
+    ToolbarItemLocation, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -915,6 +915,49 @@ fn test_clone(cx: &mut TestAppContext) {
                 .display_ranges(&e.display_snapshot(cx)))
             .unwrap()
     );
+}
+
+#[gpui::test]
+fn test_toggle_breadcrumb_does_not_change_settings(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().breadcrumbs = Some(true);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("hello", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(
+            editor.breadcrumb_location(cx),
+            ToolbarItemLocation::PrimaryLeft
+        );
+
+        editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(editor.breadcrumb_location(cx), ToolbarItemLocation::Hidden);
+    });
+
+    // Changing unrelated settings should not affect breadcrumbs visibility.
+    update_test_editor_settings(cx, &|settings| {
+        settings.vertical_scroll_margin = Some(4.0);
+    });
+    cx.run_until_parked();
+
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(editor.breadcrumb_location(cx), ToolbarItemLocation::Hidden);
+
+        editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(
+            editor.breadcrumb_location(cx),
+            ToolbarItemLocation::PrimaryLeft
+        );
+    });
 }
 
 #[gpui::test]
