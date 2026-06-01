@@ -50,7 +50,8 @@ use crate::{
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
+    SystemNotificationId, SystemNotificationPermission, Task, TextRenderingMode, TextSystem,
     ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
     WindowInvalidator,
     colors::{Colors, GlobalColors},
@@ -1336,6 +1337,28 @@ impl App {
     /// schemes at runtime.
     pub fn register_url_scheme(&self, scheme: &str) -> Task<Result<()>> {
         self.platform.register_url_scheme(scheme)
+    }
+
+    /// Returns the current platform system notification permission state.
+    pub fn system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        self.platform.system_notification_permission()
+    }
+
+    /// Requests permission to show system notifications, when the platform supports it.
+    pub fn request_system_notification_permission(
+        &self,
+    ) -> Task<Result<SystemNotificationPermission>> {
+        self.platform.request_system_notification_permission()
+    }
+
+    /// Shows or updates a platform system notification.
+    pub fn show_system_notification(&self, notification: SystemNotification) -> Task<Result<()>> {
+        self.platform.show_system_notification(notification)
+    }
+
+    /// Removes a platform system notification by ID.
+    pub fn remove_system_notification(&self, id: SystemNotificationId) -> Task<Result<()>> {
+        self.platform.remove_system_notification(id)
     }
 
     /// Returns the full pathname of the current app bundle.

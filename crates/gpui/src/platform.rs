@@ -112,6 +112,53 @@ pub fn guess_compositor() -> &'static str {
     }
 }
 
+/// A stable identifier for an OS-level notification.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SystemNotificationId(
+    /// The platform-specific notification identifier.
+    pub SharedString,
+);
+
+/// An OS-level notification to show through the active platform.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemNotification {
+    /// The stable identifier used to update or remove this notification.
+    pub id: SystemNotificationId,
+    /// The notification title.
+    pub title: SharedString,
+    /// Optional detail text for the notification.
+    pub body: Option<SharedString>,
+    /// The priority requested from the platform notification system.
+    pub priority: SystemNotificationPriority,
+}
+
+/// The requested priority for an OS-level notification.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SystemNotificationPriority {
+    /// Low-priority notification.
+    Low,
+    /// Normal-priority notification.
+    #[default]
+    Normal,
+    /// High-priority notification.
+    High,
+    /// Urgent notification.
+    Urgent,
+}
+
+/// The current platform notification permission state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemNotificationPermission {
+    /// The platform permits system notifications.
+    Granted,
+    /// The user or platform denied system notifications.
+    Denied,
+    /// The platform can request permission but no decision has been made.
+    NotDetermined,
+    /// The platform does not support system notifications in this context.
+    Unsupported,
+}
+
 #[expect(missing_docs)]
 pub trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
@@ -166,6 +213,20 @@ pub trait Platform: 'static {
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
+    fn system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        Task::ready(Ok(SystemNotificationPermission::Unsupported))
+    }
+    fn request_system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        Task::ready(Ok(SystemNotificationPermission::Unsupported))
+    }
+    fn show_system_notification(&self, _notification: SystemNotification) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "system notifications are not supported"
+        )))
+    }
+    fn remove_system_notification(&self, _id: SystemNotificationId) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
 
     fn prompt_for_paths(
         &self,
