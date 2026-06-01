@@ -268,6 +268,8 @@ impl EditorElement {
         register_action(editor, window, |editor, _: &PageUp, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx)
         });
+        register_action(editor, window, Editor::scroll_line_up_and_move_up);
+        register_action(editor, window, Editor::scroll_line_down_and_move_down);
         register_action(editor, window, Editor::move_to_previous_word_start);
         register_action(editor, window, Editor::move_to_previous_subword_start);
         register_action(editor, window, Editor::move_to_next_word_end);
