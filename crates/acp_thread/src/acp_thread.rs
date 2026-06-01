@@ -2016,7 +2016,6 @@ impl AcpThread {
             } else {
                 "failed"
             };
-            // TODO!(yara) use this for sending up data
             telemetry::event!(
                 "Agent Tool Call Completed",
                 agent_telemetry_id,

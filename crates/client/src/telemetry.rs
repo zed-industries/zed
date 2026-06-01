@@ -264,7 +264,6 @@ impl Telemetry {
         // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
         // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
         std::mem::forget(cx.on_app_quit({
-            // TODO!(yara) on app quit collect and send data
             let this = this.clone();
             move |_| this.shutdown_telemetry()
         }));
@@ -512,8 +511,6 @@ impl Telemetry {
         project_types.sort();
         Some(project_types)
     }
-
-    // TODO!(yara) call this with a FlexibleEvent
 
     fn report_event(self: &Arc<Self>, mut event: Event) {
         let mut state = self.state.lock();

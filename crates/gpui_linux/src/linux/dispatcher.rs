@@ -58,12 +58,6 @@ impl LinuxDispatcher {
                 let mut event_loop: EventLoop<()> =
                     EventLoop::try_new().expect("Failed to initialize timer loop!");
 
-                // let mut max_update = Duration::ZERO;
-                // let mut max_saving = Duration::ZERO;
-                // let mut time_spend_on_running = Duration::ZERO;
-                // let mut time_spend_on_tracking = Duration::ZERO;
-                // let mut last_print = std::time::Instant::now();
-
                 let handle = event_loop.handle();
                 let timer_handle = event_loop.handle();
                 handle
@@ -75,33 +69,11 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            // let update_running = std::time::Instant::now();
                                             let location = runnable.metadata().location;
                                             let spawned = runnable.metadata().spawned;
                                             profiler::update_running_task(spawned, location);
-                                            // let update_running = update_running.elapsed();
-                                            // let now = std::time::Instant::now();
                                             runnable.run();
-                                            // time_spend_on_running += now.elapsed();
-                                            // let save_timing = std::time::Instant::now();
                                             profiler::save_task_timing();
-                                            // let save_timing = save_timing.elapsed();
-
-                                            // time_spend_on_tracking += update_running;
-                                            // time_spend_on_tracking += save_timing;
-
-                                            // max_update = max_update.max(update_running);
-                                            // max_saving = max_saving.max(save_timing);
-                                            // if last_print.elapsed().as_secs() > 5 {
-                                            //     last_print = std::time::Instant::now();
-                                            //     dbg!(max_saving, max_update);
-                                            //     dbg!(
-                                            //         time_spend_on_tracking.as_secs_f64()
-                                            //             / time_spend_on_running.as_secs_f64()
-                                            //     );
-                                            //     max_update = Duration::ZERO;
-                                            //     max_saving = Duration::ZERO;
-                                            // }
                                         }
                                         TimeoutAction::Drop
                                     },

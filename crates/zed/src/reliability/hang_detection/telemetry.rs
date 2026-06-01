@@ -10,8 +10,9 @@ use crate::STARTUP_TIME;
 /// Microseconds since app start
 type MicroSeconds = u64;
 
-// TODO!(yara) maybe crazy take:
-// - most recent action? Action that this task was spawned from?
+// TODO(yara) some crazy ideas:
+// - track most recent action? 
+// - Action that this task was spawned from?
 // - flag that enables tracking more for a specific task
 // - task backtrace? (who spawned who etc)
 
@@ -45,7 +46,8 @@ struct TelemetryReport {
 struct Item<T: Hang> {
     total_hanged: Duration,
     slowest_poll: T,
-    histogram: Histogram<u64>,
+    /// saturates if more then 256 measurements end up in the same bin
+    histogram: Histogram<u8>,
 }
 
 impl<T: Hang> Item<T> {
@@ -131,9 +133,6 @@ impl Hang for gpui::ActionTiming {
     }
 }
 
-/// in microseconds
-const MIN_RECORDED: u64 = 1000;
-
 impl<T: Hang> Hangs<T> {
     fn new() -> Self {
         Self {
@@ -141,7 +140,7 @@ impl<T: Hang> Hangs<T> {
             hangs: HashMap::default(),
         }
     }
-    fn add(&mut self, new: T) {
+    fn add(&mut self, new: T, min_recorded_us: u64) {
         const MICROSECONDS_MINUTE: u64 = 60 * 1000 * 1000;
 
         if self.hangs.len() > 1000 {
@@ -153,6 +152,8 @@ impl<T: Hang> Hangs<T> {
             .entry(new.descriptor())
             .and_modify(|item| {
                 item.total_hanged += new.poll_duration();
+                item.histogram
+                    .saturating_record(new.poll_duration().as_micros() as u64);
                 if new.poll_duration() > item.slowest_poll.poll_duration() {
                     item.slowest_poll = new.clone();
                 }
@@ -161,7 +162,7 @@ impl<T: Hang> Hangs<T> {
                 Item {
                     total_hanged: new.poll_duration(),
                     slowest_poll: new,
-                    histogram: Histogram::new_with_bounds(MIN_RECORDED, MICROSECONDS_MINUTE, 3)
+                    histogram: Histogram::new_with_bounds(min_recorded_us, MICROSECONDS_MINUTE, 3)
                         .expect("function parameters are constants and correct"),
                 }
             });
@@ -229,7 +230,7 @@ impl Reporter {
     pub fn send_periodically(&mut self) {
         // this should be a long period otherwise things like
         // hang density get
-        if self.last_send.elapsed() > Duration::from_mins(30) {
+        if self.last_send.elapsed() > Duration::from_mins(1) {
             self.send()
         }
     }
@@ -248,10 +249,7 @@ impl Reporter {
         telemetry::event!("Hang Report", report);
     }
 
-    fn process_foreground(
-        &mut self,
-        task_stats: &[gpui::ThreadTaskStatistics],
-    ) {
+    fn process_foreground(&mut self, task_stats: &[gpui::ThreadTaskStatistics]) {
         let foreground_thread = self.foreground_thread;
         let foreground = task_stats
             .iter()
@@ -264,7 +262,8 @@ impl Reporter {
             .into_iter()
             .filter(|task| task.poll_duration() > self.record_slower_then)
         {
-            self.foreground.add(hang);
+            self.foreground
+                .add(hang, self.record_slower_then.as_micros() as u64);
         }
     }
     fn process_background(&mut self, task_stats: &[gpui::ThreadTaskStatistics]) {
@@ -280,7 +279,8 @@ impl Reporter {
                 .into_iter()
                 .filter(|task| task.poll_duration() > self.record_slower_then)
             {
-                self.background.add(hang);
+                self.background
+                    .add(hang, self.record_slower_then.as_micros() as u64);
             }
         }
     }
@@ -290,7 +290,8 @@ impl Reporter {
             .longest_runtimes(false)
             .filter(|action| action.runtime() > self.record_slower_then)
         {
-            self.actions.add(hang);
+            self.actions
+                .add(hang, self.record_slower_then.as_micros() as u64);
         }
     }
 

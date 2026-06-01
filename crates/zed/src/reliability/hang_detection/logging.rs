@@ -160,7 +160,7 @@ impl Display for DisplayActions {
         for action in self.0.iter().sorted_by_key(|action| action.runtime()).rev() {
             f.write_fmt(format_args!(
                 "{:<20} - {}",
-                format!("{:?}", action.runtime()), // impl dbg does not support alignment
+                format!("{:?}", action.runtime()), // impl debug does not support alignment
                 action.name
             ))?;
             writeln!(f)?;
@@ -180,7 +180,7 @@ impl<'a> Display for DisplayTasks<'a> {
         {
             f.write_fmt(format_args!(
                 "{:<20} - {}",
-                format!("{:?}", task.poll_duration()), // impl dbg does not support alignment
+                format!("{:?}", task.poll_duration()), // impl debug does not support alignment
                 task.location
             ))?;
             writeln!(f)?;
