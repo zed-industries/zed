@@ -267,8 +267,8 @@ fn should_show_thread_title_regeneration(agent_id: &AgentId) -> bool {
     is_native_thread(agent_id)
 }
 
-fn should_show_open_thread_as_markdown(agent_id: &AgentId, is_open: bool) -> bool {
-    is_open || is_native_thread(agent_id)
+fn should_show_open_thread_as_markdown(agent_id: &AgentId, is_live: bool) -> bool {
+    is_live || is_native_thread(agent_id)
 }
 
 fn start_title_regeneration(
@@ -3338,19 +3338,18 @@ impl Sidebar {
         toast_workspace: Option<Entity<Workspace>>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(workspace) = &open_workspace {
-            if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                match panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx)) {
-                    ThreadTitleRegenerationResult::Started
-                    | ThreadTitleRegenerationResult::AlreadyGenerating => return,
-                    ThreadTitleRegenerationResult::NoModel => {
-                        Self::show_no_thread_summary_model_toast(workspace.clone(), cx);
-                        return;
-                    }
-                    ThreadTitleRegenerationResult::NotOpen => return,
+        if let Some(workspace) = &open_workspace
+            && let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx)
+        {
+            match panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx)) {
+                ThreadTitleRegenerationResult::Started
+                | ThreadTitleRegenerationResult::AlreadyGenerating => return,
+                ThreadTitleRegenerationResult::NoModel => {
+                    Self::show_no_thread_summary_model_toast(workspace.clone(), cx);
+                    return;
                 }
+                ThreadTitleRegenerationResult::NotOpen => {}
             }
-            return;
         }
 
         if !start_title_regeneration(&mut self.regenerating_titles, thread_id) {
@@ -6042,22 +6041,22 @@ impl Sidebar {
             ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
             ThreadEntryWorkspace::Closed { .. } => self.active_workspace(cx),
         };
-        
+
         let open_workspace = match &thread_workspace {
             ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
             ThreadEntryWorkspace::Closed { .. } => None,
         };
-        let is_open = open_workspace.is_some();
+        let can_load_markdown_from_database = is_native_thread(&thread.metadata.agent_id);
         let can_regenerate_title = should_show_thread_title_regeneration(&thread.metadata.agent_id);
         let can_open_as_markdown =
-            should_show_open_thread_as_markdown(&thread.metadata.agent_id, is_open);
+            should_show_open_thread_as_markdown(&thread.metadata.agent_id, thread.is_live);
         let folder_paths = thread.metadata.folder_paths().clone();
 
         right_click_menu(context_menu_id)
             .trigger(move |_, _, _| thread_item)
             .menu({
                 let thread_id = thread.metadata.thread_id;
-                let markdown_title = thread.metadata.title.clone();
+                let markdown_title = Some(thread.metadata.display_title());
                 let rename_title = title.clone();
                 move |_window, cx| {
                     let session_id = session_id.clone();
@@ -6119,28 +6118,29 @@ impl Sidebar {
                                     let Some(ref workspace) = workspace_for_markdown else {
                                         return;
                                     };
-                                    if let Some(open_workspace) = &open_workspace {
-                                        if let Some(panel) =
+                                    if let Some(open_workspace) = &open_workspace
+                                        && let Some(panel) =
                                             open_workspace.read(cx).panel::<AgentPanel>(cx)
-                                        {
-                                            panel.update(cx, |panel, cx| {
-                                                panel.open_thread_as_markdown(
-                                                    thread_id,
-                                                    workspace.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        }
+                                        && panel.update(cx, |panel, cx| {
+                                            panel.open_thread_as_markdown(
+                                                thread_id,
+                                                workspace.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                    {
                                         return;
                                     }
-                                    Self::open_closed_native_thread_as_markdown(
-                                        &session_id,
-                                        markdown_title.clone(),
-                                        workspace,
-                                        window,
-                                        cx,
-                                    );
+                                    if can_load_markdown_from_database {
+                                        Self::open_closed_native_thread_as_markdown(
+                                            &session_id,
+                                            markdown_title.clone(),
+                                            workspace,
+                                            window,
+                                            cx,
+                                        );
+                                    }
                                 }
                             });
                         }
@@ -7961,7 +7961,7 @@ mod tests {
     }
 
     #[test]
-    fn test_open_markdown_shows_for_open_external_threads_and_closed_native_threads() {
+    fn test_open_markdown_shows_for_live_external_threads_and_database_backed_native_threads() {
         let external_agent = AgentId::new("external-agent");
 
         assert!(should_show_open_thread_as_markdown(&external_agent, true));
