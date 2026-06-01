@@ -274,6 +274,7 @@ struct BackgroundScannerState {
     changed_paths: Vec<Arc<RelPath>>,
     prev_snapshot: Snapshot,
     scanning_enabled: bool,
+    discover_nested_repositories: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1192,6 +1193,7 @@ impl LocalWorktree {
                         paths_to_scan: Default::default(),
                         removed_entries: Default::default(),
                         changed_paths: Default::default(),
+                        discover_nested_repositories: settings.discover_nested_repositories,
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
@@ -3241,6 +3243,13 @@ impl BackgroundScannerState {
                     );
                     return;
                 };
+
+                if !parent_dir.is_empty() && !self.discover_nested_repositories {
+                    log::debug!(
+                        "skipping nested git repository at {dot_git_path:?} because `git.discover_nested_repositories` is disabled"
+                    );
+                    return;
+                }
 
                 parent_dir.into()
             }
