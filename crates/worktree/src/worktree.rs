@@ -5496,6 +5496,7 @@ impl BackgroundScanner {
                         if SanitizedPath::new(repo.common_dir_abs_path.as_ref()) == dot_git_dir
                             || SanitizedPath::new(repo.repository_dir_abs_path.as_ref())
                                 == dot_git_dir
+                            || SanitizedPath::new(repo.dot_git_abs_path.as_ref()) == dot_git_dir
                         {
                             Some(repo.clone())
                         } else {
@@ -5551,10 +5552,7 @@ impl BackgroundScanner {
                     });
 
             if exists_in_snapshot
-                || matches!(
-                    self.fs.metadata(&entry.common_dir_abs_path).await,
-                    Ok(Some(_))
-                )
+                || matches!(self.fs.metadata(&entry.dot_git_abs_path).await, Ok(Some(_)))
             {
                 ids_to_preserve.insert(work_directory_id);
             }
