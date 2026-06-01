@@ -3,7 +3,7 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor,
-    multibuffer_context_lines,
+    hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
@@ -21,6 +21,7 @@ use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
     ReplicaId, Rope, TextBuffer,
 };
+use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath, WorktreeId, git_store::Repository};
 use settings::{DiffViewStyle, Settings};
@@ -31,7 +32,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ContextMenu, DiffStat, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -74,6 +75,8 @@ pub fn init(cx: &mut App) {
 pub struct CommitView {
     commit: CommitDetails,
     editor: Entity<SplittableEditor>,
+    message: Entity<Markdown>,
+    message_expanded: bool,
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
@@ -250,6 +253,15 @@ impl CommitView {
             let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
+        });
+
+        let message = cx.new(|cx| {
+            Markdown::new(
+                commit.message.clone(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
         });
 
         let editor = cx.new(|cx| {
@@ -449,6 +461,8 @@ impl CommitView {
         Self {
             commit,
             editor,
+            message,
+            message_expanded: false,
             multibuffer,
             stash,
             repository,
@@ -553,8 +567,8 @@ impl CommitView {
                     .full_width()
             })
         });
-        let avatar_min_side_padding = rems_from_px(10.).to_pixels(window.rem_size());
-        let avatar_container_min = avatar_size_px + avatar_min_side_padding * 2.0;
+        let avatar_min_side_padding = rems_from_px(6.).to_pixels(window.rem_size());
+        let avatar_container_min = avatar_size_px + avatar_min_side_padding;
         let avatar_container_width = gutter_width.max(avatar_container_min);
 
         let clipboard_has_sha = cx
@@ -570,67 +584,147 @@ impl CommitView {
             (IconName::Copy, Color::Muted)
         };
 
-        h_flex()
-            .py_2()
-            .pr_2p5()
+        let has_more = self.commit.message.trim().contains('\n');
+        let is_expanded = self.message_expanded;
+        let expand_tooltip = if is_expanded {
+            "Fold Commit Description"
+        } else {
+            "Expand Commit Description"
+        };
+
+        v_flex()
             .w_full()
-            .justify_between()
+            .py_2p5()
+            .gap_2()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
+                    .pr_2p5()
+                    .w_full()
+                    .flex_wrap()
+                    .justify_between()
                     .child(
                         h_flex()
-                            .flex_none()
-                            .w(avatar_container_width)
-                            .justify_center()
-                            .child(self.render_commit_avatar(&commit.sha, avatar_size, window, cx)),
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .w(avatar_container_width)
+                                    .justify_center()
+                                    .child(self.render_commit_avatar(
+                                        &commit.sha,
+                                        avatar_size,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                v_flex()
+                                    .child(h_flex().gap_1().child(Label::new(author_name)).when(
+                                        has_more,
+                                        |this| {
+                                            this.child(
+                                                Disclosure::new(
+                                                    "commit-message-disclosure",
+                                                    is_expanded,
+                                                )
+                                                .closed_icon(IconName::ExpandVertical)
+                                                .opened_icon(IconName::FoldVertical)
+                                                .tooltip(Tooltip::text(expand_tooltip))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.message_expanded = !this.message_expanded;
+                                                    cx.notify();
+                                                })),
+                                            )
+                                        },
+                                    ))
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(
+                                                Label::new(date_string)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("•")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .alpha(0.5),
+                                            )
+                                            .child(
+                                                Label::new(author_email)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            ),
+                                    ),
+                            ),
                     )
-                    .child(
-                        v_flex().child(Label::new(author_name)).child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    Label::new(date_string)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
+                    .when(self.stash.is_none(), |this| {
+                        this.child(
+                            Button::new("sha", "Commit SHA")
+                                .start_icon(
+                                    Icon::new(copy_icon)
+                                        .size(IconSize::Small)
+                                        .color(copy_icon_color),
                                 )
-                                .child(
-                                    Label::new("•")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .alpha(0.5),
-                                )
-                                .child(
-                                    Label::new(author_email)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                ),
-                        ),
-                    ),
-            )
-            .when(self.stash.is_none(), |this| {
-                this.child(
-                    Button::new("sha", "Commit SHA")
-                        .start_icon(
-                            Icon::new(copy_icon)
-                                .size(IconSize::Small)
-                                .color(copy_icon_color),
+                                .tooltip({
+                                    let commit_sha = commit_sha.clone();
+                                    move |_, cx| {
+                                        Tooltip::with_meta(
+                                            "Copy Commit SHA",
+                                            None,
+                                            commit_sha.clone(),
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        commit_sha.to_string(),
+                                    ));
+                                }),
                         )
-                        .tooltip({
-                            let commit_sha = commit_sha.clone();
-                            move |_, cx| {
-                                Tooltip::with_meta("Copy Commit SHA", None, commit_sha.clone(), cx)
-                            }
-                        })
-                        .on_click(move |_, _, cx| {
-                            cx.stop_propagation();
-                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                commit_sha.to_string(),
-                            ));
-                        }),
-                )
-            })
+                    }),
+            )
+            .children(self.render_commit_message(avatar_container_width, window, cx))
+    }
+
+    fn render_commit_message(
+        &self,
+        avatar_spacer: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let message = self.commit.message.trim();
+        if message.is_empty() {
+            return None;
+        }
+
+        let markdown_style = hover_markdown_style(window, cx);
+
+        let is_expanded = self.message_expanded;
+
+        let has_more = message.contains('\n');
+        let collapsed = has_more && !is_expanded;
+        let collapsed_height = window.line_height();
+
+        Some(
+            h_flex()
+                .w_full()
+                .pr_2p5()
+                .child(h_flex().flex_none().w(avatar_spacer))
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_w_0()
+                        .text_sm()
+                        .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
+                        .child(MarkdownElement::new(self.message.clone(), markdown_style)),
+                ),
+        )
     }
 
     fn render_message(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1120,8 +1214,19 @@ impl Item for CommitView {
                     editor
                 }
             });
+            let language_registry = project.read(cx).languages().clone();
+            let message = cx.new(|cx| {
+                Markdown::new(
+                    self.commit.message.clone(),
+                    Some(language_registry),
+                    None,
+                    cx,
+                )
+            });
             Self {
                 editor,
+                message,
+                message_expanded: self.message_expanded,
                 multibuffer: self.multibuffer.clone(),
                 commit: self.commit.clone(),
                 stash: self.stash,

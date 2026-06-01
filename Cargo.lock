@@ -3265,6 +3265,8 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.27.2",
+ "uuid",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -4967,7 +4969,6 @@ dependencies = [
 name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "anyhow",
  "bitflags 2.10.0",
  "client",
@@ -5005,6 +5006,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "tasks_ui",
+ "terminal",
  "terminal_view",
  "text",
  "theme",
@@ -5569,6 +5571,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.32",
+ "git",
  "gpui",
  "heapless",
  "indoc",
@@ -7717,7 +7720,6 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
- "alacritty_terminal",
  "anyhow",
  "askpass",
  "buffer_diff",
@@ -7763,6 +7765,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "telemetry",
+ "terminal",
  "theme",
  "theme_settings",
  "time",
@@ -15500,8 +15503,10 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "action_log",
  "agent",
+ "agent-client-protocol",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
@@ -15591,7 +15596,6 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 name = "repl"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
  "async-task",
@@ -17296,6 +17300,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "unicode-segmentation",
  "util",
  "workspace",
  "zed_actions",
@@ -18833,6 +18838,7 @@ dependencies = [
  "urlencoding",
  "util",
  "util_macros",
+ "vte",
  "windows 0.61.3",
 ]
 
