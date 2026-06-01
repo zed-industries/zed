@@ -16,8 +16,8 @@ pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
-mod create_file_modal;
 mod code_lens;
+mod create_file_modal;
 pub mod display_map;
 mod document_colors;
 mod document_links;
@@ -263,8 +263,8 @@ use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _}
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
 };
-use tiktoken_rs::o200k_base;
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
+use tiktoken_rs::o200k_base;
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
     IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
@@ -3726,9 +3726,7 @@ impl Editor {
                         let clean_name = name.trim_end_matches('/');
                         let path = base_path.join(clean_name);
 
-                        let output = std::process::Command::new("trash")
-                            .arg(&path)
-                            .output();
+                        let output = std::process::Command::new("trash").arg(&path).output();
 
                         match output {
                             Ok(output) => {
@@ -12067,7 +12065,12 @@ impl Editor {
     }
 
     /// Copies the entire buffer content to clipboard.
-    pub fn copy_all(&mut self, _: &crate::actions::CopyAll, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn copy_all(
+        &mut self,
+        _: &crate::actions::CopyAll,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let content = {
             let buffer = self.buffer.read(cx).read(cx);
             buffer.text()

@@ -188,7 +188,6 @@ async fn find_workspace_for_file(
 ) -> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
     let _ = file_path;
     None
-
 }
 
 pub fn init(cx: &mut App) {
@@ -521,7 +520,12 @@ impl PickerDelegate for RecentFilesDelegate {
                             if workspace.database_id() == Some(workspace_id) {
                                 // We're already in the right workspace, just open the file
                                 workspace
-                                    .open_workspace_for_paths(OpenMode::Activate, vec![path], window, cx)
+                                    .open_workspace_for_paths(
+                                        OpenMode::Activate,
+                                        vec![path],
+                                        window,
+                                        cx,
+                                    )
                                     .detach_and_log_err(cx);
                             } else {
                                 // Open the workspace that contains this file
@@ -862,9 +866,10 @@ impl PickerDelegate for DirectoryFileDelegate {
             let directory = self.directory.clone();
 
             let existing_window = (|| -> Option<WindowHandle<MultiWorkspace>> {
-                for window in
-                    workspace::workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
-                {
+                for window in workspace::workspace_windows_for_location(
+                    &SerializedWorkspaceLocation::Local,
+                    cx,
+                ) {
                     if let Ok(multi_workspace) = window.read(cx) {
                         for workspace in multi_workspace.workspaces() {
                             let workspace = workspace.read(cx);
@@ -890,19 +895,17 @@ impl PickerDelegate for DirectoryFileDelegate {
                     existing_window
                         .update(cx, |multi_workspace, window, cx| {
                             window.activate_window();
-                            multi_workspace
-                                .workspace()
-                                .update(cx, |workspace, cx| {
-                                    workspace
-                                        .open_paths(
-                                            vec![path],
-                                            workspace::OpenOptions::default(),
-                                            None,
-                                            window,
-                                            cx,
-                                        )
-                                        .detach();
-                                });
+                            multi_workspace.workspace().update(cx, |workspace, cx| {
+                                workspace
+                                    .open_paths(
+                                        vec![path],
+                                        workspace::OpenOptions::default(),
+                                        None,
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                            });
                         })
                         .log_err();
                 });

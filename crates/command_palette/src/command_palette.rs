@@ -468,8 +468,10 @@ impl PickerDelegate for CommandPaletteDelegate {
                         })
                         .collect()
                 } else {
-                    let words: Vec<String> =
-                        query.split_whitespace().map(|word| word.to_lowercase()).collect();
+                    let words: Vec<String> = query
+                        .split_whitespace()
+                        .map(|word| word.to_lowercase())
+                        .collect();
                     let mut results = Vec::new();
 
                     for (ix, command) in commands.iter().enumerate() {
@@ -504,7 +506,11 @@ impl PickerDelegate for CommandPaletteDelegate {
 
                 let intercept_result = CommandInterceptResult::default();
 
-                if tx.send((commands, matches, intercept_result)).await.is_err() {
+                if tx
+                    .send((commands, matches, intercept_result))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }

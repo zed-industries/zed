@@ -50,13 +50,10 @@ pub fn push_to_global_change_list(
         list.position = None;
 
         let should_group = group
-            || list
-                .changes
-                .last()
-                .is_some_and(|last| {
-                    last.editor == entry.editor
-                        && now.duration_since(last.timestamp) < GLOBAL_CHANGE_GROUPING_THRESHOLD
-                });
+            || list.changes.last().is_some_and(|last| {
+                last.editor == entry.editor
+                    && now.duration_since(last.timestamp) < GLOBAL_CHANGE_GROUPING_THRESHOLD
+            });
 
         if should_group {
             if let Some(last) = list.changes.last_mut() {
@@ -70,13 +67,13 @@ pub fn push_to_global_change_list(
         list.changes.retain(|existing| {
             if existing.editor == entry.editor {
                 if existing.anchors.len() == entry.anchors.len() {
-                    return !existing.anchors.iter().zip(entry.anchors.iter()).all(|(a1, a2)| {
-                        a1.to_point(&buffer).row == a2.to_point(&buffer).row
-                    });
+                    return !existing
+                        .anchors
+                        .iter()
+                        .zip(entry.anchors.iter())
+                        .all(|(a1, a2)| a1.to_point(&buffer).row == a2.to_point(&buffer).row);
                 }
-            } else if existing.project_path == entry.project_path
-                && entry.project_path.is_some()
-            {
+            } else if existing.project_path == entry.project_path && entry.project_path.is_some() {
                 if existing.points.len() == entry.points.len() {
                     return !existing
                         .points
@@ -98,7 +95,12 @@ pub fn go_to_next_global_change(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    navigate_global_change_list(workspace, workspace::searchable::Direction::Next, window, cx);
+    navigate_global_change_list(
+        workspace,
+        workspace::searchable::Direction::Next,
+        window,
+        cx,
+    );
 }
 
 pub fn go_to_previous_global_change(
@@ -107,7 +109,12 @@ pub fn go_to_previous_global_change(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    navigate_global_change_list(workspace, workspace::searchable::Direction::Prev, window, cx);
+    navigate_global_change_list(
+        workspace,
+        workspace::searchable::Direction::Prev,
+        window,
+        cx,
+    );
 }
 
 fn navigate_global_change_list(
