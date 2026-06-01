@@ -3832,6 +3832,22 @@ impl AgentPanel {
         })
     }
 
+    /// Regenerates the title of a thread that is currently open (active or
+    /// retained) in this panel, driving the live `agent::Thread` so the new
+    /// title is persisted and reflected everywhere. Returns `false` when the
+    /// thread isn't open here, so the caller can fall back to a
+    /// database-backed regeneration.
+    pub fn regenerate_thread_title(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> bool {
+        let Some(conversation_view) = self.conversation_view_for_id(&thread_id, cx).cloned() else {
+            return false;
+        };
+        let Some(thread) = conversation_view.read(cx).as_native_thread(cx) else {
+            return false;
+        };
+        thread.update(cx, |thread, cx| thread.regenerate_title(cx));
+        true
+    }
+
     pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
         self.active_conversation_view()
             .into_iter()

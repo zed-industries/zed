@@ -3359,6 +3359,55 @@ async fn test_title_generation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_stream_thread_title_keeps_only_first_line(cx: &mut TestAppContext) {
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = LanguageModelRequest::default();
+
+    let title_task = cx.spawn({
+        let model = model.clone();
+        async move |cx| crate::stream_thread_title(model, request, &cx).await
+    });
+
+    // Let the task issue its completion request before we feed it chunks.
+    cx.run_until_parked();
+
+    // The model streams more than one line; only the first should survive, and
+    // streaming should stop as soon as the second line is seen.
+    model.send_last_completion_stream_text_chunk("Hello world\nGoodnight Moon");
+    model.end_last_completion_stream();
+
+    let title = title_task.await.unwrap();
+    assert_eq!(title, "Hello world");
+}
+
+// `Thread::to_markdown` (live) and `DbThread::to_markdown` (persisted) must
+// stay byte-for-byte identical for the same messages, since both back the
+// sidebar's "Open Thread as Markdown" action. This pins that they share a
+// single rendering path.
+#[gpui::test]
+async fn test_db_thread_markdown_matches_live_thread(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey there!");
+    fake_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx)).await;
+    let live_markdown = thread.read_with(cx, |thread, _| thread.to_markdown());
+
+    assert!(!live_markdown.is_empty());
+    assert_eq!(db_thread.to_markdown(), live_markdown);
+}
+
+#[gpui::test]
 async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();

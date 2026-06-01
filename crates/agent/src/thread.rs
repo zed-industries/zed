@@ -2831,16 +2831,29 @@ impl Thread {
         if !self.can_generate_title(cx) {
             return;
         }
-
-        self.title_generation_failed = false;
         let Some(model) = self.summarization_model.clone() else {
             return;
         };
+        self.spawn_title_generation(model, cx);
+    }
 
-        log::debug!(
-            "Generating title with model: {:?}",
-            self.summarization_model.as_ref().map(|model| model.name())
-        );
+    /// Forces title regeneration in response to an explicit user request,
+    /// bypassing the `can_generate_title` heuristics that suppress *automatic*
+    /// generation (e.g. when an update-title tool is available). Does nothing
+    /// if a generation is already in flight or no summarization model exists.
+    pub fn regenerate_title(&mut self, cx: &mut Context<Self>) {
+        if self.pending_title_generation.is_some() {
+            return;
+        }
+        let Some(model) = self.summarization_model.clone() else {
+            return;
+        };
+        self.spawn_title_generation(model, cx);
+    }
+
+    fn spawn_title_generation(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+        self.title_generation_failed = false;
+        log::debug!("Generating title with model: {:?}", model.name());
         // Build the request synchronously so we don't borrow `self.messages`
         // across the await point inside the spawned task.
         let temperature = AgentSettings::temperature_for_model(&model, cx);
@@ -3182,18 +3195,7 @@ impl Thread {
     }
 
     pub fn to_markdown(&self) -> String {
-        let mut markdown = String::new();
-        for (ix, message) in self.messages.iter().enumerate() {
-            if ix > 0 {
-                markdown.push('\n');
-            }
-            match &**message {
-                Message::User(_) => markdown.push_str("## User\n\n"),
-                Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
-                Message::Resume => {}
-            }
-            markdown.push_str(&message.to_markdown());
-        }
+        let mut markdown = messages_to_markdown(&self.messages);
 
         if let Some(message) = self.pending_message.as_ref() {
             markdown.push_str("\n## Assistant\n\n");
@@ -3345,6 +3347,26 @@ impl RunningTurn {
         self.event_stream.send_canceled();
         self._task
     }
+}
+
+/// Renders a sequence of persisted messages as Markdown. Shared by
+/// `Thread::to_markdown` and `DbThread::to_markdown` so the in-memory and
+/// database-backed paths produce identical output; the only difference is that
+/// a live `Thread` may additionally append its pending (streaming) message.
+pub fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
+    let mut markdown = String::new();
+    for (ix, message) in messages.iter().enumerate() {
+        if ix > 0 {
+            markdown.push('\n');
+        }
+        match &**message {
+            Message::User(_) => markdown.push_str("## User\n\n"),
+            Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
+            Message::Resume => {}
+        }
+        markdown.push_str(&message.to_markdown());
+    }
+    markdown
 }
 
 /// Builds the LLM request used to summarize a conversation into a short title.

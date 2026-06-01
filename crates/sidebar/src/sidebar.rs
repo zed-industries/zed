@@ -37,6 +37,7 @@ use language_model::LanguageModelRegistry;
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
+use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
@@ -3288,25 +3289,65 @@ impl Sidebar {
             .detach_and_log_err(cx);
     }
 
-    /// Loads the thread from the database, builds an LLM summarization
-    /// request, and regenerates the title — all without touching the
-    /// AgentPanel or changing the active thread.
+    /// Regenerates a thread's title from an explicit right-click action.
     ///
-    /// While the request is in flight the thread is added to
-    /// `regenerating_titles` so its sidebar row pulses, and it is removed
-    /// (along with persisting the new title) in a single update so the row
-    /// swaps straight to the new title without a flicker.
+    /// For a thread that is currently open in a workspace's AgentPanel we
+    /// drive the live `agent::Thread` so the regenerated title summarizes the
+    /// up-to-date (possibly still-unsaved) conversation and is persisted
+    /// through the normal thread machinery — rather than summarizing a stale
+    /// database snapshot and writing a title override the live thread could
+    /// later clobber.
+    ///
+    /// Only when the thread isn't open anywhere do we fall back to the
+    /// database-backed path below. While that request is in flight the thread
+    /// is added to `regenerating_titles` so its sidebar row pulses, and it is
+    /// removed (along with persisting the new title) in a single update so the
+    /// row swaps straight to the new title without a flicker. (Open threads
+    /// already pulse via the live thread's own `is_title_generating`.)
     fn regenerate_thread_title(
         &mut self,
         session_id: &acp::SessionId,
         thread_id: ThreadId,
+        open_workspace: Option<Entity<Workspace>>,
         cx: &mut Context<Self>,
     ) {
         let Some(configured_model) =
             LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
         else {
+            // No summarization model configured: there's nothing we can do, so
+            // surface that to the user instead of silently doing nothing.
+            if let Some(workspace) = open_workspace.or_else(|| self.active_workspace(cx)) {
+                workspace.update(cx, |workspace, cx| {
+                    let toast = StatusToast::new(
+                        "No model is configured for summarizing thread titles.",
+                        cx,
+                        |this, _cx| {
+                            this.icon(
+                                Icon::new(IconName::Warning)
+                                    .size(IconSize::Small)
+                                    .color(Color::Warning),
+                            )
+                            .dismiss_button(true)
+                        },
+                    );
+                    workspace.toggle_status_toast(toast, cx);
+                });
+            }
             return;
         };
+
+        // If the thread is open, route to its live thread so we summarize the
+        // current conversation and persist correctly.
+        if let Some(workspace) = &open_workspace {
+            if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                let handled =
+                    panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx));
+                if handled {
+                    return;
+                }
+            }
+        }
+
         let model = configured_model.model;
         let temperature = AgentSettings::temperature_for_model(&model, cx);
 
@@ -5979,6 +6020,14 @@ impl Sidebar {
             ThreadEntryWorkspace::Closed { .. } => self.active_workspace(cx),
         };
 
+        // For regeneration we only care whether the thread is genuinely open
+        // (so we can drive its live thread); closed threads take the
+        // database-backed path inside `regenerate_thread_title`.
+        let open_workspace = match &thread_workspace {
+            ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
+            ThreadEntryWorkspace::Closed { .. } => None,
+        };
+
         right_click_menu(context_menu_id)
             .trigger(move |_, _, _| thread_item)
             .menu({
@@ -5989,17 +6038,23 @@ impl Sidebar {
                     let session_id = session_id.clone();
                     let sidebar = sidebar.clone();
                     let workspace_for_markdown = workspace_for_markdown.clone();
+                    let open_workspace = open_workspace.clone();
                     let title = title.clone();
                     ContextMenu::build(_window, cx, move |menu, _window, _cx| {
                         menu.entry("Regenerate Thread Title", None, {
                             let session_id = session_id.clone();
                             let sidebar = sidebar.clone();
+                            let open_workspace = open_workspace.clone();
                             move |_window, cx| {
                                 sidebar
                                     .update(cx, |sidebar, cx| {
                                         if let Some(ref session_id) = session_id {
-                                            sidebar
-                                                .regenerate_thread_title(session_id, thread_id, cx);
+                                            sidebar.regenerate_thread_title(
+                                                session_id,
+                                                thread_id,
+                                                open_workspace.clone(),
+                                                cx,
+                                            );
                                         }
                                     })
                                     .ok();
