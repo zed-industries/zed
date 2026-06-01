@@ -15,6 +15,7 @@
 //! Naming note: this module is about agent terminal sandboxing specifically.
 //! Other agent operations (e.g. file edits) are gated separately.
 
+use agent_settings::SandboxPermissions;
 use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use std::path::PathBuf;
@@ -55,9 +56,8 @@ impl SandboxRequest {
 ///
 /// Lives on the `Thread` and is shared (via `Rc<RefCell<…>>`) with each tool
 /// call's event stream so a later command requesting an already-granted
-/// permission can skip the approval prompt. This is deliberately **never**
-/// persisted to settings — it dies with the conversation, unlike the global
-/// `always_allow` tool-permission rules.
+/// permission can skip the approval prompt. Persistent "allow always" grants
+/// are stored separately in [`SandboxPermissions`].
 #[derive(Default)]
 pub(crate) struct ConversationSandboxGrants {
     network: bool,
@@ -68,28 +68,33 @@ pub(crate) struct ConversationSandboxGrants {
 }
 
 impl ConversationSandboxGrants {
-    /// Whether everything `request` asks for has already been granted for the
-    /// conversation, so the command can run without prompting again.
+    /// Whether the union of conversation grants and persistent "allow always"
+    /// grants covers everything `request` asks for, so the command can run
+    /// without prompting again.
     ///
-    /// Write coverage is pure subtree containment: every
-    /// requested path must sit under some granted path. This is fully
-    /// deterministic and never widens scope, because grants are concrete
-    /// paths rather than globs.
-    pub fn covers(&self, request: &SandboxRequest) -> bool {
-        if request.network && !self.network {
+    /// Write coverage is pure subtree containment: every requested path must
+    /// sit under some granted path. This is fully deterministic and never
+    /// widens scope, because grants are concrete paths rather than globs.
+    pub fn covers_with_persistent(
+        &self,
+        request: &SandboxRequest,
+        persistent: &SandboxPermissions,
+    ) -> bool {
+        if request.network && !(self.network || persistent.allow_network) {
             return false;
         }
-        if request.allow_fs_write_all && !self.allow_fs_write_all {
+        if request.allow_fs_write_all && !(self.allow_fs_write_all || persistent.allow_fs_write_all)
+        {
             return false;
         }
-        // A conversation-wide all-access write grant covers any concrete
-        // write request.
-        if self.allow_fs_write_all {
+        // A full-access write grant covers any concrete write request.
+        if self.allow_fs_write_all || persistent.allow_fs_write_all {
             return true;
         }
         request.write_paths.iter().all(|requested| {
             self.write_paths
                 .iter()
+                .chain(persistent.write_paths.iter())
                 .any(|granted| requested.starts_with(granted))
         })
     }
@@ -104,23 +109,32 @@ impl ConversationSandboxGrants {
         }
     }
 
-    /// Compute the effective sandbox permissions to actually enforce for a
-    /// command: the union of everything granted for the conversation and
-    /// what this specific command requested.
+    /// Compute the effective sandbox permissions to enforce for a command: the
+    /// union of persistent "allow always" grants, conversation grants, and this
+    /// specific command's request.
     ///
-    /// This is what makes a conversation grant "stick": every sandboxed
-    /// command applies the accumulated grants, so the model can write to a
-    /// previously approved path without re-requesting it. Passing the current `request` in
+    /// This is what makes standing grants "stick": every sandboxed command
+    /// applies the accumulated grants, so the model can write to a previously
+    /// approved path without re-requesting it. Passing the current `request` in
     /// also covers "allow once" grants, which are enforced for this command
     /// without being recorded for the conversation.
-    pub fn effective(&self, request: &SandboxRequest) -> SandboxRequest {
-        let mut write_paths = self.write_paths.clone();
+    pub fn effective_with_persistent(
+        &self,
+        request: &SandboxRequest,
+        persistent: &SandboxPermissions,
+    ) -> SandboxRequest {
+        let mut write_paths = persistent.write_paths.clone();
+        for path in &self.write_paths {
+            add_write_path(&mut write_paths, path);
+        }
         for path in &request.write_paths {
             add_write_path(&mut write_paths, path);
         }
         SandboxRequest {
-            network: self.network || request.network,
-            allow_fs_write_all: self.allow_fs_write_all || request.allow_fs_write_all,
+            network: persistent.allow_network || self.network || request.network,
+            allow_fs_write_all: persistent.allow_fs_write_all
+                || self.allow_fs_write_all
+                || request.allow_fs_write_all,
             write_paths,
         }
     }
@@ -149,12 +163,20 @@ mod tests {
         }
     }
 
+    fn covers(grants: &ConversationSandboxGrants, request: &SandboxRequest) -> bool {
+        grants.covers_with_persistent(request, &SandboxPermissions::default())
+    }
+
+    fn effective(grants: &ConversationSandboxGrants, request: &SandboxRequest) -> SandboxRequest {
+        grants.effective_with_persistent(request, &SandboxPermissions::default())
+    }
+
     #[test]
     fn empty_grants_cover_nothing() {
         let grants = ConversationSandboxGrants::default();
-        assert!(!grants.covers(&request(true, false, &[])));
-        assert!(!grants.covers(&request(false, true, &[])));
-        assert!(!grants.covers(&request(false, false, &["/tmp/build"])));
+        assert!(!covers(&grants, &request(true, false, &[])));
+        assert!(!covers(&grants, &request(false, true, &[])));
+        assert!(!covers(&grants, &request(false, false, &["/tmp/build"])));
     }
 
     #[test]
@@ -163,11 +185,14 @@ mod tests {
         grants.record(&request(false, false, &["/tmp/build"]));
 
         // Exact match and any descendant are covered.
-        assert!(grants.covers(&request(false, false, &["/tmp/build"])));
-        assert!(grants.covers(&request(false, false, &["/tmp/build/cache"])));
+        assert!(covers(&grants, &request(false, false, &["/tmp/build"])));
+        assert!(covers(
+            &grants,
+            &request(false, false, &["/tmp/build/cache"])
+        ));
         // A sibling / parent is not.
-        assert!(!grants.covers(&request(false, false, &["/tmp/other"])));
-        assert!(!grants.covers(&request(false, false, &["/tmp"])));
+        assert!(!covers(&grants, &request(false, false, &["/tmp/other"])));
+        assert!(!covers(&grants, &request(false, false, &["/tmp"])));
     }
 
     #[test]
@@ -190,17 +215,53 @@ mod tests {
     fn all_access_covers_any_concrete_write() {
         let mut grants = ConversationSandboxGrants::default();
         grants.record(&request(false, true, &[]));
-        assert!(grants.covers(&request(false, false, &["/anywhere/at/all"])));
+        assert!(covers(
+            &grants,
+            &request(false, false, &["/anywhere/at/all"])
+        ));
         // But not network, which wasn't granted.
-        assert!(!grants.covers(&request(true, false, &[])));
+        assert!(!covers(&grants, &request(true, false, &[])));
     }
 
     #[test]
     fn network_grant_tracked_independently() {
         let mut grants = ConversationSandboxGrants::default();
         grants.record(&request(true, false, &[]));
-        assert!(grants.covers(&request(true, false, &[])));
-        assert!(!grants.covers(&request(true, false, &["/tmp/build"])));
+        assert!(covers(&grants, &request(true, false, &[])));
+        assert!(!covers(&grants, &request(true, false, &["/tmp/build"])));
+    }
+
+    #[test]
+    fn persistent_grants_combine_with_conversation_grants() {
+        let mut grants = ConversationSandboxGrants::default();
+        grants.record(&request(true, false, &[]));
+        let persistent = SandboxPermissions {
+            allow_network: false,
+            allow_fs_write_all: false,
+            write_paths: vec![PathBuf::from("/tmp/build")],
+        };
+
+        assert!(
+            grants
+                .covers_with_persistent(&request(true, false, &["/tmp/build/cache"]), &persistent)
+        );
+        assert!(
+            !grants.covers_with_persistent(&request(true, false, &["/tmp/other"]), &persistent)
+        );
+    }
+
+    #[test]
+    fn persistent_all_access_covers_concrete_writes() {
+        let grants = ConversationSandboxGrants::default();
+        let persistent = SandboxPermissions {
+            allow_network: false,
+            allow_fs_write_all: true,
+            write_paths: Vec::new(),
+        };
+
+        assert!(grants.covers_with_persistent(&request(false, false, &["/anywhere"]), &persistent));
+        assert!(grants.covers_with_persistent(&request(false, true, &[]), &persistent));
+        assert!(!grants.covers_with_persistent(&request(true, false, &[]), &persistent));
     }
 
     #[test]
@@ -210,7 +271,7 @@ mod tests {
         let mut grants = ConversationSandboxGrants::default();
         grants.record(&request(false, false, &["/tmp/build"]));
 
-        let effective = grants.effective(&request(false, false, &[]));
+        let effective = effective(&grants, &request(false, false, &[]));
         assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/build")]);
     }
 
@@ -221,7 +282,7 @@ mod tests {
         let mut grants = ConversationSandboxGrants::default();
         grants.record(&request(true, false, &["/tmp/build"]));
 
-        let effective = grants.effective(&request(false, false, &["/tmp/once"]));
+        let effective = effective(&grants, &request(false, false, &["/tmp/once"]));
         assert!(effective.network);
         assert_eq!(
             effective.write_paths,
@@ -230,11 +291,25 @@ mod tests {
     }
 
     #[test]
+    fn effective_applies_persistent_grants_to_empty_request() {
+        let grants = ConversationSandboxGrants::default();
+        let persistent = SandboxPermissions {
+            allow_network: true,
+            allow_fs_write_all: false,
+            write_paths: vec![PathBuf::from("/tmp/always")],
+        };
+
+        let effective = grants.effective_with_persistent(&request(false, false, &[]), &persistent);
+        assert!(effective.network);
+        assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/always")]);
+    }
+
+    #[test]
     fn effective_dedupes_request_already_covered_by_grant() {
         let mut grants = ConversationSandboxGrants::default();
         grants.record(&request(false, false, &["/tmp/build"]));
 
-        let effective = grants.effective(&request(false, false, &["/tmp/build/cache"]));
+        let effective = effective(&grants, &request(false, false, &["/tmp/build/cache"]));
         assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/build")]);
     }
 }

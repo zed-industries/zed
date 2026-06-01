@@ -207,7 +207,7 @@ You can request elevated permissions on individual `terminal` calls:
 - `allow_fs_write_all: true` — allow unrestricted filesystem writes. Only use this when the specific paths can't be enumerated up front.
 - `unsandboxed: true` — run the command with no sandbox at all. Use only when none of the above suffice.
 
-The user will be prompted to approve before the command runs, and can grant a write request either just for that command or for the rest of the conversation. Once a write path is granted for the conversation, later commands writing under that path won't prompt again.
+The user will be prompted to approve before the command runs, and can grant a sandbox request for that command, for the rest of the conversation, or always. Once a write path is granted for the conversation or always, later commands writing under that path won't prompt again.
 
 These sandbox settings are guaranteed to remain in effect for the entire duration of this conversation. If they ever change, you will be told.
 

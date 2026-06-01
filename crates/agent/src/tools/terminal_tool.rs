@@ -5,7 +5,6 @@ use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use settings::Settings;
 use std::{
     path::{Path, PathBuf},
@@ -340,11 +339,16 @@ impl AgentTool for SandboxedTerminalTool {
             // let the model widen its own write permissions outside the
             // project.
             let sandbox_wrap = if sandboxing && !want_unsandboxed {
-                // Apply the conversation's standing grants on top of this
-                // command's request, so a path approved "for the rest of the
-                // conversation" stays writable for later commands even when
-                // the model doesn't re-request it.
-                let effective = event_stream.effective_sandbox_request(&request);
+                // Apply standing grants on top of this command's request, so
+                // a path approved "for the rest of the conversation" or
+                // "always" stays writable for later commands even when the
+                // model doesn't re-request it.
+                let sandbox_permissions = cx.update(|cx| {
+                    agent_settings::AgentSettings::get_global(cx)
+                        .sandbox_permissions
+                        .clone()
+                });
+                let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
                 let writable_paths: Vec<PathBuf> = cx.update(|cx| {
                     self.project
                         .read(cx)

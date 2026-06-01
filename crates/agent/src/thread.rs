@@ -4108,20 +4108,18 @@ impl ToolCallEventStream {
     /// Gate a sandbox *escalation* (network access, per-path writes, or full
     /// filesystem write access) on user approval.
     ///
-    /// Unlike [`Self::authorize`] / [`Self::authorize_always_prompt`], the
-    /// decision is never read from or written to settings. Instead it offers
-    /// the user two grant lifetimes — "once" and "for the rest of this
-    /// conversation" — and records conversation grants in the shared,
-    /// in-memory [`ConversationSandboxGrants`]. A request already covered by
-    /// a prior conversation grant resolves immediately without prompting.
+    /// Offers the user three grant lifetimes — "once", "for the rest of this
+    /// conversation", and "always". Conversation grants live in the shared,
+    /// in-memory [`ConversationSandboxGrants`]. Always grants are persisted in
+    /// agent settings and are also observed while a prompt is pending, matching
+    /// the settings-driven authorization flow for regular tools.
     pub(crate) fn authorize_sandbox(
         &self,
         title: impl Into<String>,
         request: SandboxRequest,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        // Already approved for this conversation — run without prompting.
-        if self.sandbox_grants.borrow().covers(&request) {
+        if Self::sandbox_request_covered_by_grants(&request, &self.sandbox_grants, cx) {
             return Task::ready(Ok(()));
         }
 
@@ -4138,17 +4136,23 @@ impl ToolCallEventStream {
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_always"),
+                "Allow always",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
                 acp::PermissionOptionId::new("deny"),
                 "Deny",
                 acp::PermissionOptionKind::RejectOnce,
             ),
         ]);
 
+        let fs = self.fs.clone();
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
         let sandbox_grants = self.sandbox_grants.clone();
-        cx.spawn(async move |_cx| {
-            let (response_tx, response_rx) = oneshot::channel();
+        cx.spawn(async move |cx| {
+            let (response_tx, mut response_rx) = oneshot::channel();
             if let Err(error) = stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
@@ -4168,35 +4172,135 @@ impl ToolCallEventStream {
                 return Err(anyhow!("Failed to send sandbox authorization: {error}"));
             }
 
-            let outcome = response_rx
-                .await
-                .map_err(|_| anyhow!("authorization channel closed"))?;
+            let (mut settings_tx, mut settings_rx) = watch::channel(());
+            let _settings_subscription = cx.update(|cx| {
+                cx.observe_global::<SettingsStore>(move |_cx| {
+                    settings_tx.send(()).ok();
+                })
+            });
 
-            match outcome.option_id.0.as_ref() {
-                "allow" => Ok(()),
-                "allow_conversation" => {
-                    sandbox_grants.borrow_mut().record(&request);
-                    Ok(())
-                }
-                "deny" => Err(anyhow!("Permission to run tool denied by user")),
-                other => {
-                    debug_assert!(false, "unexpected sandbox permission option_id: {other}");
-                    Err(anyhow!("Permission to run tool denied by user"))
+            loop {
+                let settings_changed = async {
+                    if settings_rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                };
+                futures::select_biased! {
+                    outcome = (&mut response_rx).fuse() => {
+                        let outcome = outcome
+                            .map_err(|_| anyhow!("authorization channel closed"))?;
+                        return Self::handle_sandbox_permission_outcome(
+                            &outcome,
+                            &request,
+                            sandbox_grants.clone(),
+                            fs.clone(),
+                            cx,
+                        );
+                    }
+                    _ = settings_changed.fuse() => {
+                        if cx.update(|cx| Self::sandbox_request_covered_by_grants(
+                            &request,
+                            &sandbox_grants,
+                            cx,
+                        )) {
+                            drop(response_rx);
+                            stream.update_tool_call_fields(
+                                &tool_use_id,
+                                acp::ToolCallUpdateFields::new()
+                                    .status(acp::ToolCallStatus::InProgress),
+                                None,
+                            );
+                            return Ok(());
+                        }
+                    }
                 }
             }
         })
     }
 
+    fn sandbox_request_covered_by_grants(
+        request: &SandboxRequest,
+        sandbox_grants: &Rc<RefCell<ConversationSandboxGrants>>,
+        cx: &App,
+    ) -> bool {
+        let settings = AgentSettings::get_global(cx);
+        sandbox_grants
+            .borrow()
+            .covers_with_persistent(request, &settings.sandbox_permissions)
+    }
+
+    fn handle_sandbox_permission_outcome(
+        outcome: &acp_thread::SelectedPermissionOutcome,
+        request: &SandboxRequest,
+        sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
+        fs: Option<Arc<dyn Fs>>,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        debug_assert!(
+            outcome.params.is_none(),
+            "unexpected params for sandbox permission"
+        );
+
+        match outcome.option_id.0.as_ref() {
+            "allow" => Ok(()),
+            "allow_conversation" => {
+                sandbox_grants.borrow_mut().record(request);
+                Ok(())
+            }
+            "allow_always" => {
+                sandbox_grants.borrow_mut().record(request);
+                Self::persist_sandbox_always_permission(request, fs, cx);
+                Ok(())
+            }
+            "deny" => Err(anyhow!("Permission to run tool denied by user")),
+            other => {
+                debug_assert!(false, "unexpected sandbox permission option_id: {other}");
+                Err(anyhow!("Permission to run tool denied by user"))
+            }
+        }
+    }
+
+    fn persist_sandbox_always_permission(
+        request: &SandboxRequest,
+        fs: Option<Arc<dyn Fs>>,
+        cx: &AsyncApp,
+    ) {
+        let Some(fs) = fs else {
+            return;
+        };
+
+        let request = request.clone();
+        cx.update(|cx| {
+            update_settings_file(fs, cx, move |settings, _| {
+                let agent = settings.agent.get_or_insert_default();
+                if request.network {
+                    agent.allow_sandbox_network();
+                }
+                if request.allow_fs_write_all {
+                    agent.allow_sandbox_fs_write_all();
+                }
+                for path in request.write_paths {
+                    agent.add_sandbox_write_path(path);
+                }
+            });
+        });
+    }
+
     /// The sandbox permissions to actually enforce for a command: the union
-    /// of this command's `request` and everything granted "for the rest of
-    /// the conversation".
+    /// of this command's `request`, everything granted "for the rest of the
+    /// conversation", and persistent "allow always" sandbox grants.
     ///
     /// Callers must apply this to the enforced sandbox policy (rather than
-    /// the raw `request`) so a conversation grant keeps working for later
-    /// commands that write to a previously approved path without
-    /// re-requesting it.
-    pub(crate) fn effective_sandbox_request(&self, request: &SandboxRequest) -> SandboxRequest {
-        self.sandbox_grants.borrow().effective(request)
+    /// the raw `request`) so standing grants keep working for later commands
+    /// that write to a previously approved path without re-requesting it.
+    pub(crate) fn effective_sandbox_request(
+        &self,
+        request: &SandboxRequest,
+        persistent: &agent_settings::SandboxPermissions,
+    ) -> SandboxRequest {
+        self.sandbox_grants
+            .borrow()
+            .effective_with_persistent(request, persistent)
     }
 
     /// Prompts the user to choose between an explicit set of actions and
@@ -4739,6 +4843,49 @@ mod tests {
         ) -> Task<Result<Self::Output, Self::Output>> {
             Task::ready(Ok(String::new()))
         }
+    }
+
+    #[gpui::test]
+    async fn test_authorize_sandbox_allow_always_records_current_grant(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let request = SandboxRequest {
+            network: false,
+            allow_fs_write_all: false,
+            write_paths: vec![PathBuf::from("/tmp/build")],
+        };
+
+        let authorize = cx.update(|cx| {
+            event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
+        });
+        let authorization = receiver.expect_authorization().await;
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat sandbox permission options");
+        };
+        let option_ids = options
+            .iter()
+            .map(|option| option.option_id.0.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec!["allow", "allow_conversation", "allow_always", "deny"]
+        );
+
+        let send_result = authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow_always"),
+                acp::PermissionOptionKind::AllowAlways,
+            ));
+        assert!(send_result.is_ok());
+        authorize.await.unwrap();
+
+        let effective = event_stream.effective_sandbox_request(
+            &SandboxRequest::default(),
+            &agent_settings::SandboxPermissions::default(),
+        );
+        assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/build")]);
     }
 
     #[gpui::test]
