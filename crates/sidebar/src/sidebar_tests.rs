@@ -902,6 +902,164 @@ async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_remove_folder_from_multi_root_preserves_threads(cx: &mut TestAppContext) {
+    let (_fs, project) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    // Add an agent panel to match the real app setup.
+    let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    add_agent_panel(&workspace, cx);
+    cx.run_until_parked();
+
+    // Save two threads under the multi-root project [/project-a, /project-b].
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-1")),
+        Some("Thread Alpha".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+        None,
+        &project,
+        cx,
+    );
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-2")),
+        Some("Thread Beta".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    // Both threads should appear (the draft is from the agent panel).
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project-a, project-b]",
+            "  [~ Draft]",
+            "  Thread Alpha",
+            "  Thread Beta",
+        ]
+    );
+
+    // Now remove /project-b via the multi-workspace API (the same path the
+    // sidebar ellipsis menu uses).
+    let group_key = multi_workspace.read_with(cx, |mw, cx| {
+        mw.project_groups(cx).first().unwrap().key.clone()
+    });
+    multi_workspace.update(cx, |mw, cx| {
+        mw.remove_folder_from_project_group(&group_key, std::path::Path::new("/project-b"), cx);
+    });
+    cx.run_until_parked();
+
+    // After removing /project-b, threads should still be visible under
+    // [project-a], exactly as if the user had opened project-a directly.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project-a]",
+            "  [~ Draft]",
+            "  Thread Alpha",
+            "  Thread Beta",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_remove_project_group_preserves_other_threads(cx: &mut TestAppContext) {
+    // When two separate projects A and B are open in one window, removing
+    // project B should not cause project A's threads to disappear.
+    let (fs, project_a) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    // Add agent panels.
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    add_agent_panel(&workspace_a, cx);
+
+    // Add a second separate project.
+    let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    add_agent_panel(&workspace_b, cx);
+    cx.run_until_parked();
+
+    // Save threads for project A.
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-a1")),
+        Some("Thread A-Alpha".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+        None,
+        &project_a,
+        cx,
+    );
+    // Save threads for project B.
+    let project_b = workspace_b.read_with(cx, |ws, _cx| ws.project().clone());
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-b1")),
+        Some("Thread B-Alpha".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &project_b,
+        cx,
+    );
+    cx.run_until_parked();
+
+    // Both groups should be visible with their threads.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("Thread A-Alpha")),
+        "thread A should appear: {:?}",
+        entries
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("Thread B-Alpha")),
+        "thread B should appear: {:?}",
+        entries
+    );
+
+    // Remove project B.
+    let group_b_key = multi_workspace.read_with(cx, |mw, cx| {
+        mw.project_groups(cx)
+            .iter()
+            .find(|g| {
+                g.key
+                    .path_list()
+                    .paths()
+                    .iter()
+                    .any(|p| p.ends_with("project-b"))
+            })
+            .unwrap()
+            .key
+            .clone()
+    });
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.remove_project_group(&group_b_key, window, cx)
+            .detach_and_log_err(cx);
+    });
+    cx.run_until_parked();
+
+    // Threads for project A should still be visible.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("project-a")),
+        "project-a group should still appear after removing B: {:?}",
+        entries
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("Thread A-Alpha")),
+        "thread A should still appear after removing B: {:?}",
+        entries
+    );
+}
+
+#[gpui::test]
 async fn test_workspace_lifecycle(cx: &mut TestAppContext) {
     let project = init_test_project("/project-a", cx).await;
     let (multi_workspace, cx) =
