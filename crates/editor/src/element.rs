@@ -6655,7 +6655,7 @@ pub fn render_breadcrumb_text(
 ) -> gpui::AnyElement {
     const MAX_SEGMENTS: usize = 12;
 
-    let element = h_flex().flex_grow().text_ui(cx);
+    let element = h_flex().flex_grow_1().text_ui(cx);
 
     let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
     let suffix_start_ix = cmp::max(
@@ -7997,12 +7997,14 @@ impl Element for EditorElement {
 
                     // Calculate how much of the editor is clipped by parent containers (e.g., List).
                     // This allows us to only render lines that are actually visible, which is
-                    // critical for performance when large AutoHeight editors are inside Lists.
+                    // critical for performance when large content-sized editors are inside Lists.
                     let visible_bounds = window.content_mask().bounds;
-                    let clipped_top = (visible_bounds.origin.y - bounds.origin.y).max(px(0.));
+                    let visible_top = bounds.top().max(visible_bounds.top());
+                    let visible_bottom = bounds.bottom().min(visible_bounds.bottom());
+                    let clipped_top = (visible_top - bounds.top()).max(px(0.));
+                    let visible_height = (visible_bottom - visible_top).max(px(0.));
                     let clipped_top_in_lines = f64::from(clipped_top / line_height);
-                    let visible_height_in_lines =
-                        f64::from(visible_bounds.size.height / line_height);
+                    let visible_height_in_lines = f64::from(visible_height / line_height);
 
                     // The max scroll position for the top of the window
                     let scroll_beyond_last_line = self.editor.read(cx).scroll_beyond_last_line(cx);

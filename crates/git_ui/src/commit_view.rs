@@ -539,6 +539,8 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
+        let avatar_size = rems_from_px(40.);
+        let avatar_size_px = avatar_size.to_pixels(window.rem_size());
         let gutter_width = self.editor.update(cx, |editor, cx| {
             let editor = editor.rhs_editor().clone();
             editor.update(cx, |editor, cx| {
@@ -551,6 +553,9 @@ impl CommitView {
                     .full_width()
             })
         });
+        let avatar_min_side_padding = rems_from_px(10.).to_pixels(window.rem_size());
+        let avatar_container_min = avatar_size_px + avatar_min_side_padding * 2.0;
+        let avatar_container_width = gutter_width.max(avatar_container_min);
 
         let clipboard_has_sha = cx
             .read_from_clipboard()
@@ -574,9 +579,13 @@ impl CommitView {
             .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
-                    .child(h_flex().w(gutter_width).justify_center().child(
-                        self.render_commit_avatar(&commit.sha, rems_from_px(40.), window, cx),
-                    ))
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .w(avatar_container_width)
+                            .justify_center()
+                            .child(self.render_commit_avatar(&commit.sha, avatar_size, window, cx)),
+                    )
                     .child(
                         v_flex().child(Label::new(author_name)).child(
                             h_flex()
