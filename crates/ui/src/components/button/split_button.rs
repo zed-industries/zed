@@ -76,7 +76,7 @@ impl RenderOnce for SplitButton {
             .when(self.style == SplitButtonStyle::Transparent, |this| {
                 this.gap_px()
             })
-            .child(div().flex_grow().child(match self.left {
+            .child(div().flex_grow_1().child(match self.left {
                 SplitButtonKind::ButtonLike(button) => button.into_any_element(),
                 SplitButtonKind::IconButton(icon) => icon.into_any_element(),
             }))
