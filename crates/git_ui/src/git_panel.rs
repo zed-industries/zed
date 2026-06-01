@@ -5491,14 +5491,11 @@ impl GitPanel {
             .as_ref()
             .map_or(false, |repo| repo.read(cx).error().is_some());
 
-        let content: AnyElement = if has_open_error {
-            self.render_open_error_ui(cx)
-        } else {
-            match (self.git_access, &self.active_repository) {
-                (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
-                (_, None) => self.render_uninitialized_ui(cx),
-                (_, Some(_)) => self.render_no_changes_ui(cx),
-            }
+        let content: AnyElement = match (self.git_access, has_open_error, &self.active_repository) {
+            (GitAccess::No, _, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+            (_, true, _) => self.render_open_error_ui(cx),
+            (_, _, None) => self.render_uninitialized_ui(cx),
+            (_, _, Some(_)) => self.render_no_changes_ui(cx),
         };
 
         v_flex()
@@ -9327,17 +9324,17 @@ mod tests {
             );
         });
 
-        // When the repo is owned by a different user, the panel should render
-        // the unsafe repository UI (with the "Trust Directory" button)
-        panel.read_with(cx, |panel, cx| {
-            let has_open_error = panel
-                .active_repository
-                .as_ref()
-                .map_or(false, |repo| repo.read(cx).error().is_some());
+        // When the repo is owned by a different user, `has_active_repo` should be set
+        // to something and `git_access` should be `No`, which takes priority over `open_error`
+        // causing the unsafe repository UI (with the "Trust Directory" button) to be shown.
+        panel.read_with(cx, |panel, _cx| {
+            let has_active_repo = panel.active_repository.is_some();
+            let is_no_access = matches!(panel.git_access, GitAccess::No);
             assert!(
-                !has_open_error,
-                "`panel` should not treat a dubious ownership failure as an open error; \
-                 it should render the unsafe repository UI instead so the user can trust the directory"
+                has_active_repo && is_no_access,
+                "panel should have an active repository with GitAccess::No so that \
+                 render_unsafe_repo_ui is chosen over render_open_error_ui; \
+                 got git_access=No:{is_no_access}, active_repository=Some:{has_active_repo}"
             );
         });
     }
