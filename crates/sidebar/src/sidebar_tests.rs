@@ -6028,16 +6028,10 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
 }
 
 #[gpui::test]
-async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut TestAppContext) {
-    // The sidebar surfaces an empty-draft placeholder row only for the
-    // draft that the *active workspace's panel* is currently viewing.
-    // Specifically:
-    //   1. Empty ephemeral drafts in non-active workspaces (e.g. a
-    //      sibling linked-worktree panel) are hidden.
-    //   2. An empty ephemeral that is parked in its slot while the user
-    //      is viewing a real thread is hidden (it's not the active view).
-    //   3. When the active workspace switches, the placeholder follows
-    //      the new active panel's current view.
+async fn test_empty_draft_is_visible_per_workspace_panel(cx: &mut TestAppContext) {
+    // Show one empty-draft placeholder per workspace panel, regardless
+    // of which workspace is active. When a panel leaves its draft, only
+    // that panel's placeholder disappears.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
@@ -6081,9 +6075,8 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let (sidebar, main_panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
-    // `mw.workspace()` returns the *currently active* workspace, so we
-    // capture the main one here before adding the worktree workspace
-    // (which would make it the active one).
+    // Capture the main workspace before adding the worktree, which
+    // becomes active when added.
     let main_workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
     let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
@@ -6091,8 +6084,7 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
     let worktree_panel = add_agent_panel(&worktree_workspace, cx);
     cx.run_until_parked();
 
-    // Give the main panel a real thread we can park the draft behind
-    // later. Send a message to promote the draft→real thread.
+    // Create a real main-panel thread to navigate back to later.
     let real_connection = StubAgentConnection::new();
     real_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
         acp::ContentChunk::new("done".into()),
@@ -6103,11 +6095,9 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
         main_panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
     cx.run_until_parked();
 
-    // Now open a fresh ephemeral draft in the main panel.
+    // Open one empty draft in each panel.
     agent_ui::test_support::open_draft_with_connection(&main_panel, StubAgentConnection::new(), cx);
     cx.run_until_parked();
-
-    // And an ephemeral draft in the worktree panel as well.
     agent_ui::test_support::open_draft_with_connection(
         &worktree_panel,
         StubAgentConnection::new(),
@@ -6115,21 +6105,12 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
     );
     cx.run_until_parked();
 
-    // `open_draft_with_connection` focuses the panel it's called on,
-    // which makes that workspace active. Explicitly re-activate the main
-    // workspace so the baseline assertions below describe the
-    // "main-workspace-is-active" case independently of call order above.
+    // Make the initial assertions with the main workspace active.
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.activate(main_workspace.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
-    // The invariant under test is: at most one empty-draft placeholder is
-    // visible at a time, and it corresponds to the active workspace's
-    // panel's currently-active draft. Counting `is_empty_draft` rows is
-    // more robust than tracking specific thread_ids because draft
-    // creation flows can leave behind orphan ephemeral metadata that's
-    // also hidden by the filter.
     let empty_draft_rows =
         |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<ThreadId> {
             sidebar.read_with(cx, |sidebar, _| {
@@ -6155,20 +6136,21 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
             })
         };
 
-    // Baseline: main workspace active, main panel viewing its draft.
-    // Exactly one placeholder visible, matching the main panel's draft.
+    // Both panel drafts are visible at once.
     let main_active_draft =
         active_panel_draft_id(&main_panel, cx).expect("main panel should be viewing a draft");
-    let visible = empty_draft_rows(&sidebar, cx);
+    let worktree_active_draft = active_panel_draft_id(&worktree_panel, cx)
+        .expect("worktree panel should be viewing a draft");
+    let visible: HashSet<ThreadId> = empty_draft_rows(&sidebar, cx).into_iter().collect();
+    let expected: HashSet<ThreadId> = [main_active_draft, worktree_active_draft]
+        .into_iter()
+        .collect();
     assert_eq!(
-        visible,
-        vec![main_active_draft],
-        "exactly the main panel's active empty draft should be visible"
+        visible, expected,
+        "each workspace's active empty draft should be visible"
     );
 
-    // Navigate the main panel AWAY from its draft to the real thread.
-    // The draft is no longer the active view of its panel, so its
-    // placeholder must disappear from the sidebar.
+    // Leaving the main draft hides only the main placeholder.
     main_panel.update_in(cx, |panel, window, cx| {
         panel.load_agent_thread(
             agent_ui::Agent::NativeAgent,
@@ -6190,25 +6172,22 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
             "main panel should now be viewing the real thread"
         );
     });
-    assert!(
-        empty_draft_rows(&sidebar, cx).is_empty(),
-        "no placeholder should be visible: main panel is on a real thread and worktree workspace is inactive"
+    assert_eq!(
+        empty_draft_rows(&sidebar, cx),
+        vec![worktree_active_draft],
+        "only the worktree panel's draft should remain once the main panel leaves its draft"
     );
 
-    // Switch the active workspace to the worktree. Now the worktree
-    // panel's draft is the active view, so its placeholder appears.
+    // Switching workspaces does not change per-panel draft visibility.
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.activate(worktree_workspace.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
-    let worktree_active_draft = active_panel_draft_id(&worktree_panel, cx)
-        .expect("worktree panel should be viewing a draft");
-    let visible = empty_draft_rows(&sidebar, cx);
     assert_eq!(
-        visible,
+        empty_draft_rows(&sidebar, cx),
         vec![worktree_active_draft],
-        "exactly the worktree panel's active empty draft should be visible after switching workspaces"
+        "the worktree panel's active empty draft should remain visible after switching workspaces"
     );
 }
 
@@ -9506,13 +9485,20 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    // Archiving the active thread activates a draft on the same workspace
-    // (via clear_base_view → activate_draft). The draft is not shown as a
-    // sidebar row but active_entry tracks it.
+    // Archiving the active thread activates its nearest neighbor. Now that
+    // every workspace surfaces its own empty-draft row, the neighbor set
+    // can include a real thread in a sibling workspace, so active_entry
+    // lands on that neighbor rather than synthesizing a fresh draft on
+    // workspace_b. The only invariant is that it moves off the archived
+    // thread and onto a still-live entry.
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { workspace: ws, .. }) if ws == &workspace_b),
-            "expected draft on workspace_b after archiving active thread, got: {:?}",
+            matches!(
+                &sidebar.active_entry,
+                Some(ActiveEntry::Thread { session_id, .. })
+                    if session_id.as_ref() != Some(&thread_b)
+            ),
+            "expected to move off the archived thread after archiving the active thread, got: {:?}",
             sidebar.active_entry,
         );
     });
