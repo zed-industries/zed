@@ -43,6 +43,8 @@ actions!(
         RemoveWatch,
         /// Jump to variable's memory location.
         GoToMemory,
+        /// Opens the selected variable in the Data view (for example as a pandas DataFrame).
+        ViewAsDataFrame,
     ]
 );
 
@@ -650,6 +652,36 @@ impl VariableList {
         });
     }
 
+    fn view_as_data_frame(
+        &mut self,
+        _: &ViewAsDataFrame,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_entry) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| self.entries.iter().find(|entry| &entry.path == selection))
+        else {
+            return;
+        };
+
+        let Some(expression) = selected_entry
+            .as_variable()
+            .and_then(|var| var.evaluate_name.clone())
+        else {
+            return;
+        };
+
+        let stack_frame_id = self.selected_stack_frame_id;
+        let weak_running = self.weak_running.clone();
+        window.defer(cx, move |window, cx| {
+            _ = weak_running.update(cx, |running, cx| {
+                running.show_data_frame(expression.into(), stack_frame_id, window, cx);
+            });
+        });
+    }
+
     fn deploy_list_entry_context_menu(
         &mut self,
         entry: ListEntry,
@@ -657,7 +689,7 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (supports_set_variable, supports_data_breakpoints, supports_go_to_memory) =
+        let (supports_set_variable, supports_data_breakpoints, supports_go_to_memory, is_debugpy) =
             self.session.read_with(cx, |session, _| {
                 (
                     session
@@ -672,6 +704,7 @@ impl VariableList {
                         .capabilities()
                         .supports_read_memory_request
                         .unwrap_or_default(),
+                    session.adapter().0.as_ref() == "Debugpy",
                 )
             });
         let can_toggle_data_breakpoint = entry
@@ -713,6 +746,14 @@ impl VariableList {
                             .when(supports_go_to_memory, |menu| {
                                 menu.action("Go To Memory", GoToMemory.boxed_clone())
                             })
+                            .when(
+                                is_debugpy
+                                    && entry
+                                        .as_variable()
+                                        .and_then(|var| var.evaluate_name.as_ref())
+                                        .is_some(),
+                                |menu| menu.action("View as DataFrame", ViewAsDataFrame.boxed_clone()),
+                            )
                             .action("Watch Variable", AddWatch.boxed_clone())
                             .when_some(can_toggle_data_breakpoint, |mut menu, data_info| {
                                 menu = menu.separator();
@@ -1560,6 +1601,7 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::remove_watcher))
             .on_action(cx.listener(Self::toggle_data_breakpoint))
             .on_action(cx.listener(Self::jump_to_variable_memory))
+            .on_action(cx.listener(Self::view_as_data_frame))
             .child(
                 uniform_list(
                     "variable-list",

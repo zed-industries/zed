@@ -11,14 +11,15 @@ use workspace::{Member, Pane, PaneAxis, Workspace};
 
 use crate::session::running::{
     self, DebugTerminal, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
-    loaded_source_list::LoadedSourceList, memory_view::MemoryView, module_list::ModuleList,
-    stack_frame_list::StackFrameList, variable_list::VariableList,
+    data_frame_view::DataFrameView, loaded_source_list::LoadedSourceList, memory_view::MemoryView,
+    module_list::ModuleList, stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
 #[derive(Clone, Hash, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum DebuggerPaneItem {
     Console,
     Variables,
+    Data,
     BreakpointList,
     Frames,
     Modules,
@@ -32,6 +33,7 @@ impl DebuggerPaneItem {
         static VARIANTS: &[DebuggerPaneItem] = &[
             DebuggerPaneItem::Console,
             DebuggerPaneItem::Variables,
+            DebuggerPaneItem::Data,
             DebuggerPaneItem::BreakpointList,
             DebuggerPaneItem::Frames,
             DebuggerPaneItem::Modules,
@@ -59,6 +61,7 @@ impl DebuggerPaneItem {
         match self {
             DebuggerPaneItem::Console => SharedString::new_static("Console"),
             DebuggerPaneItem::Variables => SharedString::new_static("Variables"),
+            DebuggerPaneItem::Data => SharedString::new_static("Data"),
             DebuggerPaneItem::BreakpointList => SharedString::new_static("Breakpoints"),
             DebuggerPaneItem::Frames => SharedString::new_static("Frames"),
             DebuggerPaneItem::Modules => SharedString::new_static("Modules"),
@@ -74,6 +77,9 @@ impl DebuggerPaneItem {
             }
             DebuggerPaneItem::Variables => {
                 "Shows current values of local and global variables in the current stack frame."
+            }
+            DebuggerPaneItem::Data => {
+                "Displays tabular views of data (for example, pandas DataFrames)."
             }
             DebuggerPaneItem::BreakpointList => "Lists all active breakpoints set in the code.",
             DebuggerPaneItem::Frames => {
@@ -206,6 +212,7 @@ pub(crate) fn deserialize_pane_layout(
     project: &Entity<Project>,
     stack_frame_list: &Entity<StackFrameList>,
     variable_list: &Entity<VariableList>,
+    data_frame_view: &Entity<DataFrameView>,
     module_list: &Entity<ModuleList>,
     console: &Entity<Console>,
     breakpoint_list: &Entity<BreakpointList>,
@@ -231,6 +238,7 @@ pub(crate) fn deserialize_pane_layout(
                     project,
                     stack_frame_list,
                     variable_list,
+                    data_frame_view,
                     module_list,
                     console,
                     breakpoint_list,
@@ -282,6 +290,14 @@ pub(crate) fn deserialize_pane_layout(
                         variable_list.focus_handle(cx),
                         variable_list.clone().into(),
                         DebuggerPaneItem::Variables,
+                        running_state.clone(),
+                        pane_handle.clone(),
+                        cx,
+                    )),
+                    DebuggerPaneItem::Data => Box::new(SubView::new(
+                        data_frame_view.focus_handle(cx),
+                        data_frame_view.clone().into(),
+                        DebuggerPaneItem::Data,
                         running_state.clone(),
                         pane_handle.clone(),
                         cx,
