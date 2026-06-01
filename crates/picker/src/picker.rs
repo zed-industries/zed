@@ -891,7 +891,7 @@ impl<D: PickerDelegate> Picker<D> {
             .when_some(self.widest_item, |el, widest_item| {
                 el.with_width_from_item(Some(widest_item))
             })
-            .flex_grow()
+            .flex_grow_1()
             .py(DynamicSpacing::Base04.rems(cx))
             .track_scroll(&scroll_handle)
             .into_any_element(),
@@ -902,7 +902,7 @@ impl<D: PickerDelegate> Picker<D> {
                 }),
             )
             .with_sizing_behavior(sizing_behavior)
-            .flex_grow()
+            .flex_grow_1()
             .py(DynamicSpacing::Base04.rems(cx))
             .into_any_element(),
         }
@@ -1150,7 +1150,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     v_flex()
                         .id("element-container")
                         .relative()
-                        .flex_grow()
+                        .flex_grow_1()
                         .when_some(self.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
@@ -1177,7 +1177,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
                     el.child(
                         v_flex()
-                            .flex_grow()
+                            .flex_grow_1()
                             .py(DynamicSpacing::Base04.rems(cx))
                             .child(
                                 ListItem::new("empty_state")

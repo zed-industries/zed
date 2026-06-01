@@ -334,7 +334,7 @@ impl PickerDelegate for RecentProjectsZoxideDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .child(
                     h_flex()
-                        .flex_grow()
+                        .flex_grow(1.)
                         .gap_3()
                         .child(Icon::new(IconName::Folder).color(Color::Muted))
                         .child(highlighted_text.render(window, cx)),

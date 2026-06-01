@@ -2670,7 +2670,7 @@ impl Render for TextThreadEditor {
             .size_full()
             .child(
                 div()
-                    .flex_grow()
+                    .flex_grow(1.)
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )

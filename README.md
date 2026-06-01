@@ -184,7 +184,6 @@ You modify the emojis in your `settings.json` like this in the root setting obje
 ## Git
 
 - add `blame > git_blame_font_family` setting to specify the font family for the git blame view because I am using a proportional font and the blame view misaligns otherwise
-- add `git::DiffWithCommit` from https://github.com/zed-industries/zed/pull/44467 and based on that code, `git::DiffWithBranch` is implemented
 - add `({file count})` in the git panel to every directory, inspired by https://github.com/zed-industries/zed/pull/45846 (Improve Git Panel with TreeView, VSCode-style grouping, commit history, and auto-fetch)
 - add `split_diff_font_decrease` setting to configure font size decrease for split diff view (default is 30%)
 - split diff view uses 30% smaller font size than stacked view

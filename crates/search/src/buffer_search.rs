@@ -4036,6 +4036,34 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_replace_with_non_ascii_characters(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("￥100 ￥200 ￥100", window, cx)
+        });
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("￥", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("\\n", window, cx);
+            });
+            search_bar.replace_all(&ReplaceAll, window, cx)
+        });
+
+        assert_eq!(
+            editor.read_with(cx, |this, cx| this.text(cx)),
+            "\\n100 \\n200 \\n100"
+        );
+    }
+
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {

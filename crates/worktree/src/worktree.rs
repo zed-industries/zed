@@ -3340,12 +3340,16 @@ async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
+    build_gitignore_with_root(abs_path, parent, fs).await
+}
+
+async fn build_gitignore_with_root(abs_path: &Path, root: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let contents = fs
         .load(abs_path)
         .await
         .with_context(|| format!("failed to load gitignore file at {}", abs_path.display()))?;
-    let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
-    let mut builder = GitignoreBuilder::new(parent);
+    let mut builder = GitignoreBuilder::new(root);
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
     }
@@ -5329,7 +5333,9 @@ impl BackgroundScanner {
         // Load gitignores asynchronously (outside the lock)
         let mut loaded_excludes: Vec<(Arc<Path>, Arc<Gitignore>)> = Vec::new();
         for (work_dir_abs_path, exclude_abs_path) in excludes_to_load {
-            if let Ok(current_exclude) = build_gitignore(&exclude_abs_path, self.fs.as_ref()).await
+            if let Ok(current_exclude) =
+                build_gitignore_with_root(&exclude_abs_path, &work_dir_abs_path, self.fs.as_ref())
+                    .await
             {
                 loaded_excludes.push((work_dir_abs_path, Arc::new(current_exclude)));
             }
@@ -5490,6 +5496,7 @@ impl BackgroundScanner {
                         if SanitizedPath::new(repo.common_dir_abs_path.as_ref()) == dot_git_dir
                             || SanitizedPath::new(repo.repository_dir_abs_path.as_ref())
                                 == dot_git_dir
+                            || SanitizedPath::new(repo.dot_git_abs_path.as_ref()) == dot_git_dir
                         {
                             Some(repo.clone())
                         } else {
@@ -5545,10 +5552,7 @@ impl BackgroundScanner {
                     });
 
             if exists_in_snapshot
-                || matches!(
-                    self.fs.metadata(&entry.common_dir_abs_path).await,
-                    Ok(Some(_))
-                )
+                || matches!(self.fs.metadata(&entry.dot_git_abs_path).await, Ok(Some(_)))
             {
                 ids_to_preserve.insert(work_directory_id);
             }
@@ -5641,7 +5645,9 @@ async fn discover_ancestor_git_repo(
             let (_, common_dir_abs_path) = discover_git_paths(&dot_git_abs_path, fs.as_ref()).await;
 
             let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
-            if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
+            if let Ok(repo_exclude) =
+                build_gitignore_with_root(&repo_exclude_abs_path, ancestor, fs.as_ref()).await
+            {
                 exclude = Some(Arc::new(repo_exclude));
             }
 

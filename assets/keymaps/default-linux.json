@@ -1180,6 +1180,12 @@
     },
   },
   {
+    "context": "FileFinder > Picker > Editor && end_of_input",
+    "bindings": {
+      "right": "file_finder::OpenWithoutDismiss",
+    },
+  },
+  {
     "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrevious",

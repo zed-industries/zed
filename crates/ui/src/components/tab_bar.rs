@@ -141,7 +141,7 @@ impl RenderOnce for TabBar {
                     .child(
                         div()
                             .id("tabs")
-                            .flex_grow()
+                            .flex_grow_1()
                             .when(self.vertical_stacking, |this| {
                                 this.flex().flex_wrap().overflow_hidden()
                             })
