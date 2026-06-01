@@ -23,7 +23,7 @@ use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::sync::atomic::AtomicBool;
 
-use std::process::ExitStatus;
+use std::process::{ExitStatus, Output};
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
@@ -216,6 +216,21 @@ pub struct Branch {
     pub ref_name: SharedString,
     pub upstream: Option<Upstream>,
     pub most_recent_commit: Option<CommitSummary>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BranchesScanResult {
+    pub branches: Vec<Branch>,
+    pub error: Option<SharedString>,
+}
+
+impl From<Vec<Branch>> for BranchesScanResult {
+    fn from(branches: Vec<Branch>) -> Self {
+        Self {
+            branches,
+            error: None,
+        }
+    }
 }
 
 impl Branch {
@@ -721,14 +736,20 @@ pub enum LogSource {
 }
 
 impl LogSource {
-    fn get_arg(&self) -> Result<&str> {
+    fn get_args(&self) -> Result<Vec<&str>> {
         match self {
-            LogSource::All => Ok("--all"),
-            LogSource::Branch(branch) => Ok(branch.as_str()),
-            LogSource::Sha(oid) => {
-                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
-            }
-            LogSource::Path(_) => Ok("--follow"),
+            LogSource::All => Ok(vec![
+                "--ignore-missing", // needed in case of unborn HEAD
+                "--branches",
+                "--remotes",
+                "--tags",
+                "HEAD",
+            ]),
+            LogSource::Branch(branch) => Ok(vec![branch.as_str()]),
+            LogSource::Sha(oid) => Ok(vec![
+                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")?,
+            ]),
+            LogSource::Path(path) => Ok(vec!["--follow", "--", path.as_unix_str()]),
         }
     }
 }
@@ -792,9 +813,9 @@ pub trait GitRepository: Send + Sync {
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>>;
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
+    fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>>;
 
-    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
+    fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String, base_branch: Option<String>)
@@ -967,7 +988,7 @@ pub trait GitRepository: Send + Sync {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>>;
+    ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
@@ -1657,7 +1678,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let repo = repo.lock();
                 let remote = repo.find_remote(&name).ok()?;
-                remote.url().map(|url| url.to_string())
+                remote.url().ok().map(|url| url.to_string())
             })
             .boxed()
     }
@@ -1772,7 +1793,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>> {
+    fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>> {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
@@ -1792,7 +1813,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
+    fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>> {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
@@ -1817,14 +1838,15 @@ impl GitRepository for RealGitRepository {
                 ];
                 let output = git.build_command(&args).output().await?;
 
-                anyhow::ensure!(
-                    output.status.success(),
-                    "Failed to git git branches:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
+                let error = if output.status.success() {
+                    None
+                } else {
+                    let error = format_branch_scan_error(&output);
+                    log::warn!("failed to get git branches with commit metadata: {error}");
+                    Some(error.into())
+                };
 
                 let input = String::from_utf8_lossy(&output.stdout);
-
                 let mut branches = parse_branch_input(&input)?;
                 if branches.is_empty() {
                     let args = vec!["symbolic-ref", "--quiet", "HEAD"];
@@ -1845,7 +1867,7 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
-                Ok(branches)
+                Ok(BranchesScanResult { branches, error })
             })
             .boxed()
     }
@@ -2126,7 +2148,7 @@ impl GitRepository for RealGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
+    ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
         let git_binary = self.git_binary_in_worktree();
 
@@ -2888,6 +2910,10 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
+                if git.run(&["rev-parse", "main"]).await.is_ok() {
+                    return Ok(Some("main".into()));
+                }
+
                 if git.run(&["rev-parse", "master"]).await.is_ok() {
                     return Ok(Some("master".into()));
                 }
@@ -2958,17 +2984,8 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut git_log_command = vec![
-                "log",
-                GRAPH_COMMIT_FORMAT,
-                log_order.as_arg(),
-                log_source.get_arg()?,
-            ];
-
-            if let LogSource::Path(path) = &log_source {
-                git_log_command.extend(["--", path.as_unix_str()]);
-            }
-
+            let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
+            git_log_command.extend(log_source.get_args()?);
             let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -3038,7 +3055,7 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+            let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
 
             args.push("--fixed-strings");
 
@@ -3049,10 +3066,7 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
-            if let LogSource::Path(path) = &log_source {
-                args.extend(["--", path.as_unix_str()]);
-            }
-
+            args.extend(log_source.get_args()?);
             let mut command = git.build_command(&args);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
@@ -3647,6 +3661,17 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
     Ok(branches)
 }
 
+fn format_branch_scan_error(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .trim()
+        .replace('\n', " ");
+    if stderr.is_empty() {
+        format!("git for-each-ref exited with {}", output.status)
+    } else {
+        stderr
+    }
+}
+
 fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
     if upstream_track.is_empty() {
         return Ok(UpstreamTracking::Tracked(UpstreamTrackingStatus {
@@ -3926,7 +3951,7 @@ mod tests {
         let checkpoint = repo.checkpoint().await.unwrap();
 
         // Ensure the user can't see any branches after creating a checkpoint.
-        assert_eq!(repo.branches().await.unwrap().len(), 1);
+        assert_eq!(repo.branches().await.unwrap().branches.len(), 1);
 
         smol::fs::write(&file_path, "modified after checkpoint")
             .await
@@ -3996,7 +4021,7 @@ mod tests {
         let checkpoint_sha = repo.checkpoint().await.unwrap();
 
         // Ensure the user can't see any branches after creating a checkpoint.
-        assert_eq!(repo.branches().await.unwrap().len(), 1);
+        assert_eq!(repo.branches().await.unwrap().branches.len(), 1);
 
         smol::fs::write(repo_dir.path().join("foo"), "bar")
             .await
@@ -4018,6 +4043,64 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[gpui::test]
+    async fn test_branches_return_head_when_commit_metadata_cannot_be_read(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(
+            repo_dir.path().join(".git").join("refs/heads/broken"),
+            "0a103ede22f159c792dc6405e0c8304d9bd4dc29\n",
+        )
+        .await
+        .unwrap();
+
+        let branches_scan = repo.branches().await.unwrap();
+        assert!(branches_scan.error.is_some());
+        let head_branch = branches_scan
+            .branches
+            .iter()
+            .find(|branch| branch.is_head)
+            .expect("branch list should include HEAD");
+        assert!(head_branch.ref_name.starts_with("refs/heads/"));
+
+        assert!(
+            branches_scan
+                .branches
+                .iter()
+                .all(|branch| branch.ref_name.as_ref() != "refs/heads/broken")
+        );
     }
 
     #[gpui::test]
@@ -4570,6 +4653,67 @@ mod tests {
             moved_worktree.path.canonicalize().unwrap(),
             new_path.canonicalize().unwrap()
         );
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_ref_set(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let git = repo.git_binary();
+
+        let graph_commits = async || {
+            let (tx, rx) = smol::channel::unbounded();
+            repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, tx)
+                .await
+                .unwrap();
+            let mut commits = std::collections::HashSet::new();
+            while let Ok(chunk) = rx.try_recv() {
+                for commit in chunk {
+                    commits.insert(commit.sha);
+                }
+            }
+            commits
+        };
+
+        smol::fs::write(repo_dir.path().join("file1"), "1")
+            .await
+            .unwrap();
+        let branch_sha = repo.checkpoint().await.unwrap().commit_sha;
+        repo.update_ref("refs/heads/main".into(), branch_sha.to_string())
+            .await
+            .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file2"), "2")
+            .await
+            .unwrap();
+        let hidden_sha = repo.checkpoint().await.unwrap().commit_sha;
+        repo.update_ref("refs/custom/hidden".into(), hidden_sha.to_string())
+            .await
+            .unwrap();
+
+        let graph = graph_commits().await;
+        assert!(graph.contains(&branch_sha));
+        assert!(!graph.contains(&hidden_sha));
+
+        git.build_command(&["update-ref", "--no-deref", "HEAD", &hidden_sha.to_string()])
+            .output()
+            .await
+            .unwrap();
+
+        let graph = graph_commits().await;
+        assert!(graph.contains(&branch_sha));
+        assert!(graph.contains(&hidden_sha));
     }
 
     #[test]

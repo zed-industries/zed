@@ -217,12 +217,12 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
         let mut bullet_items: Vec<SharedString> = Vec::with_capacity(3);
         bullet_items
             .push(format!("Skills live in {GLOBAL_SKILLS_DIR_DISPLAY}/<name>/SKILL.md").into());
+        bullet_items.push("Type / to manually invoke a skill".into());
         if migrated_anything {
             bullet_items.push(
-                "Default Rules are converted into your global AGENTS.md; all other rules become skills".into(),
+                "The Rules Library is making way for skills: your default rules are now in a global AGENTS.md, and your other rules have been converted to skills".into(),
             );
         }
-        bullet_items.push("Type / to manually invoke a skill".into());
 
         Some(AnnouncementContent {
             heading: "Introducing Skills Support".into(),

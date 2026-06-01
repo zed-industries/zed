@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: Helps users create new agent skills for Zed. Use this when a user wants to create a skill, asks about SKILL.md structure, or wants to package reusable agent instructions.
+description: Helps you create new agent skills for Zed. Use this to create a skill, ask about SKILLs.md, or package reusable agent instructions.
 ---
 
 # Creating a Zed Agent Skill
@@ -88,8 +88,8 @@ Reference these in the skill body. The agent can read them using the file path s
 
 1. Decide on scope (global vs project-local) based on the user's needs.
 2. Choose a descriptive, hyphenated name.
-3. Create the directory structure.
-4. Write the `SKILL.md` with frontmatter and instructions.
+3. Create the directory structure. The `create_directory` tool normally only creates directories inside the current project, but it has a special allow case for global skills under `~/.agents/skills`.
+4. Write the `SKILL.md` with frontmatter and instructions. The `write_file` and `edit_file` tools also have a special allow case for creating or modifying files under `~/.agents/skills`.
 5. Optionally add supporting files (templates, examples, references).
 
 After creating the skill, it will be automatically discovered by Zed's agent on the next conversation (no restart needed for global skills if the `~/.agents/skills/` directory already exists).

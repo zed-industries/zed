@@ -513,13 +513,16 @@ impl TerminalView {
                 .action("Paste Text", Box::new(PasteText))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
-                .when(assistant_enabled, |menu| {
-                    menu.separator()
-                        .action("Inline Assist", Box::new(InlineAssist::default()))
-                        .when(has_selection, |menu| {
-                            menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
-                        })
-                })
+                .when(
+                    assistant_enabled && !matches!(self.mode, TerminalMode::Embedded { .. }),
+                    |menu| {
+                        menu.separator()
+                            .action("Inline Assist", Box::new(InlineAssist::default()))
+                            .when(has_selection, |menu| {
+                                menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
+                            })
+                    },
+                )
                 .separator()
                 .action(
                     "Close Terminal Tab",
@@ -670,7 +673,20 @@ impl TerminalView {
         });
     }
 
+    fn is_alt_screen(&self, cx: &App) -> bool {
+        self.terminal
+            .read(cx)
+            .last_content
+            .mode
+            .contains(TermMode::ALT_SCREEN)
+    }
+
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_alt_screen(cx) {
+            cx.propagate();
+            return;
+        }
+
         let terminal_content = self.terminal.read(cx).last_content();
         if self.block_below_cursor.is_some()
             && terminal_content.display_offset == 0
@@ -686,6 +702,11 @@ impl TerminalView {
     }
 
     fn scroll_line_down(&mut self, _: &ScrollLineDown, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_alt_screen(cx) {
+            cx.propagate();
+            return;
+        }
+
         let terminal_content = self.terminal.read(cx).last_content();
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
             let max_scroll_top = self.max_scroll_top(cx);
@@ -701,6 +722,11 @@ impl TerminalView {
     }
 
     fn scroll_page_up(&mut self, _: &ScrollPageUp, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_alt_screen(cx) {
+            cx.propagate();
+            return;
+        }
+
         if self.scroll_top == Pixels::ZERO {
             self.terminal.update(cx, |term, _| term.scroll_page_up());
         } else {
@@ -726,6 +752,11 @@ impl TerminalView {
     }
 
     fn scroll_page_down(&mut self, _: &ScrollPageDown, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_alt_screen(cx) {
+            cx.propagate();
+            return;
+        }
+
         self.terminal.update(cx, |term, _| term.scroll_page_down());
         let terminal = self.terminal.read(cx);
         if terminal.last_content().display_offset < terminal.viewport_lines() {
@@ -735,11 +766,21 @@ impl TerminalView {
     }
 
     fn scroll_to_top(&mut self, _: &ScrollToTop, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_alt_screen(cx) {
+            cx.propagate();
+            return;
+        }
+
         self.terminal.update(cx, |term, _| term.scroll_to_top());
         cx.notify();
     }
 
     fn scroll_to_bottom(&mut self, _: &ScrollToBottom, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_alt_screen(cx) {
+            cx.propagate();
+            return;
+        }
+
         self.terminal.update(cx, |term, _| term.scroll_to_bottom());
         if self.block_below_cursor.is_some() {
             self.scroll_top = self.max_scroll_top(cx);
@@ -1337,7 +1378,7 @@ impl Item for TerminalView {
                 v_flex()
                     .gap_1()
                     .child(Label::new(title.clone()))
-                    .child(h_flex().flex_grow().child(Divider::horizontal()))
+                    .child(h_flex().flex_grow_1().child(Divider::horizontal()))
                     .child(
                         Label::new(format!("Process ID (PID): {}", pid))
                             .color(Color::Muted)
@@ -2057,7 +2098,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2099,6 +2140,88 @@ mod tests {
         let written =
             String::from_utf8(input_log.remove(0)).expect("terminal write should be valid UTF-8");
         assert_eq!(written, expected_text);
+    }
+
+    // DEC private mode 1049: a program writes this to enter the alternate screen buffer.
+    const ENTER_ALT_SCREEN: &[u8] = b"\x1b[?1049h";
+
+    // CSI `1;2A` = cursor-up with the xterm Shift modifier (`1 + 1` for Shift).
+    const SHIFT_UP_ESCAPE: &[u8] = b"\x1b[1;2A";
+
+    #[gpui::test]
+    async fn shift_up_scrolls_history_in_normal_screen(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        cx.update(load_default_keymap);
+        let (_pane, terminal, _terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+
+        let output = (0..200)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        cx.update(|window, cx| {
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(output.as_bytes(), cx);
+                terminal.sync(window, cx);
+            });
+        });
+        terminal.read_with(&cx, |terminal, _| {
+            assert!(!terminal.last_content.mode.contains(TermMode::ALT_SCREEN));
+            assert_eq!(terminal.last_content.display_offset, 0);
+        });
+
+        cx.simulate_keystrokes("shift-up");
+        cx.update(|window, cx| {
+            terminal.update(cx, |terminal, cx| terminal.sync(window, cx));
+        });
+
+        assert_eq!(
+            terminal.read_with(&cx, |terminal, _| terminal.last_content.display_offset),
+            1,
+            "shift-up should scroll terminal history in the normal screen",
+        );
+        assert!(
+            terminal
+                .update(&mut cx, |terminal, _| terminal.take_input_log())
+                .is_empty(),
+            "shift-up in the normal screen should not be forwarded to the shell",
+        );
+    }
+
+    #[gpui::test]
+    async fn shift_up_is_forwarded_to_program_in_alt_screen(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        cx.update(load_default_keymap);
+        let (_pane, terminal, _terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(ENTER_ALT_SCREEN, cx);
+                terminal.sync(window, cx);
+            });
+        });
+        terminal.read_with(&cx, |terminal, _| {
+            assert!(terminal.last_content.mode.contains(TermMode::ALT_SCREEN));
+        });
+
+        cx.simulate_keystrokes("shift-up");
+        assert_eq!(
+            terminal.update(&mut cx, |terminal, _| terminal.take_input_log()),
+            vec![SHIFT_UP_ESCAPE.to_vec()],
+            "shift-up should be forwarded to the program in the alternate screen",
+        );
     }
 
     // Working directory calculation tests
@@ -2271,6 +2394,72 @@ mod tests {
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let (project, workspace, _) = init_test_with_window(cx).await;
         (project, workspace)
+    }
+
+    fn load_default_keymap(cx: &mut App) {
+        cx.bind_keys(
+            settings::KeymapFile::load_asset_allow_partial_failure(
+                settings::DEFAULT_KEYMAP_PATH,
+                cx,
+            )
+            .unwrap(),
+        );
+    }
+
+    fn add_display_only_terminal(
+        project: &Entity<Project>,
+        window_handle: gpui::WindowHandle<MultiWorkspace>,
+        focus: bool,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Pane>, Entity<Terminal>, Entity<TerminalView>) {
+        let project = project.clone();
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let active_pane = workspace.read(cx).active_pane().clone();
+
+                let terminal = cx.new(|cx| {
+                    terminal::TerminalBuilder::new_display_only(
+                        CursorShape::default(),
+                        terminal::terminal_settings::AlternateScroll::On,
+                        None,
+                        0,
+                        cx.background_executor(),
+                        PathStyle::local(),
+                    )
+                    .unwrap()
+                    .subscribe(cx)
+                });
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        workspace.downgrade(),
+                        None,
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+
+                active_pane.update(cx, |pane, cx| {
+                    pane.add_item(
+                        Box::new(terminal_view.clone()),
+                        true,
+                        false,
+                        None,
+                        window,
+                        cx,
+                    );
+                });
+
+                if focus {
+                    let focus_handle = terminal_view.read(cx).focus_handle.clone();
+                    focus_handle.focus(window, cx);
+                }
+
+                (active_pane, terminal, terminal_view)
+            })
+            .unwrap()
     }
 
     /// Creates a worktree with 1 file /root.txt and returns the project, workspace, and window handle.
@@ -2473,45 +2662,11 @@ mod tests {
             })
             .unwrap();
 
-        let (active_pane, terminal, terminal_view, tab_item) = window_handle
-            .update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspace().clone();
-                let active_pane = workspace.read(cx).active_pane().clone();
+        let (active_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, false, cx);
 
-                let terminal = cx.new(|cx| {
-                    terminal::TerminalBuilder::new_display_only(
-                        CursorShape::default(),
-                        terminal::terminal_settings::AlternateScroll::On,
-                        None,
-                        0,
-                        cx.background_executor(),
-                        PathStyle::local(),
-                    )
-                    .unwrap()
-                    .subscribe(cx)
-                });
-                let terminal_view = cx.new(|cx| {
-                    TerminalView::new(
-                        terminal.clone(),
-                        workspace.downgrade(),
-                        None,
-                        project.downgrade(),
-                        window,
-                        cx,
-                    )
-                });
-
-                active_pane.update(cx, |pane, cx| {
-                    pane.add_item(
-                        Box::new(terminal_view.clone()),
-                        true,
-                        false,
-                        None,
-                        window,
-                        cx,
-                    );
-                });
-
+        let tab_item = window_handle
+            .update(cx, |_, window, cx| {
                 let tab_project_item = cx.new(|_| TestProjectItem {
                     entry_id: Some(second_entry.id),
                     project_path: Some(ProjectPath {
@@ -2525,8 +2680,7 @@ mod tests {
                 active_pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(tab_item.clone()), true, false, None, window, cx);
                 });
-
-                (active_pane, terminal, terminal_view, tab_item)
+                tab_item
             })
             .unwrap();
 

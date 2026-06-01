@@ -515,7 +515,7 @@ One such service is [Ollama Turbo](https://ollama.com/turbo). To configure Zed t
 4. Paste your API key and press enter.
 5. For the API URL enter `https://ollama.com`
 
-Zed will also use the `OLLAMA_API_KEY` environment variables if defined.
+Zed will also use the `OLLAMA_API_KEY` environment variable if defined.
 
 ### OpenAI {#openai}
 
