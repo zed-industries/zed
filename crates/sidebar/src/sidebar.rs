@@ -544,6 +544,38 @@ impl WorkspaceMenuWorktreeLabel {
     }
 }
 
+fn repository_snapshot_for_root_path<'a>(
+    root_path: &Path,
+    repository_snapshots: &'a [project::git_store::RepositorySnapshot],
+) -> Option<(&'a project::git_store::RepositorySnapshot, &'a Path)> {
+    if let Some(snapshot) = repository_snapshots
+        .iter()
+        .find(|snapshot| snapshot.work_directory_abs_path.as_ref() == root_path)
+    {
+        return Some((snapshot, snapshot.work_directory_abs_path.as_ref()));
+    }
+
+    if let Some((snapshot, worktree_path)) = repository_snapshots
+        .iter()
+        .flat_map(|snapshot| {
+            snapshot
+                .linked_worktrees()
+                .iter()
+                .filter(|linked_worktree| root_path.starts_with(&linked_worktree.path))
+                .map(move |linked_worktree| (snapshot, linked_worktree.path.as_path()))
+        })
+        .max_by_key(|(_, worktree_path)| worktree_path.components().count())
+    {
+        return Some((snapshot, worktree_path));
+    }
+
+    repository_snapshots
+        .iter()
+        .filter(|snapshot| root_path.starts_with(snapshot.work_directory_abs_path.as_ref()))
+        .max_by_key(|snapshot| snapshot.work_directory_abs_path.components().count())
+        .map(|snapshot| (snapshot, snapshot.work_directory_abs_path.as_ref()))
+}
+
 fn workspace_menu_worktree_labels(
     workspace: &Entity<Workspace>,
     cx: &App,
@@ -566,20 +598,31 @@ fn workspace_menu_worktree_labels(
                 .file_name()
                 .map(|name| SharedString::from(name.to_string_lossy().to_string()))
                 .unwrap_or_default();
-            let repository_snapshot = repository_snapshots
-                .iter()
-                .find(|snapshot| snapshot.work_directory_abs_path.as_ref() == root_path);
 
-            if let Some(snapshot) = repository_snapshot {
-                let worktree_name = if snapshot.is_linked_worktree() {
+            if let Some((snapshot, worktree_path)) =
+                repository_snapshot_for_root_path(root_path, &repository_snapshots)
+            {
+                let worktree_name = if snapshot.work_directory_abs_path.as_ref() == worktree_path {
+                    if snapshot.is_linked_worktree() {
+                        snapshot
+                            .main_worktree_abs_path()
+                            .and_then(|main_worktree_path| {
+                                project::linked_worktree_short_name(
+                                    main_worktree_path,
+                                    worktree_path,
+                                )
+                            })
+                            .unwrap_or_else(|| folder_name.clone())
+                    } else {
+                        "main".into()
+                    }
+                } else {
                     snapshot
                         .main_worktree_abs_path()
                         .and_then(|main_worktree_path| {
-                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                            project::linked_worktree_short_name(main_worktree_path, worktree_path)
                         })
                         .unwrap_or_else(|| folder_name.clone())
-                } else {
-                    "main".into()
                 };
 
                 if show_folder_name {

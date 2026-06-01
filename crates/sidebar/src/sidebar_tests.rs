@@ -2001,6 +2001,56 @@ async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_workspace_menu_labels_linked_worktree_subdirectory(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "example": {},
+        }),
+    )
+    .await;
+    fs.insert_tree("/worktrees/sedge-beacon/example", serde_json::json!({}))
+        .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/worktrees/sedge-beacon"),
+            ref_name: Some("refs/heads/sedge-beacon".into()),
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let worktree_project =
+        project::Project::test(fs.clone(), ["/worktrees/sedge-beacon/example".as_ref()], cx).await;
+    worktree_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        MultiWorkspace::test_new(worktree_project.clone(), window, cx)
+    });
+    let workspace = _multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let labels = workspace_menu_worktree_labels(&workspace, cx);
+
+    assert_eq!(labels.len(), 1);
+    assert_eq!(labels[0].primary_name.as_ref(), "example");
+    assert_eq!(
+        labels[0].secondary_name.as_ref().map(|name| name.as_ref()),
+        Some("sedge-beacon")
+    );
+}
+
+#[gpui::test]
 async fn test_terminal_close_event_on_archived_linked_worktree_removes_workspace(
     cx: &mut TestAppContext,
 ) {
