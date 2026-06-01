@@ -1456,18 +1456,12 @@ mod test {
                 .first()
                 .map(|selection| buffer_snapshot.point_to_offset(selection.head()))
                 .unwrap_or(MultiBufferOffset(0));
-            let style = editor.style(cx);
-            let font = style.text.font();
-            let font_size = style.text.font_size.to_pixels(window.rem_size());
             let data = Vim::build_helix_jump_labels(
                 buffer_snapshot,
                 MultiBufferOffset(0),
                 buffer_snapshot.len(),
                 cursor_offset,
                 &skip_data,
-                window.text_system(),
-                font,
-                font_size,
             );
 
             data
@@ -3333,18 +3327,12 @@ mod test {
                 .first()
                 .map(|selection| buffer_snapshot.point_to_offset(selection.head()))
                 .unwrap_or(MultiBufferOffset(0));
-            let style = editor.style(cx);
-            let font = style.text.font();
-            let font_size = style.text.font_size.to_pixels(window.rem_size());
             let data = Vim::build_helix_jump_labels(
                 buffer_snapshot,
                 MultiBufferOffset(0),
                 buffer_snapshot.len(),
                 cursor_offset,
                 &skip_data,
-                window.text_system(),
-                font,
-                font_size,
             );
 
             data.into_iter()
