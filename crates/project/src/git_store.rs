@@ -7981,13 +7981,15 @@ impl Repository {
                         repo.open_error = Some(err.clone());
                         let id = repo.id;
                         if let Some(git_store) = repo.git_store.upgrade() {
-                            let error = anyhow::anyhow!(err.clone());
+                            let error = anyhow::anyhow!(err);
                             git_store.update(cx, |_, cx| {
                                 cx.emit(GitStoreEvent::RepositoryOpenError(id, error));
                             });
+                        } else {
+                            log::warn!("git_store dropped before repository open error could be emitted for repository {id:?}");
                         }
                     })
-                    .ok();
+                    .log_err();
                     return;
                 }
             };
