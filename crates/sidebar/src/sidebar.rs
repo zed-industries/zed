@@ -1514,7 +1514,11 @@ impl Sidebar {
             let label = group_key.display_name(&path_detail_map);
 
             let is_collapsed = self.is_group_collapsed(group_key, cx);
-            let should_load_threads = !is_collapsed || !query.is_empty();
+            // Respect the user's collapsed state even while a query is active,
+            // so the project chevron actually toggles search results. Groups
+            // whose threads contain matches still surface a header below
+            // (via has_content_match_in_group), so the user can expand them.
+            let should_load_threads = !is_collapsed;
 
             let is_active = active_workspace
                 .as_ref()
@@ -1873,7 +1877,34 @@ impl Sidebar {
                     }
                 }
 
-                if matched_threads.is_empty() && matched_terminals.is_empty() && !workspace_matched
+                // When the group is collapsed, its threads weren't loaded, so
+                // `matched_threads` can't surface them. Still keep the header
+                // visible if any of the group's threads match by title or
+                // content — so the user knows where the hits live and can
+                // expand the group to reveal them. Without this, a collapsed
+                // project would silently vanish from search results.
+                let has_collapsed_match = is_collapsed && {
+                    let store = ThreadMetadataStore::global(cx).read(cx);
+                    store
+                        .entries_for_main_worktree_path(
+                            group_key.path_list(),
+                            group_host.as_ref(),
+                        )
+                        .chain(
+                            store.entries_for_path(group_key.path_list(), group_host.as_ref()),
+                        )
+                        .any(|m| {
+                            self.content_matches.contains(&m.thread_id)
+                                || self.closed_search_matches.contains(&m.thread_id)
+                                || fuzzy_match_positions(&query, m.display_title().as_ref())
+                                    .is_some()
+                        })
+                };
+
+                if matched_threads.is_empty()
+                    && matched_terminals.is_empty()
+                    && !workspace_matched
+                    && !has_collapsed_match
                 {
                     continue;
                 }

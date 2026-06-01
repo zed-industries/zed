@@ -4571,7 +4571,10 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppContext) {
+async fn test_search_keeps_collapsed_group_header_visible_for_matches(cx: &mut TestAppContext) {
+    // Project chevron must work *during* search: a collapsed group stays
+    // collapsed when a query matches inside it, but its header is kept visible
+    // so the user knows results live there and can expand to see them.
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -4588,8 +4591,7 @@ async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppConte
     );
     cx.run_until_parked();
 
-    // User focuses the sidebar and collapses the group using keyboard:
-    // manually select the header, then press SelectParent to collapse.
+    // Collapse the group via keyboard.
     focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(0);
@@ -4605,14 +4607,15 @@ async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppConte
         ]
     );
 
-    // User types a search — the thread appears even though its group is collapsed.
+    // Type a search that matches a thread in the collapsed group. The header
+    // remains (so the user knows there's a match in there) and the chevron
+    // stays in its collapsed state — the user must expand to reveal the hits.
     type_in_search(&sidebar, "important", cx);
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
         vec![
             //
-            "> [my-project]",
-            "  Important thread  <== selected",
+            "> [my-project]  <== selected",
         ]
     );
 }
