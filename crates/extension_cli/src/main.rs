@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::Arc;
@@ -13,7 +14,6 @@ use extension::build_debug_adapter_schema_path;
 use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
-use futures::StreamExt as _;
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
 use settings_content::SemanticTokenRules;
@@ -95,14 +95,11 @@ async fn main() -> Result<()> {
     let extension_provides = manifest.provides();
     validate_extension_features(&extension_provides)?;
 
-    let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store, fs.clone()).await?;
-    futures::future::try_join4(
-        test_languages(&manifest, &extension_path, &grammars, fs.clone()),
-        test_themes(&manifest, &extension_path, fs.clone()),
-        test_snippets(&manifest, &extension_path, fs.clone()),
-        test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()),
-    )
-    .await?;
+    let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
+    test_languages(&manifest, &extension_path, &grammars)?;
+    test_themes(&manifest, &extension_path, fs.clone()).await?;
+    test_snippets(&manifest, &extension_path, fs.clone()).await?;
+    test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()).await?;
 
     let archive_dir = output_dir.join("archive");
     fs.remove_dir(
@@ -414,11 +411,10 @@ fn validate_extension_features(
     Ok(())
 }
 
-async fn test_grammars(
+fn test_grammars(
     manifest: &ExtensionManifest,
     extension_path: &Path,
     wasm_store: &mut WasmStore,
-    fs: Arc<dyn Fs>,
 ) -> Result<HashMap<String, Language>> {
     let mut grammars = HashMap::default();
     let grammars_dir = extension_path.join("grammars");
@@ -427,7 +423,7 @@ async fn test_grammars(
         let mut grammar_path = grammars_dir.join(grammar_name.as_ref());
         grammar_path.set_extension("wasm");
 
-        let wasm = fs.load_bytes(&grammar_path).await?;
+        let wasm = fs::read(&grammar_path)?;
         let language = wasm_store.load_language(grammar_name, &wasm)?;
         log::info!("loaded grammar {grammar_name}");
         grammars.insert(grammar_name.to_string(), language);
@@ -436,96 +432,77 @@ async fn test_grammars(
     Ok(grammars)
 }
 
-async fn test_languages(
+fn test_languages(
     manifest: &ExtensionManifest,
     extension_path: &Path,
     grammars: &HashMap<String, Language>,
-    fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    futures::future::try_join_all(manifest.languages.iter().map(|relative_language_dir| {
-        let fs = fs.clone();
-        async move {
-            let language_dir = extension_path.join(relative_language_dir);
-            let config_path = language_dir.join(LanguageConfig::FILE_NAME);
-            let config_content = fs.load(&config_path).await?;
-            let config: LanguageConfig = toml::from_str(&config_content)?;
-            let grammar = if let Some(name) = &config.grammar {
-                Some(
-                    grammars
-                        .get(name.as_ref())
-                        .with_context(|| format!("grammar not found: '{name}'"))?,
-                )
-            } else {
-                None
+    for relative_language_dir in &manifest.languages {
+        let language_dir = extension_path.join(relative_language_dir);
+        let config_path = language_dir.join(LanguageConfig::FILE_NAME);
+        let config = LanguageConfig::load(&config_path)?;
+        let grammar = if let Some(name) = &config.grammar {
+            Some(
+                grammars
+                    .get(name.as_ref())
+                    .with_context(|| format!("grammar not found: '{name}'"))?,
+            )
+        } else {
+            None
+        };
+
+        let query_entries = fs::read_dir(&language_dir)?;
+        for entry in query_entries {
+            let entry = entry?;
+            let file_path = entry.path();
+
+            let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
             };
 
-            let mut query_entries = fs.read_dir(&language_dir).await?;
-            while let Some(file_path) = query_entries.next().await {
-                let file_path = file_path?;
-
-                let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
-                    continue;
-                };
-
-                match file_name {
-                    LanguageConfig::FILE_NAME => {
-                        // Loaded above
-                    }
-                    SemanticTokenRules::FILE_NAME => {
-                        let rules_content = fs.load_bytes(&file_path).await.with_context(|| {
-                            anyhow!(
-                                "Could not read semantic token rules from {}",
-                                file_path.display()
-                            )
-                        })?;
-                        let _token_rules =
-                            serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content)
-                                .with_context(|| {
-                                    anyhow!(
-                                        "Failed to parse semantic token rules from {}",
-                                        file_path.display()
-                                    )
-                                })?;
-                    }
-                    TaskTemplates::FILE_NAME => {
-                        let task_file_content =
-                            fs.load_bytes(&file_path).await.with_context(|| {
+            match file_name {
+                LanguageConfig::FILE_NAME => {
+                    // Loaded above
+                }
+                SemanticTokenRules::FILE_NAME => {
+                    let _token_rules = SemanticTokenRules::load(&file_path)?;
+                }
+                TaskTemplates::FILE_NAME => {
+                    let task_file_content = std::fs::read(&file_path).with_context(|| {
+                        anyhow!(
+                            "Failed to read tasks file at {path}",
+                            path = file_path.display()
+                        )
+                    })?;
+                    let _task_templates =
+                        serde_json_lenient::from_slice::<TaskTemplates>(&task_file_content)
+                            .with_context(|| {
                                 anyhow!(
-                                    "Failed to read tasks file at {path}",
+                                    "Failed to parse tasks file at {path}",
                                     path = file_path.display()
                                 )
                             })?;
-                        let _task_templates =
-                            serde_json_lenient::from_slice::<TaskTemplates>(&task_file_content)
-                                .with_context(|| {
-                                    anyhow!(
-                                        "Failed to parse tasks file at {path}",
-                                        path = file_path.display()
-                                    )
-                                })?;
-                    }
-                    _ if file_name.ends_with(".scm") => {
-                        let grammar = grammar.with_context(|| {
-                            format!(
-                                "language {} provides query {} but no grammar",
-                                config.name,
-                                file_path.display()
-                            )
-                        })?;
-
-                        let query_source = fs.load(&file_path).await?;
-                        let _query = Query::new(grammar, &query_source)?;
-                    }
-                    _ => {}
                 }
-            }
+                _ if file_name.ends_with(".scm") => {
+                    let grammar = grammar.with_context(|| {
+                        format! {
+                            "language {} provides query {} but no grammar",
+                            config.name,
+                            file_path.display()
+                        }
+                    })?;
 
-            log::info!("loaded language {}", config.name);
-            Ok(())
+                    let query_source = fs::read_to_string(&file_path)?;
+                    let _query = Query::new(grammar, &query_source)?;
+                }
+                _ => {}
+            }
         }
-    }))
-    .await
-    .map(|_| ())
+
+        log::info!("loaded language {}", config.name);
+    }
+
+    Ok(())
 }
 
 async fn test_themes(
@@ -533,34 +510,28 @@ async fn test_themes(
     extension_path: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    futures::future::try_join_all(manifest.themes.iter().map(|relative_theme_path| {
-        let fs = fs.clone();
-        async move {
-            let theme_path = extension_path.join(relative_theme_path);
-            let theme_family =
-                theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
-            log::info!("loaded theme family {}", theme_family.name);
+    for relative_theme_path in &manifest.themes {
+        let theme_path = extension_path.join(relative_theme_path);
+        let theme_family =
+            theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
+        log::info!("loaded theme family {}", theme_family.name);
 
-            for theme in &theme_family.themes {
-                if theme
-                    .style
-                    .colors
-                    .deprecated_scrollbar_thumb_background
-                    .is_some()
-                {
-                    bail!(
-                        r#"Theme "{theme_name}" is using a deprecated style property: \
-                    scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
-                        theme_name = theme.name
-                    )
-                }
+        for theme in &theme_family.themes {
+            if theme
+                .style
+                .colors
+                .deprecated_scrollbar_thumb_background
+                .is_some()
+            {
+                bail!(
+                    r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
+                    theme_name = theme.name
+                )
             }
-
-            Ok(())
         }
-    }))
-    .await
-    .map(|_| ())
+    }
+
+    Ok(())
 }
 
 async fn test_snippets(
@@ -568,45 +539,35 @@ async fn test_snippets(
     extension_path: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    futures::future::try_join_all(
-        manifest
-            .snippets
-            .as_ref()
-            .map(ExtensionSnippets::paths)
-            .into_iter()
-            .flatten()
-            .map(|relative_snippet_path| {
-                let fs = fs.clone();
-                async move {
-                    let snippet_path = extension_path.join(relative_snippet_path);
-                    let snippets_content = fs.load_bytes(&snippet_path).await?;
-                    let snippets_file =
-                        serde_json_lenient::from_slice::<VsSnippetsFile>(&snippets_content)
-                            .with_context(|| {
-                                anyhow!("Failed to parse snippet file at {snippet_path:?}")
-                            })?;
-                    let snippet_errors = file_to_snippets(snippets_file, &snippet_path)
-                        .flat_map(Result::err)
-                        .collect::<Vec<_>>();
-                    let error_count = snippet_errors.len();
+    for relative_snippet_path in manifest
+        .snippets
+        .as_ref()
+        .map(ExtensionSnippets::paths)
+        .into_iter()
+        .flatten()
+    {
+        let snippet_path = extension_path.join(relative_snippet_path);
+        let snippets_content = fs.load_bytes(&snippet_path).await?;
+        let snippets_file = serde_json_lenient::from_slice::<VsSnippetsFile>(&snippets_content)
+            .with_context(|| anyhow!("Failed to parse snippet file at {snippet_path:?}"))?;
+        let snippet_errors = file_to_snippets(snippets_file, &snippet_path)
+            .flat_map(Result::err)
+            .collect::<Vec<_>>();
+        let error_count = snippet_errors.len();
 
-                    anyhow::ensure!(
-                        error_count == 0,
-                        "Could not parse {error_count} snippet{suffix} \
-                        in file {snippet_path:?}:\n\n{snippet_errors}",
-                        suffix = if error_count == 1 { "" } else { "s" },
-                        snippet_errors = snippet_errors
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    );
-                    Ok(())
-                }
-            }),
-    )
-    .await
-    .map(|_| ())
+        anyhow::ensure!(
+            error_count == 0,
+            "Could not parse {error_count} snippet{suffix} in file {snippet_path:?}:\n\n{snippet_errors}",
+            suffix = if error_count == 1 { "" } else { "s" },
+            snippet_errors = snippet_errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    Ok(())
 }
 
 async fn test_debug_adapter_schemas(
