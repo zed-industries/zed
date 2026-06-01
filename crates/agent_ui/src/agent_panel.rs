@@ -3880,14 +3880,20 @@ impl AgentPanel {
         let Some(thread) = conversation_view.read(cx).as_native_thread(cx) else {
             return ThreadTitleRegenerationResult::NotOpen;
         };
+        let thread_id = conversation_view.read(cx).parent_id();
         thread.update(cx, |thread, cx| {
             if thread.is_generating_title() {
                 ThreadTitleRegenerationResult::AlreadyGenerating
             } else if thread.summarization_model().is_none() {
                 ThreadTitleRegenerationResult::NoModel
-            } else {
-                thread.regenerate_title(cx);
+            } else if thread.regenerate_title_with_callback(cx, move |title, cx| {
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.set_generated_title(thread_id, title, cx);
+                });
+            }) {
                 ThreadTitleRegenerationResult::Started
+            } else {
+                ThreadTitleRegenerationResult::AlreadyGenerating
             }
         })
     }
@@ -6421,6 +6427,7 @@ mod tests {
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use gpui::{App, TestAppContext, UpdateGlobal, VisualTestContext};
+
     use parking_lot::Mutex;
     use project::{Project, WorktreePaths};
     use std::any::Any;

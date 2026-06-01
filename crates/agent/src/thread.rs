@@ -2834,33 +2834,60 @@ impl Thread {
         let Some(model) = self.summarization_model.clone() else {
             return;
         };
-        self.spawn_title_generation(model, cx);
+        self.spawn_title_generation(model, None, cx);
     }
 
-    pub fn regenerate_title(&mut self, cx: &mut Context<Self>) {
+    pub fn regenerate_title(&mut self, cx: &mut Context<Self>) -> bool {
+        self.regenerate_title_with_callback(cx, |_title, _cx| {})
+    }
+
+    pub fn regenerate_title_with_callback(
+        &mut self,
+        cx: &mut Context<Self>,
+        on_generated_title: impl FnOnce(SharedString, &mut Context<Self>) + 'static,
+    ) -> bool {
         if self.pending_title_generation.is_some() {
-            return;
+            return false;
         }
+
         let Some(model) = self.summarization_model.clone() else {
-            return;
+            return false;
         };
-        self.spawn_title_generation(model, cx);
+
+        self.spawn_title_generation(model, Some(Box::new(on_generated_title)), cx);
+
+        true
     }
 
-    fn spawn_title_generation(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+    fn spawn_title_generation(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        on_generated_title: Option<Box<dyn FnOnce(SharedString, &mut Context<Self>)>>,
+        cx: &mut Context<Self>,
+    ) {
         self.title_generation_failed = false;
         log::debug!("Generating title with model: {:?}", model.name());
+
         let temperature = AgentSettings::temperature_for_model(&model, cx);
         let request = build_thread_title_request(&self.messages, temperature);
-        self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
-            let title = stream_thread_title(model, request, cx)
+
+        let title_generation = cx.spawn(async move |_this, cx| {
+            stream_thread_title(model, request, cx)
                 .await
                 .context("failed to generate thread title")
-                .log_err();
+                .map(SharedString::from)
+                .log_err()
+        });
+
+        self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
+            let title = title_generation.await;
             _ = this.update(cx, |this, cx| {
                 this.pending_title_generation = None;
                 if let Some(title) = title {
-                    this.set_title(title.into(), cx);
+                    this.set_title(title.clone(), cx);
+                    if let Some(on_generated_title) = on_generated_title {
+                        on_generated_title(title, cx);
+                    }
                 } else {
                     this.title_generation_failed = true;
                     cx.emit(TitleUpdated);
