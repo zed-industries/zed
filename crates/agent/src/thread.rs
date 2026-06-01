@@ -4124,6 +4124,11 @@ impl ToolCallEventStream {
         }
 
         let title = title.into();
+        let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
+            network: request.network,
+            allow_fs_write_all: request.allow_fs_write_all,
+            write_paths: request.write_paths.clone(),
+        };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new("allow"),
@@ -4160,7 +4165,10 @@ impl ToolCallEventStream {
                         tool_call: acp::ToolCallUpdate::new(
                             tool_use_id.to_string(),
                             acp::ToolCallUpdateFields::new().title(title),
-                        ),
+                        )
+                        .meta(acp_thread::meta_with_sandbox_authorization(
+                            sandbox_authorization_details,
+                        )),
                         options,
                         response: response_tx,
                         context: None,
@@ -4853,13 +4861,26 @@ mod tests {
         let request = SandboxRequest {
             network: false,
             allow_fs_write_all: false,
-            write_paths: vec![PathBuf::from("/tmp/build")],
+            write_paths: vec![
+                PathBuf::from("/tmp/build"),
+                PathBuf::from("/tmp/cache"),
+                PathBuf::from("/tmp/logs"),
+                PathBuf::from("/tmp/secret"),
+            ],
         };
 
         let authorize = cx.update(|cx| {
             event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
         });
         let authorization = receiver.expect_authorization().await;
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+                .expect("sandbox authorization should include request details");
+        assert_eq!(details.network, request.network);
+        assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
+        assert_eq!(details.write_paths, request.write_paths);
+        assert!(authorization.tool_call.fields.content.is_none());
+
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
             panic!("expected flat sandbox permission options");
         };
@@ -4885,7 +4906,15 @@ mod tests {
             &SandboxRequest::default(),
             &agent_settings::SandboxPermissions::default(),
         );
-        assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/build")]);
+        assert_eq!(
+            effective.write_paths,
+            vec![
+                PathBuf::from("/tmp/build"),
+                PathBuf::from("/tmp/cache"),
+                PathBuf::from("/tmp/logs"),
+                PathBuf::from("/tmp/secret"),
+            ]
+        );
     }
 
     #[gpui::test]

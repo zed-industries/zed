@@ -527,7 +527,7 @@ fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String
     } else if !request.write_paths.is_empty() {
         parts.push(format!(
             "write access to {}",
-            describe_paths(&request.write_paths)
+            write_path_summary(&request.write_paths)
         ));
     }
     match parts.as_slice() {
@@ -540,19 +540,11 @@ fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String
     }
 }
 
-/// Render a short, human-readable summary of requested write paths for the
-/// approval prompt, capping the number listed so the title stays readable.
-fn describe_paths(paths: &[PathBuf]) -> String {
-    const MAX_SHOWN: usize = 3;
-    let shown: Vec<String> = paths
-        .iter()
-        .take(MAX_SHOWN)
-        .map(|path| path.display().to_string())
-        .collect();
-    if paths.len() > MAX_SHOWN {
-        format!("{} (+{} more)", shown.join(", "), paths.len() - MAX_SHOWN)
-    } else {
-        shown.join(", ")
+fn write_path_summary(paths: &[PathBuf]) -> String {
+    match paths {
+        [] => "0 paths".to_string(),
+        [path] => path.display().to_string(),
+        paths => format!("{} paths", paths.len()),
     }
 }
 
@@ -1882,10 +1874,10 @@ mod tests {
     }
 
     #[test]
-    fn test_sandbox_approval_title_caps_listed_paths() {
+    fn test_sandbox_approval_title_summarizes_multiple_paths_by_count() {
         let title =
             sandbox_approval_title(&sandbox_request(false, false, &["/a", "/b", "/c", "/d"]));
-        assert_eq!(title, "Allow write access to /a, /b, /c (+1 more)?");
+        assert_eq!(title, "Allow write access to 4 paths?");
     }
 
     #[test]
