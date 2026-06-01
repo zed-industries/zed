@@ -2618,6 +2618,7 @@ impl Interactivity {
 
                                 if let Some(button) = keyboard_button
                                     && !stroke.modifiers.modified()
+                                    && window.focus_unchanged_since_key_down()
                                 {
                                     let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
                                         button,
