@@ -106,6 +106,13 @@ pub enum ThreadStatus {
     Ended,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RestartSessionResult {
+    Started,
+    AlreadyRestarting,
+    NotRunning,
+}
+
 impl ThreadStatus {
     pub fn label(&self) -> &'static str {
         match self {
@@ -2178,9 +2185,13 @@ impl Session {
         .detach();
     }
 
-    pub fn restart(&mut self, args: Option<Value>, cx: &mut Context<Self>) {
-        if self.restart_task.is_some() || self.as_running().is_none() {
-            return;
+    pub fn restart(&mut self, args: Option<Value>, cx: &mut Context<Self>) -> RestartSessionResult {
+        if self.restart_task.is_some() {
+            return RestartSessionResult::AlreadyRestarting;
+        }
+
+        if self.as_running().is_none() {
+            return RestartSessionResult::NotRunning;
         }
 
         let supports_dap_restart =
@@ -2209,6 +2220,8 @@ impl Session {
             })
             .ok();
         }));
+
+        RestartSessionResult::Started
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -2277,6 +2290,52 @@ impl Session {
                     .map(|response| response.targets)
                     .context("failed to fetch completions")?,
             )
+        })
+    }
+
+    pub fn dap_threads(&self) -> Task<Result<Vec<dap::Thread>>> {
+        self.state.request_dap(ThreadsCommand)
+    }
+
+    pub fn dap_stack_trace(
+        &self,
+        thread_id: ThreadId,
+        levels: Option<u64>,
+    ) -> Task<Result<Vec<dap::StackFrame>>> {
+        self.state.request_dap(StackTraceCommand {
+            thread_id: thread_id.0,
+            start_frame: None,
+            levels,
+        })
+    }
+
+    pub fn dap_scopes(&self, stack_frame_id: StackFrameId) -> Task<Result<Vec<dap::Scope>>> {
+        self.state.request_dap(ScopesCommand { stack_frame_id })
+    }
+
+    pub fn dap_variables(
+        &self,
+        variables_reference: VariableReference,
+    ) -> Task<Result<Vec<dap::Variable>>> {
+        self.state.request_dap(VariablesCommand {
+            variables_reference,
+            filter: None,
+            start: None,
+            count: None,
+            format: None,
+        })
+    }
+
+    pub fn dap_evaluate_expression(
+        &self,
+        expression: String,
+        stack_frame_id: Option<StackFrameId>,
+    ) -> Task<Result<dap::EvaluateResponse>> {
+        self.state.request_dap(EvaluateCommand {
+            expression,
+            frame_id: stack_frame_id,
+            context: Some(EvaluateArgumentsContext::Repl),
+            source: None,
         })
     }
 

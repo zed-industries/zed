@@ -1,7 +1,8 @@
 use crate::{
-    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
-    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
-    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, ControlDebugSessionTool,
+    CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool,
+    EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
+    GetDebugSessionStateTool, GoToDefinitionTool, GrepTool, ListDebugSessionsTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
     UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
@@ -1719,6 +1720,9 @@ impl Thread {
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
+        self.add_tool(ListDebugSessionsTool::new(self.project.clone()));
+        self.add_tool(GetDebugSessionStateTool::new(self.project.clone()));
+        self.add_tool(ControlDebugSessionTool::new(self.project.clone()));
         self.add_tool(DeletePathTool::new(
             self.project.clone(),
             self.action_log.clone(),

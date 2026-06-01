@@ -548,6 +548,7 @@ impl DapStore {
 
         self.sessions.get(session_id).cloned()
     }
+
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
     }
