@@ -11790,9 +11790,9 @@ async fn test_fold_function_bodies(cx: &mut TestAppContext) {
             fn b() {
                 c();
             }
-
-      -     // this is another uncommitted comment
       -
+      -     // this is another uncommitted comment
+
             fn d() {
                 // e
                 // f
@@ -20507,6 +20507,130 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
 }
 
 #[gpui::test]
+async fn go_to_diagnostic(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
+
+    // Place the cursor inside the `def` diagnostic (`[12, 15)`) before any
+    // diagnostic is active so we can later confirm that running `editor: go to
+    // diagnostic` will activate this diagnostic instead of advancing to the
+    // next one.
+    cx.set_state(indoc! {"
+        fn func(abc dˇef: i32) -> u32 {
+        }
+    "});
+
+    // Set up the diagnostics:
+    //
+    // * `[11, 12)` (the space before `def`),
+    // * `[12, 15)` (`def`),
+    // * `[25, 28)` (`u32`).
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 12),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 25),
+                                    lsp::Position::new(0, 28),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+
+    executor.run_until_parked();
+
+    // When the cursor is at an inactive diagnostic, cursor should be moved to
+    // the start of that same diagnostic and activate it.
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Manually move the cursor to a different, not yet active diagnostic to
+    // confirm that using `editor: go to diagnostic` will now activate this one.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 26)..Point::new(0, 26)])
+        });
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -28013,7 +28137,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
         )
     });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28163,7 +28287,8 @@ async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
-    let project_path = first_editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path =
+        first_editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28231,7 +28356,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         )
     });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28402,7 +28527,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
         )
     });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28563,9 +28688,9 @@ impl BookmarkTestContext {
     }
 
     fn abs_path(&self) -> Arc<Path> {
-        let project_path = self
-            .editor
-            .read_with(&self.cx, |editor, cx| editor.project_path(cx).unwrap());
+        let project_path = self.editor.read_with(&self.cx, |editor, cx| {
+            editor.active_project_path(cx).unwrap()
+        });
         self.project.read_with(&self.cx, |project, cx| {
             project
                 .absolute_path(&project_path, cx)

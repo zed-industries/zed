@@ -6,10 +6,11 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -251,6 +252,16 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.sign_out(cx)
     }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for OpenAI?".into(),
+            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
+                targets significantly lower latency than the standard tier and is billed at a \
+                premium per-token rate."
+                .into(),
+        })
+    }
 }
 
 //
@@ -345,6 +356,13 @@ impl ChatGptModel {
     fn supports_prompt_cache_key(&self) -> bool {
         true
     }
+
+    fn supports_priority(&self) -> bool {
+        match self {
+            Self::Gpt55 | Self::Gpt54 => true,
+            Self::Gpt54Mini | Self::Gpt53Codex | Self::Gpt52 => false,
+        }
+    }
 }
 
 struct OpenAiSubscribedLanguageModel {
@@ -392,6 +410,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         true
     }
 
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_priority()
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         let default_effort = self.model.default_reasoning_effort();
         self.model
@@ -431,7 +453,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -443,6 +465,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        if !self.model.supports_priority() {
+            request.speed = None;
+        }
+
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.

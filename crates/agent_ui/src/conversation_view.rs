@@ -42,7 +42,6 @@ use markdown::{
 };
 use parking_lot::{Mutex, RwLock};
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
-use prompt_store::{PromptId, PromptStore};
 
 use crate::message_editor::SessionCapabilities;
 use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
@@ -53,7 +52,7 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use std::{rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme_settings::{AgentBufferFontSize, AgentUiFontSize};
@@ -70,13 +69,11 @@ use util::{
     size::format_file_size,
     time::duration_alt_display,
 };
-use workspace::PathList;
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
+    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Toast, Workspace,
     path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
-use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
@@ -357,6 +354,33 @@ impl Conversation {
             .collect()
     }
 
+    /// Returns the first pending tool call request for exactly `session_id`.
+    /// Unlike `pending_tool_call`, this does not use the global FIFO pending
+    /// request for non-subagent sessions.
+    pub fn pending_tool_call_for_session(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> Option<acp::ToolCallId> {
+        let thread = self.threads.get(session_id)?;
+        let tool_call_id = self.permission_requests.get(session_id)?.iter().next()?;
+        let (_, tool_call) = thread.read(cx).tool_call(tool_call_id)?;
+        if !matches!(
+            tool_call.status,
+            ToolCallStatus::WaitingForConfirmation { .. }
+        ) {
+            return None;
+        }
+        Some(tool_call_id.clone())
+    }
+
+    pub fn pending_tool_call_count_for_session(&self, session_id: &acp::SessionId) -> usize {
+        self.permission_requests
+            .get(session_id)
+            .map(|tool_call_ids| tool_call_ids.len())
+            .unwrap_or(0)
+    }
+
     pub fn authorize_pending_tool_call(
         &mut self,
         session_id: &acp::SessionId,
@@ -505,7 +529,6 @@ pub struct ConversationView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    prompt_store: Option<Entity<PromptStore>>,
     pub(crate) thread_id: ThreadId,
     pub(crate) root_session_id: Option<acp::SessionId>,
     server_state: ServerState,
@@ -712,7 +735,6 @@ impl ConversationView {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -769,7 +791,6 @@ impl ConversationView {
             workspace,
             project: project.clone(),
             thread_store,
-            prompt_store,
             thread_id,
             root_session_id: resume_session_id.clone(),
             server_state: Self::initial_state(
@@ -1078,7 +1099,6 @@ impl ConversationView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                self.prompt_store.clone(),
                 session_capabilities.clone(),
                 self.agent.agent_id(),
             )
@@ -1247,7 +1267,6 @@ impl ConversationView {
                 self.project.downgrade(),
                 self.code_span_resolver.clone(),
                 self.thread_store.clone(),
-                self.prompt_store.clone(),
                 initial_content,
                 subscriptions,
                 window,
@@ -2466,7 +2485,6 @@ impl ConversationView {
                     workspace.clone(),
                     project.clone(),
                     None,
-                    None,
                     session_capabilities.clone(),
                     agent_name.clone(),
                     "",
@@ -3366,7 +3384,7 @@ pub(crate) mod tests {
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext};
+    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, size};
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -3695,7 +3713,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -3832,7 +3849,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -3914,7 +3930,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4053,7 +4068,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4338,7 +4352,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             workspace.focus_panel::<crate::AgentPanel>(window, cx);
             panel
@@ -4379,7 +4393,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4478,7 +4491,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4554,7 +4566,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4622,7 +4633,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4698,7 +4708,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace1.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             // Open the dock and activate the agent panel so it's visible
@@ -4744,7 +4754,6 @@ pub(crate) mod tests {
                     workspace1.downgrade(),
                     project1.clone(),
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -4966,7 +4975,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -5625,7 +5633,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store.clone()),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -7981,6 +7988,414 @@ pub(crate) mod tests {
         });
     }
 
+    /// Set up a `ConversationView` whose active thread has a single tool call
+    /// awaiting permission. Returns the conversation view, its active
+    /// `ThreadView`, and the entry index of the tool call within the thread.
+    async fn setup_pending_permission_thread<'a>(
+        tool_call_id: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (
+        Entity<ConversationView>,
+        Entity<ThreadView>,
+        usize,
+        &'a mut VisualTestContext,
+    ) {
+        let tool_call_id_value = acp::ToolCallId::new(tool_call_id);
+        let tool_call = acp::ToolCall::new(tool_call_id_value.clone(), "Run something")
+            .kind(acp::ToolKind::Edit);
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id_value.clone(),
+                PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                    "allow",
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )]),
+            )]));
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let entry_ix = thread_view.read_with(cx, |view, cx| {
+            view.thread
+                .read(cx)
+                .entries()
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        acp_thread::AgentThreadEntry::ToolCall(call)
+                            if call.id == tool_call_id_value
+                    )
+                })
+                .expect("tool call entry should exist after run_until_parked")
+        });
+
+        (conversation_view, thread_view, entry_ix, cx)
+    }
+
+    struct TestListView {
+        list_state: ListState,
+    }
+
+    impl Render for TestListView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            list(self.list_state.clone(), |_, _, _| {
+                div().h(px(20.0)).w_full().into_any_element()
+            })
+            .size_full()
+        }
+    }
+
+    fn draw_thread_list_at(
+        thread_view: &Entity<ThreadView>,
+        scroll_top: ListOffset,
+        cx: &mut VisualTestContext,
+    ) {
+        let list_state = thread_view.read_with(cx, |view, _cx| view.list_state.clone());
+        list_state.scroll_to(scroll_top);
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(20.0)),
+            |_, cx| {
+                cx.new(|_| TestListView {
+                    list_state: list_state.clone(),
+                })
+                .into_any_element()
+            },
+        );
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_hidden_when_inline_bounds_unavailable(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-no-bounds", cx).await;
+
+        // Pin the scroll top to the entry so it isn't treated as above the
+        // viewport, forcing the unmeasured-bounds path we want to exercise.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            });
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should stay hidden until the inline prompt has known list bounds"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pending_tool_call_for_session_scopes_to_that_session(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+
+        let session_id_a = acp::SessionId::new("thread-a");
+        let session_id_b = acp::SessionId::new("thread-b");
+        let (thread_a, thread_b, conversation) = cx.update(|cx| {
+            let thread_a =
+                create_test_acp_thread(None, "thread-a", connection.clone(), project.clone(), cx);
+            let thread_b =
+                create_test_acp_thread(None, "thread-b", connection.clone(), project.clone(), cx);
+            let conversation = cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(thread_a.clone(), cx);
+                conversation.register_thread(thread_b.clone(), cx);
+                conversation
+            });
+            (thread_a, thread_b, conversation)
+        });
+
+        // Pending tool calls in both threads. Unlike `pending_tool_call`,
+        // `pending_tool_call_for_session` must not fall back across threads.
+        let _task_a = request_test_tool_authorization(&thread_a, "tc-a", "allow-a", cx);
+        let _task_b = request_test_tool_authorization(&thread_b, "tc-b", "allow-b", cx);
+
+        cx.read(|cx| {
+            let tool_call_id_a = conversation
+                .read(cx)
+                .pending_tool_call_for_session(&session_id_a, cx)
+                .expect("Expected a pending tool call in thread A");
+            assert_eq!(tool_call_id_a, acp::ToolCallId::new("tc-a"));
+
+            let tool_call_id_b = conversation
+                .read(cx)
+                .pending_tool_call_for_session(&session_id_b, cx)
+                .expect("Expected a pending tool call in thread B");
+            assert_eq!(tool_call_id_b, acp::ToolCallId::new("tc-b"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_scroll_to_dismisses_row(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-scroll", cx).await;
+
+        // Start off-screen below the viewport. The row is visible because the
+        // item has bounds that do not intersect the viewport.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                view.list_state.bounds_for_item(entry_ix).is_some(),
+                "The tool call entry must be measured for this test to exercise the\
+                 \"entry below viewport\" branch. If list overdraw stops measuring\
+                 offscreen items, this test needs to drive measurement another way."
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some()
+            );
+        });
+
+        // Simulate clicking "Scroll to": the list scrolls to the entry and the
+        // measured item bounds intersect the viewport.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear after scrolling brings the inline prompt into view"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_shown_when_inline_prompt_is_above_viewport(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-above", cx).await;
+
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            let result = thread.handle_session_update(
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "More content".into(),
+                )),
+                cx,
+            );
+            assert!(
+                result.is_ok(),
+                "following assistant message should be accepted"
+            );
+        });
+
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix + 1,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                entry_ix < view.list_state.logical_scroll_top().item_ix,
+                "The tool call entry should be above the logical scroll top"
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some(),
+                "Floating row should be visible when the inline prompt is above the viewport"
+            );
+        });
+
+        // Scrolling up to the entry brings it back into view.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear after scrolling brings the inline prompt into view"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_disappears_when_authorized(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, thread_view, _entry_ix, cx) =
+            setup_pending_permission_thread("perm-allow", cx).await;
+
+        // Park the inline prompt below the viewport so the floating row would render.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some(),
+                "Floating row should be visible before authorizing"
+            );
+        });
+
+        // Dispatch the same AuthorizeToolCall action the row's Allow button
+        // wires up.
+        conversation_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::AuthorizeToolCall {
+                    tool_call_id: "perm-allow".to_string(),
+                    option_id: "allow".to_string(),
+                    option_kind: "AllowOnce".to_string(),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            assert!(
+                view.pending_tool_call(cx).is_none(),
+                "Tool call should no longer be pending after Allow is clicked"
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear once the permission is granted"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_ignores_subagent_requests(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Build a baseline ConversationView with no permission requests, so we
+        // have a real `ThreadView` to call `render_main_agent_awaiting_permission` on.
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let parent_session_id =
+            thread_view.read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        let conversation = thread_view.read_with(cx, |view, _cx| view.conversation.clone());
+
+        // Attach a subagent thread with a pending tool-call permission request.
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let stub: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let subagent_thread = cx.update(|_window, cx| {
+            create_test_acp_thread(
+                Some(parent_session_id.clone()),
+                "subagent",
+                stub,
+                project,
+                cx,
+            )
+        });
+        conversation.update(cx, |conversation, cx| {
+            conversation.register_thread(subagent_thread.clone(), cx);
+        });
+        let _subagent_task =
+            request_test_tool_authorization(&subagent_thread, "sub-tc", "allow-sub", cx);
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            assert!(
+                conversation
+                    .read(cx)
+                    .pending_tool_call_for_session(&parent_session_id, cx)
+                    .is_none(),
+                "Subagent requests must not surface as pending in the parent session"
+            );
+            assert!(
+                !conversation
+                    .read(cx)
+                    .subagents_awaiting_permission(cx)
+                    .is_empty(),
+                "Subagent permission row should still see the pending request"
+            );
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Subagent permission requests should not trigger the main-agent floating row"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_move_queued_message_to_empty_main_editor(cx: &mut TestAppContext) {
         init_test(cx);
@@ -8193,7 +8608,6 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
