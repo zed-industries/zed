@@ -5493,8 +5493,8 @@ impl GitPanel {
 
         let content: AnyElement = match (self.git_access, has_open_error, &self.active_repository) {
             (GitAccess::No, _, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
-            (_, true, _) => self.render_open_error_ui(cx),
             (_, _, None) => self.render_uninitialized_ui(cx),
+            (_, true, Some(_)) => self.render_open_error_ui(cx),
             (_, _, Some(_)) => self.render_no_changes_ui(cx),
         };
 
