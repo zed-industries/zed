@@ -5917,6 +5917,27 @@ impl IndentSize {
         self
     }
 
+    /// Returns the number of indentation characters to remove when outdenting to the
+    /// previous editor tab stop.
+    pub fn outdent_len(self, tab_size: NonZeroU32) -> u32 {
+        if self.len == 0 {
+            return 0;
+        }
+
+        match self.kind {
+            IndentKind::Space => {
+                let tab_size = tab_size.get();
+                let columns_to_prev_tab_stop = self.len % tab_size;
+                if columns_to_prev_tab_stop == 0 {
+                    tab_size
+                } else {
+                    columns_to_prev_tab_stop
+                }
+            }
+            IndentKind::Tab => 1,
+        }
+    }
+
     pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
         match self.kind {
             IndentKind::Space => self.len as usize,
