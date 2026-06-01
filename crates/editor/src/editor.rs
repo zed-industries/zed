@@ -1583,6 +1583,25 @@ pub struct RewrapOptions {
     pub line_length: Option<usize>,
 }
 
+fn outdent_len_for_indent(indent_size: IndentSize, tab_size: NonZeroU32) -> u32 {
+    if indent_size.len == 0 {
+        return 0;
+    }
+
+    match indent_size.kind {
+        IndentKind::Space => {
+            let tab_size = tab_size.get();
+            let columns_to_prev_tab_stop = indent_size.len % tab_size;
+            if columns_to_prev_tab_stop == 0 {
+                tab_size
+            } else {
+                columns_to_prev_tab_stop
+            }
+        }
+        IndentKind::Tab => 1,
+    }
+}
+
 impl Editor {
     pub fn single_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
@@ -5106,7 +5125,7 @@ impl Editor {
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
                 let settings = buffer.language_settings_at(selection.start, cx);
-                let tab_size = settings.tab_size.get();
+                let tab_size = settings.tab_size;
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -5120,17 +5139,7 @@ impl Editor {
                 for row in rows.iter_rows() {
                     let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
-                        let deletion_len = match indent_size.kind {
-                            IndentKind::Space => {
-                                let columns_to_prev_tab_stop = indent_size.len % tab_size;
-                                if columns_to_prev_tab_stop == 0 {
-                                    tab_size
-                                } else {
-                                    columns_to_prev_tab_stop
-                                }
-                            }
-                            IndentKind::Tab => 1,
-                        };
+                        let deletion_len = outdent_len_for_indent(indent_size, tab_size);
                         let start = if has_multiple_rows
                             || deletion_len > selection.start.column
                             || indent_size.len < selection.start.column

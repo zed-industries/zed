@@ -34948,6 +34948,42 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         -
         ˇitem
     "});
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings.defaults.tab_size = Some(4.try_into().unwrap());
+    });
+
+    // Case 9: Empty list item unindent works when tab size is larger than list indentation
+    cx.set_state(indoc! {"
+        - item
+          - sub item
+          - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - item
+          - sub item
+        - ˇ
+    "});
+
+    // Case 10: Empty list item unindent moves to the previous tab stop
+    cx.set_state(
+        indoc! {"
+        $$$$$$- ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(
+        indoc! {"
+        $$$$- ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
 }
 
 #[gpui::test]
