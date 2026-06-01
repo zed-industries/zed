@@ -3661,6 +3661,23 @@ impl GitStore {
             .collect()
     }
 
+    fn coalesce_repo_paths(mut paths: Vec<RepoPath>) -> Vec<RepoPath> {
+        paths.sort();
+
+        let mut coalesced = Vec::with_capacity(paths.len());
+        for path in paths {
+            if coalesced
+                .last()
+                .is_some_and(|ancestor: &RepoPath| path.starts_with(ancestor))
+            {
+                continue;
+            }
+            coalesced.push(path);
+        }
+
+        coalesced
+    }
+
     fn process_updated_entries(
         &self,
         worktree: &Entity<Worktree>,
@@ -3735,6 +3752,10 @@ impl GitStore {
                     path_was_used[ix] = true;
                     entry.push(repo_path);
                 }
+            }
+
+            for paths in paths_by_git_repo.values_mut() {
+                *paths = Self::coalesce_repo_paths(mem::take(paths));
             }
 
             paths_by_git_repo
@@ -8915,6 +8936,7 @@ mod tests {
     use super::*;
     use crate::Project;
     use fs::FakeFs;
+    use git::repository::{RepoPath, repo_path};
     use gpui::TestAppContext;
     use gpui::proptest::prelude::*;
     use rand::{SeedableRng, rngs::StdRng};
@@ -9258,6 +9280,43 @@ mod tests {
                 unexpected_loaded_shas,
             );
         });
+    }
+
+    fn repo_paths(paths: &[&str]) -> Vec<RepoPath> {
+        paths.iter().map(repo_path).collect()
+    }
+
+    #[test]
+    fn coalesce_repo_paths_keeps_root_only() {
+        let coalesced = GitStore::coalesce_repo_paths(repo_paths(&["", "src", "src/lib.rs"]));
+
+        assert_eq!(coalesced, repo_paths(&[""]));
+    }
+
+    #[test]
+    fn coalesce_repo_paths_keeps_existing_ancestors() {
+        let coalesced = GitStore::coalesce_repo_paths(repo_paths(&[
+            "src",
+            "src/lib.rs",
+            "src/nested/file.rs",
+            "tests/test.rs",
+        ]));
+
+        assert_eq!(coalesced, repo_paths(&["src", "tests/test.rs"]));
+    }
+
+    #[test]
+    fn coalesce_repo_paths_does_not_invent_missing_parents() {
+        let coalesced = GitStore::coalesce_repo_paths(repo_paths(&[
+            "submodule/a.txt",
+            "submodule/nested/b.txt",
+            "top_level.rs",
+        ]));
+
+        assert_eq!(
+            coalesced,
+            repo_paths(&["submodule/a.txt", "submodule/nested/b.txt", "top_level.rs"])
+        );
     }
 }
 

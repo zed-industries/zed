@@ -305,7 +305,7 @@ impl MessageContent {
                     }
                 })
                 .collect::<Vec<_>>()
-                .join(""),
+                .concat(),
         }
     }
 }

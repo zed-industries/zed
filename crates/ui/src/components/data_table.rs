@@ -652,7 +652,7 @@ pub fn render_table_row(
         // restrict_scroll_to_axis lets vertical scroll events pass through to the list.
         let mut scrollable_section = div()
             .id(("table-row-scrollable", row_index as u64))
-            .flex_grow()
+            .flex_grow_1()
             .overflow_x_scroll()
             .flex()
             .child(
@@ -769,7 +769,7 @@ pub fn render_table_header(
         );
         let mut scrollable_section = div()
             .id("table-header-scrollable")
-            .flex_grow()
+            .flex_grow_1()
             .overflow_x_scroll()
             .flex()
             .child(inner);
@@ -1136,7 +1136,7 @@ impl RenderOnce for Table {
             })
             .child({
                 let content = div()
-                    .flex_grow()
+                    .flex_grow_1()
                     .w_full()
                     .relative()
                     .overflow_hidden()
@@ -1180,7 +1180,7 @@ impl RenderOnce for Table {
                                 },
                             )
                             .size_full()
-                            .flex_grow()
+                            .flex_grow_1()
                             .with_sizing_behavior(ListSizingBehavior::Auto)
                             .with_horizontal_sizing_behavior(horizontal_sizing)
                             .when_some(
@@ -1208,7 +1208,7 @@ impl RenderOnce for Table {
                                 }
                             })
                             .size_full()
-                            .flex_grow()
+                            .flex_grow_1()
                             .with_sizing_behavior(ListSizingBehavior::Auto),
                         ),
                     })
@@ -1237,7 +1237,7 @@ impl RenderOnce for Table {
                 let mut h_scroll_container = div()
                     .id("table-h-scroll")
                     .overflow_x_scroll()
-                    .flex_grow()
+                    .flex_grow_1()
                     .h_full()
                     .track_scroll(&state.read(cx).horizontal_scroll_handle)
                     .child(table);
