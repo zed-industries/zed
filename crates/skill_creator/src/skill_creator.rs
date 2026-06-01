@@ -898,7 +898,7 @@ impl SkillCreator {
         // than squeezing the body editor below its minimum height.
         v_flex()
             .id("skill-creator-form-fields")
-            .flex_grow()
+            .flex_grow_1()
             .flex_shrink_0()
             .gap_4()
             .child(
@@ -914,7 +914,7 @@ impl SkillCreator {
             .child(Divider::horizontal())
             .child(
                 v_flex()
-                    .flex_grow()
+                    .flex_grow_1()
                     .flex_shrink_0()
                     .gap_2()
                     .child(Label::new("Skill Content"))
