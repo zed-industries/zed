@@ -854,7 +854,10 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn copy_from_edit_menu(
+    /// Specific handler for the [`editor::actions::Copy`] action in order for
+    /// the `Edit > Copy` menu item to not be disabled, as the app expects a
+    /// handler for this action in order to enable/disable the menu item.
+    fn editor_copy(
         &mut self,
         _: &editor::actions::Copy,
         window: &mut Window,
@@ -885,7 +888,10 @@ impl TerminalView {
         }
     }
 
-    fn paste_from_edit_menu(
+    /// Specific handler for the [`editor::actions::Paste`] action in order for
+    /// the `Edit > Paste` menu item to not be disabled, as the app expects a
+    /// handler for this action in order to enable/disable the menu item.
+    fn editor_paste(
         &mut self,
         _: &editor::actions::Paste,
         window: &mut Window,
@@ -1302,9 +1308,9 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::send_text))
             .on_action(cx.listener(TerminalView::send_keystroke))
             .on_action(cx.listener(TerminalView::copy))
-            .on_action(cx.listener(TerminalView::copy_from_edit_menu))
+            .on_action(cx.listener(TerminalView::editor_copy))
             .on_action(cx.listener(TerminalView::paste))
-            .on_action(cx.listener(TerminalView::paste_from_edit_menu))
+            .on_action(cx.listener(TerminalView::editor_paste))
             .on_action(cx.listener(TerminalView::paste_text))
             .on_action(cx.listener(TerminalView::clear))
             .on_action(cx.listener(TerminalView::scroll_line_up))
