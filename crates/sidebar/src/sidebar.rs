@@ -768,6 +768,7 @@ impl Sidebar {
                     this.sync_active_entry_from_active_workspace(cx);
                     this.replace_archived_panel_thread(window, cx);
                     this.update_entries(cx);
+                    this.reveal_active_project_header(cx);
                 }
                 MultiWorkspaceEvent::WorkspaceAdded(workspace) => {
                     this.subscribe_to_workspace(workspace, window, cx);
@@ -1057,11 +1058,25 @@ impl Sidebar {
     }
 
     fn sync_active_entry_from_active_workspace(&mut self, cx: &App) {
-        let panel = self
-            .active_workspace(cx)
-            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx));
-        if let Some(panel) = panel {
+        let Some(active_workspace) = self.active_workspace(cx) else {
+            return;
+        };
+        if let Some(panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) {
             self.sync_active_entry_from_panel(&panel, cx);
+        } else if self
+            .active_entry
+            .as_ref()
+            .is_some_and(|entry| entry.workspace != active_workspace)
+        {
+            self.active_entry = None;
+        }
+    }
+
+    fn reveal_active_project_header(&mut self, cx: &mut Context<Self>) {
+        if let Some(header_pos) = self.active_project_header_position(cx) {
+            if let Some(&entry_ix) = self.contents.project_header_indices.get(header_pos) {
+                self.list_state.scroll_to_reveal_item(entry_ix);
+            }
         }
     }
 

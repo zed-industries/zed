@@ -805,15 +805,23 @@ impl MultiWorkspace {
     fn derived_project_groups(&self, cx: &App) -> Vec<ProjectGroup> {
         self.project_groups
             .iter()
-            .map(|group| ProjectGroup {
-                key: group.key.clone(),
-                workspaces: self
+            .map(|group| {
+                let mut workspaces: Vec<_> = self
                     .retained_workspaces
                     .iter()
                     .filter(|workspace| workspace.read(cx).project_group_key(cx) == group.key)
                     .cloned()
-                    .collect(),
-                expanded: group.expanded,
+                    .collect();
+                if self.active_workspace.read(cx).project_group_key(cx) == group.key
+                    && !workspaces.contains(&self.active_workspace)
+                {
+                    workspaces.push(self.active_workspace.clone());
+                }
+                ProjectGroup {
+                    key: group.key.clone(),
+                    workspaces,
+                    expanded: group.expanded,
+                }
             })
             .collect()
     }
@@ -901,14 +909,22 @@ impl MultiWorkspace {
             || self
                 .retained_workspaces
                 .iter()
-                .any(|workspace| workspace.read(cx).project_group_key(cx) == *key);
+                .any(|workspace| workspace.read(cx).project_group_key(cx) == *key)
+            || self.active_workspace.read(cx).project_group_key(cx) == *key;
 
         has_group.then(|| {
-            self.retained_workspaces
+            let mut workspaces: Vec<_> = self
+                .retained_workspaces
                 .iter()
                 .filter(|workspace| workspace.read(cx).project_group_key(cx) == *key)
                 .cloned()
-                .collect()
+                .collect();
+            if self.active_workspace.read(cx).project_group_key(cx) == *key
+                && !workspaces.contains(&self.active_workspace)
+            {
+                workspaces.push(self.active_workspace.clone());
+            }
+            workspaces
         })
     }
 
@@ -1051,6 +1067,14 @@ impl MultiWorkspace {
                         window,
                         cx,
                     );
+                }
+
+                if let Some(existing_workspace) = this
+                    .workspaces()
+                    .find(|workspace| !excluded_workspaces.contains(workspace))
+                    .cloned()
+                {
+                    return Task::ready(Ok(existing_workspace));
                 }
 
                 // No other project groups remain — create an empty workspace.
@@ -1572,6 +1596,7 @@ impl MultiWorkspace {
                         .log_err();
                 }));
         }
+
     }
 
     fn sync_sidebar_to_workspace(&self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
