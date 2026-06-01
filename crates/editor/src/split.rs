@@ -598,7 +598,7 @@ impl SplittableEditor {
         };
         let project = workspace.read(cx).project().clone();
         let all_paths = self.diff_paths(cx);
-        if all_paths.is_empty() {
+        if all_paths.is_empty() && !self.rhs_multibuffer.read(cx).is_empty() {
             return;
         }
 
@@ -2131,8 +2131,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
-    use gpui::Element as _;
     use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
+    use gpui::{BorrowAppContext as _, Element as _};
     use language::language_settings::SoftWrap;
     use language::{Buffer, Capability};
     use multi_buffer::{MultiBuffer, PathKey};
@@ -2160,6 +2160,11 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(style);
+                });
+            });
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
