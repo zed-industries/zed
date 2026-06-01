@@ -81,7 +81,7 @@ For example, the GitHub MCP extension requires you to add a [Personal Access Tok
 In the case of custom servers, make sure you check the provider documentation to determine what type of command, arguments, and environment variables need to be added to the JSON.
 
 To check if your MCP server is properly configured, go to the Agent Panel's settings view and watch the indicator dot next to its name.
-If they're running correctly, the indicator will be green and its tooltip will say "Server is active".
+If it's running correctly, the indicator will be green and its tooltip will say "Server is active".
 If not, other colors and tooltip messages will indicate what is happening.
 
 ### Agent Panel Usage
@@ -162,7 +162,7 @@ For details on what configuration is shared between Zed and external agents, see
 
 ### Error Handling
 
-When a MCP server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails.
+When an MCP server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails.
 Common error scenarios include:
 
 - Invalid parameters passed to the tool

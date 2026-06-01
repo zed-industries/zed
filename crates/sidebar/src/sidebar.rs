@@ -230,26 +230,42 @@ fn draft_display_label_for_thread_metadata(
     metadata: &ThreadMetadata,
     workspace: &ThreadEntryWorkspace,
     cx: &App,
-) -> Option<SharedString> {
+) -> Option<(SharedString, DraftKind)> {
     let workspace = match workspace {
         ThreadEntryWorkspace::Open(workspace) => Some(workspace),
         ThreadEntryWorkspace::Closed { .. } => None,
     };
-    agent_ui::draft_prompt_store::display_label_for_draft(workspace, metadata.thread_id, cx)
+
+    if let Some(label) =
+        agent_ui::draft_prompt_store::display_label_for_draft(workspace, metadata.thread_id, cx)
+    {
+        return Some((label, DraftKind::WithContent));
+    }
+
+    let placeholder = agent_ui::draft_prompt_store::empty_draft_placeholder_label(
+        workspace,
+        &metadata.agent_id,
+        cx,
+    );
+    Some((placeholder, DraftKind::Empty))
 }
 
 fn thread_metadata_would_render_sidebar_row(
     metadata: &ThreadMetadata,
     workspace: &ThreadEntryWorkspace,
-    hidden_draft_thread_ids: &HashSet<ThreadId>,
     cx: &App,
 ) -> bool {
     if !metadata.is_draft() {
         return true;
     }
 
-    !hidden_draft_thread_ids.contains(&metadata.thread_id)
-        && draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
+    draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DraftKind {
+    WithContent,
+    Empty,
 }
 
 #[derive(Clone)]
@@ -262,7 +278,7 @@ struct ThreadEntry {
     is_live: bool,
     is_background: bool,
     is_title_generating: bool,
-    is_draft: bool,
+    draft: Option<DraftKind>,
     highlight_positions: Vec<usize>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     diff_stats: DiffStats,
@@ -1445,14 +1461,6 @@ impl Sidebar {
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
             let group_host = group_key.host();
-            let hidden_draft_thread_ids: HashSet<ThreadId> = group_workspaces
-                .iter()
-                .filter_map(|ws| {
-                    ws.read(cx)
-                        .panel::<AgentPanel>(cx)
-                        .and_then(|panel| panel.read(cx).ephemeral_draft_thread_id(cx))
-                })
-                .collect();
 
             if should_load_threads {
                 let thread_store = ThreadMetadataStore::global(cx);
@@ -1462,7 +1470,10 @@ impl Sidebar {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
                             worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
-                        let is_draft = row.is_draft();
+                        // Start drafts as `WithContent`; the post-processing
+                        // pass below downgrades them to `Empty` if no draft
+                        // label can be derived.
+                        let draft = row.is_draft().then_some(DraftKind::WithContent);
                         Arc::new(ThreadEntry {
                             metadata: row,
                             icon,
@@ -1472,7 +1483,7 @@ impl Sidebar {
                             is_live: false,
                             is_background: false,
                             is_title_generating: false,
-                            is_draft,
+                            draft,
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
@@ -1562,22 +1573,38 @@ impl Sidebar {
                     }
                 }
 
-                if !hidden_draft_thread_ids.is_empty() {
-                    threads.retain(|thread| {
-                        !hidden_draft_thread_ids.contains(&thread.metadata.thread_id)
-                    });
-                }
                 for thread in &mut threads {
-                    if !thread.is_draft {
+                    if thread.draft.is_none() {
                         continue;
                     }
-                    Arc::make_mut(thread).metadata.title = draft_display_label_for_thread_metadata(
+                    if let Some((label, kind)) = draft_display_label_for_thread_metadata(
                         &thread.metadata,
                         &thread.workspace,
                         cx,
-                    );
+                    ) {
+                        let thread = Arc::make_mut(thread);
+                        thread.metadata.title = Some(label);
+                        thread.draft = Some(kind);
+                    }
                 }
-                threads.retain(|thread| !thread.is_draft || thread.metadata.title.is_some());
+                threads.retain(|thread| thread.draft.is_none() || thread.metadata.title.is_some());
+
+                // Keep empty drafts only while their thread is active; preserve
+                // drafts with content because they hold user-typed state.
+                let pending_activation = self.pending_thread_activation;
+                let active_panel_thread_id = active_workspace
+                    .as_ref()
+                    .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
+                    .and_then(|panel| panel.read(cx).active_thread_id(cx));
+                threads.retain(|thread| {
+                    if thread.draft != Some(DraftKind::Empty) {
+                        return true;
+                    }
+                    if pending_activation.is_some() {
+                        return false;
+                    }
+                    Some(thread.metadata.thread_id) == active_panel_thread_id
+                });
 
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
@@ -1679,23 +1706,13 @@ impl Sidebar {
                     .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
                     .any(|metadata| {
                         let workspace = resolve_workspace(metadata.folder_paths());
-                        thread_metadata_would_render_sidebar_row(
-                            metadata,
-                            &workspace,
-                            &hidden_draft_thread_ids,
-                            cx,
-                        )
+                        thread_metadata_would_render_sidebar_row(metadata, &workspace, cx)
                     })
                     || store
                         .entries_for_path(group_key.path_list(), group_host.as_ref())
                         .any(|metadata| {
                             let workspace = resolve_workspace(metadata.folder_paths());
-                            thread_metadata_would_render_sidebar_row(
-                                metadata,
-                                &workspace,
-                                &hidden_draft_thread_ids,
-                                cx,
-                            )
+                            thread_metadata_would_render_sidebar_row(metadata, &workspace, cx)
                         })
             };
             let has_threads = has_visible_rows || has_stored_thread_rows;
@@ -5174,7 +5191,7 @@ impl Sidebar {
                     }
                     AgentThreadStatus::Completed | AgentThreadStatus::Error => {}
                 }
-                if thread.is_draft {
+                if thread.draft.is_some() {
                     let workspace = thread.workspace.clone();
                     let draft_id = thread.metadata.thread_id;
                     self.remove_draft(draft_id, &workspace, window, cx);
@@ -5236,6 +5253,9 @@ impl Sidebar {
     ) {
         fn display_time(entry: &ListEntry) -> DateTime<Utc> {
             match entry {
+                ListEntry::Thread(thread) if thread.draft == Some(DraftKind::Empty) => {
+                    DateTime::<Utc>::MAX_UTC
+                }
                 ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
                 ListEntry::Terminal(terminal) => terminal.metadata.created_at,
                 ListEntry::ProjectHeader { .. } => unreachable!(),
@@ -5297,6 +5317,9 @@ impl Sidebar {
                     None
                 }
                 ListEntry::Thread(thread) => {
+                    if thread.draft == Some(DraftKind::Empty) {
+                        return None;
+                    }
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
                         ThreadEntryWorkspace::Closed { .. } => {
@@ -5333,7 +5356,7 @@ impl Sidebar {
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
-                        is_draft: thread.is_draft,
+                        is_draft: thread.draft.is_some(),
                         is_title_generating: thread.is_title_generating,
                         notified,
                         timestamp,
@@ -5633,7 +5656,8 @@ impl Sidebar {
 
         let is_hovered = self.hovered_thread_index == Some(ix);
         let is_selected = is_active;
-        let is_draft = thread.is_draft;
+        let is_draft = thread.draft.is_some();
+        let is_empty_draft = thread.draft == Some(DraftKind::Empty);
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -5652,7 +5676,11 @@ impl Sidebar {
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
 
-        let timestamp = format_history_entry_timestamp(Self::thread_display_time(&thread.metadata));
+        let timestamp: SharedString = if is_empty_draft {
+            SharedString::default()
+        } else {
+            format_history_entry_timestamp(Self::thread_display_time(&thread.metadata)).into()
+        };
 
         let is_remote = thread.workspace.is_remote(cx);
 
@@ -5750,64 +5778,72 @@ impl Sidebar {
                         })
                     });
 
-                let contextual_action = if is_running {
-                    IconButton::new("stop-thread", IconName::Stop)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Error)
-                        .style(ButtonStyle::Tinted(TintColor::Error))
-                        .tooltip(Tooltip::text("Stop Generation"))
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.stop_thread(&thread_id_for_actions, cx);
-                        }))
-                        .into_any_element()
-                } else if is_draft {
-                    IconButton::new("discard_thread", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Discard Draft"))
-                        .on_click({
-                            let thread_workspace = thread_workspace.clone();
-                            cx.listener(move |this, _, window, cx| {
-                                this.remove_draft(
-                                    thread_id_for_actions,
-                                    &thread_workspace,
-                                    window,
-                                    cx,
-                                );
-                            })
-                        })
-                        .into_any_element()
+                let contextual_action: Option<AnyElement> = if is_running {
+                    Some(
+                        IconButton::new("stop-thread", IconName::Stop)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Error)
+                            .style(ButtonStyle::Tinted(TintColor::Error))
+                            .tooltip(Tooltip::text("Stop Generation"))
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.stop_thread(&thread_id_for_actions, cx);
+                            }))
+                            .into_any_element(),
+                    )
                 } else {
-                    IconButton::new("archive-thread", IconName::Archive)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |_window, cx| {
-                                Tooltip::for_action_in(
-                                    "Archive Thread",
-                                    &ArchiveSelectedThread,
-                                    &focus_handle,
-                                    cx,
-                                )
-                            }
-                        })
-                        .on_click({
-                            let session_id = session_id_for_delete.clone();
-                            cx.listener(move |this, _, window, cx| {
-                                if let Some(ref session_id) = session_id {
-                                    this.archive_thread(session_id, window, cx);
-                                }
-                            })
-                        })
-                        .into_any_element()
+                    match thread.draft {
+                        Some(DraftKind::Empty) => None,
+                        Some(DraftKind::WithContent) => Some(
+                            IconButton::new("discard_thread", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Discard Draft"))
+                                .on_click({
+                                    let thread_workspace = thread_workspace.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.remove_draft(
+                                            thread_id_for_actions,
+                                            &thread_workspace,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                })
+                                .into_any_element(),
+                        ),
+                        None => Some(
+                            IconButton::new("archive-thread", IconName::Archive)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Archive Thread",
+                                            &ArchiveSelectedThread,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click({
+                                    let session_id = session_id_for_delete.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        if let Some(ref session_id) = session_id {
+                                            this.archive_thread(session_id, window, cx);
+                                        }
+                                    })
+                                })
+                                .into_any_element(),
+                        ),
+                    }
                 };
 
                 this.action_slot(
                     h_flex()
                         .gap_0p5()
                         .child(rename_button)
-                        .child(contextual_action),
+                        .when_some(contextual_action, |this, action| this.child(action)),
                 )
             })
             .on_click({

@@ -2624,7 +2624,7 @@ impl ThreadView {
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .flex_grow_0()
                     .max_w_full()
                     .bg(self.activity_bar_bg(cx))
@@ -3726,7 +3726,7 @@ impl ThreadView {
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
                     .when(fills_container, |this| this.h_full())
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .flex_grow_0()
                     .justify_between()
                     .gap_2()
@@ -4183,9 +4183,6 @@ impl ThreadView {
     }
 
     fn fast_mode_available(&self, cx: &Context<Self>) -> bool {
-        if !cx.is_staff() {
-            return false;
-        }
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
             .map(|model| model.supports_fast_mode())
@@ -5100,7 +5097,7 @@ impl ThreadView {
             }),
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-        .flex_grow()
+        .flex_grow_1()
     }
 
     fn render_entry(
