@@ -9,14 +9,37 @@ use std::{
 use util::{paths::PathStyle, rel_path::RelPath};
 
 use nucleo::Utf32Str;
-use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
+use nucleo::pattern::Pattern;
+
+use fuzzy::CharBag;
 
 use crate::matcher::{self, LENGTH_PENALTY};
+use crate::{Cancelled, Case, Query, case_penalty, count_case_mismatches, positions_from_sorted};
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
     pub is_dir: bool,
     pub path: &'a RelPath,
+    pub char_bag: CharBag,
+}
+
+impl<'a> PathMatchCandidate<'a> {
+    /// Build a candidate whose prefilter bag covers both the worktree prefix and the path.
+    /// Pass `None` when matching against paths that have no worktree prefix.
+    pub fn new(path: &'a RelPath, is_dir: bool, path_prefix: Option<&RelPath>) -> Self {
+        let mut char_bag = CharBag::default();
+        if let Some(prefix) = path_prefix
+            && !prefix.is_empty()
+        {
+            char_bag.extend(prefix.as_unix_str().chars().map(|c| c.to_ascii_lowercase()));
+        }
+        char_bag.extend(path.as_unix_str().chars().map(|c| c.to_ascii_lowercase()));
+        Self {
+            is_dir,
+            path,
+            char_bag,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,8 +85,7 @@ impl PartialOrd for PathMatch {
 impl Ord for PathMatch {
     fn cmp(&self, other: &Self) -> Ordering {
         self.score
-            .partial_cmp(&other.score)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&other.score)
             .then_with(|| self.worktree_id.cmp(&other.worktree_id))
             .then_with(|| {
                 other
@@ -72,18 +94,6 @@ impl Ord for PathMatch {
             })
             .then_with(|| self.path.cmp(&other.path))
     }
-}
-
-fn make_atoms(query: &str, smart_case: bool) -> Vec<Atom> {
-    let case = if smart_case {
-        CaseMatching::Smart
-    } else {
-        CaseMatching::Ignore
-    };
-    query
-        .split_whitespace()
-        .map(|word| Atom::new(word, case, Normalization::Smart, AtomKind::Fuzzy, false))
-        .collect()
 }
 
 pub(crate) fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
@@ -99,33 +109,34 @@ pub(crate) fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> u
     path_components.count() + relative_components.count() + 1
 }
 
+#[inline]
 fn get_filename_match_bonus(
     candidate_buf: &str,
-    query_atoms: &[Atom],
+    pattern: &Pattern,
     matcher: &mut nucleo::Matcher,
 ) -> f64 {
-    let filename = match std::path::Path::new(candidate_buf).file_name() {
-        Some(f) => f.to_str().unwrap_or(""),
-        None => return 0.0,
-    };
-    if filename.is_empty() || query_atoms.is_empty() {
+    let Some(filename) = std::path::Path::new(candidate_buf)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .filter(|f| !f.is_empty())
+    else {
         return 0.0;
-    }
+    };
     let mut buf = Vec::new();
     let haystack = Utf32Str::new(filename, &mut buf);
-    let mut total_score = 0u32;
-    for atom in query_atoms {
-        if let Some(score) = atom.score(haystack, matcher) {
-            total_score = total_score.saturating_add(score as u32);
-        }
-    }
-    total_score as f64 / filename.len().max(1) as f64
+    let score: u32 = pattern
+        .atoms
+        .iter()
+        .filter_map(|atom| atom.score(haystack, matcher))
+        .map(|s| s as u32)
+        .sum();
+
+    score as f64 / filename.len().max(1) as f64
 }
-struct Cancelled;
 
 fn path_match_helper<'a>(
     matcher: &mut nucleo::Matcher,
-    atoms: &[Atom],
+    query: &Query,
     candidates: impl Iterator<Item = PathMatchCandidate<'a>>,
     results: &mut Vec<PathMatch>,
     worktree_id: usize,
@@ -145,12 +156,16 @@ fn path_match_helper<'a>(
     let path_prefix_len = candidate_buf.len();
     let mut buf = Vec::new();
     let mut matched_chars: Vec<u32> = Vec::new();
-    let mut atom_matched_chars = Vec::new();
+    let mut candidate_chars: Vec<char> = Vec::new();
     for candidate in candidates {
         buf.clear();
         matched_chars.clear();
         if cancel_flag.load(atomic::Ordering::Relaxed) {
             return Err(Cancelled);
+        }
+
+        if !candidate.char_bag.is_superset(query.char_bag) {
+            continue;
         }
 
         candidate_buf.truncate(path_prefix_len);
@@ -162,60 +177,45 @@ fn path_match_helper<'a>(
 
         let haystack = Utf32Str::new(&candidate_buf, &mut buf);
 
-        let mut total_score: u32 = 0;
-        let mut all_matched = true;
+        let Some(score) = query.pattern.indices(haystack, matcher, &mut matched_chars) else {
+            continue;
+        };
 
-        for atom in atoms {
-            atom_matched_chars.clear();
-            if let Some(score) = atom.indices(haystack, matcher, &mut atom_matched_chars) {
-                total_score = total_score.saturating_add(score as u32);
-                matched_chars.extend_from_slice(&atom_matched_chars);
+        let case_mismatches = count_case_mismatches(
+            query.query_chars.as_deref(),
+            &matched_chars,
+            &candidate_buf,
+            &mut candidate_chars,
+        );
+
+        matched_chars.sort_unstable();
+        matched_chars.dedup();
+
+        let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
+        let filename_bonus = get_filename_match_bonus(&candidate_buf, &query.pattern, matcher);
+        let positive = (score as f64 + filename_bonus) * case_penalty(case_mismatches);
+        let adjusted_score = positive - length_penalty;
+        let positions = positions_from_sorted(&candidate_buf, &matched_chars);
+
+        results.push(PathMatch {
+            score: adjusted_score,
+            positions,
+            worktree_id,
+            path: if root_is_file {
+                Arc::clone(path_prefix)
             } else {
-                all_matched = false;
-                break;
-            }
-        }
-
-        if all_matched && !atoms.is_empty() {
-            matched_chars.sort_unstable();
-            matched_chars.dedup();
-
-            let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
-            let filename_bonus = get_filename_match_bonus(&candidate_buf, atoms, matcher);
-            let adjusted_score = total_score as f64 + filename_bonus - length_penalty;
-            let mut positions: Vec<usize> = candidate_buf
-                .char_indices()
-                .enumerate()
-                .filter_map(|(char_offset, (byte_offset, _))| {
-                    matched_chars
-                        .contains(&(char_offset as u32))
-                        .then_some(byte_offset)
-                })
-                .collect();
-            positions.sort_unstable();
-
-            results.push(PathMatch {
-                score: adjusted_score,
-                positions,
-                worktree_id,
-                path: if root_is_file {
-                    Arc::clone(path_prefix)
-                } else {
-                    candidate.path.into()
-                },
-                path_prefix: if root_is_file {
-                    RelPath::empty().into()
-                } else {
-                    Arc::clone(path_prefix)
-                },
-                is_dir: candidate.is_dir,
-                distance_to_relative_ancestor: relative_to
-                    .as_ref()
-                    .map_or(usize::MAX, |relative_to| {
-                        distance_between_paths(candidate.path, relative_to.as_ref())
-                    }),
-            });
-        }
+                candidate.path.into()
+            },
+            path_prefix: if root_is_file {
+                RelPath::empty().into()
+            } else {
+                Arc::clone(path_prefix)
+            },
+            is_dir: candidate.is_dir,
+            distance_to_relative_ancestor: relative_to.as_ref().map_or(usize::MAX, |relative_to| {
+                distance_between_paths(candidate.path, relative_to.as_ref())
+            }),
+        });
     }
     Ok(())
 }
@@ -225,15 +225,17 @@ pub fn match_fixed_path_set(
     worktree_id: usize,
     worktree_root_name: Option<Arc<RelPath>>,
     query: &str,
-    smart_case: bool,
+    case: Case,
     max_results: usize,
     path_style: PathStyle,
 ) -> Vec<PathMatch> {
+    let Some(query) = Query::build(query, case) else {
+        return Vec::new();
+    };
+
     let mut config = nucleo::Config::DEFAULT;
     config.set_match_paths();
     let mut matcher = matcher::get_matcher(config);
-
-    let atoms = make_atoms(query, smart_case);
 
     let root_is_file = worktree_root_name.is_some() && candidates.iter().all(|c| c.path.is_empty());
 
@@ -243,7 +245,7 @@ pub fn match_fixed_path_set(
 
     path_match_helper(
         &mut matcher,
-        &atoms,
+        &query,
         candidates.into_iter(),
         &mut results,
         worktree_id,
@@ -263,7 +265,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
     relative_to: &Option<Arc<RelPath>>,
-    smart_case: bool,
+    case: Case,
     max_results: usize,
     cancel_flag: &AtomicBool,
     executor: BackgroundExecutor,
@@ -281,7 +283,9 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         query.to_owned()
     };
 
-    let atoms = make_atoms(&query, smart_case);
+    let Some(query) = Query::build(&query, case) else {
+        return Vec::new();
+    };
 
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
@@ -298,7 +302,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                 .zip(matchers.iter_mut())
                 .enumerate()
             {
-                let atoms = atoms.clone();
+                let query = &query;
                 let relative_to = relative_to.clone();
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
@@ -315,7 +319,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
                             if path_match_helper(
                                 matcher,
-                                &atoms,
+                                query,
                                 candidates,
                                 results,
                                 candidate_set.id(),

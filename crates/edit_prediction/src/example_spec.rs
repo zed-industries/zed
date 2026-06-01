@@ -6,12 +6,21 @@ use telemetry_events::EditPredictionRating;
 pub use zeta_prompt::udiff::{
     CURSOR_POSITION_MARKER, encode_cursor_in_patch, extract_cursor_from_patch,
 };
+
+use crate::data_collection::format_cursor_excerpt;
 pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
 /// Maximum cursor file size to capture (64KB).
 /// Files larger than this will not have their content captured,
 /// falling back to git-based loading.
 pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RecentFile {
+    pub path: Arc<Path>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_position: Option<usize>,
+}
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -25,6 +34,12 @@ pub struct ExampleSpec {
     pub reasoning: Option<String>,
     #[serde(default)]
     pub uncommitted_diff: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recently_opened_files: Vec<RecentFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recently_viewed_files: Vec<RecentFile>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub uncommitted_diff_contains_edit_history: bool,
     pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
@@ -56,11 +71,49 @@ pub struct TelemetrySource {
 
 const REASONING_HEADING: &str = "Reasoning";
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
+const RECENTLY_OPENED_FILES_HEADING: &str = "Recently Opened Files";
+const RECENTLY_VIEWED_FILES_HEADING: &str = "Recently Viewed Files";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const REJECTED_PATCH_HEADING: &str = "Rejected Patch";
 const ACCEPTED_PREDICTION_MARKER: &str = "// User accepted prediction:";
+
+fn write_path_list(markdown: &mut String, heading: &str, files: &[RecentFile]) {
+    if files.is_empty() {
+        return;
+    }
+
+    _ = writeln!(markdown, "## {heading}");
+    _ = writeln!(markdown);
+    _ = writeln!(markdown, "```");
+    for file in files {
+        _ = write!(markdown, "{}", file.path.display());
+        if let Some(position) = file.cursor_position {
+            _ = write!(markdown, "\t{position}");
+        }
+        _ = writeln!(markdown);
+    }
+    _ = writeln!(markdown, "```");
+    markdown.push('\n');
+}
+
+fn parse_path_list(text: &str) -> Vec<RecentFile> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let (path, cursor_position) = line
+                .rsplit_once('\t')
+                .map(|(path, position)| (path, position.parse().ok()))
+                .unwrap_or((line, None));
+            RecentFile {
+                path: Path::new(path).into(),
+                cursor_position,
+            }
+        })
+        .collect()
+}
 
 #[derive(Serialize, Deserialize)]
 struct FrontMatter<'a> {
@@ -68,6 +121,12 @@ struct FrontMatter<'a> {
     revision: Cow<'a, str>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    uncommitted_diff_requires_edit_history_rollback: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl ExampleSpec {
@@ -91,6 +150,8 @@ impl ExampleSpec {
             repository_url: Cow::Borrowed(&self.repository_url),
             revision: Cow::Borrowed(&self.revision),
             tags: self.tags.clone(),
+            uncommitted_diff_requires_edit_history_rollback: self
+                .uncommitted_diff_contains_edit_history,
         };
         let front_matter_toml =
             toml::to_string_pretty(&front_matter).unwrap_or_else(|_| String::new());
@@ -129,6 +190,17 @@ impl ExampleSpec {
             _ = writeln!(markdown, "```");
             markdown.push('\n');
         }
+
+        write_path_list(
+            &mut markdown,
+            RECENTLY_OPENED_FILES_HEADING,
+            &self.recently_opened_files,
+        );
+        write_path_list(
+            &mut markdown,
+            RECENTLY_VIEWED_FILES_HEADING,
+            &self.recently_viewed_files,
+        );
 
         _ = writeln!(markdown, "## {}", EDIT_HISTORY_HEADING);
         _ = writeln!(markdown);
@@ -194,6 +266,9 @@ impl ExampleSpec {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -211,6 +286,8 @@ impl ExampleSpec {
                 spec.repository_url = data.repository_url.into_owned();
                 spec.revision = data.revision.into_owned();
                 spec.tags = data.tags;
+                spec.uncommitted_diff_contains_edit_history =
+                    data.uncommitted_diff_requires_edit_history_rollback;
             }
             input = rest.trim_start();
         }
@@ -223,6 +300,8 @@ impl ExampleSpec {
         enum Section {
             Start,
             UncommittedDiff,
+            RecentlyOpenedFiles,
+            RecentlyViewedFiles,
             EditHistory,
             CursorPosition,
             ExpectedPatch,
@@ -245,6 +324,10 @@ impl ExampleSpec {
                     let title = mem::take(&mut text);
                     current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
                         Section::UncommittedDiff
+                    } else if title.eq_ignore_ascii_case(RECENTLY_OPENED_FILES_HEADING) {
+                        Section::RecentlyOpenedFiles
+                    } else if title.eq_ignore_ascii_case(RECENTLY_VIEWED_FILES_HEADING) {
+                        Section::RecentlyViewedFiles
                     } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
                         Section::EditHistory
                     } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
@@ -291,6 +374,14 @@ impl ExampleSpec {
                     match current_section {
                         Section::UncommittedDiff => {
                             spec.uncommitted_diff = mem::take(&mut text);
+                        }
+                        Section::RecentlyOpenedFiles => {
+                            spec.recently_opened_files = parse_path_list(&text);
+                            text.clear();
+                        }
+                        Section::RecentlyViewedFiles => {
+                            spec.recently_viewed_files = parse_path_list(&text);
+                            text.clear();
                         }
                         Section::EditHistory => {
                             if next_edit_predicted {
@@ -393,51 +484,7 @@ impl ExampleSpec {
         cursor_offset: usize,
         line_comment_prefix: &str,
     ) {
-        // Find which line the cursor is on and its column
-        let cursor_line_start = excerpt[..cursor_offset]
-            .rfind('\n')
-            .map(|pos| pos + 1)
-            .unwrap_or(0);
-        let cursor_line_end = excerpt[cursor_line_start..]
-            .find('\n')
-            .map(|pos| cursor_line_start + pos + 1)
-            .unwrap_or(excerpt.len());
-        let cursor_line = &excerpt[cursor_line_start..cursor_line_end];
-        let cursor_line_indent = &cursor_line[..cursor_line.len() - cursor_line.trim_start().len()];
-        let cursor_column = cursor_offset - cursor_line_start;
-
-        // Build the marker line
-        let mut marker_line = String::new();
-        if cursor_column < line_comment_prefix.len() {
-            for _ in 0..cursor_column {
-                marker_line.push(' ');
-            }
-            marker_line.push_str(line_comment_prefix);
-            write!(marker_line, " <{}", CURSOR_POSITION_MARKER).unwrap();
-        } else {
-            if cursor_column >= cursor_line_indent.len() + line_comment_prefix.len() {
-                marker_line.push_str(cursor_line_indent);
-            }
-            marker_line.push_str(line_comment_prefix);
-            while marker_line.len() < cursor_column {
-                marker_line.push(' ');
-            }
-            write!(marker_line, "^{}", CURSOR_POSITION_MARKER).unwrap();
-        }
-
-        // Build the final cursor_position string
-        let mut result = String::with_capacity(excerpt.len() + marker_line.len() + 2);
-        result.push_str(&excerpt[..cursor_line_end]);
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push_str(&marker_line);
-        if cursor_line_end < excerpt.len() {
-            result.push('\n');
-            result.push_str(&excerpt[cursor_line_end..]);
-        }
-
-        self.cursor_position = result;
+        self.cursor_position = format_cursor_excerpt(excerpt, cursor_offset, line_comment_prefix);
     }
 
     /// Returns all of the possible expected patches for this example, each with an optional
@@ -481,6 +528,9 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -617,6 +667,9 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -689,6 +742,9 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),

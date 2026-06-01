@@ -25,7 +25,7 @@ use gpui::{
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{CompletionDisplayOptions, Project};
 use settings::{
     BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
@@ -1665,7 +1665,7 @@ impl KeymapEditor {
                     }
                 }))
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -2019,7 +2019,8 @@ impl Render for KeymapEditor {
                                         context.add("BufferSearchBar");
                                         context
                                     })
-                                    .size_full()
+                                    .flex_1()
+                                    .min_w_0()
                                     .h_8()
                                     .pl_2()
                                     .pr_1()
@@ -2032,7 +2033,7 @@ impl Render for KeymapEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .min_w_96()
+                                    .flex_none()
                                     .items_center()
                                     .child(
                                         IconButton::new(
@@ -2357,7 +2358,7 @@ impl Render for KeymapEditor {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -2883,8 +2884,12 @@ impl KeybindingEditorModal {
                                 format!("Saved edits to the {} action.", humanized_action_name),
                                 cx,
                                 move |this, _cx| {
-                                    this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                                        .dismiss_button(true)
+                                    this.icon(
+                                        Icon::new(IconName::Check)
+                                            .size(IconSize::Small)
+                                            .color(Color::Success),
+                                    )
+                                    .dismiss_button(true)
                                     // .action("Undo", f) todo: wire the undo functionality
                                 },
                             );
@@ -3318,6 +3323,7 @@ impl ActionArgumentsEditor {
                         window,
                         cx,
                     );
+                    editor.disable_mouse_wheel_zoom();
                     editor.set_searchable(false);
                     editor.disable_scrollbars_and_minimap(window, cx);
                     editor.set_show_edit_predictions(Some(false), window, cx);
@@ -3463,7 +3469,7 @@ impl Render for ActionArgumentsEditor {
             .min_h_8()
             .min_w_48()
             .px_2()
-            .flex_grow()
+            .flex_grow_1()
             .rounded_md()
             .bg(cx.theme().colors().editor_background)
             .border_1()
@@ -3513,6 +3519,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
+                    group: None,
                 })
                 .collect(),
             display_options: CompletionDisplayOptions::default(),
@@ -3622,7 +3629,7 @@ async fn save_keybinding_update(
     };
 
     let source = settings::KeybindUpdateTarget {
-        context: action_mapping.context.as_ref().map(|a| &***a),
+        context: action_mapping.context.as_deref(),
         keystrokes: &action_mapping.keystrokes,
         action_name: existing.action().name,
         action_arguments: new_args,

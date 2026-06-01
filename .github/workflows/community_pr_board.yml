@@ -1,0 +1,75 @@
+# Community PR Board — route labeled community PRs to a GitHub Project board
+#
+# When an area/platform label is added to a community PR (not staff, not bot),
+# the PR is added to the project board with a Track field set to the matching
+# review area group. Status transitions for assignment, re-request, and
+# comment events are handled here. Review-based status changes (approved →
+# "In Progress (us)", changes requested → "In Progress (author)") are handled
+# by built-in board automations.
+#
+# See script/community-pr-track-mapping.json for the label→track mapping.
+
+name: Community PR Board
+
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, assigned, review_requested]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to process (re-resolves track from current labels)"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-pr-board-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  route-pr:
+    if: >-
+      github.repository == 'zed-industries/zed' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.issue.pull_request &&
+        github.event.comment.user.login == github.event.issue.user.login)) &&
+      !contains(toJSON(github.event.pull_request.labels.*.name), 'staff') &&
+      !contains(toJSON(github.event.pull_request.labels.*.name), 'bot')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          sparse-checkout: |
+            script/github-community-pr-board.py
+            script/community-pr-track-mapping.json
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Route PR to board
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "85"
+          MANUAL_PR_NUMBER: ${{ inputs.pr_number }}
+        run: python script/github-community-pr-board.py

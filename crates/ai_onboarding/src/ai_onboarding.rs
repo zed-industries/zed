@@ -16,10 +16,8 @@ pub use young_account_banner::YoungAccountBanner;
 use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
-use gpui::{AnyElement, Entity, IntoElement, ParentElement};
-use ui::{
-    Divider, List, ListBulletItem, RegisterComponent, Tooltip, Vector, VectorName, prelude::*,
-};
+use gpui::{AnyElement, Entity, IntoElement, ParentElement, TaskExt};
+use ui::{Divider, RegisterComponent, Tooltip, Vector, VectorName, prelude::*};
 
 #[derive(PartialEq)]
 pub enum SignInStatus {
@@ -158,11 +156,11 @@ impl ZedAiOnboarding {
             .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
             .child(
-                Label::new("Sign in to try Zed Pro for 14 days, no credit card required.")
+                Label::new("Sign in to try Zed Pro free for 14 days.")
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan())
+            .child(PlanDefinitions.sign_in_upsell())
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
@@ -378,7 +376,13 @@ impl Component for ZedAiOnboarding {
         "Agent New User Onboarding"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "The onboarding surface shown to new agent panel users, \
+        guiding them through signing in to Zed and selecting a plan \
+        before they can start using the agent."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         fn onboarding(
             sign_in_status: SignInStatus,
             plan: Option<Plan>,
@@ -404,157 +408,39 @@ impl Component for ZedAiOnboarding {
                 .into_any_element()
         }
 
-        Some(
-            v_flex()
-                .min_w_0()
-                .gap_4()
-                .children(vec![
-                    single_example(
-                        "Not Signed-in",
-                        onboarding(SignInStatus::SignedOut, None, false),
-                    ),
-                    single_example(
-                        "Young Account",
-                        onboarding(SignInStatus::SignedIn, None, true),
-                    ),
-                    single_example(
-                        "Free Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedFree), false),
-                    ),
-                    single_example(
-                        "Pro Trial",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedProTrial), false),
-                    ),
-                    single_example(
-                        "Pro Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
-                    ),
-                    single_example(
-                        "Business Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
-                    ),
-                    single_example(
-                        "Student Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedStudent), false),
-                    ),
-                ])
-                .into_any_element(),
-        )
-    }
-}
-
-#[derive(RegisterComponent)]
-pub struct AgentLayoutOnboarding {
-    pub use_agent_layout: Arc<dyn Fn(&mut Window, &mut App)>,
-    pub revert_to_editor_layout: Arc<dyn Fn(&mut Window, &mut App)>,
-    pub dismissed: Arc<dyn Fn(&mut Window, &mut App)>,
-    pub is_agent_layout: bool,
-}
-
-impl Render for AgentLayoutOnboarding {
-    fn render(&mut self, _window: &mut ui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let description = "The new threads sidebar, positioned in the far left of your workspace, allows you to manage agents across many projects. Your agent thread lives alongside it, and all other panels live on the right.";
-
-        let dismiss_button = div().absolute().top_1().right_1().child(
-            IconButton::new("dismiss", IconName::Close)
-                .icon_size(IconSize::Small)
-                .on_click({
-                    let dismiss = self.dismissed.clone();
-                    move |_, window, cx| {
-                        telemetry::event!("Agentic Layout Onboarding Dismissed");
-                        dismiss(window, cx)
-                    }
-                }),
-        );
-
-        let primary_button = if self.is_agent_layout {
-            Button::new("revert", "Use Previous Layout")
-                .label_size(LabelSize::Small)
-                .style(ButtonStyle::Outlined)
-                .on_click({
-                    let revert = self.revert_to_editor_layout.clone();
-                    let dismiss = self.dismissed.clone();
-                    move |_, window, cx| {
-                        telemetry::event!("Clicked to Use Previous Layout");
-                        revert(window, cx);
-                        dismiss(window, cx);
-                    }
-                })
-        } else {
-            Button::new("start", "Use New Layout")
-                .label_size(LabelSize::Small)
-                .style(ButtonStyle::Outlined)
-                .on_click({
-                    let use_layout = self.use_agent_layout.clone();
-                    let dismiss = self.dismissed.clone();
-                    move |_, window, cx| {
-                        telemetry::event!("Clicked to Use New Layout");
-                        use_layout(window, cx);
-                        dismiss(window, cx);
-                    }
-                })
-        };
-
-        let content = v_flex()
+        v_flex()
             .min_w_0()
-            .w_full()
-            .relative()
-            .gap_1()
-            .child(Label::new("A new workspace layout for agentic work"))
-            .child(Label::new(description).color(Color::Muted).mb_2())
-            .child(
-                List::new()
-                    .child(ListBulletItem::new("Use your favorite agents in parallel"))
-                    .child(ListBulletItem::new("Isolate agents using worktrees"))
-                    .child(ListBulletItem::new(
-                        "Combine multiple projects in one window",
-                    )),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .flex_wrap()
-                    .justify_end()
-                    .child(primary_button),
-            )
-            .child(dismiss_button);
-
-        AgentPanelOnboardingCard::new().child(content)
-    }
-}
-
-impl Component for AgentLayoutOnboarding {
-    fn scope() -> ComponentScope {
-        ComponentScope::Onboarding
-    }
-
-    fn name() -> &'static str {
-        "Agent Layout Onboarding"
-    }
-
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let onboarding = cx.new(|_cx| AgentLayoutOnboarding {
-            use_agent_layout: Arc::new(|_, _| {}),
-            revert_to_editor_layout: Arc::new(|_, _| {}),
-            dismissed: Arc::new(|_, _| {}),
-            is_agent_layout: false,
-        });
-
-        Some(
-            v_flex()
-                .min_w_0()
-                .gap_4()
-                .child(single_example(
-                    "Agent Layout Onboarding",
-                    div()
-                        .w_full()
-                        .min_w_40()
-                        .max_w(px(1100.))
-                        .child(onboarding)
-                        .into_any_element(),
-                ))
-                .into_any_element(),
-        )
+            .gap_4()
+            .children(vec![
+                single_example(
+                    "Not Signed-in",
+                    onboarding(SignInStatus::SignedOut, None, false),
+                ),
+                single_example(
+                    "Young Account",
+                    onboarding(SignInStatus::SignedIn, None, true),
+                ),
+                single_example(
+                    "Free Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedFree), false),
+                ),
+                single_example(
+                    "Pro Trial",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedProTrial), false),
+                ),
+                single_example(
+                    "Pro Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
+                ),
+                single_example(
+                    "Business Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
+                ),
+                single_example(
+                    "Student Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedStudent), false),
+                ),
+            ])
+            .into_any_element()
     }
 }

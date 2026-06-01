@@ -22,7 +22,9 @@ debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
+acp_thread.workspace = true
 anyhow.workspace = true
+async-channel.workspace = true
 askpass.workspace = true
 clap.workspace = true
 client.workspace = true
@@ -86,6 +88,7 @@ gpui = { workspace = true, features = ["windows-manifest"] }
 [dev-dependencies]
 action_log.workspace = true
 agent = { workspace = true, features = ["test-support"] }
+agent-client-protocol.workspace = true
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
@@ -103,6 +106,7 @@ language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 zlog.workspace = true
 
 [build-dependencies]

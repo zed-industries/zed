@@ -8,7 +8,7 @@ use lsp::LanguageServerId;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
@@ -416,6 +416,16 @@ impl HeadlessProject {
                         log_store.remove_language_server(*id, cx);
                     });
                 }
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_name: None,
+                        language_server_id: id.to_proto(),
+                        variant: Some(proto::update_language_server::Variant::Removed(
+                            proto::ServerRemoved {},
+                        )),
+                    })
+                    .log_err();
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -523,6 +533,9 @@ impl HeadlessProject {
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_string_lossy().into_owned(),
+                root_repo_common_dir: worktree
+                    .root_repo_common_dir()
+                    .map(|p| p.to_string_lossy().into_owned()),
             }
         });
 
@@ -998,6 +1011,15 @@ impl HeadlessProject {
                 "failed to spawn kernel process (command: {})",
                 envelope.payload.command
             ))?
+        } else if let Some(venv_python) = working_directory
+            .as_ref()
+            .and_then(|wd| find_venv_python(wd))
+        {
+            let path_str = venv_python.to_string_lossy().to_string();
+            spawn_kernel(&path_str, &[]).context(format!(
+                "failed to spawn kernel process (venv: {})",
+                path_str
+            ))?
         } else {
             spawn_kernel("python3", &[])
                 .or_else(|_| spawn_kernel("python", &[]))
@@ -1321,4 +1343,24 @@ fn prompt_to_proto(
             proto::language_server_prompt_request::Critical {},
         ),
     }
+}
+
+fn find_venv_python(working_directory: &str) -> Option<std::path::PathBuf> {
+    let wd = std::path::Path::new(working_directory);
+    for dir_name in &[".venv", "venv", ".env", "env"] {
+        let venv_dir = wd.join(dir_name);
+        let has_pyvenv_cfg = venv_dir.join("pyvenv.cfg").is_file();
+        let has_activate = venv_dir.join("bin").join("activate").is_file();
+        if has_pyvenv_cfg || has_activate {
+            let python = venv_dir.join("bin").join("python");
+            if python.is_file() {
+                return Some(python);
+            }
+            let python3 = venv_dir.join("bin").join("python3");
+            if python3.is_file() {
+                return Some(python3);
+            }
+        }
+    }
+    None
 }

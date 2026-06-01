@@ -37,7 +37,6 @@ use worktree_settings_file::LocalSettingsKind;
 
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
-pub use tables::user::Model as User;
 pub use tables::*;
 
 #[cfg(feature = "test-support")]
@@ -532,6 +531,7 @@ impl RejoinedProject {
                     root_name: worktree.root_name.clone(),
                     visible: worktree.visible,
                     abs_path: worktree.abs_path.clone(),
+                    root_repo_common_dir: None,
                 })
                 .collect(),
             collaborators: self

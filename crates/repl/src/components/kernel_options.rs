@@ -362,7 +362,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                 .child(icon.color(Color::Default).size(IconSize::Medium))
                                 .child(
                                     v_flex()
-                                        .flex_grow()
+                                        .flex_grow_1()
                                         .overflow_x_hidden()
                                         .gap_0p5()
                                         .child(
@@ -371,7 +371,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                                 .child(
                                                     div()
                                                         .overflow_x_hidden()
-                                                        .flex_shrink()
+                                                        .flex_shrink_1()
                                                         .text_ellipsis()
                                                         .child(
                                                             Label::new(spec.name())
@@ -484,7 +484,7 @@ where
         PopoverMenu::new("kernel-switcher")
             .menu(move |_window, _cx| Some(picker_view.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
+            .attach(gpui::Anchor::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

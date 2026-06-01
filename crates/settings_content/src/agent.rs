@@ -9,31 +9,7 @@ use crate::ExtendingVec;
 
 use crate::DockPosition;
 
-/// Where new threads should start by default.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum NewThreadLocation {
-    /// Start threads in the current project.
-    #[default]
-    LocalProject,
-    /// Start threads in a new worktree.
-    NewWorktree,
-}
-
-/// Where to position the sidebar.
+/// Where to position the threads sidebar.
 #[derive(
     Clone,
     Copy,
@@ -108,13 +84,13 @@ pub struct AgentSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the agent panel.
     ///
-    /// Default: right
+    /// Default: left
     pub dock: Option<DockPosition>,
     /// Whether the agent panel should use flexible (proportional) sizing.
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the sidebar.
+    /// Where to position the threads sidebar.
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
@@ -128,6 +104,12 @@ pub struct AgentSettingsContent {
     /// Default: 320
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
+    /// Whether to limit the content width in the agent panel. When enabled,
+    /// content will be constrained to `max_content_width` and centered when
+    /// the panel is wider than that value, for optimal readability.
+    ///
+    /// Default: true
+    pub limit_content_width: Option<bool>,
     /// Maximum content width in pixels for the agent panel. Content will be
     /// centered when the panel is wider than this value.
     ///
@@ -136,6 +118,8 @@ pub struct AgentSettingsContent {
     pub max_content_width: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
+    pub subagent_model: Option<LanguageModelSelection>,
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -147,6 +131,9 @@ pub struct AgentSettingsContent {
     pub inline_assistant_use_streaming_tools: Option<bool>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// Custom instructions to include in the prompt when generating git commit messages.
+    /// Applied in addition to any project rules files (such as `.rules` or `AGENTS.md`).
+    pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
@@ -155,10 +142,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: write
     pub default_profile: Option<Arc<str>>,
-    /// Where new threads should start by default.
-    ///
-    /// Default: "local_project"
-    pub new_thread_location: Option<NewThreadLocation>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -171,7 +154,7 @@ pub struct AgentSettingsContent {
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
-    /// Default: true
+    /// Default: false
     pub single_file_review: Option<bool>,
     /// Additional parameters for language model requests. When making a request
     /// to a model, parameters will be taken from the last entry in this list
@@ -256,6 +239,7 @@ impl AgentSettingsContent {
             model,
             enable_thinking: false,
             effort: None,
+            speed: None,
         });
     }
 
@@ -263,18 +247,35 @@ impl AgentSettingsContent {
         self.default_profile = Some(profile_id);
     }
 
-    pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
-        self.new_thread_location = Some(value);
-    }
-
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
-        if !self.favorite_models.contains(&model) {
+        // Note: this is intentional to not compare using `PartialEq`here.
+        // Full equality would treat entries that differ just in thinking/effort/speed
+        // as distinct and silently produce duplicates.
+        if !self
+            .favorite_models
+            .iter()
+            .any(|m| m.provider == model.provider && m.model == model.model)
+        {
             self.favorite_models.push(model);
         }
     }
 
     pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
-        self.favorite_models.retain(|m| m != model);
+        self.favorite_models
+            .retain(|m| !(m.provider == model.provider && m.model == model.model));
+    }
+
+    pub fn update_favorite_model<F>(&mut self, provider: &str, model: &str, f: F)
+    where
+        F: FnOnce(&mut LanguageModelSelection),
+    {
+        if let Some(entry) = self
+            .favorite_models
+            .iter_mut()
+            .find(|m| m.provider.0 == provider && m.model == model)
+        {
+            f(entry);
+        }
     }
 
     pub fn set_tool_default_permission(&mut self, tool_id: &str, mode: ToolPermissionMode) {
@@ -397,6 +398,7 @@ pub struct LanguageModelSelection {
     #[serde(default)]
     pub enable_thinking: bool,
     pub effort: Option<String>,
+    pub speed: Option<language_model_core::Speed>,
 }
 
 #[with_fallible_options]
@@ -432,8 +434,8 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "opencode",
                         "openrouter",
-                        "vercel",
                         "vercel_ai_gateway",
                         "x_ai",
                         "zed.dev"
@@ -524,46 +526,8 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
-    Extension {
-        /// Additional environment variables to pass to the agent.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        env: HashMap<String, String>,
-        /// The default mode to use for this agent.
-        ///
-        /// Note: Not only all agents support modes.
-        ///
-        /// Default: None
-        default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
-        /// Default values for session config options.
-        ///
-        /// This is a map from config option ID to value ID.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
-        /// Favorited values for session config options.
-        ///
-        /// This is a map from config option ID to a list of favorited value IDs.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        favorite_config_option_values: HashMap<String, Vec<String>>,
-    },
+    // Used for the ACP extension migration
+    #[serde(alias = "extension")]
     Registry {
         /// Additional environment variables to pass to the agent.
         ///

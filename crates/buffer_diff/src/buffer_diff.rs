@@ -1,8 +1,6 @@
 use futures::channel::oneshot;
-use imara_diff::{
-    Algorithm, Sink, diff as imara_diff, intern::InternedInput, sources::lines_with_terminator,
-};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
+use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
 use language::{
     Capability, Diff, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
@@ -267,6 +265,10 @@ impl BufferDiffSnapshot {
         self.inner
             .base_text_exists
             .then(|| self.inner.base_text.text())
+    }
+
+    pub fn base_text_exists(&self) -> bool {
+        self.inner.base_text_exists
     }
 
     pub fn secondary_diff(&self) -> Option<&BufferDiffSnapshot> {
@@ -1153,7 +1155,7 @@ fn compute_hunks(
             lines_with_terminator(buffer_text.as_str()),
         );
         let sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
-        let hunks = imara_diff(Algorithm::Histogram, &input, sink);
+        let hunks = imara_diff::diff(Algorithm::Histogram, &input, sink);
         for hunk in hunks {
             tree.push(hunk, buffer);
         }
@@ -1172,7 +1174,6 @@ fn compute_hunks(
 
     tree
 }
-
 struct HunkSink<'a> {
     diff_base_rope: &'a Rope,
     buffer: &'a text::BufferSnapshot,
@@ -1234,7 +1235,8 @@ impl Sink for HunkSink<'_> {
             && base_line_count == buffer_line_count
             && diff_options.max_word_diff_line_count >= base_line_count
         {
-            let base_text: String = self.diff_base_rope
+            let base_text: String = self
+                .diff_base_rope
                 .chunks_in_range(diff_base_byte_range.clone())
                 .collect();
             let buffer_text: String = self.buffer.text_for_range(buffer_range.clone()).collect();
@@ -1266,8 +1268,12 @@ impl Sink for HunkSink<'_> {
         self.hunks.push(InternalDiffHunk {
             buffer_range,
             diff_base_byte_range: diff_base_byte_range.clone(),
-            diff_base_point_range: self.diff_base_rope.offset_to_point(diff_base_byte_range.start)
-                ..self.diff_base_rope.offset_to_point(diff_base_byte_range.end),
+            diff_base_point_range: self
+                .diff_base_rope
+                .offset_to_point(diff_base_byte_range.start)
+                ..self
+                    .diff_base_rope
+                    .offset_to_point(diff_base_byte_range.end),
             base_word_diffs,
             buffer_word_diffs,
         });
@@ -1487,9 +1493,15 @@ pub struct DiffChanged {
 
 #[derive(Clone, Debug)]
 pub enum BufferDiffEvent {
+    BaseTextChanged,
     DiffChanged(DiffChanged),
     LanguageChanged,
     HunksStagedOrUnstaged(Option<Rope>),
+}
+
+struct SetSnapshotResult {
+    change: DiffChanged,
+    base_text_changed: bool,
 }
 
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
@@ -1756,7 +1768,7 @@ impl BufferDiff {
         secondary_diff_change: Option<Range<Anchor>>,
         clear_pending_hunks: bool,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = DiffChanged> + use<> {
+    ) -> impl Future<Output = SetSnapshotResult> + use<> {
         log::debug!("set snapshot with secondary {secondary_diff_change:?}");
 
         let old_snapshot = self.snapshot(cx);
@@ -1876,10 +1888,13 @@ impl BufferDiff {
             if let Some(parsing_idle) = parsing_idle {
                 parsing_idle.await;
             }
-            DiffChanged {
-                changed_range,
-                base_text_changed_range,
-                extended_range,
+            SetSnapshotResult {
+                change: DiffChanged {
+                    changed_range,
+                    base_text_changed_range,
+                    extended_range,
+                },
+                base_text_changed,
             }
         }
     }
@@ -1910,12 +1925,15 @@ impl BufferDiff {
         );
 
         cx.spawn(async move |this, cx| {
-            let change = fut.await;
+            let result = fut.await;
             this.update(cx, |_, cx| {
-                cx.emit(BufferDiffEvent::DiffChanged(change.clone()));
+                if result.base_text_changed {
+                    cx.emit(BufferDiffEvent::BaseTextChanged);
+                }
+                cx.emit(BufferDiffEvent::DiffChanged(result.change.clone()));
             })
             .ok();
-            change.changed_range
+            result.change.changed_range
         })
     }
 
@@ -1991,8 +2009,11 @@ impl BufferDiff {
         let fg_executor = cx.foreground_executor().clone();
         let snapshot = fg_executor.block_on(fut);
         let fut = self.set_snapshot_with_secondary_inner(snapshot, buffer, None, false, cx);
-        let change = fg_executor.block_on(fut);
-        cx.emit(BufferDiffEvent::DiffChanged(change));
+        let result = fg_executor.block_on(fut);
+        if result.base_text_changed {
+            cx.emit(BufferDiffEvent::BaseTextChanged);
+        }
+        cx.emit(BufferDiffEvent::DiffChanged(result.change));
     }
 
     pub fn base_text_buffer(&self) -> &Entity<language::Buffer> {
@@ -2147,7 +2168,7 @@ mod tests {
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }

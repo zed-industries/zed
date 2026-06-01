@@ -16,8 +16,8 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, Subscription, Task, WeakEntity,
+    Action, Anchor, AnyView, App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable,
+    ScrollHandle, Subscription, Task, TaskExt, WeakEntity,
 };
 use itertools::Itertools;
 use language::LanguageRegistry;
@@ -26,7 +26,7 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{
     agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
@@ -463,7 +463,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -562,7 +562,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -664,8 +664,14 @@ impl AgentConfiguration {
             None
         };
         let auth_required = matches!(server_status, ContextServerStatus::AuthRequired);
+        let client_secret_required = matches!(
+            server_status,
+            ContextServerStatus::ClientSecretRequired { .. }
+        );
         let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
         let context_server_store = self.context_server_store.clone();
+        let workspace = self.workspace.clone();
+        let language_registry = self.language_registry.clone();
 
         let tool_count = self
             .context_server_registry
@@ -685,6 +691,9 @@ impl AgentConfiguration {
             ContextServerStatus::Error(_) => AiSettingItemStatus::Error,
             ContextServerStatus::Stopped => AiSettingItemStatus::Stopped,
             ContextServerStatus::AuthRequired => AiSettingItemStatus::AuthRequired,
+            ContextServerStatus::ClientSecretRequired { .. } => {
+                AiSettingItemStatus::ClientSecretRequired
+            }
             ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
         };
 
@@ -705,7 +714,7 @@ impl AgentConfiguration {
                     .icon_size(IconSize::Small),
                 Tooltip::text("Configure MCP Server"),
             )
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
             .menu({
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
@@ -886,7 +895,7 @@ impl AgentConfiguration {
                             ),
                     )
                     .child(
-                        Button::new("error-logout-server", "Authenticate")
+                        Button::new("authenticate-server", "Authenticate")
                             .style(ButtonStyle::Outlined)
                             .label_size(LabelSize::Small)
                             .on_click({
@@ -895,6 +904,46 @@ impl AgentConfiguration {
                                     context_server_store.update(cx, |store, cx| {
                                         store.authenticate_server(&context_server_id, cx).log_err();
                                     });
+                                }
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        } else if client_secret_required {
+            Some(
+                feedback_base_container()
+                    .child(
+                        h_flex()
+                            .pr_4()
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Enter a client secret to connect this server")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                    .child(
+                        Button::new("enter-client-secret", "Enter Client Secret")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let context_server_id = context_server_id.clone();
+                                move |_event, window, cx| {
+                                    ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
                                 }
                             }),
                     )
@@ -1059,7 +1108,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -1125,7 +1174,6 @@ impl AgentConfiguration {
         };
 
         let source_kind = match source {
-            ExternalAgentSource::Extension => AiSettingItemSource::Extension,
             ExternalAgentSource::Registry => AiSettingItemSource::Registry,
             ExternalAgentSource::Custom => AiSettingItemSource::Custom,
         };
@@ -1135,10 +1183,13 @@ impl AgentConfiguration {
             id: agent_server_name.clone(),
         };
 
-        let connection_status = self
-            .agent_connection_store
-            .read(cx)
-            .connection_status(&agent, cx);
+        let (connection_status, running_version) = {
+            let connection_store = self.agent_connection_store.read(cx);
+            (
+                connection_store.connection_status(&agent, cx),
+                connection_store.agent_version(&agent, cx),
+            )
+        };
 
         let restart_button = matches!(
             connection_status,
@@ -1166,26 +1217,6 @@ impl AgentConfiguration {
         });
 
         let uninstall_button = match source {
-            ExternalAgentSource::Extension => Some(
-                IconButton::new(
-                    SharedString::from(format!("uninstall-{}", id)),
-                    IconName::Trash,
-                )
-                .icon_color(Color::Muted)
-                .icon_size(IconSize::Small)
-                .tooltip(Tooltip::text("Uninstall Agent Extension"))
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    let agent_name = agent_server_name.clone();
-
-                    if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
-                        store.get_extension_id_for_agent(&agent_name)
-                    }) {
-                        ExtensionStore::global(cx)
-                            .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
-                            .detach_and_log_err(cx);
-                    }
-                })),
-            ),
             ExternalAgentSource::Registry => {
                 let fs = self.fs.clone();
                 Some(
@@ -1252,6 +1283,7 @@ impl AgentConfiguration {
 
         AiSettingItem::new(id, display_name, status, source_kind)
             .icon(icon)
+            .when_some(running_version, |this, version| this.detail_label(version))
             .when_some(restart_button, |this, button| this.action(button))
             .when_some(uninstall_button, |this, button| this.action(button))
     }
@@ -1330,40 +1362,44 @@ fn show_unable_to_uninstall_extension_with_context_server(
         move |this, _cx| {
             let workspace_handle = workspace_handle.clone();
 
-            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
-                .dismiss_button(true)
-                .action("Uninstall", move |_, _cx| {
-                    if let Some((extension_id, _)) =
-                        resolve_extension_for_context_server(&context_server_id, _cx)
-                    {
-                        ExtensionStore::global(_cx).update(_cx, |store, cx| {
-                            store
-                                .uninstall_extension(extension_id, cx)
-                                .detach_and_log_err(cx);
-                        });
+            this.icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .dismiss_button(true)
+            .action("Uninstall", move |_, _cx| {
+                if let Some((extension_id, _)) =
+                    resolve_extension_for_context_server(&context_server_id, _cx)
+                {
+                    ExtensionStore::global(_cx).update(_cx, |store, cx| {
+                        store
+                            .uninstall_extension(extension_id, cx)
+                            .detach_and_log_err(cx);
+                    });
 
-                        workspace_handle
-                            .update(_cx, |workspace, cx| {
-                                let fs = workspace.app_state().fs.clone();
-                                cx.spawn({
-                                    let context_server_id = context_server_id.clone();
-                                    async move |_workspace_handle, cx| {
-                                        cx.update(|cx| {
-                                            update_settings_file(fs, cx, move |settings, _| {
-                                                settings
-                                                    .project
-                                                    .context_servers
-                                                    .remove(&context_server_id.0);
-                                            });
+                    workspace_handle
+                        .update(_cx, |workspace, cx| {
+                            let fs = workspace.app_state().fs.clone();
+                            cx.spawn({
+                                let context_server_id = context_server_id.clone();
+                                async move |_workspace_handle, cx| {
+                                    cx.update(|cx| {
+                                        update_settings_file(fs, cx, move |settings, _| {
+                                            settings
+                                                .project
+                                                .context_servers
+                                                .remove(&context_server_id.0);
                                         });
-                                        anyhow::Ok(())
-                                    }
-                                })
-                                .detach_and_log_err(cx);
+                                    });
+                                    anyhow::Ok(())
+                                }
                             })
-                            .log_err();
-                    }
-                })
+                            .detach_and_log_err(cx);
+                        })
+                        .log_err();
+                }
+            })
         },
     );
 

@@ -32,6 +32,7 @@ rope.workspace = true
 schemars.workspace = true
 serde.workspace = true
 smallvec.workspace = true
+async-channel.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true

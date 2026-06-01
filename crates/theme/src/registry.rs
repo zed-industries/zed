@@ -3,7 +3,6 @@ use std::{fmt::Debug, path::Path};
 
 use anyhow::Result;
 use collections::HashMap;
-use derive_more::{Deref, DerefMut};
 use gpui::{App, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
 use thiserror::Error;
@@ -38,8 +37,22 @@ pub struct IconThemeNotFoundError(pub SharedString);
 /// inserting the [`ThemeRegistry`] into the context as a global.
 ///
 /// This should not be exposed outside of this module.
-#[derive(Default, Deref, DerefMut)]
+#[derive(Default)]
 struct GlobalThemeRegistry(Arc<ThemeRegistry>);
+
+impl std::ops::DerefMut for GlobalThemeRegistry {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl std::ops::Deref for GlobalThemeRegistry {
+    type Target = Arc<ThemeRegistry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Global for GlobalThemeRegistry {}
 

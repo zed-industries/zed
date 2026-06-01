@@ -3,6 +3,7 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
+use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -19,7 +20,7 @@ use language::{
     Point, ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
-use project::{Project, WorktreeId, git_store::Repository};
+use project::{Project, ProjectPath, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
     collections::HashSet,
@@ -27,7 +28,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{DiffStat, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, DiffStat, Divider, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -42,7 +43,15 @@ use workspace::{
 use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
 
-actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
+actions!(
+    git,
+    [
+        ApplyCurrentStash,
+        PopCurrentStash,
+        DropCurrentStash,
+        OpenFileAtHead,
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
@@ -65,6 +74,7 @@ pub struct CommitView {
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
 }
 
@@ -78,6 +88,7 @@ struct GitBlob {
 
 struct CommitDiffAddon {
     file_statuses: HashMap<language::BufferId, FileStatus>,
+    commit_view: WeakEntity<CommitView>,
 }
 
 impl Addon for CommitDiffAddon {
@@ -91,6 +102,45 @@ impl Addon for CommitDiffAddon {
         _cx: &App,
     ) -> Option<FileStatus> {
         self.file_statuses.get(&buffer_id).copied()
+    }
+
+    fn extend_buffer_header_context_menu(
+        &self,
+        menu: ContextMenu,
+        buffer: &language::BufferSnapshot,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> ContextMenu {
+        let file_to_open = buffer.file().and_then(|file| {
+            let commit_view = self.commit_view.upgrade()?;
+            let commit_view = commit_view.read(cx);
+            let project_path = commit_view
+                .repository
+                .read(cx)
+                .repo_path_to_project_path(&RepoPath::from_rel_path(file.path()), cx)?;
+            let exists_at_head = commit_view
+                .workspace
+                .upgrade()?
+                .read(cx)
+                .project()
+                .read(cx)
+                .entry_for_path(&project_path, cx)
+                .is_some();
+            exists_at_head.then(|| file.clone())
+        });
+
+        menu.when_some(file_to_open, |menu, file| {
+            let commit_view = self.commit_view.clone();
+            menu.entry(
+                "Open File in Project",
+                Some(Box::new(OpenFileAtHead)),
+                move |window, cx| {
+                    commit_view
+                        .update(cx, |view, cx| view.open_file_at_head(&file, window, cx))
+                        .log_err();
+                },
+            )
+        })
     }
 }
 
@@ -130,12 +180,14 @@ impl CommitView {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         let project = workspace.project();
+                        let workspace_handle = cx.weak_entity();
                         let commit_view = cx.new(|cx| {
                             CommitView::new(
                                 commit_details,
                                 commit_diff,
                                 repo,
                                 project.clone(),
+                                workspace_handle,
                                 stash,
                                 window,
                                 cx,
@@ -150,7 +202,21 @@ impl CommitView {
                                     .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
                             });
                             if let Some(ix) = ix {
-                                pane.activate_item(ix, true, true, window, cx);
+                                let existing = pane
+                                    .items()
+                                    .filter_map(|item| item.downcast::<CommitView>())
+                                    .find(|view| view.read(cx).commit.sha == commit_sha)
+                                    .unwrap();
+
+                                pane.remove_item(existing.item_id(), false, false, window, cx);
+                                pane.add_item(
+                                    Box::new(commit_view),
+                                    true,
+                                    true,
+                                    Some(ix),
+                                    window,
+                                    cx,
+                                );
                             } else {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }
@@ -166,6 +232,7 @@ impl CommitView {
         commit_diff: CommitDiff,
         repository: Entity<Repository>,
         project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -203,6 +270,7 @@ impl CommitView {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
 
             editor.disable_inline_diagnostics();
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_diff_review_button(true, cx);
             editor.set_expand_all_diff_hunks(cx);
@@ -325,43 +393,67 @@ impl CommitView {
                     Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await?)
                 };
 
-                this.update(cx, |this, cx| {
-                    this.multibuffer.update(cx, |multibuffer, cx| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let path = snapshot.file().unwrap().path().clone();
-                        let excerpt_ranges = if is_binary {
+                let (excerpt_ranges, path) = cx.update(|cx| {
+                    let snapshot = buffer.read(cx).snapshot();
+                    let path = PathKey::with_sort_prefix(
+                        FILE_NAMESPACE_SORT_PREFIX,
+                        snapshot.file().unwrap().path().clone(),
+                    );
+                    let ranges = if is_binary {
+                        vec![language::Point::zero()..snapshot.max_point()]
+                    } else if let Some(buffer_diff) = &buffer_diff {
+                        let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+                        let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
+                        if hunks.peek().is_none() {
                             vec![language::Point::zero()..snapshot.max_point()]
-                        } else if let Some(buffer_diff) = &buffer_diff {
-                            let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
-                            let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
-                            if hunks.peek().is_none() {
-                                vec![language::Point::zero()..snapshot.max_point()]
-                            } else {
-                                hunks
-                                    .map(|hunk| hunk.buffer_range.to_point(&snapshot))
-                                    .collect::<Vec<_>>()
-                            }
                         } else {
-                            vec![language::Point::zero()..snapshot.max_point()]
-                        };
-
-                        let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
-                            buffer,
-                            excerpt_ranges,
-                            multibuffer_context_lines(cx),
-                            cx,
-                        );
-                        if let Some(buffer_diff) = buffer_diff {
-                            multibuffer.add_diff(buffer_diff, cx);
+                            hunks
+                                .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                .collect::<Vec<_>>()
                         }
-                    });
-                })?;
+                    } else {
+                        vec![language::Point::zero()..snapshot.max_point()]
+                    };
+                    (ranges, path)
+                });
+
+                // Batch the insertion of excerpts and yield between batches, to avoid blocking the main thread when a single file has many hunks.
+                const EXCERPT_BATCH_SIZE: usize = 10;
+                let total = excerpt_ranges.len();
+                let mut batch_end = 0;
+                while batch_end < total {
+                    let is_first_batch = batch_end == 0;
+                    batch_end = (batch_end + EXCERPT_BATCH_SIZE).min(total);
+                    let ranges = excerpt_ranges[..batch_end].to_vec();
+                    this.update(cx, |this, cx| {
+                        this.multibuffer.update(cx, |multibuffer, cx| {
+                            multibuffer.set_excerpts_for_path(
+                                path.clone(),
+                                buffer.clone(),
+                                ranges,
+                                multibuffer_context_lines(cx),
+                                cx,
+                            );
+                            if is_first_batch {
+                                if let Some(buffer_diff) = buffer_diff.clone() {
+                                    multibuffer.add_diff(buffer_diff, cx);
+                                }
+                            }
+                        });
+                    })?;
+                    if batch_end < total {
+                        yield_now().await;
+                    }
+                }
             }
 
             this.update(cx, |this, cx| {
+                let commit_view = cx.weak_entity();
                 this.editor.update(cx, |editor, _cx| {
-                    editor.register_addon(CommitDiffAddon { file_statuses });
+                    editor.register_addon(CommitDiffAddon {
+                        file_statuses,
+                        commit_view,
+                    });
                 });
                 if !binary_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {
@@ -395,6 +487,7 @@ impl CommitView {
             multibuffer,
             stash,
             repository,
+            workspace,
             remote,
         }
     }
@@ -419,6 +512,50 @@ impl CommitView {
         self.multibuffer.read(cx).snapshot(cx).total_changed_lines()
     }
 
+    fn open_file_at_head(
+        &mut self,
+        file: &Arc<dyn language::File>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rel_path = file.path().clone();
+        let worktree_id = file.worktree_id(cx);
+        let repo_path = RepoPath::from_rel_path(&rel_path);
+        let project_path = self
+            .repository
+            .read(cx)
+            .repo_path_to_project_path(&repo_path, cx)
+            .unwrap_or(project::ProjectPath {
+                worktree_id,
+                path: rel_path,
+            });
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .open_path_preview(project_path, None, false, false, true, window, cx)
+                    .detach_and_log_err(cx);
+            })
+            .log_err();
+    }
+
+    fn open_file_at_head_action(
+        &mut self,
+        _: &OpenFileAtHead,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(file) = self
+            .editor
+            .read(cx)
+            .active_buffer(cx)
+            .and_then(|buffer| buffer.read(cx).file().cloned())
+        else {
+            return;
+        };
+        self.open_file_at_head(&file, window, cx);
+    }
+
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let commit = &self.commit;
         let author_name = commit.author_name.clone();
@@ -434,6 +571,8 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
+        let avatar_size = rems_from_px(40.);
+        let avatar_size_px = avatar_size.to_pixels(window.rem_size());
         let gutter_width = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let style = editor.style(cx);
@@ -443,6 +582,9 @@ impl CommitView {
                 .gutter_dimensions(font_id, font_size, style, window, cx)
                 .full_width()
         });
+        let avatar_min_side_padding = rems_from_px(10.).to_pixels(window.rem_size());
+        let avatar_container_min = avatar_size_px + avatar_min_side_padding * 2.0;
+        let avatar_container_width = gutter_width.max(avatar_container_min);
 
         let clipboard_has_sha = cx
             .read_from_clipboard()
@@ -466,9 +608,13 @@ impl CommitView {
             .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
-                    .child(h_flex().w(gutter_width).justify_center().child(
-                        self.render_commit_avatar(&commit.sha, rems_from_px(40.), window, cx),
-                    ))
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .w(avatar_container_width)
+                            .justify_center()
+                            .child(self.render_commit_avatar(&commit.sha, avatar_size, window, cx)),
+                    )
                     .child(
                         v_flex().child(Label::new(author_name)).child(
                             h_flex()
@@ -881,6 +1027,10 @@ impl Item for CommitView {
         self.editor.for_each_project_item(cx, f)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
+    }
+
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
@@ -933,13 +1083,17 @@ impl Item for CommitView {
             .map(|addon| addon.file_statuses.clone())
             .unwrap_or_default();
         Task::ready(Some(cx.new(|cx| {
+            let commit_view = cx.weak_entity();
             let editor = cx.new({
                 let file_statuses = file_statuses.clone();
                 |cx| {
                     let mut editor = self
                         .editor
                         .update(cx, |editor, cx| editor.clone(window, cx));
-                    editor.register_addon(CommitDiffAddon { file_statuses });
+                    editor.register_addon(CommitDiffAddon {
+                        file_statuses,
+                        commit_view,
+                    });
                     editor
                 }
             });
@@ -950,6 +1104,7 @@ impl Item for CommitView {
                 commit: self.commit.clone(),
                 stash: self.stash,
                 repository: self.repository.clone(),
+                workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
             }
         })))
@@ -962,11 +1117,12 @@ impl Render for CommitView {
 
         v_flex()
             .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
+            .on_action(cx.listener(Self::open_file_at_head_action))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
             .when(!self.editor.read(cx).is_empty(cx), |this| {
-                this.child(div().flex_grow().child(self.editor.clone()))
+                this.child(div().flex_grow_1().child(self.editor.clone()))
             })
     }
 }
@@ -1058,10 +1214,7 @@ impl Render for CommitViewToolbar {
                         }),
                 )
                 .children(remote_info.map(|(provider_name, url)| {
-                    let icon = match provider_name.as_str() {
-                        "GitHub" => IconName::Github,
-                        _ => IconName::Link,
-                    };
+                    let icon = crate::get_provider_icon(provider_name.as_str());
 
                     IconButton::new("view_on_provider", icon)
                         .icon_size(IconSize::Small)

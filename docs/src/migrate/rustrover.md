@@ -45,7 +45,7 @@ This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` f
 
 ## Set Up Editor Preferences
 
-You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
 
 Settings RustRover users typically configure first:
 
@@ -132,13 +132,13 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 | Action            | Shortcut                   | Notes                          |
 | ----------------- | -------------------------- | ------------------------------ |
-| Toggle Right Dock | `Cmd + R`                  | Assistant panel, notifications |
+| Toggle Right Dock | `Cmd + R`                  | Agent panel, notifications     |
 | Split Panes       | `Cmd + K`, then arrow keys | Create splits in any direction |
 
 ### How to Customize Keybindings
 
 - Open the Command Palette (`Cmd+Shift+A` or `Shift Shift`)
-- Run `Zed: Open Keymap Editor`
+- Run {#action zed::OpenKeymap}
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.
 
@@ -183,7 +183,7 @@ Both editors store per-project configuration in a hidden folder. RustRover uses 
 **How to adapt:**
 
 - Create a `.zed/settings.json` in your project root for project-specific settings
-- Define common commands in `tasks.json` (open via Command Palette: `zed: open tasks`):
+- Define common commands in `tasks.json` (open via Command Palette: {#action zed::OpenTasks}):
 
 ```json
 [
@@ -339,7 +339,7 @@ Here's what RustRover offers that Zed doesn't have:
 
 On licensing and telemetry:
 
-- **Zed is open source** (MIT licensed for the editor, AGPL for collaboration services)
+- **Zed is open source** (primarily GPL-licensed, with Apache-licensed components)
 - **Telemetry is optional** and can be disabled during onboarding or in settings
 
 ## Collaboration in Zed vs. RustRover

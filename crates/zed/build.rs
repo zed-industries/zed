@@ -202,37 +202,58 @@ fn main() {
             }
         }
 
-        let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
-        let icon = match release_channel {
-            "stable" => "resources/windows/app-icon.ico",
-            "preview" => "resources/windows/app-icon-preview.ico",
-            "nightly" => "resources/windows/app-icon-nightly.ico",
-            "dev" => "resources/windows/app-icon-dev.ico",
-            _ => "resources/windows/app-icon-dev.ico",
-        };
-        let icon = std::path::Path::new(icon);
-
         println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
-        println!("cargo:rerun-if-changed={}", icon.display());
+        println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
 
         #[cfg(windows)]
         {
-            let mut res = winresource::WindowsResource::new();
-
-            // Depending on the security applied to the computer, winresource might fail
-            // fetching the RC path. Therefore, we add a way to explicitly specify the
-            // toolkit path, allowing winresource to use a valid RC path.
-            if let Some(explicit_rc_toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH").ok() {
-                res.set_toolkit_path(explicit_rc_toolkit_path.as_str());
-            }
-            res.set_icon(icon.to_str().unwrap());
-            res.set("FileDescription", "Zed");
-            res.set("ProductName", "Zed");
-
-            if let Err(e) = res.compile() {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
+            windows_resources::compile(false).expect("failed to compile Windows resources");
         }
     }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    prepare_app_icon_x11();
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn icon_path() -> std::path::PathBuf {
+    use std::str::FromStr;
+
+    let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
+    let channel = match release_channel {
+        "stable" => "",
+        "preview" => "-preview",
+        "nightly" => "-nightly",
+        "dev" => "-dev",
+        _ => "-dev",
+    };
+
+    #[cfg(windows)]
+    let icon = format!("resources/windows/app-icon{}.ico", channel);
+    #[cfg(not(windows))]
+    let icon = format!("resources/app-icon{}.png", channel);
+
+    std::path::PathBuf::from_str(&icon).unwrap()
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn prepare_app_icon_x11() {
+    use image::{ImageReader, imageops};
+    use std::env;
+    use std::path::Path;
+
+    let out_dir = env::var("OUT_DIR").unwrap();
+
+    let resized_image = ImageReader::open(icon_path())
+        .unwrap()
+        .decode()
+        .unwrap()
+        .resize(256, 256, imageops::FilterType::Lanczos3);
+
+    // name should match include_bytes! call in src/zed.rs
+    let icon_out_path = Path::new(&out_dir).join("app_icon.png");
+    resized_image.save(&icon_out_path).expect("saving app icon");
+
+    println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
+    println!("cargo:rerun-if-changed={}", icon_path().to_string_lossy());
 }
