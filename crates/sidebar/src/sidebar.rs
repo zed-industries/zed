@@ -4,7 +4,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
-use agent_settings::{AgentSettings, SUMMARIZE_THREAD_PROMPT};
+use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore,
 };
@@ -23,21 +23,17 @@ use agent_ui::{
     channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
-use editor::{Editor, MultiBuffer};
+use editor::Editor;
 use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
-use futures::StreamExt as _;
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
     Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
     WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
-use language_model::{
-    CompletionIntent, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
-};
+use language_model::LanguageModelRegistry;
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
@@ -3249,6 +3245,10 @@ impl Sidebar {
     /// Loads the thread from the database, converts it to markdown, and
     /// opens it as a new editor tab in the given workspace. Does not
     /// touch the AgentPanel or change the active thread.
+    ///
+    /// The markdown rendering and editor setup are shared with the
+    /// AgentPanel via `agent::DbThread::to_markdown` and
+    /// `agent_ui::open_markdown_in_workspace`.
     fn open_thread_as_markdown(
         session_id: &acp::SessionId,
         title: Option<SharedString>,
@@ -3264,13 +3264,6 @@ impl Sidebar {
             .map(|t| t.to_string())
             .unwrap_or_else(|| DEFAULT_THREAD_TITLE.to_string());
 
-        let markdown_language_task = workspace
-            .read(cx)
-            .app_state()
-            .languages
-            .language_for_name("Markdown");
-
-        let project = workspace.read(cx).project().clone();
         let workspace = workspace.clone();
         window
             .spawn(cx, async move |cx| {
@@ -3279,53 +3272,18 @@ impl Sidebar {
                     anyhow::bail!("Thread not found in database");
                 };
 
-                // Build the markdown the same way Thread::to_markdown does.
-                let mut markdown = String::new();
-                for (ix, message) in db_thread.messages.iter().enumerate() {
-                    if ix > 0 {
-                        markdown.push('\n');
-                    }
-                    match &**message {
-                        agent::Message::User(_) => markdown.push_str("## User\n\n"),
-                        agent::Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
-                        agent::Message::Resume => {}
-                    }
-                    markdown.push_str(&message.to_markdown());
-                }
+                let markdown = db_thread.to_markdown();
 
-                let markdown_language = markdown_language_task.await?;
-
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.create_buffer(Some(markdown_language), false, cx)
-                    })
-                    .await?;
-
-                buffer.update(cx, |buffer, cx| {
-                    buffer.set_text(markdown, cx);
-                    buffer.set_capability(language::Capability::ReadWrite, cx);
-                });
-
-                workspace.update_in(cx, |workspace, window, cx| {
-                    let buffer = cx.new(|cx| {
-                        MultiBuffer::singleton(buffer, cx).with_title(thread_title.clone())
-                    });
-
-                    workspace.add_item_to_active_pane(
-                        Box::new(cx.new(|cx| {
-                            let mut editor =
-                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                            editor.set_breadcrumb_header(thread_title);
-                            editor.disable_mouse_wheel_zoom();
-                            editor
-                        })),
-                        None,
-                        true,
+                cx.update(|window, cx| {
+                    agent_ui::open_markdown_in_workspace(
+                        thread_title,
+                        markdown,
+                        workspace,
                         window,
                         cx,
-                    );
-                })?;
-                anyhow::Ok(())
+                    )
+                })?
+                .await
             })
             .detach_and_log_err(cx);
     }
@@ -3369,36 +3327,11 @@ impl Sidebar {
                     anyhow::bail!("Thread not found in database");
                 };
 
-                // Build the summarization request from the stored messages.
-                let mut request = LanguageModelRequest {
-                    intent: Some(CompletionIntent::ThreadSummarization),
-                    temperature,
-                    ..Default::default()
-                };
-                for message in &db_thread.messages {
-                    request.messages.extend(message.to_request());
-                }
-                request.messages.push(LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec![SUMMARIZE_THREAD_PROMPT.into()],
-                    cache: false,
-                    reasoning_details: None,
-                });
-
-                let mut title = String::new();
-                let mut messages = model.stream_completion(request, cx).await?;
-                while let Some(event) = messages.next().await {
-                    let event = event?;
-                    let text = match event {
-                        LanguageModelCompletionEvent::Text(text) => text,
-                        _ => continue,
-                    };
-                    let mut lines = text.lines();
-                    title.extend(lines.next());
-                    if lines.next().is_some() {
-                        break;
-                    }
-                }
+                // Reuse the agent crate's summarization helpers so the prompt
+                // and streaming behavior stay identical to the AgentPanel's
+                // live title generation.
+                let request = agent::build_thread_title_request(&db_thread.messages, temperature);
+                let title = agent::stream_thread_title(model, request, cx).await?;
 
                 anyhow::Ok(SharedString::from(title))
             }

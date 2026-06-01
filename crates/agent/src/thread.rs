@@ -2841,53 +2841,18 @@ impl Thread {
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
-        let mut request = LanguageModelRequest {
-            intent: Some(CompletionIntent::ThreadSummarization),
-            temperature: AgentSettings::temperature_for_model(&model, cx),
-            ..Default::default()
-        };
-
-        for message in &self.messages {
-            request.messages.extend(message.to_request());
-        }
-
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![SUMMARIZE_THREAD_PROMPT.into()],
-            cache: false,
-            reasoning_details: None,
-        });
+        // Build the request synchronously so we don't borrow `self.messages`
+        // across the await point inside the spawned task.
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let request = build_thread_title_request(&self.messages, temperature);
         self.pending_title_generation = Some(cx.spawn(async move |this, cx| {
-            let mut title = String::new();
-
-            let generate = async {
-                let mut messages = model.stream_completion(request, cx).await?;
-                while let Some(event) = messages.next().await {
-                    let event = event?;
-                    let text = match event {
-                        LanguageModelCompletionEvent::Text(text) => text,
-                        _ => continue,
-                    };
-
-                    let mut lines = text.lines();
-                    title.extend(lines.next());
-
-                    // Stop if the LLM generated multiple lines.
-                    if lines.next().is_some() {
-                        break;
-                    }
-                }
-                anyhow::Ok(())
-            };
-
-            let succeeded = generate
+            let title = stream_thread_title(model, request, cx)
                 .await
                 .context("failed to generate thread title")
-                .log_err()
-                .is_some();
+                .log_err();
             _ = this.update(cx, |this, cx| {
                 this.pending_title_generation = None;
-                if succeeded {
+                if let Some(title) = title {
                     this.set_title(title.into(), cx);
                 } else {
                     this.title_generation_failed = true;
@@ -3380,6 +3345,56 @@ impl RunningTurn {
         self.event_stream.send_canceled();
         self._task
     }
+}
+
+/// Builds the LLM request used to summarize a conversation into a short title.
+///
+/// Shared by `Thread::generate_title` (live, in-memory threads) and the
+/// sidebar's "Regenerate Thread Title" action (database-backed threads) so
+/// both paths produce identical prompts and stay in sync.
+pub fn build_thread_title_request(
+    messages: &[Arc<Message>],
+    temperature: Option<f32>,
+) -> LanguageModelRequest {
+    let mut request = LanguageModelRequest {
+        intent: Some(CompletionIntent::ThreadSummarization),
+        temperature,
+        ..Default::default()
+    };
+    for message in messages {
+        request.messages.extend(message.to_request());
+    }
+    request.messages.push(LanguageModelRequestMessage {
+        role: Role::User,
+        content: vec![SUMMARIZE_THREAD_PROMPT.into()],
+        cache: false,
+        reasoning_details: None,
+    });
+    request
+}
+
+/// Streams a title from the model and returns the first generated line,
+/// stopping as soon as the model emits a second line. Pair with
+/// `build_thread_title_request` to build the `request`.
+pub async fn stream_thread_title(
+    model: Arc<dyn LanguageModel>,
+    request: LanguageModelRequest,
+    cx: &AsyncApp,
+) -> Result<String> {
+    let mut title = String::new();
+    let mut events = model.stream_completion(request, cx).await?;
+    while let Some(event) = events.next().await {
+        let LanguageModelCompletionEvent::Text(text) = event? else {
+            continue;
+        };
+        let mut lines = text.lines();
+        title.extend(lines.next());
+        // Stop if the LLM generated multiple lines.
+        if lines.next().is_some() {
+            break;
+        }
+    }
+    Ok(title)
 }
 
 pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);

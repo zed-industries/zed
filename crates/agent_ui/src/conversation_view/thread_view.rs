@@ -661,6 +661,59 @@ fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Opti
     (!full_path.is_empty()).then_some(full_path)
 }
 
+/// Opens a Markdown string as a new read-write editor tab in the given
+/// workspace's active pane. Shared by the AgentPanel's "Open Thread as
+/// Markdown" (live threads) and the sidebar's right-click action
+/// (database-backed threads) so the editor setup stays identical.
+pub fn open_markdown_in_workspace(
+    title: String,
+    markdown: String,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let markdown_language_task = workspace
+        .read(cx)
+        .app_state()
+        .languages
+        .language_for_name("Markdown");
+    let project = workspace.read(cx).project().clone();
+
+    window.spawn(cx, async move |cx| {
+        let markdown_language = markdown_language_task.await?;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.create_buffer(Some(markdown_language), false, cx)
+            })
+            .await?;
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(markdown, cx);
+            buffer.set_capability(language::Capability::ReadWrite, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.clone()));
+
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                    editor.set_breadcrumb_header(title);
+                    editor.disable_mouse_wheel_zoom();
+                    editor
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
+        })?;
+        anyhow::Ok(())
+    })
+}
+
 impl ThreadView {
     pub(crate) fn new(
         root_thread_id: ThreadId,
@@ -5897,12 +5950,6 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let markdown_language_task = workspace
-            .read(cx)
-            .app_state()
-            .languages
-            .language_for_name("Markdown");
-
         let thread = self.thread.read(cx);
         let thread_title = thread
             .title()
@@ -5910,41 +5957,7 @@ impl ThreadView {
             .to_string();
         let markdown = thread.to_markdown(cx);
 
-        let project = workspace.read(cx).project().clone();
-        window.spawn(cx, async move |cx| {
-            let markdown_language = markdown_language_task.await?;
-
-            let buffer = project
-                .update(cx, |project, cx| {
-                    project.create_buffer(Some(markdown_language), false, cx)
-                })
-                .await?;
-
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_text(markdown, cx);
-                buffer.set_capability(language::Capability::ReadWrite, cx);
-            });
-
-            workspace.update_in(cx, |workspace, window, cx| {
-                let buffer = cx
-                    .new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_title.clone()));
-
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                        editor.set_breadcrumb_header(thread_title);
-                        editor.disable_mouse_wheel_zoom();
-                        editor
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-            })?;
-            anyhow::Ok(())
-        })
+        open_markdown_in_workspace(thread_title, markdown, workspace, window, cx)
     }
 
     pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {

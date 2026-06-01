@@ -152,6 +152,26 @@ impl SharedThread {
 impl DbThread {
     pub const VERSION: &'static str = "0.3.0";
 
+    /// Renders the persisted conversation as Markdown. Kept in sync with
+    /// `Thread::to_markdown` so the in-memory and database-backed paths
+    /// produce identical output; the only difference is that an in-memory
+    /// `Thread` may also append a pending (still-streaming) message.
+    pub fn to_markdown(&self) -> String {
+        let mut markdown = String::new();
+        for (ix, message) in self.messages.iter().enumerate() {
+            if ix > 0 {
+                markdown.push('\n');
+            }
+            match &**message {
+                crate::Message::User(_) => markdown.push_str("## User\n\n"),
+                crate::Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
+                crate::Message::Resume => {}
+            }
+            markdown.push_str(&message.to_markdown());
+        }
+        markdown
+    }
+
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
         match saved_thread_json.get("version") {
