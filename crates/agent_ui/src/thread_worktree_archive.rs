@@ -166,11 +166,12 @@ pub fn build_root_plan(
     let (linked_snapshot, repo) = linked_repo?;
     let main_repo_path = linked_snapshot.main_worktree_abs_path()?.to_path_buf();
 
-    // Only archive worktrees that live inside the Zed-managed worktrees
-    // directory (configured via `git.worktree_directory`). Worktrees the
-    // user created outside that directory should be left untouched.
+    // Only archive worktrees that Zed explicitly created. The managed
+    // directory check keeps older path assumptions constrained, but the marker
+    // is what distinguishes a Zed-created worktree from one the user manually
+    // created under the same directory layout.
     let worktrees_base = worktrees_base_for_repo(&main_repo_path, linked_snapshot.path_style, cx)?;
-    if !path.starts_with(&worktrees_base) {
+    if !path.starts_with(&worktrees_base) || !linked_snapshot.is_zed_managed_worktree {
         return None;
     }
 
@@ -864,7 +865,7 @@ fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
 mod tests {
     use super::*;
     use fs::{FakeFs, Fs as _};
-    use git::repository::Worktree as GitWorktree;
+    use git::repository::{Worktree as GitWorktree, ZED_MANAGED_WORKTREE_MARKER};
     use gpui::{BorrowAppContext, TestAppContext};
     use project::Project;
     use serde_json::json;
@@ -879,6 +880,17 @@ mod tests {
             editor::init(cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
+    }
+
+    async fn mark_zed_managed_worktree(fs: &FakeFs, main_dot_git: &Path, branch_name: &str) {
+        fs.insert_file(
+            main_dot_git
+                .join("worktrees")
+                .join(branch_name)
+                .join(ZED_MANAGED_WORKTREE_MARKER),
+            b"created-by-zed\n".to_vec(),
+        )
+        .await;
     }
 
     #[gpui::test]
@@ -949,6 +961,7 @@ mod tests {
             },
         )
         .await;
+        mark_zed_managed_worktree(&fs, Path::new("/project/.git"), "feature").await;
 
         let project = Project::test(
             fs.clone(),
@@ -1070,6 +1083,85 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_build_root_plan_returns_none_for_unmarked_linked_worktree_in_managed_directory(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        fs.remove_file(
+            &Path::new("/project/.git")
+                .join("worktrees")
+                .join("feature")
+                .join(ZED_MANAGED_WORKTREE_MARKER),
+            fs::RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            let plan = build_root_plan(
+                Path::new("/worktrees/project/feature/project"),
+                None,
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_none(),
+                "build_root_plan should return None for an unmarked linked worktree, \
+                 even when it lives inside the Zed-managed worktrees directory",
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_build_root_plan_with_custom_worktree_directory(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1110,6 +1202,7 @@ mod tests {
             },
         )
         .await;
+        mark_zed_managed_worktree(&fs, Path::new("/project/.git"), "feature").await;
 
         // Worktree outside the custom managed directory (at the default
         // `../worktrees` location, which is not what the setting says).
@@ -1206,6 +1299,7 @@ mod tests {
             },
         )
         .await;
+        mark_zed_managed_worktree(&fs, Path::new("/project/.git"), "feature").await;
 
         let project = Project::test(
             fs.clone(),
@@ -1287,6 +1381,7 @@ mod tests {
             },
         )
         .await;
+        mark_zed_managed_worktree(&fs, Path::new("/project/.git"), "feature").await;
 
         let project = Project::test(
             fs.clone(),
@@ -1376,6 +1471,7 @@ mod tests {
             },
         )
         .await;
+        mark_zed_managed_worktree(&fs, Path::new("/project/.git"), "feature").await;
 
         let project = Project::test(
             fs.clone(),

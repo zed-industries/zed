@@ -15,6 +15,7 @@ use git::{
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
         GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
         PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        ZED_MANAGED_WORKTREE_MARKER,
     },
     stash::GitStash,
     status::{
@@ -599,6 +600,12 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn is_zed_managed_worktree(&self) -> BoxFuture<'_, bool> {
+        let fs = self.fs.clone();
+        let marker_path = self.repository_dir_path.join(ZED_MANAGED_WORKTREE_MARKER);
+        async move { fs.metadata(&marker_path).await.ok().flatten().is_some() }.boxed()
+    }
+
     fn create_worktree(
         &self,
         target: CreateWorktreeTarget,
@@ -706,6 +713,11 @@ impl GitRepository for FakeGitRepository {
             fs.write_file_internal(
                 worktrees_entry_dir.join("gitdir"),
                 worktree_dot_git.to_string_lossy().into_owned().into_bytes(),
+                false,
+            )?;
+            fs.write_file_internal(
+                worktrees_entry_dir.join(ZED_MANAGED_WORKTREE_MARKER),
+                b"created-by-zed\n".to_vec(),
                 false,
             )?;
 

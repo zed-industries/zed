@@ -32,6 +32,8 @@ use std::mem::MaybeUninit;
 
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
+#[cfg(feature = "test-support")]
+use git::repository::ZED_MANAGED_WORKTREE_MARKER;
 use git::repository::{GitRepository, RealGitRepository};
 use is_executable::IsExecutable;
 use rope::Rope;
@@ -2063,6 +2065,12 @@ impl FakeFs {
         self.write_file_internal(
             worktrees_entry_dir.join("gitdir"),
             worktree_dot_git.to_string_lossy().into_owned().into_bytes(),
+            false,
+        )
+        .unwrap();
+        self.write_file_internal(
+            worktrees_entry_dir.join(ZED_MANAGED_WORKTREE_MARKER),
+            b"created-by-zed\n".to_vec(),
             false,
         )
         .unwrap();

@@ -315,6 +315,7 @@ pub struct RepositorySnapshot {
     /// that common directory is a bare repository, there may be no main
     /// worktree path to derive from it.
     pub common_dir_abs_path: Arc<Path>,
+    pub is_zed_managed_worktree: bool,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub branch_list: Arc<[Branch]>,
@@ -4210,6 +4211,7 @@ impl RepositorySnapshot {
             repository_dir_abs_path,
             dot_git_abs_path,
             common_dir_abs_path,
+            is_zed_managed_worktree: false,
             work_directory_abs_path,
             branch: None,
             branch_list: Arc::from([]),
@@ -4265,6 +4267,7 @@ impl RepositorySnapshot {
                 self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
             common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
+            is_zed_managed_worktree: self.is_zed_managed_worktree,
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
@@ -4352,6 +4355,7 @@ impl RepositorySnapshot {
                 self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
             common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
+            is_zed_managed_worktree: self.is_zed_managed_worktree,
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
@@ -7756,6 +7760,7 @@ impl Repository {
         if let Some(common_dir_abs_path) = &update.common_dir_abs_path {
             self.snapshot.common_dir_abs_path = Path::new(common_dir_abs_path.as_str()).into();
         }
+        self.snapshot.is_zed_managed_worktree = update.is_zed_managed_worktree;
 
         let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
         let new_head_commit = update
@@ -9380,8 +9385,17 @@ async fn compute_snapshot(
         let backend = backend.clone();
         async move { backend.worktrees().await.log_err().unwrap_or_default() }
     };
-    let (branches, head_commit, all_worktrees) =
-        futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
+    let is_zed_managed_worktree_future = {
+        let backend = backend.clone();
+        async move { backend.is_zed_managed_worktree().await }
+    };
+    let (branches, head_commit, all_worktrees, is_zed_managed_worktree) = futures::future::join4(
+        branches_future,
+        head_commit_future,
+        worktrees_future,
+        is_zed_managed_worktree_future,
+    )
+    .await;
     log::debug!("fetched branches, head commit, worktrees");
 
     let BranchesScanResult {
@@ -9418,6 +9432,7 @@ async fn compute_snapshot(
             remote_origin_url,
             remote_upstream_url,
             linked_worktrees,
+            is_zed_managed_worktree,
             scan_id: prev_snapshot.scan_id + 1,
             ..prev_snapshot
         };

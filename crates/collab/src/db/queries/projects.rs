@@ -902,6 +902,7 @@ impl Database {
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),
                         repository_dir_abs_path: db_repository_entry.repository_dir_abs_path,
                         common_dir_abs_path: db_repository_entry.common_dir_abs_path,
+                        is_zed_managed_worktree: false,
                         linked_worktrees: db_repository_entry
                             .linked_worktrees
                             .as_deref()

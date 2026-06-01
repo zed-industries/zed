@@ -58,6 +58,7 @@ pub const GRAPH_CHUNK_SIZE: usize = 1000;
 
 /// Default value for the `git.worktree_directory` setting.
 pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
+pub const ZED_MANAGED_WORKTREE_MARKER: &str = "zed-managed-worktree";
 
 /// Given the git common directory (from `commondir()`), derive the original
 /// repository's working directory.
@@ -74,6 +75,26 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
     } else {
         None
     }
+}
+
+fn linked_worktree_git_dir(worktree_path: &Path) -> Result<PathBuf> {
+    let dot_git_path = worktree_path.join(".git");
+    let git_file = std::fs::read_to_string(&dot_git_path)
+        .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
+    let git_dir = git_file
+        .strip_prefix("gitdir:")
+        .context("worktree .git file missing gitdir pointer")?
+        .trim();
+    Ok(worktree_path.join(git_dir))
+}
+
+fn mark_zed_managed_worktree(worktree_path: &Path) -> Result<()> {
+    let git_dir = linked_worktree_git_dir(worktree_path)?;
+    std::fs::write(
+        git_dir.join(ZED_MANAGED_WORKTREE_MARKER),
+        b"created-by-zed\n",
+    )?;
+    Ok(())
 }
 
 /// Commit data needed for the git graph visualization.
@@ -835,6 +856,8 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
+
+    fn is_zed_managed_worktree(&self) -> BoxFuture<'_, bool>;
 
     fn create_worktree(
         &self,
@@ -1910,6 +1933,17 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn is_zed_managed_worktree(&self) -> BoxFuture<'_, bool> {
+        let marker_path = self
+            .repository
+            .lock()
+            .path()
+            .join(ZED_MANAGED_WORKTREE_MARKER);
+        self.executor
+            .spawn(async move { std::fs::metadata(marker_path).is_ok() })
+            .boxed()
+    }
+
     fn create_worktree(
         &self,
         target: CreateWorktreeTarget,
@@ -1949,6 +1983,12 @@ impl GitRepository for RealGitRepository {
                 std::fs::create_dir_all(path.parent().unwrap_or(&path))?;
                 let output = git.build_command(&args).output().await?;
                 if output.status.success() {
+                    mark_zed_managed_worktree(&path).with_context(|| {
+                        format!(
+                            "failed to mark worktree '{}' as Zed-managed",
+                            path.display()
+                        )
+                    })?;
                     Ok(())
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
