@@ -784,7 +784,7 @@ impl ConsoleQueryBarCompletionProvider {
     }
 }
 
-fn background_color_fetcher(color: terminal::TerminalColor) -> impl Fn(&Theme) -> Hsla {
+fn background_color_fetcher(color: terminal::Color) -> impl Fn(&Theme) -> Hsla {
     move |theme| {
         if terminal::is_default_background_color(color) {
             theme.colors().terminal_background
@@ -850,8 +850,8 @@ mod tests {
             theme.styles.colors.terminal_background = gpui::red();
             theme.styles.colors.terminal_ansi_background = gpui::blue();
 
-            let color = background_color_fetcher(terminal::TerminalColor::Named(
-                terminal::TerminalNamedColor::Background,
+            let color = background_color_fetcher(terminal::Color::Named(
+                terminal::NamedColor::Background,
             ))(&theme);
 
             assert_eq!(color, gpui::red());

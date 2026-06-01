@@ -10,15 +10,14 @@ use alacritty_terminal::{
 };
 use log::{info, warn};
 use regex::Regex;
-use std::ops::Index;
 use std::{
-    ops::Range,
+    ops::{Index, Range as StdRange},
     time::{Duration, Instant},
 };
 use url::Url;
 use util::paths::{PathStyle, UrlExt};
 
-use crate::TerminalRange;
+use crate::Range;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 const WIDE_CHAR_SPACERS: Flags =
@@ -35,7 +34,7 @@ pub(super) struct RegexSearches {
 pub(super) struct HyperlinkMatch {
     pub(super) text: String,
     pub(super) is_url: bool,
-    pub(super) range: TerminalRange,
+    pub(super) range: Range,
 }
 
 impl From<(String, bool, Match)> for HyperlinkMatch {
@@ -43,7 +42,7 @@ impl From<(String, bool, Match)> for HyperlinkMatch {
         Self {
             text,
             is_url,
-            range: TerminalRange::from_alacritty(range),
+            range: Range::from_alacritty(range),
         }
     }
 }
@@ -158,7 +157,7 @@ fn normalize_found_word(
     normalize_hyperlink_match(
         maybe_url_or_path,
         is_url,
-        TerminalRange::from_alacritty(word_match),
+        Range::from_alacritty(word_match),
         path_style,
     )
 }
@@ -166,7 +165,7 @@ fn normalize_found_word(
 fn normalize_hyperlink_match(
     maybe_url_or_path: String,
     is_url: bool,
-    range: TerminalRange,
+    range: Range,
     path_style: PathStyle,
 ) -> HyperlinkMatch {
     if is_url {
@@ -372,8 +371,8 @@ fn path_match<T>(
     if line.len() <= hovered_point_byte_offset {
         return None;
     }
-    let found_from_range = |path_range: Range<usize>,
-                            link_range: Range<usize>,
+    let found_from_range = |path_range: StdRange<usize>,
+                            link_range: StdRange<usize>,
                             position: Option<(u32, Option<u32>)>| {
         let advance_point_by_str = |mut point: AlacPoint, s: &str| {
             for _ in s.chars() {

@@ -1,26 +1,29 @@
 use alacritty_terminal::{
     grid::{GridIterator, Scroll as AlacScroll},
     index::{Column, Direction as AlacDirection, Line, Point as AlacPoint},
-    selection::{Selection, SelectionRange, SelectionType as AlacSelectionType},
+    selection::{
+        Selection as AlacSelection, SelectionRange as AlacSelectionRange,
+        SelectionType as AlacSelectionType,
+    },
     term::{
         RenderableCursor, TermMode,
         cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
         search::RegexSearch,
     },
-    vi_mode::ViMotion,
+    vi_mode::ViMotion as AlacViMotion,
     vte::ansi::CursorShape as AlacCursorShape,
 };
 use std::{
-    ops::{BitOr, BitOrAssign, Deref, Range, RangeInclusive},
+    ops::{BitOr, BitOrAssign, Deref, Range as StdRange, RangeInclusive},
     sync::Arc,
 };
 use vte::ansi::{Attr, Handler, Processor, StdSyncHandler};
-pub use vte::ansi::{Color as TerminalColor, NamedColor as TerminalNamedColor, Rgb as TerminalRgb};
+pub use vte::ansi::{Color, NamedColor, Rgb};
 
-use crate::{TerminalBounds, terminal_settings::CursorShape};
+use crate::{TerminalBounds, terminal_settings::CursorShape as SettingsCursorShape};
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum TerminalScroll {
+pub(super) enum Scroll {
     Delta(i32),
     PageUp,
     PageDown,
@@ -28,7 +31,7 @@ pub(super) enum TerminalScroll {
     Bottom,
 }
 
-impl TerminalScroll {
+impl Scroll {
     pub(super) fn to_alacritty(self) -> AlacScroll {
         match self {
             Self::Delta(delta) => AlacScroll::Delta(delta),
@@ -41,7 +44,7 @@ impl TerminalScroll {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum TerminalViMotion {
+pub(super) enum ViMotion {
     Up,
     Down,
     Left,
@@ -58,33 +61,33 @@ pub(super) enum TerminalViMotion {
     Bracket,
 }
 
-impl TerminalViMotion {
-    pub(super) fn to_alacritty(self) -> ViMotion {
+impl ViMotion {
+    pub(super) fn to_alacritty(self) -> AlacViMotion {
         match self {
-            Self::Up => ViMotion::Up,
-            Self::Down => ViMotion::Down,
-            Self::Left => ViMotion::Left,
-            Self::Right => ViMotion::Right,
-            Self::First => ViMotion::First,
-            Self::Last => ViMotion::Last,
-            Self::FirstOccupied => ViMotion::FirstOccupied,
-            Self::High => ViMotion::High,
-            Self::Middle => ViMotion::Middle,
-            Self::Low => ViMotion::Low,
-            Self::WordLeft => ViMotion::WordLeft,
-            Self::WordRight => ViMotion::WordRight,
-            Self::WordRightEnd => ViMotion::WordRightEnd,
-            Self::Bracket => ViMotion::Bracket,
+            Self::Up => AlacViMotion::Up,
+            Self::Down => AlacViMotion::Down,
+            Self::Left => AlacViMotion::Left,
+            Self::Right => AlacViMotion::Right,
+            Self::First => AlacViMotion::First,
+            Self::Last => AlacViMotion::Last,
+            Self::FirstOccupied => AlacViMotion::FirstOccupied,
+            Self::High => AlacViMotion::High,
+            Self::Middle => AlacViMotion::Middle,
+            Self::Low => AlacViMotion::Low,
+            Self::WordLeft => AlacViMotion::WordLeft,
+            Self::WordRight => AlacViMotion::WordRight,
+            Self::WordRightEnd => AlacViMotion::WordRightEnd,
+            Self::Bracket => AlacViMotion::Bracket,
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct TerminalSearch {
+pub struct Search {
     search: RegexSearch,
 }
 
-impl TerminalSearch {
+impl Search {
     pub fn new(search: &str) -> Option<Self> {
         Some(Self {
             search: RegexSearch::new(search).ok()?,
@@ -97,26 +100,26 @@ impl TerminalSearch {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct TerminalSelection {
-    ty: TerminalSelectionType,
-    start: TerminalSelectionAnchor,
-    end: TerminalSelectionAnchor,
-    pub(super) head: TerminalPoint,
+pub(super) struct Selection {
+    ty: SelectionType,
+    start: SelectionAnchor,
+    end: SelectionAnchor,
+    pub(super) head: Point,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct TerminalSelectionAnchor {
-    point: TerminalPoint,
-    side: TerminalSelectionSide,
+struct SelectionAnchor {
+    point: Point,
+    side: SelectionSide,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TerminalSelectionSide {
+pub(crate) enum SelectionSide {
     Left,
     Right,
 }
 
-impl TerminalSelectionSide {
+impl SelectionSide {
     pub(super) fn to_alacritty(self) -> AlacDirection {
         match self {
             Self::Left => AlacDirection::Left,
@@ -126,13 +129,13 @@ impl TerminalSelectionSide {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum TerminalSelectionType {
+pub(super) enum SelectionType {
     Simple,
     Semantic,
     Lines,
 }
 
-impl TerminalSelectionType {
+impl SelectionType {
     fn to_alacritty(self) -> AlacSelectionType {
         match self {
             Self::Simple => AlacSelectionType::Simple,
@@ -142,13 +145,9 @@ impl TerminalSelectionType {
     }
 }
 
-impl TerminalSelection {
-    pub(super) fn new(
-        selection_type: TerminalSelectionType,
-        point: TerminalPoint,
-        side: TerminalSelectionSide,
-    ) -> Self {
-        let anchor = TerminalSelectionAnchor { point, side };
+impl Selection {
+    pub(super) fn new(selection_type: SelectionType, point: Point, side: SelectionSide) -> Self {
+        let anchor = SelectionAnchor { point, side };
         Self {
             ty: selection_type,
             start: anchor,
@@ -157,23 +156,19 @@ impl TerminalSelection {
         }
     }
 
-    pub(super) fn simple_range(range: TerminalRange) -> Self {
-        let mut selection = Self::new(
-            TerminalSelectionType::Simple,
-            range.start(),
-            TerminalSelectionSide::Left,
-        );
-        selection.update(range.end(), TerminalSelectionSide::Right);
+    pub(super) fn simple_range(range: Range) -> Self {
+        let mut selection = Self::new(SelectionType::Simple, range.start(), SelectionSide::Left);
+        selection.update(range.end(), SelectionSide::Right);
         selection
     }
 
-    pub(super) fn update(&mut self, point: TerminalPoint, side: TerminalSelectionSide) {
-        self.end = TerminalSelectionAnchor { point, side };
+    pub(super) fn update(&mut self, point: Point, side: SelectionSide) {
+        self.end = SelectionAnchor { point, side };
         self.head = point;
     }
 
-    pub(super) fn to_alacritty(&self) -> Selection {
-        let mut selection = Selection::new(
+    pub(super) fn to_alacritty(&self) -> AlacSelection {
+        let mut selection = AlacSelection::new(
             self.ty.to_alacritty(),
             self.start.point.to_alacritty(),
             self.start.side.to_alacritty(),
@@ -185,24 +180,21 @@ impl TerminalSelection {
     }
 }
 
-pub fn is_default_background_color(color: TerminalColor) -> bool {
-    matches!(color, TerminalColor::Named(TerminalNamedColor::Background))
+pub fn is_default_background_color(color: Color) -> bool {
+    matches!(color, Color::Named(NamedColor::Background))
 }
 
-pub fn is_app_chosen_exact_color(color: TerminalColor) -> bool {
-    matches!(
-        color,
-        TerminalColor::Spec(_) | TerminalColor::Indexed(16..=255)
-    )
+pub fn is_app_chosen_exact_color(color: Color) -> bool {
+    matches!(color, Color::Spec(_) | Color::Indexed(16..=255))
 }
 
-pub type TerminalAnsiSpans = Vec<(Range<usize>, Option<TerminalColor>)>;
+pub type AnsiSpans = Vec<(StdRange<usize>, Option<Color>)>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ParsedAnsiText {
     pub text: String,
-    pub foreground_spans: TerminalAnsiSpans,
-    pub background_spans: TerminalAnsiSpans,
+    pub foreground_spans: AnsiSpans,
+    pub background_spans: AnsiSpans,
 }
 
 pub fn parse_ansi_text(input: &[u8]) -> ParsedAnsiText {
@@ -222,12 +214,12 @@ pub fn strip_ansi_text(input: &[u8]) -> String {
 #[derive(Default)]
 struct StyledAnsiTextHandler {
     text: String,
-    foreground_spans: TerminalAnsiSpans,
-    background_spans: TerminalAnsiSpans,
+    foreground_spans: AnsiSpans,
+    background_spans: AnsiSpans,
     current_foreground_range_start: usize,
     current_background_range_start: usize,
-    current_foreground_color: Option<TerminalColor>,
-    current_background_color: Option<TerminalColor>,
+    current_foreground_color: Option<Color>,
+    current_background_color: Option<Color>,
 }
 
 impl StyledAnsiTextHandler {
@@ -253,7 +245,7 @@ impl StyledAnsiTextHandler {
         }
     }
 
-    fn break_foreground_span(&mut self, color: Option<TerminalColor>) {
+    fn break_foreground_span(&mut self, color: Option<Color>) {
         self.foreground_spans.push((
             self.current_foreground_range_start..self.text.len(),
             self.current_foreground_color,
@@ -262,7 +254,7 @@ impl StyledAnsiTextHandler {
         self.current_foreground_range_start = self.text.len();
     }
 
-    fn break_background_span(&mut self, color: Option<TerminalColor>) {
+    fn break_background_span(&mut self, color: Option<Color>) {
         self.background_spans.push((
             self.current_background_range_start..self.text.len(),
             self.current_background_color,
@@ -328,20 +320,20 @@ impl Handler for PlainAnsiTextHandler {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct TerminalHyperlink {
-    data: TerminalHyperlinkData,
+pub struct Hyperlink {
+    data: HyperlinkData,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-enum TerminalHyperlinkData {
+enum HyperlinkData {
     Alacritty(AlacHyperlink),
     Owned { id: Option<Arc<str>>, uri: Arc<str> },
 }
 
-impl TerminalHyperlink {
+impl Hyperlink {
     pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
         Self {
-            data: TerminalHyperlinkData::Owned {
+            data: HyperlinkData::Owned {
                 id: id.map(|id| Arc::from(id.to_string())),
                 uri: Arc::from(uri),
             },
@@ -350,27 +342,27 @@ impl TerminalHyperlink {
 
     pub fn id(&self) -> Option<&str> {
         match &self.data {
-            TerminalHyperlinkData::Alacritty(hyperlink) => Some(hyperlink.id()),
-            TerminalHyperlinkData::Owned { id, .. } => id.as_deref(),
+            HyperlinkData::Alacritty(hyperlink) => Some(hyperlink.id()),
+            HyperlinkData::Owned { id, .. } => id.as_deref(),
         }
     }
 
     pub fn uri(&self) -> &str {
         match &self.data {
-            TerminalHyperlinkData::Alacritty(hyperlink) => hyperlink.uri(),
-            TerminalHyperlinkData::Owned { uri, .. } => uri,
+            HyperlinkData::Alacritty(hyperlink) => hyperlink.uri(),
+            HyperlinkData::Owned { uri, .. } => uri,
         }
     }
 
     fn from_alacritty(hyperlink: AlacHyperlink) -> Self {
         Self {
-            data: TerminalHyperlinkData::Alacritty(hyperlink),
+            data: HyperlinkData::Alacritty(hyperlink),
         }
     }
 }
 
-fn terminal_hyperlink_from_alacritty(hyperlink: AlacHyperlink) -> TerminalHyperlink {
-    TerminalHyperlink::from_alacritty(hyperlink)
+fn terminal_hyperlink_from_alacritty(hyperlink: AlacHyperlink) -> Hyperlink {
+    Hyperlink::from_alacritty(hyperlink)
 }
 
 #[cfg(test)]
@@ -382,10 +374,7 @@ mod tests {
         let hyperlink = AlacHyperlink::new(Some("id"), "https://example.com".to_string());
         let hyperlink = terminal_hyperlink_from_alacritty(hyperlink);
 
-        assert!(matches!(
-            &hyperlink.data,
-            TerminalHyperlinkData::Alacritty(_)
-        ));
+        assert!(matches!(&hyperlink.data, HyperlinkData::Alacritty(_)));
         assert_eq!(hyperlink.id(), Some("id"));
         assert_eq!(hyperlink.uri(), "https://example.com");
     }
@@ -413,7 +402,7 @@ mod tests {
             parsed.foreground_spans,
             vec![
                 (0..0, None),
-                (0..10, Some(TerminalColor::Named(TerminalNamedColor::Red))),
+                (0..10, Some(Color::Named(NamedColor::Red))),
                 (10..15, None),
             ]
         );
@@ -421,7 +410,7 @@ mod tests {
             parsed.background_spans,
             vec![
                 (0..3, None),
-                (3..10, Some(TerminalColor::Named(TerminalNamedColor::Blue))),
+                (3..10, Some(Color::Named(NamedColor::Blue))),
                 (10..15, None),
             ]
         );
@@ -429,7 +418,7 @@ mod tests {
 
     #[test]
     fn terminal_cell_clone_shares_extra_storage() {
-        let mut cell = TerminalCell::default();
+        let mut cell = Cell::default();
         cell.push_zerowidth('a');
 
         let clone = cell.clone();
@@ -455,11 +444,11 @@ mod tests {
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
-pub struct TerminalCell {
+pub struct Cell {
     cell: AlacCell,
 }
 
-impl TerminalCell {
+impl Cell {
     #[inline]
     pub fn character(&self) -> char {
         self.cell.c
@@ -471,12 +460,12 @@ impl TerminalCell {
     }
 
     #[inline]
-    pub fn foreground(&self) -> TerminalColor {
+    pub fn foreground(&self) -> Color {
         self.cell.fg
     }
 
     #[inline]
-    pub fn background(&self) -> TerminalColor {
+    pub fn background(&self) -> Color {
         self.cell.bg
     }
 
@@ -490,21 +479,21 @@ impl TerminalCell {
         self.cell.push_zerowidth(character);
     }
 
-    pub fn set_underline_color(&mut self, color: Option<TerminalColor>) {
+    pub fn set_underline_color(&mut self, color: Option<Color>) {
         self.cell.set_underline_color(color);
     }
 
     #[inline]
-    pub fn underline_color(&self) -> Option<TerminalColor> {
+    pub fn underline_color(&self) -> Option<Color> {
         self.cell.underline_color()
     }
 
-    pub fn set_hyperlink(&mut self, hyperlink: Option<TerminalHyperlink>) {
+    pub fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
         self.cell.set_hyperlink(hyperlink.map(Into::into));
     }
 
     #[inline]
-    pub fn hyperlink(&self) -> Option<TerminalHyperlink> {
+    pub fn hyperlink(&self) -> Option<Hyperlink> {
         self.cell.hyperlink().map(terminal_hyperlink_from_alacritty)
     }
 
@@ -556,17 +545,17 @@ impl TerminalCell {
     }
 }
 
-impl From<TerminalHyperlink> for AlacHyperlink {
-    fn from(hyperlink: TerminalHyperlink) -> Self {
+impl From<Hyperlink> for AlacHyperlink {
+    fn from(hyperlink: Hyperlink) -> Self {
         match hyperlink.data {
-            TerminalHyperlinkData::Alacritty(hyperlink) => hyperlink,
-            TerminalHyperlinkData::Owned { id, uri } => Self::new(id.as_deref(), uri.to_string()),
+            HyperlinkData::Alacritty(hyperlink) => hyperlink,
+            HyperlinkData::Owned { id, uri } => Self::new(id.as_deref(), uri.to_string()),
         }
     }
 }
 
-pub(super) fn terminal_cell_from_alacritty(cell: &AlacCell) -> TerminalCell {
-    TerminalCell { cell: cell.clone() }
+pub(super) fn terminal_cell_from_alacritty(cell: &AlacCell) -> Cell {
+    Cell { cell: cell.clone() }
 }
 
 pub struct RenderableCells<'a> {
@@ -596,23 +585,23 @@ impl Iterator for RenderableCells<'_> {
 
 #[derive(Debug, Clone)]
 pub struct IndexedCell {
-    pub point: TerminalPoint,
-    pub cell: TerminalCell,
+    pub point: Point,
+    pub cell: Cell,
 }
 
 impl Deref for IndexedCell {
-    type Target = TerminalCell;
+    type Target = Cell;
 
     #[inline]
-    fn deref(&self) -> &TerminalCell {
+    fn deref(&self) -> &Cell {
         &self.cell
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TerminalModes(u32);
+pub struct Modes(u32);
 
-impl TerminalModes {
+impl Modes {
     pub const NONE: Self = Self(0);
     pub const APP_CURSOR: Self = Self(1 << 0);
     pub const APP_KEYPAD: Self = Self(1 << 1);
@@ -698,109 +687,99 @@ impl TerminalModes {
     }
 }
 
-pub(super) fn terminal_modes_from_alacritty(mode: TermMode) -> TerminalModes {
-    let mut terminal_modes = TerminalModes::empty();
+pub(super) fn terminal_modes_from_alacritty(mode: TermMode) -> Modes {
+    let mut terminal_modes = Modes::empty();
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::APP_CURSOR,
-        TerminalModes::APP_CURSOR,
+        Modes::APP_CURSOR,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::APP_KEYPAD,
-        TerminalModes::APP_KEYPAD,
+        Modes::APP_KEYPAD,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::SHOW_CURSOR,
-        TerminalModes::SHOW_CURSOR,
+        Modes::SHOW_CURSOR,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::LINE_WRAP,
-        TerminalModes::LINE_WRAP,
+        Modes::LINE_WRAP,
     );
-    add_terminal_mode(
-        &mut terminal_modes,
-        mode,
-        TermMode::ORIGIN,
-        TerminalModes::ORIGIN,
-    );
-    add_terminal_mode(
-        &mut terminal_modes,
-        mode,
-        TermMode::INSERT,
-        TerminalModes::INSERT,
-    );
+    add_terminal_mode(&mut terminal_modes, mode, TermMode::ORIGIN, Modes::ORIGIN);
+    add_terminal_mode(&mut terminal_modes, mode, TermMode::INSERT, Modes::INSERT);
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::LINE_FEED_NEW_LINE,
-        TerminalModes::LINE_FEED_NEW_LINE,
+        Modes::LINE_FEED_NEW_LINE,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::FOCUS_IN_OUT,
-        TerminalModes::FOCUS_IN_OUT,
+        Modes::FOCUS_IN_OUT,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::ALTERNATE_SCROLL,
-        TerminalModes::ALTERNATE_SCROLL,
+        Modes::ALTERNATE_SCROLL,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::BRACKETED_PASTE,
-        TerminalModes::BRACKETED_PASTE,
+        Modes::BRACKETED_PASTE,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::SGR_MOUSE,
-        TerminalModes::SGR_MOUSE,
+        Modes::SGR_MOUSE,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::UTF8_MOUSE,
-        TerminalModes::UTF8_MOUSE,
+        Modes::UTF8_MOUSE,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::ALT_SCREEN,
-        TerminalModes::ALT_SCREEN,
+        Modes::ALT_SCREEN,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::MOUSE_REPORT_CLICK,
-        TerminalModes::MOUSE_REPORT_CLICK,
+        Modes::MOUSE_REPORT_CLICK,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::MOUSE_DRAG,
-        TerminalModes::MOUSE_DRAG,
+        Modes::MOUSE_DRAG,
     );
     add_terminal_mode(
         &mut terminal_modes,
         mode,
         TermMode::MOUSE_MOTION,
-        TerminalModes::MOUSE_MOTION,
+        Modes::MOUSE_MOTION,
     );
-    add_terminal_mode(&mut terminal_modes, mode, TermMode::VI, TerminalModes::VI);
+    add_terminal_mode(&mut terminal_modes, mode, TermMode::VI, Modes::VI);
     terminal_modes
 }
 
-impl BitOr for TerminalModes {
+impl BitOr for Modes {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self::Output {
@@ -808,17 +787,17 @@ impl BitOr for TerminalModes {
     }
 }
 
-impl BitOrAssign for TerminalModes {
+impl BitOrAssign for Modes {
     fn bitor_assign(&mut self, rhs: Self) {
         self.insert(rhs);
     }
 }
 
 fn add_terminal_mode(
-    terminal_modes: &mut TerminalModes,
+    terminal_modes: &mut Modes,
     alacritty_modes: TermMode,
     alacritty_mode: TermMode,
-    terminal_mode: TerminalModes,
+    terminal_mode: Modes,
 ) {
     if alacritty_modes.contains(alacritty_mode) {
         terminal_modes.insert(terminal_mode);
@@ -828,8 +807,8 @@ fn add_terminal_mode(
 #[cfg(test)]
 fn add_alacritty_mode(
     alacritty_modes: &mut TermMode,
-    terminal_modes: TerminalModes,
-    terminal_mode: TerminalModes,
+    terminal_modes: Modes,
+    terminal_mode: Modes,
     alacritty_mode: TermMode,
 ) {
     if terminal_modes.contains(terminal_mode) {
@@ -838,12 +817,12 @@ fn add_alacritty_mode(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TerminalCursor {
-    pub shape: TerminalCursorShape,
-    pub point: TerminalPoint,
+pub struct Cursor {
+    pub shape: CursorShape,
+    pub point: Point,
 }
 
-impl TerminalCursor {
+impl Cursor {
     pub(super) fn from_alacritty(cursor: RenderableCursor) -> Self {
         Self {
             shape: terminal_cursor_shape_from_alacritty(cursor.shape),
@@ -853,7 +832,7 @@ impl TerminalCursor {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TerminalCursorShape {
+pub enum CursorShape {
     Block,
     Underline,
     Bar,
@@ -861,34 +840,34 @@ pub enum TerminalCursorShape {
     Hidden,
 }
 
-fn terminal_cursor_shape_from_alacritty(shape: AlacCursorShape) -> TerminalCursorShape {
+fn terminal_cursor_shape_from_alacritty(shape: AlacCursorShape) -> CursorShape {
     match shape {
-        AlacCursorShape::Block => TerminalCursorShape::Block,
-        AlacCursorShape::Underline => TerminalCursorShape::Underline,
-        AlacCursorShape::Beam => TerminalCursorShape::Bar,
-        AlacCursorShape::HollowBlock => TerminalCursorShape::HollowBlock,
-        AlacCursorShape::Hidden => TerminalCursorShape::Hidden,
+        AlacCursorShape::Block => CursorShape::Block,
+        AlacCursorShape::Underline => CursorShape::Underline,
+        AlacCursorShape::Beam => CursorShape::Bar,
+        AlacCursorShape::HollowBlock => CursorShape::HollowBlock,
+        AlacCursorShape::Hidden => CursorShape::Hidden,
     }
 }
 
-impl From<CursorShape> for TerminalCursorShape {
-    fn from(shape: CursorShape) -> Self {
+impl From<SettingsCursorShape> for CursorShape {
+    fn from(shape: SettingsCursorShape) -> Self {
         match shape {
-            CursorShape::Block => Self::Block,
-            CursorShape::Underline => Self::Underline,
-            CursorShape::Bar => Self::Bar,
-            CursorShape::Hollow => Self::HollowBlock,
+            SettingsCursorShape::Block => Self::Block,
+            SettingsCursorShape::Underline => Self::Underline,
+            SettingsCursorShape::Bar => Self::Bar,
+            SettingsCursorShape::Hollow => Self::HollowBlock,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct TerminalPoint {
+pub struct Point {
     pub line: i32,
     pub column: usize,
 }
 
-impl TerminalPoint {
+impl Point {
     pub fn new(line: i32, column: usize) -> Self {
         Self { line, column }
     }
@@ -898,33 +877,33 @@ impl TerminalPoint {
     }
 }
 
-pub(super) fn terminal_point_from_alacritty(point: AlacPoint) -> TerminalPoint {
-    TerminalPoint {
+pub(super) fn terminal_point_from_alacritty(point: AlacPoint) -> Point {
+    Point {
         line: point.line.0,
         column: point.column.0,
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct TerminalRange {
-    start: TerminalPoint,
-    end: TerminalPoint,
+pub struct Range {
+    start: Point,
+    end: Point,
 }
 
-impl TerminalRange {
-    pub fn new(start: TerminalPoint, end: TerminalPoint) -> Self {
+impl Range {
+    pub fn new(start: Point, end: Point) -> Self {
         Self { start, end }
     }
 
-    pub fn start(&self) -> TerminalPoint {
+    pub fn start(&self) -> Point {
         self.start
     }
 
-    pub fn end(&self) -> TerminalPoint {
+    pub fn end(&self) -> Point {
         self.end
     }
 
-    pub fn contains(&self, point: TerminalPoint) -> bool {
+    pub fn contains(&self, point: Point) -> bool {
         self.start <= point && point <= self.end
     }
 
@@ -942,22 +921,20 @@ impl TerminalRange {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TerminalSelectionRange {
-    pub start: TerminalPoint,
-    pub end: TerminalPoint,
+pub struct SelectionRange {
+    pub start: Point,
+    pub end: Point,
     pub is_block: bool,
 }
 
-impl TerminalSelectionRange {
-    pub fn point_range(self) -> TerminalRange {
-        TerminalRange::new(self.start, self.end)
+impl SelectionRange {
+    pub fn point_range(self) -> Range {
+        Range::new(self.start, self.end)
     }
 }
 
-pub(super) fn terminal_selection_range_from_alacritty(
-    range: SelectionRange,
-) -> TerminalSelectionRange {
-    TerminalSelectionRange {
+pub(super) fn terminal_selection_range_from_alacritty(range: AlacSelectionRange) -> SelectionRange {
+    SelectionRange {
         start: terminal_point_from_alacritty(range.start),
         end: terminal_point_from_alacritty(range.end),
         is_block: range.is_block,
@@ -966,13 +943,13 @@ pub(super) fn terminal_selection_range_from_alacritty(
 
 // TODO: Un-pub
 #[derive(Clone)]
-pub struct TerminalContent {
+pub struct Content {
     pub cells: Vec<IndexedCell>,
-    pub mode: TerminalModes,
+    pub mode: Modes,
     pub display_offset: usize,
     pub selection_text: Option<String>,
-    pub selection: Option<TerminalSelectionRange>,
-    pub cursor: TerminalCursor,
+    pub selection: Option<SelectionRange>,
+    pub cursor: Cursor,
     pub cursor_char: char,
     pub terminal_bounds: TerminalBounds,
     pub last_hovered_word: Option<HoveredWord>,
@@ -983,21 +960,21 @@ pub struct TerminalContent {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct HoveredWord {
     pub word: String,
-    pub word_match: TerminalRange,
+    pub word_match: Range,
     pub id: usize,
 }
 
-impl Default for TerminalContent {
+impl Default for Content {
     fn default() -> Self {
-        TerminalContent {
+        Content {
             cells: Default::default(),
             mode: Default::default(),
             display_offset: Default::default(),
             selection_text: Default::default(),
             selection: Default::default(),
-            cursor: TerminalCursor {
-                shape: TerminalCursorShape::Block,
-                point: TerminalPoint::new(0, 0),
+            cursor: Cursor {
+                shape: CursorShape::Block,
+                point: Point::new(0, 0),
             },
             cursor_char: Default::default(),
             terminal_bounds: Default::default(),

@@ -3,9 +3,9 @@ use std::iter::repeat;
 
 /// Most of the code, and specifically the constants, in this are copied from Alacritty,
 /// with modifications for our circumstances
-use gpui::{Modifiers, MouseButton, Pixels, Point, ScrollWheelEvent, px};
+use gpui::{Modifiers, MouseButton, Pixels, Point as GpuiPoint, ScrollWheelEvent, px};
 
-use crate::{TerminalBounds, TerminalModes, TerminalPoint, TerminalSelectionSide};
+use crate::{Modes, Point, SelectionSide, TerminalBounds};
 
 enum MouseFormat {
     Sgr,
@@ -13,10 +13,10 @@ enum MouseFormat {
 }
 
 impl MouseFormat {
-    fn from_mode(mode: TerminalModes) -> Self {
-        if mode.contains(TerminalModes::SGR_MOUSE) {
+    fn from_mode(mode: Modes) -> Self {
+        if mode.contains(Modes::SGR_MOUSE) {
             MouseFormat::Sgr
-        } else if mode.contains(TerminalModes::UTF8_MOUSE) {
+        } else if mode.contains(Modes::UTF8_MOUSE) {
             MouseFormat::Normal(true)
         } else {
             MouseFormat::Normal(false)
@@ -77,12 +77,12 @@ impl MouseButtonCode {
 }
 
 pub(crate) fn scroll_report(
-    point: TerminalPoint,
+    point: Point,
     scroll_lines: i32,
     e: &ScrollWheelEvent,
-    mode: TerminalModes,
+    mode: Modes,
 ) -> Option<impl Iterator<Item = Vec<u8>>> {
-    if mode.intersects(TerminalModes::MOUSE_MODE) {
+    if mode.intersects(Modes::MOUSE_MODE) {
         mouse_report(
             point,
             MouseButtonCode::from_scroll(e),
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn scroll_report_repeats_for_negative_scroll_lines() {
-        let grid_point = TerminalPoint::new(0, 0);
+        let grid_point = Point::new(0, 0);
 
         let scroll_event = ScrollWheelEvent {
             delta: ScrollDelta::Lines(point(0., -1.)),
@@ -111,7 +111,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mode = TerminalModes::MOUSE_MODE;
+        let mode = Modes::MOUSE_MODE;
         let reports: Vec<Vec<u8>> = scroll_report(grid_point, -3, &scroll_event, mode)
             .expect("mouse mode should produce a scroll report")
             .collect();
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn scroll_report_repeats_for_positive_scroll_lines() {
-        let grid_point = TerminalPoint::new(0, 0);
+        let grid_point = Point::new(0, 0);
 
         let scroll_event = ScrollWheelEvent {
             delta: ScrollDelta::Lines(point(0., 1.)),
@@ -129,7 +129,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mode = TerminalModes::MOUSE_MODE;
+        let mode = Modes::MOUSE_MODE;
         let reports: Vec<Vec<u8>> = scroll_report(grid_point, 3, &scroll_event, mode)
             .expect("mouse mode should produce a scroll report")
             .collect();
@@ -151,14 +151,14 @@ pub(crate) fn alt_scroll(scroll_lines: i32) -> Vec<u8> {
 }
 
 pub(crate) fn mouse_button_report(
-    point: TerminalPoint,
+    point: Point,
     button: gpui::MouseButton,
     modifiers: Modifiers,
     pressed: bool,
-    mode: TerminalModes,
+    mode: Modes,
 ) -> Option<Vec<u8>> {
     let button = MouseButtonCode::from_button(button);
-    if !button.is_other() && mode.intersects(TerminalModes::MOUSE_MODE) {
+    if !button.is_other() && mode.intersects(Modes::MOUSE_MODE) {
         mouse_report(
             point,
             button,
@@ -172,18 +172,16 @@ pub(crate) fn mouse_button_report(
 }
 
 pub(crate) fn mouse_moved_report(
-    point: TerminalPoint,
+    point: Point,
     button: Option<MouseButton>,
     modifiers: Modifiers,
-    mode: TerminalModes,
+    mode: Modes,
 ) -> Option<Vec<u8>> {
     let button = MouseButtonCode::from_move_button(button);
 
-    if !button.is_other()
-        && mode.intersects(TerminalModes::MOUSE_MOTION | TerminalModes::MOUSE_DRAG)
-    {
+    if !button.is_other() && mode.intersects(Modes::MOUSE_MOTION | Modes::MOUSE_DRAG) {
         //Only drags are reported in drag mode, so block NoneMove.
-        if mode.contains(TerminalModes::MOUSE_DRAG) && matches!(button, MouseButtonCode::NoneMove) {
+        if mode.contains(Modes::MOUSE_DRAG) && matches!(button, MouseButtonCode::NoneMove) {
             None
         } else {
             mouse_report(point, button, true, modifiers, MouseFormat::from_mode(mode))
@@ -194,52 +192,52 @@ pub(crate) fn mouse_moved_report(
 }
 
 pub(crate) fn grid_point(
-    pos: Point<Pixels>,
+    pos: GpuiPoint<Pixels>,
     cur_size: TerminalBounds,
     display_offset: usize,
-) -> TerminalPoint {
+) -> Point {
     grid_point_and_side(pos, cur_size, display_offset).0
 }
 
 pub(crate) fn grid_point_and_side(
-    pos: Point<Pixels>,
+    pos: GpuiPoint<Pixels>,
     cur_size: TerminalBounds,
     display_offset: usize,
-) -> (TerminalPoint, TerminalSelectionSide) {
+) -> (Point, SelectionSide) {
     let mut column = (pos.x / cur_size.cell_width) as usize;
     let cell_x = cmp::max(px(0.), pos.x) % cur_size.cell_width;
     let half_cell_width = cur_size.cell_width / 2.0;
     let mut side = if cell_x > half_cell_width {
-        TerminalSelectionSide::Right
+        SelectionSide::Right
     } else {
-        TerminalSelectionSide::Left
+        SelectionSide::Left
     };
 
     let last_column = cur_size.num_columns().saturating_sub(1);
     if column > last_column {
         column = last_column;
-        side = TerminalSelectionSide::Right;
+        side = SelectionSide::Right;
     }
     let column = min(column, last_column);
     let mut line = (pos.y / cur_size.line_height) as i32;
     let bottommost_line = i32::try_from(cur_size.num_lines().saturating_sub(1)).unwrap_or(i32::MAX);
     if line > bottommost_line {
         line = bottommost_line;
-        side = TerminalSelectionSide::Right;
+        side = SelectionSide::Right;
     } else if line < 0 {
-        side = TerminalSelectionSide::Left;
+        side = SelectionSide::Left;
     }
 
     let display_offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
     (
-        TerminalPoint::new(line.saturating_sub(display_offset), column),
+        Point::new(line.saturating_sub(display_offset), column),
         side,
     )
 }
 
 ///Generate the bytes to send to the terminal, from the cell location, a mouse event, and the terminal mode
 fn mouse_report(
-    point: TerminalPoint,
+    point: Point,
     button: MouseButtonCode,
     pressed: bool,
     modifiers: Modifiers,
@@ -274,7 +272,7 @@ fn mouse_report(
     }
 }
 
-fn normal_mouse_report(point: TerminalPoint, button: u8, utf8: bool) -> Option<Vec<u8>> {
+fn normal_mouse_report(point: Point, button: u8, utf8: bool) -> Option<Vec<u8>> {
     let max_point = if utf8 { 2015 } else { 223 };
 
     if point.line >= max_point || point.column >= max_point as usize {
@@ -305,7 +303,7 @@ fn normal_mouse_report(point: TerminalPoint, button: u8, utf8: bool) -> Option<V
     Some(msg)
 }
 
-fn sgr_mouse_report(point: TerminalPoint, button: u8, pressed: bool) -> String {
+fn sgr_mouse_report(point: Point, button: u8, pressed: bool) -> String {
     let c = if pressed { 'M' } else { 'm' };
 
     let msg = format!(

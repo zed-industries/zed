@@ -5,13 +5,12 @@ mod terminal_hyperlinks;
 pub mod terminal_settings;
 mod terminal_types;
 
-pub(crate) use terminal_types::TerminalSelectionSide;
+pub(crate) use terminal_types::SelectionSide;
 pub use terminal_types::{
-    HoveredWord, IndexedCell, ParsedAnsiText, RenderableCells, SelectionPhase, TerminalAnsiSpans,
-    TerminalCell, TerminalColor, TerminalContent, TerminalCursor, TerminalCursorShape,
-    TerminalHyperlink, TerminalModes, TerminalNamedColor, TerminalPoint, TerminalRange,
-    TerminalRgb, TerminalSearch, TerminalSelectionRange, is_app_chosen_exact_color,
-    is_default_background_color, parse_ansi_text, strip_ansi_text,
+    AnsiSpans, Cell, Color, Content, Cursor, CursorShape, HoveredWord, Hyperlink, IndexedCell,
+    Modes, NamedColor, ParsedAnsiText, Point, Range, RenderableCells, Rgb, Search, SelectionPhase,
+    SelectionRange, is_app_chosen_exact_color, is_default_background_color, parse_ansi_text,
+    strip_ansi_text,
 };
 
 use alacritty_terminal::event::Notify;
@@ -57,7 +56,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{HideStrategy, Shell, SpawnInTerminal};
 use terminal_hyperlinks::{HyperlinkMatch, RegexSearches};
-use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
+use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
 use util::{paths::PathStyle, truncate_and_trailoff};
@@ -78,15 +77,15 @@ use vte::ansi::{CursorShape as AlacCursorShape, Processor, StdSyncHandler};
 
 use gpui::{
     App, AppContext as _, BackgroundExecutor, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point as GpuiPoint, Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
 use crate::terminal_types::{
-    TerminalScroll, TerminalSelection, TerminalSelectionType, TerminalViMotion,
-    terminal_cell_from_alacritty, terminal_modes_from_alacritty, terminal_point_from_alacritty,
+    Scroll, Selection, SelectionType, ViMotion, terminal_cell_from_alacritty,
+    terminal_modes_from_alacritty, terminal_point_from_alacritty,
     terminal_selection_range_from_alacritty,
 };
 
@@ -184,22 +183,22 @@ enum InternalEvent {
     Resize(TerminalBounds),
     Clear,
     // FocusNextMatch,
-    Scroll(TerminalScroll),
-    ScrollToPoint(TerminalPoint),
-    SetSelection(Option<TerminalSelection>),
-    UpdateSelection(Point<Pixels>),
-    FindHyperlink(Point<Pixels>, bool),
+    Scroll(Scroll),
+    ScrollToPoint(Point),
+    SetSelection(Option<Selection>),
+    UpdateSelection(GpuiPoint<Pixels>),
+    FindHyperlink(GpuiPoint<Pixels>, bool),
     ProcessHyperlink(HyperlinkMatch, bool),
     // Whether keep selection when copy
     Copy(Option<bool>),
     // Vi mode events
     ToggleViMode,
-    ViMotion(TerminalViMotion),
-    MoveViCursorToPoint(TerminalPoint),
+    ViMotion(ViMotion),
+    MoveViCursorToPoint(Point),
 }
 
 type ClipboardFormatter = Arc<dyn Fn(&str) -> String + Sync + Send + 'static>;
-type ColorFormatter = Arc<dyn Fn(TerminalRgb) -> String + Sync + Send + 'static>;
+type ColorFormatter = Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>;
 type TextAreaSizeFormatter = Arc<dyn Fn(TerminalBounds) -> String + Sync + Send + 'static>;
 
 #[derive(Clone)]
@@ -329,7 +328,7 @@ impl Default for TerminalBounds {
             DEBUG_LINE_HEIGHT,
             DEBUG_CELL_WIDTH,
             Bounds {
-                origin: Point::default(),
+                origin: GpuiPoint::default(),
                 size: Size {
                     width: DEBUG_TERMINAL_WIDTH,
                     height: DEBUG_TERMINAL_HEIGHT,
@@ -354,16 +353,16 @@ fn normalize_terminal_bounds(mut bounds: TerminalBounds) -> TerminalBounds {
     bounds
 }
 
-fn alacritty_cursor_shape(cursor_shape: CursorShape) -> AlacCursorShape {
+fn alacritty_cursor_shape(cursor_shape: SettingsCursorShape) -> AlacCursorShape {
     match cursor_shape {
-        CursorShape::Block => AlacCursorShape::Block,
-        CursorShape::Underline => AlacCursorShape::Underline,
-        CursorShape::Bar => AlacCursorShape::Beam,
-        CursorShape::Hollow => AlacCursorShape::HollowBlock,
+        SettingsCursorShape::Block => AlacCursorShape::Block,
+        SettingsCursorShape::Underline => AlacCursorShape::Underline,
+        SettingsCursorShape::Bar => AlacCursorShape::Beam,
+        SettingsCursorShape::Hollow => AlacCursorShape::HollowBlock,
     }
 }
 
-fn alacritty_cursor_style(cursor_shape: CursorShape) -> AlacCursorStyle {
+fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
     AlacCursorStyle {
         shape: alacritty_cursor_shape(cursor_shape),
         blinking: false,
@@ -456,7 +455,7 @@ pub struct TerminalBuilder {
 
 impl TerminalBuilder {
     pub fn new_display_only(
-        cursor_shape: CursorShape,
+        cursor_shape: SettingsCursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window_id: u64,
@@ -475,7 +474,7 @@ impl TerminalBuilder {
     }
 
     pub fn new_display_only_with_bounds(
-        cursor_shape: CursorShape,
+        cursor_shape: SettingsCursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window_id: u64,
@@ -515,7 +514,7 @@ impl TerminalBuilder {
             output_processor: Processor::<StdSyncHandler>::new(),
             title_override: None,
             events: VecDeque::with_capacity(10),
-            last_content: TerminalContent {
+            last_content: Content {
                 terminal_bounds,
                 ..Default::default()
             },
@@ -566,7 +565,7 @@ impl TerminalBuilder {
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
-        cursor_shape: CursorShape,
+        cursor_shape: SettingsCursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         path_hyperlink_regexes: Vec<String>,
@@ -971,10 +970,10 @@ pub struct Terminal {
     output_processor: Processor<StdSyncHandler>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
-    last_mouse: Option<(TerminalPoint, TerminalSelectionSide)>,
-    pub matches: Vec<TerminalRange>,
-    pub last_content: TerminalContent,
-    pub selection_head: Option<TerminalPoint>,
+    last_mouse: Option<(Point, SelectionSide)>,
+    pub matches: Vec<Range>,
+    pub last_content: Content,
+    pub selection_head: Option<Point>,
 
     pub breadcrumb_text: String,
     title_override: Option<String>,
@@ -986,7 +985,7 @@ pub struct Terminal {
     vi_mode_enabled: bool,
     is_remote_terminal: bool,
     last_mouse_move_time: Instant,
-    last_hyperlink_search_position: Option<Point<Pixels>>,
+    last_hyperlink_search_position: Option<GpuiPoint<Pixels>>,
     mouse_down_hyperlink: Option<HyperlinkMatch>,
     #[cfg(windows)]
     shell_program: Option<String>,
@@ -1004,7 +1003,7 @@ pub struct Terminal {
 struct CopyTemplate {
     shell: Shell,
     env: HashMap<String, String>,
-    cursor_shape: CursorShape,
+    cursor_shape: SettingsCursorShape,
     alternate_scroll: AlternateScroll,
     max_scroll_history_lines: Option<usize>,
     path_hyperlink_regexes: Vec<String>,
@@ -1202,22 +1201,22 @@ impl Terminal {
 
                 if self.vi_mode_enabled {
                     match *scroll {
-                        TerminalScroll::Delta(delta) => {
+                        Scroll::Delta(delta) => {
                             term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, delta);
                         }
-                        TerminalScroll::PageUp => {
+                        Scroll::PageUp => {
                             let lines = term.screen_lines() as i32;
                             term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
                         }
-                        TerminalScroll::PageDown => {
+                        Scroll::PageDown => {
                             let lines = -(term.screen_lines() as i32);
                             term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
                         }
-                        TerminalScroll::Top => {
+                        Scroll::Top => {
                             let point = AlacPoint::new(term.topmost_line(), Column(0));
                             term.vi_mode_cursor = ViModeCursor::new(point);
                         }
-                        TerminalScroll::Bottom => {
+                        Scroll::Bottom => {
                             let point = AlacPoint::new(term.bottommost_line(), Column(0));
                             term.vi_mode_cursor = ViModeCursor::new(point);
                         }
@@ -1239,7 +1238,7 @@ impl Terminal {
             }
             InternalEvent::SetSelection(selection) => {
                 trace!("Setting selection: selection={selection:?}");
-                term.selection = selection.as_ref().map(TerminalSelection::to_alacritty);
+                term.selection = selection.as_ref().map(Selection::to_alacritty);
 
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 if let Some(selection_text) = term.selection_to_string() {
@@ -1371,7 +1370,7 @@ impl Terminal {
         }
     }
 
-    fn find_hyperlink_at_point(&mut self, point: TerminalPoint) -> Option<HyperlinkMatch> {
+    fn find_hyperlink_at_point(&mut self, point: Point) -> Option<HyperlinkMatch> {
         let term_lock = self.term.lock();
         terminal_hyperlinks::find_from_grid_point(
             &term_lock,
@@ -1384,7 +1383,7 @@ impl Terminal {
     fn update_selected_word(
         &mut self,
         prev_word: Option<HoveredWord>,
-        word_match: TerminalRange,
+        word_match: Range,
         word: String,
         navigation_target: MaybeNavigationTarget,
         cx: &mut Context<Self>,
@@ -1416,11 +1415,11 @@ impl Terminal {
         res
     }
 
-    pub fn last_content(&self) -> &TerminalContent {
+    pub fn last_content(&self) -> &Content {
         &self.last_content
     }
 
-    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape) {
+    pub fn set_cursor_shape(&mut self, cursor_shape: SettingsCursorShape) {
         self.term_config.default_cursor_style = alacritty_cursor_style(cursor_shape);
         self.term.lock().set_options(self.term_config.clone());
     }
@@ -1465,7 +1464,7 @@ impl Terminal {
 
     pub fn activate_match(&mut self, index: usize) {
         if let Some(search_match) = self.matches.get(index).cloned() {
-            self.set_selection(Some(TerminalSelection::simple_range(search_match)));
+            self.set_selection(Some(Selection::simple_range(search_match)));
             if self.vi_mode_enabled {
                 self.events
                     .push_back(InternalEvent::MoveViCursorToPoint(search_match.end()));
@@ -1476,7 +1475,7 @@ impl Terminal {
         }
     }
 
-    pub fn select_matches(&mut self, matches: &[TerminalRange]) {
+    pub fn select_matches(&mut self, matches: &[Range]) {
         let matches_to_select = self
             .matches
             .iter()
@@ -1484,7 +1483,7 @@ impl Terminal {
             .cloned()
             .collect::<Vec<_>>();
         for match_to_select in matches_to_select {
-            self.set_selection(Some(TerminalSelection::simple_range(match_to_select)));
+            self.set_selection(Some(Selection::simple_range(match_to_select)));
         }
     }
 
@@ -1493,12 +1492,12 @@ impl Terminal {
         let start = AlacPoint::new(term.topmost_line(), Column(0));
         let end = AlacPoint::new(term.bottommost_line(), term.last_column());
         drop(term);
-        self.set_selection(Some(TerminalSelection::simple_range(
-            TerminalRange::from_alacritty(start..=end),
-        )));
+        self.set_selection(Some(Selection::simple_range(Range::from_alacritty(
+            start..=end,
+        ))));
     }
 
-    fn set_selection(&mut self, selection: Option<TerminalSelection>) {
+    fn set_selection(&mut self, selection: Option<Selection>) {
         self.events
             .push_back(InternalEvent::SetSelection(selection));
     }
@@ -1513,44 +1512,39 @@ impl Terminal {
 
     pub fn scroll_line_up(&mut self) {
         self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::Delta(1)));
+            .push_back(InternalEvent::Scroll(Scroll::Delta(1)));
     }
 
     pub fn scroll_up_by(&mut self, lines: usize) {
         self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::Delta(lines as i32)));
+            .push_back(InternalEvent::Scroll(Scroll::Delta(lines as i32)));
     }
 
     pub fn scroll_line_down(&mut self) {
         self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::Delta(-1)));
+            .push_back(InternalEvent::Scroll(Scroll::Delta(-1)));
     }
 
     pub fn scroll_down_by(&mut self, lines: usize) {
         self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::Delta(
-                -(lines as i32),
-            )));
+            .push_back(InternalEvent::Scroll(Scroll::Delta(-(lines as i32))));
     }
 
     pub fn scroll_page_up(&mut self) {
-        self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::PageUp));
+        self.events.push_back(InternalEvent::Scroll(Scroll::PageUp));
     }
 
     pub fn scroll_page_down(&mut self) {
         self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::PageDown));
+            .push_back(InternalEvent::Scroll(Scroll::PageDown));
     }
 
     pub fn scroll_to_top(&mut self) {
-        self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::Top));
+        self.events.push_back(InternalEvent::Scroll(Scroll::Top));
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::Bottom));
+        self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
     }
 
     pub fn scrolled_to_top(&self) -> bool {
@@ -1602,8 +1596,7 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
-        self.events
-            .push_back(InternalEvent::Scroll(TerminalScroll::Bottom));
+        self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.keyboard_input_sent = true;
@@ -1634,27 +1627,27 @@ impl Terminal {
             Cow::Borrowed(keystroke.key.as_str())
         };
 
-        let motion: Option<TerminalViMotion> = match key.as_ref() {
-            "h" | "left" => Some(TerminalViMotion::Left),
-            "j" | "down" => Some(TerminalViMotion::Down),
-            "k" | "up" => Some(TerminalViMotion::Up),
-            "l" | "right" => Some(TerminalViMotion::Right),
-            "w" => Some(TerminalViMotion::WordRight),
-            "b" if !keystroke.modifiers.control => Some(TerminalViMotion::WordLeft),
-            "e" => Some(TerminalViMotion::WordRightEnd),
-            "%" => Some(TerminalViMotion::Bracket),
-            "$" => Some(TerminalViMotion::Last),
-            "0" => Some(TerminalViMotion::First),
-            "^" => Some(TerminalViMotion::FirstOccupied),
-            "H" => Some(TerminalViMotion::High),
-            "M" => Some(TerminalViMotion::Middle),
-            "L" => Some(TerminalViMotion::Low),
+        let motion: Option<ViMotion> = match key.as_ref() {
+            "h" | "left" => Some(ViMotion::Left),
+            "j" | "down" => Some(ViMotion::Down),
+            "k" | "up" => Some(ViMotion::Up),
+            "l" | "right" => Some(ViMotion::Right),
+            "w" => Some(ViMotion::WordRight),
+            "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
+            "e" => Some(ViMotion::WordRightEnd),
+            "%" => Some(ViMotion::Bracket),
+            "$" => Some(ViMotion::Last),
+            "0" => Some(ViMotion::First),
+            "^" => Some(ViMotion::FirstOccupied),
+            "H" => Some(ViMotion::High),
+            "M" => Some(ViMotion::Middle),
+            "L" => Some(ViMotion::Low),
             _ => None,
         };
 
         if let Some(motion) = motion {
             let cursor = self.last_content.cursor.point;
-            let cursor_pos = Point {
+            let cursor_pos = GpuiPoint {
                 x: cursor.column as f32 * self.last_content.terminal_bounds.cell_width,
                 y: cursor.line as f32 * self.last_content.terminal_bounds.line_height,
             };
@@ -1665,17 +1658,17 @@ impl Terminal {
         }
 
         let scroll_motion = match key.as_ref() {
-            "g" => Some(TerminalScroll::Top),
-            "G" => Some(TerminalScroll::Bottom),
-            "b" if keystroke.modifiers.control => Some(TerminalScroll::PageUp),
-            "f" if keystroke.modifiers.control => Some(TerminalScroll::PageDown),
+            "g" => Some(Scroll::Top),
+            "G" => Some(Scroll::Bottom),
+            "b" if keystroke.modifiers.control => Some(Scroll::PageUp),
+            "f" if keystroke.modifiers.control => Some(Scroll::PageDown),
             "d" if keystroke.modifiers.control => {
                 let amount = self.last_content.terminal_bounds.line_height().to_f64() as i32 / 2;
-                Some(TerminalScroll::Delta(-amount))
+                Some(Scroll::Delta(-amount))
             }
             "u" if keystroke.modifiers.control => {
                 let amount = self.last_content.terminal_bounds.line_height().to_f64() as i32 / 2;
-                Some(TerminalScroll::Delta(amount))
+                Some(Scroll::Delta(amount))
             }
             _ => None,
         };
@@ -1688,9 +1681,9 @@ impl Terminal {
         match key.as_ref() {
             "v" => {
                 let point = self.last_content.cursor.point;
-                let selection_type = TerminalSelectionType::Simple;
-                let side = TerminalSelectionSide::Right;
-                let selection = TerminalSelection::new(selection_type, point, side);
+                let selection_type = SelectionType::Simple;
+                let side = SelectionSide::Right;
+                let selection = Selection::new(selection_type, point, side);
                 self.events
                     .push_back(InternalEvent::SetSelection(Some(selection)));
             }
@@ -1750,11 +1743,7 @@ impl Terminal {
 
     ///Paste text into the terminal
     pub fn paste(&mut self, text: &str) {
-        let paste_text = if self
-            .last_content
-            .mode
-            .contains(TerminalModes::BRACKETED_PASTE)
-        {
+        let paste_text = if self.last_content.mode.contains(Modes::BRACKETED_PASTE) {
             format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
         } else {
             text.replace("\r\n", "\r").replace('\n', "\r")
@@ -1774,7 +1763,7 @@ impl Terminal {
         self.last_content = Self::make_content(&terminal, &self.last_content);
     }
 
-    fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
+    fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
         let content = term.renderable_content();
 
         // Pre-allocate with estimated size to reduce reallocations
@@ -1792,7 +1781,7 @@ impl Terminal {
             None
         };
 
-        TerminalContent {
+        Content {
             cells,
             mode: terminal_modes_from_alacritty(content.mode),
             display_offset: content.display_offset,
@@ -1800,7 +1789,7 @@ impl Terminal {
             selection: content
                 .selection
                 .map(terminal_selection_range_from_alacritty),
-            cursor: TerminalCursor::from_alacritty(content.cursor),
+            cursor: Cursor::from_alacritty(content.cursor),
             cursor_char: term.grid()[content.cursor.point].c,
             terminal_bounds: last_content.terminal_bounds,
             last_hovered_word: last_content.last_hovered_word.clone(),
@@ -1878,18 +1867,18 @@ impl Terminal {
     }
 
     pub fn focus_in(&self) {
-        if self.last_content.mode.contains(TerminalModes::FOCUS_IN_OUT) {
+        if self.last_content.mode.contains(Modes::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[I".as_bytes());
         }
     }
 
     pub fn focus_out(&mut self) {
-        if self.last_content.mode.contains(TerminalModes::FOCUS_IN_OUT) {
+        if self.last_content.mode.contains(Modes::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[O".as_bytes());
         }
     }
 
-    fn mouse_changed(&mut self, point: TerminalPoint, side: TerminalSelectionSide) -> bool {
+    fn mouse_changed(&mut self, point: Point, side: SelectionSide) -> bool {
         match self.last_mouse {
             Some((old_point, old_side)) => {
                 if old_point == point && old_side == side {
@@ -1907,7 +1896,7 @@ impl Terminal {
     }
 
     pub fn mouse_mode(&self, shift: bool) -> bool {
-        self.last_content.mode.intersects(TerminalModes::MOUSE_MODE) && !shift
+        self.last_content.mode.intersects(Modes::MOUSE_MODE) && !shift
     }
 
     pub fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
@@ -1937,7 +1926,7 @@ impl Terminal {
         cx.notify();
     }
 
-    fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: Point<Pixels>) {
+    fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: GpuiPoint<Pixels>) {
         if self.selection_phase == SelectionPhase::Selecting
             || !modifiers.secondary()
             || !self.last_content.terminal_bounds.bounds.contains(&position)
@@ -1975,7 +1964,7 @@ impl Terminal {
             self.last_content.terminal_bounds,
             self.last_content.display_offset,
         );
-        let selection = TerminalSelection::new(TerminalSelectionType::Semantic, point, side);
+        let selection = Selection::new(SelectionType::Semantic, point, side);
         self.events
             .push_back(InternalEvent::SetSelection(Some(selection)));
     }
@@ -2009,14 +1998,14 @@ impl Terminal {
                 .push_back(InternalEvent::UpdateSelection(position));
 
             // Doesn't make sense to scroll the alt screen
-            if !self.last_content.mode.contains(TerminalModes::ALT_SCREEN) {
+            if !self.last_content.mode.contains(Modes::ALT_SCREEN) {
                 let scroll_lines = match self.drag_line_delta(e, region) {
                     Some(value) => value,
                     None => return,
                 };
 
                 self.events
-                    .push_back(InternalEvent::Scroll(TerminalScroll::Delta(scroll_lines)));
+                    .push_back(InternalEvent::Scroll(Scroll::Delta(scroll_lines)));
             }
 
             cx.notify();
@@ -2077,20 +2066,20 @@ impl Terminal {
 
                     let selection_type = match e.click_count {
                         0 => return, //This is a release
-                        1 => Some(TerminalSelectionType::Simple),
-                        2 => Some(TerminalSelectionType::Semantic),
-                        3 => Some(TerminalSelectionType::Lines),
+                        1 => Some(SelectionType::Simple),
+                        2 => Some(SelectionType::Semantic),
+                        3 => Some(SelectionType::Lines),
                         _ => None,
                     };
 
-                    if selection_type == Some(TerminalSelectionType::Simple) && e.modifiers.shift {
+                    if selection_type == Some(SelectionType::Simple) && e.modifiers.shift {
                         self.events
                             .push_back(InternalEvent::UpdateSelection(position));
                         return;
                     }
 
                     let selection = selection_type
-                        .map(|selection_type| TerminalSelection::new(selection_type, point, side));
+                        .map(|selection_type| Selection::new(selection_type, point, side));
 
                     if let Some(selection) = selection {
                         self.events
@@ -2195,13 +2184,13 @@ impl Terminal {
             } else if self
                 .last_content
                 .mode
-                .contains(TerminalModes::ALT_SCREEN | TerminalModes::ALTERNATE_SCROLL)
+                .contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL)
                 && !e.shift
             {
                 self.write_to_pty(alt_scroll(scroll_lines));
             } else {
                 self.events
-                    .push_back(InternalEvent::Scroll(TerminalScroll::Delta(scroll_lines)));
+                    .push_back(InternalEvent::Scroll(Scroll::Delta(scroll_lines)));
             }
         }
     }
@@ -2240,18 +2229,14 @@ impl Terminal {
         }
     }
 
-    pub fn find_matches(
-        &self,
-        searcher: TerminalSearch,
-        cx: &Context<Self>,
-    ) -> Task<Vec<TerminalRange>> {
+    pub fn find_matches(&self, searcher: Search, cx: &Context<Self>) -> Task<Vec<Range>> {
         let term = self.term.clone();
         cx.background_spawn(async move {
             let mut searcher = searcher.into_alacritty();
             let term = term.lock();
 
             all_search_matches(&term, &mut searcher)
-                .map(TerminalRange::from_alacritty)
+                .map(Range::from_alacritty)
                 .collect()
         })
     }
@@ -2676,7 +2661,7 @@ fn all_search_matches<'a, T>(
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
 }
 
-fn content_index_for_mouse(pos: Point<Pixels>, terminal_bounds: &TerminalBounds) -> usize {
+fn content_index_for_mouse(pos: GpuiPoint<Pixels>, terminal_bounds: &TerminalBounds) -> usize {
     let col = (pos.x / terminal_bounds.cell_width()).round() as usize;
     let clamped_col = min(col, terminal_bounds.num_columns().saturating_sub(1));
     let row = (pos.y / terminal_bounds.line_height()).round() as usize;
@@ -2780,19 +2765,19 @@ mod tests {
 
     use super::*;
     use crate::{
-        IndexedCell, TerminalBounds, TerminalBuilder, TerminalCell, TerminalContent,
-        content_index_for_mouse, rgb_for_index,
+        Cell, Content, IndexedCell, TerminalBounds, TerminalBuilder, content_index_for_mouse,
+        rgb_for_index,
     };
     use alacritty_terminal::{
         index::{Column, Line, Point as AlacPoint},
-        selection::SelectionRange,
+        selection::SelectionRange as AlacSelectionRange,
         term::TermMode,
     };
     use async_channel::Receiver;
     use collections::HashMap;
     use gpui::MouseMoveEvent;
     use gpui::{
-        ClipboardItem, Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point,
+        ClipboardItem, Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels,
         TestAppContext, bounds, point, size,
     };
     use parking_lot::Mutex;
@@ -2886,7 +2871,7 @@ mod tests {
                         title_override: None,
                     },
                     HashMap::default(),
-                    CursorShape::default(),
+                    SettingsCursorShape::default(),
                     AlternateScroll::On,
                     None,
                     vec![],
@@ -2913,7 +2898,7 @@ mod tests {
 
         let terminal = cx.new(|cx| {
             TerminalBuilder::new_display_only(
-                CursorShape::default(),
+                SettingsCursorShape::default(),
                 AlternateScroll::On,
                 None,
                 0,
@@ -2948,7 +2933,7 @@ mod tests {
 
     fn ctrl_mouse_down_at(
         terminal: &mut Terminal,
-        position: Point<Pixels>,
+        position: GpuiPoint<Pixels>,
         cx: &mut Context<Terminal>,
     ) {
         let mouse_down = MouseDownEvent {
@@ -2963,7 +2948,7 @@ mod tests {
 
     fn ctrl_mouse_move_to(
         terminal: &mut Terminal,
-        position: Point<Pixels>,
+        position: GpuiPoint<Pixels>,
         cx: &mut Context<Terminal>,
     ) {
         let terminal_bounds = terminal.last_content.terminal_bounds.bounds;
@@ -2977,7 +2962,7 @@ mod tests {
 
     fn ctrl_mouse_up_at(
         terminal: &mut Terminal,
-        position: Point<Pixels>,
+        position: GpuiPoint<Pixels>,
         cx: &mut Context<Terminal>,
     ) {
         let mouse_up = MouseUpEvent {
@@ -3045,7 +3030,7 @@ mod tests {
                     None,
                     task::Shell::System,
                     HashMap::default(),
-                    CursorShape::default(),
+                    SettingsCursorShape::default(),
                     AlternateScroll::On,
                     None,
                     vec![],
@@ -3113,7 +3098,7 @@ mod tests {
                     None,
                     task::Shell::System,
                     HashMap::default(),
-                    CursorShape::default(),
+                    SettingsCursorShape::default(),
                     AlternateScroll::On,
                     None,
                     vec![],
@@ -3179,7 +3164,7 @@ mod tests {
                         title_override: None,
                     },
                     HashMap::default(),
-                    CursorShape::default(),
+                    SettingsCursorShape::default(),
                     AlternateScroll::On,
                     None,
                     Vec::new(),
@@ -3253,14 +3238,14 @@ mod tests {
             | TermMode::VI;
 
         let terminal_modes = terminal_modes_from_alacritty(alacritty_modes);
-        assert!(terminal_modes.contains(TerminalModes::APP_CURSOR));
-        assert!(terminal_modes.contains(TerminalModes::BRACKETED_PASTE));
-        assert!(terminal_modes.contains(TerminalModes::ALT_SCREEN));
-        assert!(terminal_modes.contains(TerminalModes::MOUSE_DRAG));
-        assert!(terminal_modes.intersects(TerminalModes::MOUSE_MODE));
-        assert!(terminal_modes.contains(TerminalModes::SGR_MOUSE));
-        assert!(terminal_modes.contains(TerminalModes::VI));
-        assert!(!terminal_modes.contains(TerminalModes::MOUSE_REPORT_CLICK));
+        assert!(terminal_modes.contains(Modes::APP_CURSOR));
+        assert!(terminal_modes.contains(Modes::BRACKETED_PASTE));
+        assert!(terminal_modes.contains(Modes::ALT_SCREEN));
+        assert!(terminal_modes.contains(Modes::MOUSE_DRAG));
+        assert!(terminal_modes.intersects(Modes::MOUSE_MODE));
+        assert!(terminal_modes.contains(Modes::SGR_MOUSE));
+        assert!(terminal_modes.contains(Modes::VI));
+        assert!(!terminal_modes.contains(Modes::MOUSE_REPORT_CLICK));
 
         let alacritty_modes = terminal_modes.to_alacritty();
         assert!(alacritty_modes.contains(TermMode::APP_CURSOR));
@@ -3274,7 +3259,7 @@ mod tests {
 
     #[test]
     fn test_terminal_selection_range_round_trip_alacritty_range() {
-        let alacritty_range = SelectionRange {
+        let alacritty_range = AlacSelectionRange {
             start: AlacPoint::new(Line(-2), Column(3)),
             end: AlacPoint::new(Line(4), Column(8)),
             is_block: true,
@@ -3283,12 +3268,12 @@ mod tests {
         let terminal_range = terminal_selection_range_from_alacritty(alacritty_range);
         assert_eq!(
             terminal_range,
-            TerminalSelectionRange {
-                start: TerminalPoint {
+            SelectionRange {
+                start: Point {
                     line: -2,
                     column: 3
                 },
-                end: TerminalPoint { line: 4, column: 8 },
+                end: Point { line: 4, column: 8 },
                 is_block: true,
             }
         );
@@ -3308,7 +3293,7 @@ mod tests {
                 cell_width: Pixels::from(cell_size),
                 line_height: Pixels::from(cell_size),
                 bounds: bounds(
-                    Point::default(),
+                    GpuiPoint::default(),
                     size(
                         Pixels::from(cell_size * (viewport_cells as f32)),
                         Pixels::from(cell_size * (viewport_cells as f32)),
@@ -3349,7 +3334,7 @@ mod tests {
             cell_width: Pixels::from(10.),
             line_height: Pixels::from(10.),
             bounds: bounds(
-                Point::default(),
+                GpuiPoint::default(),
                 size(Pixels::from(100.), Pixels::from(100.)),
             ),
         };
@@ -3379,7 +3364,7 @@ mod tests {
     async fn test_set_size_coalesces_pixel_only_changes(cx: &mut TestAppContext) {
         let builder = cx.update(|cx| {
             TerminalBuilder::new_display_only(
-                CursorShape::Block,
+                SettingsCursorShape::Block,
                 AlternateScroll::On,
                 None,
                 0,
@@ -3393,7 +3378,7 @@ mod tests {
             cell_width: Pixels::from(10.),
             line_height: Pixels::from(10.),
             bounds: bounds(
-                Point::default(),
+                GpuiPoint::default(),
                 size(Pixels::from(100.), Pixels::from(100.)),
             ),
         };
@@ -3434,24 +3419,21 @@ mod tests {
         cells
     }
 
-    fn convert_cells_to_content(
-        terminal_bounds: TerminalBounds,
-        cells: &[Vec<char>],
-    ) -> TerminalContent {
+    fn convert_cells_to_content(terminal_bounds: TerminalBounds, cells: &[Vec<char>]) -> Content {
         let mut ic = Vec::new();
 
         for (index, row) in cells.iter().enumerate() {
             for (cell_index, cell_char) in row.iter().enumerate() {
-                let mut cell = TerminalCell::default();
+                let mut cell = Cell::default();
                 cell.set_character(*cell_char);
                 ic.push(IndexedCell {
-                    point: TerminalPoint::new(index as i32, cell_index),
+                    point: Point::new(index as i32, cell_index),
                     cell,
                 });
             }
         }
 
-        TerminalContent {
+        Content {
             cells: ic,
             terminal_bounds,
             ..Default::default()
@@ -3462,7 +3444,7 @@ mod tests {
     async fn test_write_output_converts_lf_to_crlf(cx: &mut TestAppContext) {
         let terminal = cx.new(|cx| {
             TerminalBuilder::new_display_only(
-                CursorShape::default(),
+                SettingsCursorShape::default(),
                 AlternateScroll::On,
                 None,
                 0,
@@ -3509,7 +3491,7 @@ mod tests {
     async fn test_write_output_preserves_existing_crlf(cx: &mut TestAppContext) {
         let terminal = cx.new(|cx| {
             TerminalBuilder::new_display_only(
-                CursorShape::default(),
+                SettingsCursorShape::default(),
                 AlternateScroll::On,
                 None,
                 0,
@@ -3550,7 +3532,7 @@ mod tests {
     async fn test_write_output_preserves_bare_cr(cx: &mut TestAppContext) {
         let terminal = cx.new(|cx| {
             TerminalBuilder::new_display_only(
-                CursorShape::default(),
+                SettingsCursorShape::default(),
                 AlternateScroll::On,
                 None,
                 0,
@@ -3598,7 +3580,7 @@ mod tests {
 
         let terminal = cx.new(|cx| {
             TerminalBuilder::new_display_only(
-                CursorShape::default(),
+                SettingsCursorShape::default(),
                 AlternateScroll::On,
                 None,
                 0,
@@ -3814,7 +3796,7 @@ mod tests {
     mod perf {
         use super::super::*;
         use gpui::{
-            Entity, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualContext,
+            Entity, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualContext,
             VisualTestContext, point,
         };
         use util::default;
@@ -3840,7 +3822,7 @@ mod tests {
                         None,
                         task::Shell::System,
                         HashMap::default(),
-                        CursorShape::default(),
+                        SettingsCursorShape::default(),
                         AlternateScroll::On,
                         None,
                         settings.path_hyperlink_regexes.clone(),
@@ -3886,7 +3868,7 @@ mod tests {
                     terminal.scroll_wheel(
                         &ScrollWheelEvent {
                             position,
-                            delta: ScrollDelta::Lines(Point::new(0.0, lines as f32)),
+                            delta: ScrollDelta::Lines(GpuiPoint::new(0.0, lines as f32)),
                             ..default()
                         },
                         1.0,
@@ -3921,7 +3903,7 @@ mod tests {
                         px(line_height),
                         px(8.0),
                         Bounds {
-                            origin: Point::default(),
+                            origin: GpuiPoint::default(),
                             size: Size {
                                 width: px(800.0),
                                 height: px(height),
@@ -3947,7 +3929,7 @@ mod tests {
                         px(20.0),
                         px(cell_width),
                         Bounds {
-                            origin: Point::default(),
+                            origin: GpuiPoint::default(),
                             size: Size {
                                 width: px(width),
                                 height: px(400.0),

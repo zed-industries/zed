@@ -3,7 +3,7 @@ use std::borrow::Cow;
 /// The mappings defined in this file where created from reading the alacritty source
 use gpui::Keystroke;
 
-use crate::TerminalModes;
+use crate::Modes;
 
 #[derive(Debug, PartialEq, Eq)]
 enum TerminalModifiers {
@@ -46,7 +46,7 @@ impl TerminalModifiers {
 
 pub fn to_esc_str(
     keystroke: &Keystroke,
-    mode: TerminalModes,
+    mode: Modes,
     option_as_meta: bool,
 ) -> Option<Cow<'static, str>> {
     let modifiers = TerminalModifiers::new(keystroke);
@@ -66,42 +66,18 @@ pub fn to_esc_str(
         ("backspace", TerminalModifiers::Alt) => Some("\x1b\x7f"),
         ("backspace", TerminalModifiers::Shift) => Some("\x7f"),
         ("space", TerminalModifiers::Ctrl) => Some("\x00"),
-        ("home", TerminalModifiers::None) if mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1bOH")
-        }
-        ("home", TerminalModifiers::None) if !mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1b[H")
-        }
-        ("end", TerminalModifiers::None) if mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1bOF")
-        }
-        ("end", TerminalModifiers::None) if !mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1b[F")
-        }
-        ("up", TerminalModifiers::None) if mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1bOA")
-        }
-        ("up", TerminalModifiers::None) if !mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1b[A")
-        }
-        ("down", TerminalModifiers::None) if mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1bOB")
-        }
-        ("down", TerminalModifiers::None) if !mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1b[B")
-        }
-        ("right", TerminalModifiers::None) if mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1bOC")
-        }
-        ("right", TerminalModifiers::None) if !mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1b[C")
-        }
-        ("left", TerminalModifiers::None) if mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1bOD")
-        }
-        ("left", TerminalModifiers::None) if !mode.contains(TerminalModes::APP_CURSOR) => {
-            Some("\x1b[D")
-        }
+        ("home", TerminalModifiers::None) if mode.contains(Modes::APP_CURSOR) => Some("\x1bOH"),
+        ("home", TerminalModifiers::None) if !mode.contains(Modes::APP_CURSOR) => Some("\x1b[H"),
+        ("end", TerminalModifiers::None) if mode.contains(Modes::APP_CURSOR) => Some("\x1bOF"),
+        ("end", TerminalModifiers::None) if !mode.contains(Modes::APP_CURSOR) => Some("\x1b[F"),
+        ("up", TerminalModifiers::None) if mode.contains(Modes::APP_CURSOR) => Some("\x1bOA"),
+        ("up", TerminalModifiers::None) if !mode.contains(Modes::APP_CURSOR) => Some("\x1b[A"),
+        ("down", TerminalModifiers::None) if mode.contains(Modes::APP_CURSOR) => Some("\x1bOB"),
+        ("down", TerminalModifiers::None) if !mode.contains(Modes::APP_CURSOR) => Some("\x1b[B"),
+        ("right", TerminalModifiers::None) if mode.contains(Modes::APP_CURSOR) => Some("\x1bOC"),
+        ("right", TerminalModifiers::None) if !mode.contains(Modes::APP_CURSOR) => Some("\x1b[C"),
+        ("left", TerminalModifiers::None) if mode.contains(Modes::APP_CURSOR) => Some("\x1bOD"),
+        ("left", TerminalModifiers::None) if !mode.contains(Modes::APP_CURSOR) => Some("\x1b[D"),
         ("back", TerminalModifiers::None) => Some("\x7f"),
         ("insert", TerminalModifiers::None) => Some("\x1b[2~"),
         ("delete", TerminalModifiers::None) => Some("\x1b[3~"),
@@ -296,13 +272,13 @@ mod test {
             key: "🖖🏻".to_string(), //2 char string
             key_char: None,
         };
-        assert_eq!(to_esc_str(&ks, TerminalModes::NONE, false), None);
+        assert_eq!(to_esc_str(&ks, Modes::NONE, false), None);
     }
 
     #[test]
     fn test_application_mode() {
-        let app_cursor = TerminalModes::APP_CURSOR;
-        let none = TerminalModes::NONE;
+        let app_cursor = Modes::APP_CURSOR;
+        let none = Modes::NONE;
 
         let up = Keystroke::parse("up").unwrap();
         let down = Keystroke::parse("down").unwrap();
@@ -349,7 +325,7 @@ mod test {
     fn test_ctrl_codes() {
         let letters_lower = 'a'..='z';
         let letters_upper = 'A'..='Z';
-        let mode = TerminalModes::APP_CURSOR;
+        let mode = Modes::APP_CURSOR;
 
         for (lower, upper) in letters_lower.zip(letters_upper) {
             assert_eq!(
@@ -377,7 +353,7 @@ mod test {
             assert_eq!(
                 to_esc_str(
                     &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
-                    TerminalModes::NONE,
+                    Modes::NONE,
                     true
                 )
                 .unwrap(),
@@ -395,7 +371,7 @@ mod test {
             assert_ne!(
                 to_esc_str(
                     &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
-                    TerminalModes::NONE,
+                    Modes::NONE,
                     true
                 )
                 .unwrap(),
@@ -408,7 +384,7 @@ mod test {
     fn test_shift_enter_newline() {
         let shift_enter = Keystroke::parse("shift-enter").unwrap();
         let regular_enter = Keystroke::parse("enter").unwrap();
-        let mode = TerminalModes::NONE;
+        let mode = Modes::NONE;
 
         // Shift-enter should send line feed (newline)
         assert_eq!(to_esc_str(&shift_enter, mode, false), Some("\x0a".into()));

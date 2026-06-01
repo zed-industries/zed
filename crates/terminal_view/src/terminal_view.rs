@@ -11,8 +11,8 @@ use editor::{
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
     FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt, WeakEntity,
-    actions, anchored, deferred, div,
+    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
+    WeakEntity, actions, anchored, deferred, div,
 };
 use itertools::Itertools;
 use menu;
@@ -26,7 +26,7 @@ use settings::{
 use std::{
     any::Any,
     cmp,
-    ops::Range,
+    ops::Range as StdRange,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -34,10 +34,9 @@ use std::{
 };
 use task::TaskId;
 use terminal::{
-    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, PasteText, ScrollLineDown,
-    ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette,
-    TaskState, TaskStatus, Terminal, TerminalBounds, TerminalModes, TerminalPoint, TerminalRange,
-    TerminalSearch, ToggleViMode,
+    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, Paste, PasteText, Point, Range,
+    ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
+    Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -67,7 +66,7 @@ struct ImeState {
     marked_text: String,
 }
 
-fn viewport_line_for_point(point: TerminalPoint, display_offset: usize) -> Option<usize> {
+fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize> {
     let display_offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
     let line = point.line.saturating_add(display_offset);
     if line < 0 {
@@ -136,7 +135,7 @@ pub struct TerminalView {
     focus_handle: FocusHandle,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<(Entity<ContextMenu>, GpuiPoint<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
@@ -360,7 +359,7 @@ impl TerminalView {
     }
 
     /// Gets the current marked range (UTF-16).
-    pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
+    pub(crate) fn marked_text_range(&self) -> Option<StdRange<usize>> {
         self.ime_state
             .as_ref()
             .map(|state| 0..state.marked_text.encode_utf16().count())
@@ -497,7 +496,7 @@ impl TerminalView {
 
     pub fn deploy_context_menu(
         &mut self,
-        position: Point<Pixels>,
+        position: GpuiPoint<Pixels>,
         has_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -603,7 +602,7 @@ impl TerminalView {
             .read(cx)
             .last_content
             .mode
-            .contains(TerminalModes::ALT_SCREEN)
+            .contains(Modes::ALT_SCREEN)
         {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
@@ -685,7 +684,7 @@ impl TerminalView {
             .read(cx)
             .last_content
             .mode
-            .contains(TerminalModes::ALT_SCREEN)
+            .contains(Modes::ALT_SCREEN)
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -815,7 +814,7 @@ impl TerminalView {
                 .read(cx)
                 .last_content
                 .mode
-                .contains(TerminalModes::ALT_SCREEN)
+                .contains(Modes::ALT_SCREEN)
         {
             return true;
         }
@@ -939,55 +938,55 @@ impl TerminalView {
         let mode = self.terminal.read(cx).last_content.mode;
         dispatch_context.set(
             "screen",
-            if mode.contains(TerminalModes::ALT_SCREEN) {
+            if mode.contains(Modes::ALT_SCREEN) {
                 "alt"
             } else {
                 "normal"
             },
         );
 
-        if mode.contains(TerminalModes::APP_CURSOR) {
+        if mode.contains(Modes::APP_CURSOR) {
             dispatch_context.add("DECCKM");
         }
-        if mode.contains(TerminalModes::APP_KEYPAD) {
+        if mode.contains(Modes::APP_KEYPAD) {
             dispatch_context.add("DECPAM");
         } else {
             dispatch_context.add("DECPNM");
         }
-        if mode.contains(TerminalModes::SHOW_CURSOR) {
+        if mode.contains(Modes::SHOW_CURSOR) {
             dispatch_context.add("DECTCEM");
         }
-        if mode.contains(TerminalModes::LINE_WRAP) {
+        if mode.contains(Modes::LINE_WRAP) {
             dispatch_context.add("DECAWM");
         }
-        if mode.contains(TerminalModes::ORIGIN) {
+        if mode.contains(Modes::ORIGIN) {
             dispatch_context.add("DECOM");
         }
-        if mode.contains(TerminalModes::INSERT) {
+        if mode.contains(Modes::INSERT) {
             dispatch_context.add("IRM");
         }
         //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
-        if mode.contains(TerminalModes::LINE_FEED_NEW_LINE) {
+        if mode.contains(Modes::LINE_FEED_NEW_LINE) {
             dispatch_context.add("LNM");
         }
-        if mode.contains(TerminalModes::FOCUS_IN_OUT) {
+        if mode.contains(Modes::FOCUS_IN_OUT) {
             dispatch_context.add("report_focus");
         }
-        if mode.contains(TerminalModes::ALTERNATE_SCROLL) {
+        if mode.contains(Modes::ALTERNATE_SCROLL) {
             dispatch_context.add("alternate_scroll");
         }
-        if mode.contains(TerminalModes::BRACKETED_PASTE) {
+        if mode.contains(Modes::BRACKETED_PASTE) {
             dispatch_context.add("bracketed_paste");
         }
-        if mode.intersects(TerminalModes::MOUSE_MODE) {
+        if mode.intersects(Modes::MOUSE_MODE) {
             dispatch_context.add("any_mouse_reporting");
         }
         {
-            let mouse_reporting = if mode.contains(TerminalModes::MOUSE_REPORT_CLICK) {
+            let mouse_reporting = if mode.contains(Modes::MOUSE_REPORT_CLICK) {
                 "click"
-            } else if mode.contains(TerminalModes::MOUSE_DRAG) {
+            } else if mode.contains(Modes::MOUSE_DRAG) {
                 "drag"
-            } else if mode.contains(TerminalModes::MOUSE_MOTION) {
+            } else if mode.contains(Modes::MOUSE_MOTION) {
                 "motion"
             } else {
                 "off"
@@ -995,9 +994,9 @@ impl TerminalView {
             dispatch_context.set("mouse_reporting", mouse_reporting);
         }
         {
-            let format = if mode.contains(TerminalModes::SGR_MOUSE) {
+            let format = if mode.contains(Modes::SGR_MOUSE) {
                 "sgr"
-            } else if mode.contains(TerminalModes::UTF8_MOUSE) {
+            } else if mode.contains(Modes::UTF8_MOUSE) {
                 "utf8"
             } else {
                 "normal"
@@ -1176,15 +1175,15 @@ fn subscribe_for_terminal_events(
     vec![terminal_subscription, terminal_events_subscription]
 }
 
-fn regex_search_for_query(query: &SearchQuery) -> Option<TerminalSearch> {
+fn regex_search_for_query(query: &SearchQuery) -> Option<Search> {
     let str = query.as_str();
     if query.is_regex() {
         if str == "." {
             return None;
         }
-        TerminalSearch::new(str)
+        Search::new(str)
     } else {
-        TerminalSearch::new(&regex::escape(str))
+        Search::new(&regex::escape(str))
     }
 }
 
@@ -1893,7 +1892,7 @@ impl SerializableItem for TerminalView {
 }
 
 impl SearchableItem for TerminalView {
-    type Match = TerminalRange;
+    type Match = Range;
 
     fn supported_options(&self) -> SearchOptions {
         SearchOptions {
@@ -2178,12 +2177,7 @@ mod tests {
             });
         });
         terminal.read_with(&cx, |terminal, _| {
-            assert!(
-                !terminal
-                    .last_content
-                    .mode
-                    .contains(TerminalModes::ALT_SCREEN)
-            );
+            assert!(!terminal.last_content.mode.contains(Modes::ALT_SCREEN));
             assert_eq!(terminal.last_content.display_offset, 0);
         });
 
@@ -2225,12 +2219,7 @@ mod tests {
             });
         });
         terminal.read_with(&cx, |terminal, _| {
-            assert!(
-                terminal
-                    .last_content
-                    .mode
-                    .contains(TerminalModes::ALT_SCREEN)
-            );
+            assert!(terminal.last_content.mode.contains(Modes::ALT_SCREEN));
         });
 
         cx.simulate_keystrokes("shift-up");
