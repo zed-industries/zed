@@ -108,7 +108,8 @@ zlog.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 ctor.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["bench"] }
+gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }

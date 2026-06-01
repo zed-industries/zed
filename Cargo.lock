@@ -5797,6 +5797,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "gpui_platform",
  "indoc",
  "itertools 0.14.0",
  "language",

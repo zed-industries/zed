@@ -29,7 +29,7 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
-#[cfg(feature = "input-latency-histogram")]
+#[cfg(any(feature = "input-latency-histogram", feature = "bench"))]
 use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -116,6 +116,10 @@ struct WindowInvalidatorInner {
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
     pub update_count: usize,
+    #[cfg(feature = "bench")]
+    pub frame_dirty_at: Option<Instant>,
+    #[cfg(feature = "bench")]
+    pub frame_invalidations: u64,
 }
 
 #[derive(Clone)]
@@ -131,6 +135,10 @@ impl WindowInvalidator {
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
+                #[cfg(feature = "bench")]
+                frame_dirty_at: None,
+                #[cfg(feature = "bench")]
+                frame_invalidations: 0,
             })),
         }
     }
@@ -140,6 +148,8 @@ impl WindowInvalidator {
         inner.update_count += 1;
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
+            #[cfg(feature = "bench")]
+            Self::record_frame_dirty(&mut inner);
             inner.dirty = true;
             cx.push_effect(Effect::Notify { emitter: entity });
             true
@@ -157,6 +167,8 @@ impl WindowInvalidator {
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
+            #[cfg(feature = "bench")]
+            Self::record_frame_dirty(&mut inner);
         }
     }
 
@@ -166,6 +178,21 @@ impl WindowInvalidator {
 
     pub fn update_count(&self) -> usize {
         self.inner.borrow().update_count
+    }
+
+    #[cfg(feature = "bench")]
+    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
+        inner.frame_dirty_at.get_or_insert_with(Instant::now);
+        inner.frame_invalidations += 1;
+    }
+
+    #[cfg(feature = "bench")]
+    fn take_frame_latency_start(&self) -> (Option<Instant>, u64) {
+        let mut inner = self.inner.borrow_mut();
+        (
+            inner.frame_dirty_at.take(),
+            mem::take(&mut inner.frame_invalidations),
+        )
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -1008,8 +1035,8 @@ pub struct Window {
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
-    #[cfg(feature = "input-latency-histogram")]
-    input_latency_tracker: InputLatencyTracker,
+    #[cfg(any(feature = "input-latency-histogram", feature = "bench"))]
+    latency_tracker: LatencyTracker,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1076,6 +1103,63 @@ impl InputRateTracker {
     fn prune_old_timestamps(&mut self, now: Instant) {
         self.timestamps
             .retain(|&t| now.duration_since(t) <= self.window);
+    }
+}
+
+#[cfg(any(feature = "input-latency-histogram", feature = "bench"))]
+struct LatencyTracker {
+    #[cfg(feature = "input-latency-histogram")]
+    input: InputLatencyTracker,
+    #[cfg(feature = "bench")]
+    frame: FrameLatencyTracker,
+}
+
+#[cfg(any(feature = "input-latency-histogram", feature = "bench"))]
+impl LatencyTracker {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            #[cfg(feature = "input-latency-histogram")]
+            input: InputLatencyTracker::new()?,
+            #[cfg(feature = "bench")]
+            frame: FrameLatencyTracker::new()?,
+        })
+    }
+
+    #[cfg(feature = "input-latency-histogram")]
+    fn record_input(&mut self, dispatch_time: Instant) {
+        self.input.record_input(dispatch_time);
+    }
+
+    #[cfg(feature = "input-latency-histogram")]
+    fn record_mid_draw_input(&mut self) {
+        self.input.record_mid_draw_input();
+    }
+
+    #[cfg(feature = "input-latency-histogram")]
+    fn record_frame_presented(&mut self) {
+        self.input.record_frame_presented();
+    }
+
+    #[cfg(feature = "input-latency-histogram")]
+    fn input_snapshot(&self) -> InputLatencySnapshot {
+        self.input.snapshot()
+    }
+
+    #[cfg(feature = "bench")]
+    fn record_frame_drawn(
+        &mut self,
+        dirty_at: Option<Instant>,
+        invalidations: u64,
+        draw_started_at: Instant,
+        draw_finished_at: Instant,
+    ) {
+        self.frame
+            .record_drawn(dirty_at, invalidations, draw_started_at, draw_finished_at);
+    }
+
+    #[cfg(feature = "bench")]
+    fn frame_snapshot(&self) -> FrameLatencySnapshot {
+        self.frame.snapshot()
     }
 }
 
@@ -1157,6 +1241,69 @@ impl InputLatencyTracker {
             latency_histogram: self.latency_histogram.clone(),
             events_per_frame_histogram: self.events_per_frame_histogram.clone(),
             mid_draw_events_dropped: self.mid_draw_events_dropped,
+        }
+    }
+}
+
+/// A point-in-time snapshot of frame latency histograms for benchmark reporting.
+#[cfg(feature = "bench")]
+#[derive(Clone)]
+pub struct FrameLatencySnapshot {
+    /// Time from the first invalidation in a frame to the end of `Window::draw`, in nanoseconds.
+    pub dirty_to_draw_histogram: Histogram<u64>,
+    /// Time spent inside `Window::draw`, in nanoseconds.
+    pub draw_histogram: Histogram<u64>,
+    /// Number of invalidations coalesced into each drawn frame.
+    pub invalidations_per_frame_histogram: Histogram<u64>,
+}
+
+#[cfg(feature = "bench")]
+struct FrameLatencyTracker {
+    dirty_to_draw_histogram: Histogram<u64>,
+    draw_histogram: Histogram<u64>,
+    invalidations_per_frame_histogram: Histogram<u64>,
+}
+
+#[cfg(feature = "bench")]
+impl FrameLatencyTracker {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            dirty_to_draw_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create dirty-to-draw histogram: {e}"))?,
+            draw_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create draw histogram: {e}"))?,
+            invalidations_per_frame_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create invalidations-per-frame histogram: {e}"))?,
+        })
+    }
+
+    fn record_drawn(
+        &mut self,
+        dirty_at: Option<Instant>,
+        invalidations: u64,
+        draw_started_at: Instant,
+        draw_finished_at: Instant,
+    ) {
+        if let Some(dirty_at) = dirty_at {
+            self.dirty_to_draw_histogram
+                .record(draw_finished_at.duration_since(dirty_at).as_nanos() as u64)
+                .ok();
+        }
+        self.draw_histogram
+            .record(draw_finished_at.duration_since(draw_started_at).as_nanos() as u64)
+            .ok();
+        if invalidations > 0 {
+            self.invalidations_per_frame_histogram
+                .record(invalidations)
+                .ok();
+        }
+    }
+
+    fn snapshot(&self) -> FrameLatencySnapshot {
+        FrameLatencySnapshot {
+            dirty_to_draw_histogram: self.dirty_to_draw_histogram.clone(),
+            draw_histogram: self.draw_histogram.clone(),
+            invalidations_per_frame_histogram: self.invalidations_per_frame_histogram.clone(),
         }
     }
 }
@@ -1702,8 +1849,8 @@ impl Window {
             hovered,
             needs_present,
             input_rate_tracker,
-            #[cfg(feature = "input-latency-histogram")]
-            input_latency_tracker: InputLatencyTracker::new()?,
+            #[cfg(any(feature = "input-latency-histogram", feature = "bench"))]
+            latency_tracker: LatencyTracker::new()?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -2569,6 +2716,11 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        #[cfg(feature = "bench")]
+        let draw_started_at = Instant::now();
+        #[cfg(feature = "bench")]
+        let (dirty_at, invalidations) = self.invalidator.take_frame_latency_start();
+
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
         let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
@@ -2662,6 +2814,14 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
 
+        #[cfg(feature = "bench")]
+        self.latency_tracker.record_frame_drawn(
+            dirty_at,
+            invalidations,
+            draw_started_at,
+            Instant::now(),
+        );
+
         ArenaClearNeeded::new(&cx.element_arena)
     }
 
@@ -2688,10 +2848,10 @@ impl Window {
     }
 
     #[profiling::function]
-    fn present(&mut self) {
+    pub(crate) fn present(&mut self) {
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "input-latency-histogram")]
-        self.input_latency_tracker.record_frame_presented();
+        self.latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
     }
@@ -2699,7 +2859,13 @@ impl Window {
     /// Returns a snapshot of the current input-latency histograms.
     #[cfg(feature = "input-latency-histogram")]
     pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
-        self.input_latency_tracker.snapshot()
+        self.latency_tracker.input_snapshot()
+    }
+
+    /// Returns a snapshot of the current frame-latency histograms.
+    #[cfg(feature = "bench")]
+    pub fn frame_latency_snapshot(&self) -> FrameLatencySnapshot {
+        self.latency_tracker.frame_snapshot()
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
@@ -4553,9 +4719,9 @@ impl Window {
             self.input_rate_tracker.borrow_mut().record_input();
             #[cfg(feature = "input-latency-histogram")]
             if self.invalidator.not_drawing() {
-                self.input_latency_tracker.record_input(dispatch_time);
+                self.latency_tracker.record_input(dispatch_time);
             } else {
-                self.input_latency_tracker.record_mid_draw_input();
+                self.latency_tracker.record_mid_draw_input();
             }
         }
 

@@ -1,14 +1,193 @@
-use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc};
+use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow};
+use scheduler::Instant;
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
-    Entity, EntityId, Focusable, ForegroundExecutor, Global, IntoElement, Render, Reservation,
-    Task, TestDispatcher, TestPlatform, VisualContext, Window, WindowBounds, WindowHandle,
-    WindowOptions,
-    app::{GpuiBorrow, GpuiMode},
+    Entity, EntityId, Focusable, ForegroundExecutor, FrameLatencySnapshot, Global, Platform,
+    Render, Reservation, Task, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    app::GpuiBorrow,
 };
+
+const FRAME_BUDGET_NANOS: u128 = 16_666_667;
+
+/// A small report produced by GPUI benchmarks.
+#[derive(Clone, Default)]
+pub struct BenchReport {
+    measurements: Rc<RefCell<Vec<BenchMeasurementReport>>>,
+}
+
+impl BenchReport {
+    fn record_sample(&self, name: &'static str, foreground_time: Duration) {
+        let missed_frames = missed_frames(foreground_time);
+        self.record_summary(
+            name,
+            1,
+            foreground_time.as_nanos(),
+            foreground_time,
+            missed_frames,
+            missed_frames,
+        );
+    }
+
+    fn record_frame_latency_delta(
+        &self,
+        before: &FrameLatencySnapshot,
+        after: &FrameLatencySnapshot,
+    ) {
+        let mut dirty_to_draw = after.dirty_to_draw_histogram.clone();
+        dirty_to_draw.subtract(&before.dirty_to_draw_histogram).ok();
+        self.record_histogram_summary("bench_renderer dirty-to-draw", &dirty_to_draw);
+
+        let mut draw = after.draw_histogram.clone();
+        draw.subtract(&before.draw_histogram).ok();
+        self.record_histogram_summary("bench_renderer draw", &draw);
+    }
+
+    fn record_histogram_summary(
+        &self,
+        name: &'static str,
+        histogram: &hdrhistogram::Histogram<u64>,
+    ) {
+        let samples = histogram.len();
+        if samples == 0 {
+            return;
+        }
+
+        let total_nanos = (histogram.mean() * samples as f64) as u128;
+        let max = Duration::from_nanos(histogram.max());
+        self.record_summary(
+            name,
+            samples,
+            total_nanos,
+            max,
+            total_missed_frames(histogram),
+            missed_frames(max),
+        );
+    }
+
+    fn record_summary(
+        &self,
+        name: &'static str,
+        samples: u64,
+        total_foreground_nanos: u128,
+        max_foreground_time: Duration,
+        total_missed_frames: u64,
+        max_missed_frames: u64,
+    ) {
+        let mut measurements = self.measurements.borrow_mut();
+        match measurements
+            .iter_mut()
+            .find(|measurement| measurement.name == name)
+        {
+            Some(measurement) => measurement.record_summary(
+                samples,
+                total_foreground_nanos,
+                max_foreground_time,
+                total_missed_frames,
+                max_missed_frames,
+            ),
+            None => {
+                let mut measurement = BenchMeasurementReport::new(name);
+                measurement.record_summary(
+                    samples,
+                    total_foreground_nanos,
+                    max_foreground_time,
+                    total_missed_frames,
+                    max_missed_frames,
+                );
+                measurements.push(measurement);
+            }
+        }
+    }
+
+    /// Prints this report to stderr.
+    pub fn print(&self, benchmark_name: Option<&'static str>) {
+        let measurements = self.measurements.borrow();
+        if measurements.is_empty() {
+            return;
+        }
+
+        let benchmark_name = benchmark_name.unwrap_or("unknown benchmark");
+        eprintln!("GPUI bench report (all observed iterations): {benchmark_name}");
+        eprintln!("  note: includes Criterion warmup/calibration");
+        for measurement in measurements.iter() {
+            eprintln!(
+                "  {}: foreground mean {}, max {}, missed frames total {}, max {}",
+                measurement.name,
+                format_duration(measurement.mean_foreground_time()),
+                format_duration(measurement.max_foreground_time),
+                measurement.total_missed_frames,
+                measurement.max_missed_frames,
+            );
+        }
+    }
+}
+
+struct BenchMeasurementReport {
+    name: &'static str,
+    samples: u64,
+    total_foreground_nanos: u128,
+    max_foreground_time: Duration,
+    total_missed_frames: u64,
+    max_missed_frames: u64,
+}
+
+impl BenchMeasurementReport {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            samples: 0,
+            total_foreground_nanos: 0,
+            max_foreground_time: Duration::ZERO,
+            total_missed_frames: 0,
+            max_missed_frames: 0,
+        }
+    }
+
+    fn record_summary(
+        &mut self,
+        samples: u64,
+        total_foreground_nanos: u128,
+        max_foreground_time: Duration,
+        total_missed_frames: u64,
+        max_missed_frames: u64,
+    ) {
+        self.samples += samples;
+        self.total_foreground_nanos += total_foreground_nanos;
+        self.max_foreground_time = self.max_foreground_time.max(max_foreground_time);
+        self.total_missed_frames += total_missed_frames;
+        self.max_missed_frames = self.max_missed_frames.max(max_missed_frames);
+    }
+
+    fn mean_foreground_time(&self) -> Duration {
+        Duration::from_nanos((self.total_foreground_nanos / self.samples as u128) as u64)
+    }
+}
+
+fn total_missed_frames(histogram: &hdrhistogram::Histogram<u64>) -> u64 {
+    histogram
+        .iter_recorded()
+        .map(|value| {
+            missed_frames(Duration::from_nanos(value.value_iterated_to())) * value.count_at_value()
+        })
+        .sum()
+}
+
+fn missed_frames(foreground_time: Duration) -> u64 {
+    let foreground_nanos = foreground_time.as_nanos();
+    if foreground_nanos <= FRAME_BUDGET_NANOS {
+        return 0;
+    }
+
+    let over_budget_nanos = foreground_nanos - FRAME_BUDGET_NANOS;
+    ((over_budget_nanos + FRAME_BUDGET_NANOS - 1) / FRAME_BUDGET_NANOS) as u64
+}
+
+fn format_duration(duration: Duration) -> String {
+    format!("{:.3}ms", duration.as_secs_f64() * 1000.)
+}
 
 /// A GPUI app context for Criterion benchmarks.
 ///
@@ -21,50 +200,51 @@ pub struct BenchAppContext<'a, 'measurement> {
     app: Rc<AppCell>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    dispatcher: TestDispatcher,
     benchmark_name: Option<&'static str>,
     bencher: Rc<RefCell<Option<&'a mut criterion::Bencher<'measurement>>>>,
+    report: BenchReport,
 }
 
 impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
-    /// Creates a new benchmark app context.
+    /// Creates a new benchmark app context backed by the provided platform.
     pub fn new(
+        platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
         bencher: &'a mut criterion::Bencher<'measurement>,
     ) -> Self {
-        Self::with_seed(benchmark_name, 0, bencher)
+        Self::build(platform, benchmark_name, bencher, BenchReport::default())
     }
 
-    /// Creates a new benchmark app context with the provided scheduler seed.
-    pub fn with_seed(
+    /// Creates a new benchmark app context backed by the provided platform.
+    #[doc(hidden)]
+    pub fn new_with_platform_and_report(
+        platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
-        seed: u64,
         bencher: &'a mut criterion::Bencher<'measurement>,
+        report: BenchReport,
     ) -> Self {
-        Self::build(TestDispatcher::new(seed), benchmark_name, bencher)
+        Self::build(platform, benchmark_name, bencher, report)
     }
 
     fn build(
-        dispatcher: TestDispatcher,
+        platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
         bencher: &'a mut criterion::Bencher<'measurement>,
+        report: BenchReport,
     ) -> Self {
-        let dispatcher = Arc::new(dispatcher);
-        let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
-        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        let background_executor = platform.background_executor();
+        let foreground_executor = platform.foreground_executor();
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let app = App::new_app(platform, asset_source, http_client);
-        app.borrow_mut().mode = GpuiMode::test();
 
         Self {
             app,
             background_executor,
             foreground_executor,
-            dispatcher: (*dispatcher).clone(),
             benchmark_name,
             bencher: Rc::new(RefCell::new(Some(bencher))),
+            report,
         }
     }
 
@@ -81,11 +261,6 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Returns the foreground executor used by this benchmark app.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
-    }
-
-    /// Runs pending scheduled work until the benchmark app is idle.
-    pub fn run_until_idle(&self) {
-        self.dispatcher.run_until_parked();
     }
 
     /// Updates the app and flushes synchronous GPUI effects afterward.
@@ -106,16 +281,21 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// benchmark app context so it can update GPUI state.
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
-        let mut benchmark = || benchmark(self);
+        let mut benchmark = || {
+            let started_at = Instant::now();
+            benchmark(self);
+            self.report
+                .record_sample("bench_iter", started_at.elapsed());
+        };
         bencher.iter(&mut benchmark);
         self.replace_bencher(bencher);
     }
 
-    /// Measures the foreground render pipeline for a GPUI entity.
+    /// Measures the foreground render pipeline for a GPUI entity's current window.
     ///
-    /// Each iteration runs `update` against the entity in its current window,
-    /// lets GPUI flush synchronous effects from that update, then renders the
-    /// entity by running layout, prepaint, and paint.
+    /// Each iteration runs `update` against the entity in its current window, then
+    /// measures a normal `Window::draw` for that window. The entity should be part
+    /// of the window's render tree, such as the root view or a child of it.
     pub fn bench_renderer<V>(
         &mut self,
         view: Entity<V>,
@@ -124,17 +304,20 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         V: 'static + Render,
     {
         let bencher = self.take_bencher("bench_renderer");
+        let report = self.report.clone();
         let mut benchmark = || {
+            let before = self
+                .with_window(view.entity_id(), |window, _| {
+                    window.frame_latency_snapshot()
+                })
+                .expect("cannot benchmark renderer for entity without a current window");
             self.with_window(view.entity_id(), |window, cx| {
                 view.update(cx, |view, cx| update(view, window, cx));
-            })
-            .expect("cannot benchmark renderer for entity without a current window");
-
-            self.with_window(view.entity_id(), |window, cx| {
-                let mut element = view.clone().into_any_element();
-                let _ = element.request_layout(window, cx);
-                let _ = element.prepaint(window, cx);
-                element.paint(window, cx);
+                let arena_clear_needed = window.draw(cx);
+                window.present();
+                arena_clear_needed.clear();
+                let after = window.frame_latency_snapshot();
+                report.record_frame_latency_delta(&before, &after);
             })
             .expect("cannot benchmark renderer for entity without a current window");
         };
@@ -160,7 +343,6 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             window
         };
 
-        self.run_until_idle();
         BenchWindowContext {
             cx: self.clone(),
             window,
@@ -183,12 +365,9 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs GPUI benchmark teardown.
     pub fn teardown(mut self) {
-        self.run_until_idle();
         self.update(|cx| {
-            cx.background_executor().forbid_parking();
             cx.quit();
         });
-        self.run_until_idle();
     }
 }
 
@@ -307,11 +486,6 @@ impl<'a, 'measurement> BenchWindowContext<'a, 'measurement> {
         self.cx
             .update_window(self.window, |_, window, cx| update(window, cx))
             .expect("benchmark window was unexpectedly closed")
-    }
-
-    /// Runs pending scheduled work until the benchmark app is idle.
-    pub fn run_until_idle(&self) {
-        self.cx.run_until_idle();
     }
 }
 

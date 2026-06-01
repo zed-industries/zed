@@ -99,7 +99,7 @@ fn editor_render(cx: &mut BenchAppContext) {
 
     let mut window = cx.add_empty_window();
     let editor = window.update(|window, cx| {
-        let editor = cx.new(|cx| {
+        let editor = window.replace_root(cx, |window, cx| {
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
             editor.set_style(editor::EditorStyle::default(), window, cx);
             editor
