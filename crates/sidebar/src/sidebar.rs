@@ -726,6 +726,10 @@ pub struct Sidebar {
     /// transitions can be detected even when the group is collapsed (and
     /// thread entries are not present in the list).
     live_thread_statuses: HashMap<acp::SessionId, (AgentThreadStatus, ThreadId)>,
+    /// Remembers whether each draft last rendered as empty or with content so
+    /// that when a draft that was empty gains content again, we refresh
+    /// its interaction time.
+    draft_kinds: HashMap<ThreadId, DraftKind>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -848,6 +852,7 @@ impl Sidebar {
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
             live_thread_statuses: HashMap::new(),
+            draft_kinds: HashMap::new(),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -1921,6 +1926,7 @@ impl Sidebar {
             self.entry_shapes(multi_workspace.read(cx)).collect();
 
         self.rebuild_contents(cx);
+        self.refresh_refilled_draft_times(cx);
         self.refresh_draft_editor_observations(cx);
 
         // Preserve measurements for unchanged entries so sticky headers do not flicker.
@@ -1983,6 +1989,44 @@ impl Sidebar {
             ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
             ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
         })
+    }
+
+    /// Detects drafts that just went from empty back to having content and
+    /// refreshes their interaction time to now, so a re-filled draft sorts to
+    /// the top of the list instead of falling back to its original creation time.
+    fn refresh_refilled_draft_times(&mut self, cx: &mut Context<Self>) {
+        let mut new_kinds: HashMap<ThreadId, DraftKind> = HashMap::new();
+        let mut refilled: Vec<ThreadId> = Vec::new();
+
+        for entry in &self.contents.entries {
+            let ListEntry::Thread(thread) = entry else {
+                continue;
+            };
+            let Some(kind) = thread.draft else {
+                continue;
+            };
+            let thread_id = thread.metadata.thread_id;
+
+            if kind == DraftKind::WithContent
+                && self.draft_kinds.get(&thread_id) == Some(&DraftKind::Empty)
+            {
+                refilled.push(thread_id);
+            }
+            new_kinds.insert(thread_id, kind);
+        }
+        self.draft_kinds = new_kinds;
+
+        if refilled.is_empty() {
+            return;
+        }
+
+        let now = Utc::now();
+
+        ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            for thread_id in refilled {
+                store.update_interacted_at(&thread_id, now, store_cx);
+            }
+        });
     }
 
     /// Re-establishes subscriptions to each visible draft's message editor
