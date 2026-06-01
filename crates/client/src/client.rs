@@ -333,7 +333,11 @@ impl Status {
 struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
+    /// Bumped each time the cloud websocket finishes its handshake. Starts at `0` so
+    /// subscribers can distinguish "no connection yet" from a real reconnect.
+    cloud_connection_id: (watch::Sender<u64>, watch::Receiver<u64>),
     _reconnect_task: Option<Task<()>>,
+    _cloud_connection_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -434,7 +438,9 @@ impl Default for ClientState {
         Self {
             credentials: None,
             status: watch::channel_with(Status::SignedOut),
+            cloud_connection_id: watch::channel_with(0),
             _reconnect_task: None,
+            _cloud_connection_task: None,
         }
     }
 }
@@ -607,6 +613,7 @@ impl Client {
     pub fn teardown(&self) {
         let mut state = self.state.write();
         state._reconnect_task.take();
+        state._cloud_connection_task.take();
         self.handler_set.lock().clear();
         self.peer.teardown();
     }
@@ -663,6 +670,14 @@ impl Client {
 
     pub fn status(&self) -> watch::Receiver<Status> {
         self.state.read().status.1.clone()
+    }
+
+    /// Watches successful cloud websocket reconnections.
+    ///
+    /// The value is bumped each time the websocket handshake completes. The
+    /// initial `0` means no reconnection yet.
+    pub fn cloud_connection_id(&self) -> watch::Receiver<u64> {
+        self.state.read().cloud_connection_id.1.clone()
     }
 
     fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncApp) {
@@ -724,6 +739,7 @@ impl Client {
             Status::SignedOut | Status::UpgradeRequired => {
                 self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
+                state._cloud_connection_task.take();
             }
             _ => {}
         }
@@ -957,28 +973,62 @@ impl Client {
         }
     }
 
-    /// Establishes a WebSocket connection with Cloud for receiving updates from the server.
-    async fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) -> Result<()> {
+    /// Maintains a WebSocket connection with Cloud for receiving updates from the server.
+    ///
+    /// The connection is re-established with exponential backoff if it drops or fails to
+    /// establish.
+    fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) {
+        let this = self.clone();
+        let task = cx.spawn(async move |cx| {
+            #[cfg(any(test, feature = "test-support"))]
+            let mut rng = StdRng::seed_from_u64(0);
+            #[cfg(not(any(test, feature = "test-support")))]
+            let mut rng = StdRng::from_os_rng();
+
+            let mut delay = INITIAL_RECONNECTION_DELAY;
+            loop {
+                match Self::run_cloud_connection(&this, cx).await {
+                    Ok(()) => {
+                        log::info!("cloud websocket disconnected, will reconnect");
+                        delay = INITIAL_RECONNECTION_DELAY;
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "cloud websocket connect failed: {err:#}; retrying in {delay:?}"
+                        );
+                    }
+                }
+
+                let jitter = Duration::from_millis(rng.random_range(0..delay.as_millis() as u64));
+                cx.background_executor().timer(delay + jitter).await;
+                delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
+            }
+        });
+        self.state.write()._cloud_connection_task = Some(task);
+    }
+
+    /// Runs a single attempt of the cloud websocket connection, returning once the connection
+    /// closes (cleanly or otherwise) or fails to establish.
+    async fn run_cloud_connection(self: &Arc<Self>, cx: &mut AsyncApp) -> Result<()> {
         let connect_task = cx.update({
             let cloud_client = self.cloud_client.clone();
             move |cx| cloud_client.connect(cx)
         })?;
         let connection = connect_task.await?;
 
-        let (mut messages, task) = cx.update(|cx| connection.spawn(cx));
-        task.detach();
+        let (mut messages, _cloud_io_task) = cx.update(|cx| connection.spawn(cx));
 
-        cx.spawn({
-            let this = self.clone();
-            async move |cx| {
-                while let Some(message) = messages.next().await {
-                    if let Some(message) = message.log_err() {
-                        this.handle_message_to_client(message, cx);
-                    }
-                }
+        {
+            let mut state = self.state.write();
+            let mut cloud_connection_id = state.cloud_connection_id.0.borrow_mut();
+            *cloud_connection_id = cloud_connection_id.saturating_add(1);
+        }
+
+        while let Some(message) = messages.next().await {
+            if let Some(message) = message.log_err() {
+                self.handle_message_to_client(message, cx);
             }
-        })
-        .detach();
+        }
 
         Ok(())
     }
@@ -1009,7 +1059,7 @@ impl Client {
 
         let credentials = self.sign_in(try_provider, cx).await?;
 
-        self.connect_to_cloud(cx).await.log_err();
+        self.connect_to_cloud(cx);
 
         cx.update(move |cx| {
             cx.spawn({

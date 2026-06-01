@@ -179,9 +179,12 @@ impl FromStr for Oid {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        libgit::Oid::from_str(s)
-            .context("parsing git oid")
-            .map(Self)
+        let oid = if s.len() == 64 {
+            libgit::Oid::from_str_ext(s, libgit::ObjectFormat::Sha256)
+        } else {
+            libgit::Oid::from_str_ext(s, libgit::ObjectFormat::Sha1)
+        };
+        oid.context("parsing git oid").map(Self)
     }
 }
 
@@ -218,7 +221,7 @@ impl<'de> Deserialize<'de> for Oid {
 
 impl Default for Oid {
     fn default() -> Self {
-        Self(libgit::Oid::zero())
+        Self(libgit::Oid::ZERO_SHA1)
     }
 }
 

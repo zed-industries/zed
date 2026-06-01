@@ -11,11 +11,13 @@ pub use test_scheduler::*;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use std::{
+    any::Any,
     future::Future,
     panic::Location,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    thread,
     time::Duration,
 };
 
@@ -82,7 +84,11 @@ pub trait Scheduler: Send + Sync {
         timeout: Option<Duration>,
     ) -> bool;
 
-    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>);
+    /// Schedule a runnable on the local (session-pinned) queue for `session_id`.
+    /// Runnables scheduled here run in order on whichever thread drains the
+    /// session — the main thread for ordinary sessions, or a dedicated OS
+    /// thread for sessions created via `spawn_dedicated_thread`.
+    fn schedule_local(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>);
 
     /// Schedule a background task with the given priority.
     fn schedule_background_with_priority(
@@ -103,9 +109,85 @@ pub trait Scheduler: Send + Sync {
     fn timer(&self, timeout: Duration) -> Timer;
     fn clock(&self) -> Arc<dyn Clock>;
 
+    /// Spawn a closure on a fresh session pinned to its own [`LocalExecutor`].
+    ///
+    /// `PlatformScheduler` runs the closure on a new OS thread (see
+    /// [`spawn_dedicated_thread`]). `TestScheduler` runs it on the test
+    /// scheduler's loop alongside everything else so determinism under
+    /// `TestScheduler::many` is preserved.
+    ///
+    /// This is the dyn-safe entry point: the closure's output is type-erased
+    /// as `Box<dyn Any + Send + Sync>` so the trait stays object-safe.
+    /// Callers typically reach for the type-safe wrappers on
+    /// [`LocalExecutor::spawn_dedicated`] and
+    /// [`BackgroundExecutor::spawn_dedicated`], which compose this method
+    /// with [`Task::downcast`] to recover the closure's concrete return type.
+    fn spawn_dedicated(
+        self: Arc<Self>,
+        f: Box<
+            dyn FnOnce(
+                    LocalExecutor,
+                )
+                    -> Pin<Box<dyn Future<Output = Box<dyn Any + Send + Sync>> + 'static>>
+                + Send
+                + 'static,
+        >,
+    ) -> Task<Box<dyn Any + Send + Sync>>;
+
     fn as_test(&self) -> Option<&TestScheduler> {
         None
     }
+}
+
+/// Spawn work on a fresh OS thread that's exclusive to the returned task and
+/// anything spawned on the executor it provides. Blocking syscalls inside that
+/// work don't disturb any other executor in the process.
+///
+/// `f` is called on the dedicated thread with a [`LocalExecutor`] pinned
+/// to it. The future `f` returns may freely be `!Send`. The returned `Task` is
+/// that future's task: dropping it cancels the root, but detached children
+/// keep running until they finish. The thread shuts down once the executor and
+/// every task on it are gone.
+///
+/// The caller is responsible for supplying a `session_id` that's distinct from
+/// every other live session on `scheduler`. Concrete schedulers typically wrap
+/// this in an inherent method that allocates the id from their own counter.
+pub fn spawn_dedicated_thread<F, Fut>(
+    session_id: SessionId,
+    scheduler: Arc<dyn Scheduler>,
+    f: F,
+) -> Task<Fut::Output>
+where
+    F: FnOnce(LocalExecutor) -> Fut + Send + 'static,
+    Fut: Future + 'static,
+    Fut::Output: Send + 'static,
+{
+    let (runnable_sender, runnable_receiver) = flume::unbounded::<Runnable<RunnableMeta>>();
+    let (task_sender, task_receiver) = flume::bounded::<Task<Fut::Output>>(1);
+
+    thread::Builder::new()
+        .name(format!("spawn_dedicated session {:?}", session_id))
+        .spawn(move || {
+            let dispatch = move |runnable: Runnable<RunnableMeta>| {
+                let _ = runnable_sender.send(runnable);
+            };
+            let executor = LocalExecutor::new(session_id, scheduler, dispatch);
+            let root_task = executor.spawn(f(executor.clone()));
+            let _ = task_sender.send(root_task);
+            // After this drop, every strong reference to the runnable sender
+            // lives inside a spawned task or a user-held executor clone. The
+            // recv loop exits once all of those are gone.
+            drop(executor);
+
+            while let Ok(runnable) = runnable_receiver.recv() {
+                runnable.run();
+            }
+        })
+        .expect("failed to spawn dedicated thread");
+
+    task_receiver
+        .recv()
+        .expect("dedicated thread failed to produce root task")
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]

@@ -3,6 +3,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+mod sandboxing;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -10,7 +11,6 @@ mod thread;
 mod thread_store;
 mod tool_permissions;
 mod tools;
-mod user_agents_md;
 
 use context_server::ContextServerId;
 pub use db::*;
@@ -23,7 +23,6 @@ pub use thread::*;
 pub use thread_store::*;
 pub use tool_permissions::*;
 pub use tools::*;
-pub use user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -31,9 +30,10 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, Skill, SkillIndex, SkillLoadError,
-    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
-    load_skills_from_directory, project_skills_relative_path,
+    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
+    SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillScopeId, SkillSource, SkillSummary,
+    builtin_skills, global_skills_dir, load_skills_from_directory, parse_skill_frontmatter,
+    project_skills_relative_path, read_skill_body_from_content,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -49,12 +49,10 @@ use gpui::{
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{
-    AgentId, Project, ProjectItem, ProjectPath, Worktree, trusted_worktrees::TrustedWorktrees,
+    AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
+    trusted_worktrees::TrustedWorktrees,
 };
-use prompt_store::{
-    ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
-    WorktreeContext,
-};
+use prompt_store::{ProjectContext, RULES_FILE_NAMES, RulesFileContext, WorktreeContext};
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
@@ -308,7 +306,6 @@ pub struct NativeAgent {
     templates: Arc<Templates>,
     /// Cached model information
     models: LanguageModels,
-    prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the lifecycle of global skills directory observation. We
@@ -345,30 +342,121 @@ static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
         .collect()
 });
 
+static AGENTS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
+    RelPath::unix(AGENTS_DIR_NAME)
+        .ok()
+        .map(|path| path.into_arc())
+});
+
 static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
     RelPath::unix(project_skills_relative_path())
         .ok()
         .map(|path| path.into_arc())
 });
 
+struct ProjectSkillFile {
+    relative_path: Arc<RelPath>,
+    display_path: PathBuf,
+    size: u64,
+}
+
+async fn expand_worktree_directory(
+    worktree: &Entity<Worktree>,
+    path: &RelPath,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let expand_task = worktree.update(cx, |worktree, cx| {
+        let entry_id = worktree
+            .entry_for_path(path)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.id);
+        entry_id.and_then(|entry_id| worktree.expand_entry(entry_id, cx))
+    });
+
+    if let Some(expand_task) = expand_task {
+        expand_task.await?;
+    }
+
+    Ok(())
+}
+
+async fn expand_project_skills_directories(
+    worktree: &Entity<Worktree>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let agents_dir = RelPath::unix(AGENTS_DIR_NAME)?;
+    let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
+        return Ok(());
+    };
+
+    expand_worktree_directory(worktree, agents_dir, cx).await?;
+    expand_worktree_directory(worktree, skills_prefix, cx).await?;
+
+    let skill_dirs = worktree.update(cx, |worktree, _cx| {
+        worktree
+            .child_entries(skills_prefix)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>()
+    });
+    for skill_dir in skill_dirs {
+        expand_worktree_directory(worktree, &skill_dir, cx).await?;
+    }
+
+    Ok(())
+}
+
+fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFile> {
+    let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(skill_file_name) = RelPath::unix(SKILL_FILE_NAME) else {
+        return Vec::new();
+    };
+
+    let mut skill_files = Vec::new();
+    for skill_dir in worktree.child_entries(skills_prefix) {
+        if !skill_dir.is_dir() {
+            continue;
+        }
+
+        let relative_path = skill_dir.path.join(skill_file_name);
+        let Some(skill_file) = worktree.entry_for_path(&relative_path) else {
+            continue;
+        };
+        if !skill_file.is_file() {
+            continue;
+        }
+
+        skill_files.push(ProjectSkillFile {
+            display_path: worktree.absolutize(&relative_path),
+            relative_path,
+            size: skill_file.size,
+        });
+    }
+
+    skill_files.sort_by(|a, b| {
+        a.relative_path
+            .as_unix_str()
+            .cmp(b.relative_path.as_unix_str())
+    });
+    skill_files
+}
+
 impl NativeAgent {
     pub fn new(
         thread_store: Entity<ThreadStore>,
         templates: Arc<Templates>,
-        prompt_store: Option<Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Entity<NativeAgent> {
         log::debug!("Creating new NativeAgent");
 
         cx.new(|cx| {
-            let mut subscriptions = vec![cx.subscribe(
+            let subscriptions = vec![cx.subscribe(
                 &LanguageModelRegistry::global(cx),
                 Self::handle_models_updated_event,
             )];
-            if let Some(prompt_store) = prompt_store.as_ref() {
-                subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
-            }
 
             if !cx.has_global::<SkillIndex>() {
                 cx.set_global(SkillIndex::default());
@@ -381,7 +469,6 @@ impl NativeAgent {
                 projects: HashMap::default(),
                 templates,
                 models: LanguageModels::new(cx),
-                prompt_store,
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
@@ -595,9 +682,9 @@ impl NativeAgent {
             // after the thread is constructed are still visible to the
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
-            thread.add_tool(SkillTool::new(
+            thread.add_tool(SkillTool::with_body_resolver(
                 skills_resolver_for_project(weak.clone(), project_id),
-                self.fs.clone(),
+                skill_body_resolver_for_project(project.clone(), self.fs.clone()),
             ));
         });
 
@@ -640,7 +727,7 @@ impl NativeAgent {
             return project_id;
         }
 
-        let project_context = cx.new(|_| ProjectContext::new(vec![], vec![]));
+        let project_context = cx.new(|_| ProjectContext::new(vec![]));
         self.register_project_with_initial_context(project.clone(), project_context, cx);
         if let Some(state) = self.projects.get_mut(&project_id) {
             state.project_context_needs_refresh.send(()).ok();
@@ -733,7 +820,6 @@ impl NativeAgent {
                     .context("project state not found")?;
                 anyhow::Ok(Self::build_project_context(
                     &state.project,
-                    this.prompt_store.as_ref(),
                     this.fs.clone(),
                     cx,
                 ))
@@ -805,7 +891,6 @@ impl NativeAgent {
 
     fn build_project_context(
         project: &Entity<Project>,
-        prompt_store: Option<&Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadError>)> {
@@ -842,9 +927,8 @@ impl NativeAgent {
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
         let worktree_store = project.read(cx).worktree_store();
         let project_skills_task = {
-            let project_skills_futures: Vec<
-                futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,
-            > = worktrees
+            let project = project.clone();
+            let trusted_worktrees = worktrees
                 .iter()
                 .filter_map(|worktree| {
                     let worktree_id = worktree.read(cx).id();
@@ -856,53 +940,98 @@ impl NativeAgent {
                     if !is_trusted {
                         return None;
                     }
+
                     let worktree_snapshot = worktree.read(cx);
-                    let abs_path = worktree_snapshot.abs_path();
                     let worktree_root_name: Arc<str> = worktree_snapshot.root_name_str().into();
-                    // Capture scan_complete *before* spawning so we don't have to re-borrow
-                    // the worktree from inside the async task (which would require a cx).
                     let scan_complete = worktree_snapshot
                         .as_local()
                         .map(|local| local.scan_complete());
-                    let skills_dir = abs_path.join(project_skills_relative_path());
-                    let fs = fs.clone();
-                    Some(
-                        async move {
-                            if let Some(scan_complete) = scan_complete {
-                                scan_complete.await;
-                            }
-                            load_skills_from_directory(
-                                &fs,
-                                &skills_dir,
-                                SkillSource::ProjectLocal {
-                                    worktree_id: SkillScopeId(worktree_id.to_usize()),
-                                    worktree_root_name,
-                                },
-                            )
-                            .await
-                        }
-                        .boxed(),
-                    )
+                    Some((
+                        worktree.clone(),
+                        worktree_id,
+                        worktree_root_name,
+                        scan_complete,
+                    ))
                 })
-                .collect();
-            cx.background_spawn(async move { future::join_all(project_skills_futures).await })
-        };
-        let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
-            prompt_store.read_with(cx, |prompt_store, cx| {
-                let prompts = prompt_store.default_prompt_metadata();
-                let load_tasks = prompts.into_iter().map(|prompt_metadata| {
-                    let contents = prompt_store.load(prompt_metadata.id, cx);
-                    async move { (contents.await, prompt_metadata) }
-                });
-                cx.background_spawn(future::join_all(load_tasks))
-            })
-        } else {
-            Task::ready(vec![])
-        };
+                .collect::<Vec<_>>();
 
+            cx.spawn(async move |cx| {
+                let mut project_skills_results = Vec::new();
+                for (worktree, worktree_id, worktree_root_name, scan_complete) in trusted_worktrees
+                {
+                    if let Some(scan_complete) = scan_complete {
+                        scan_complete.await;
+                    }
+                    if let Err(error) = expand_project_skills_directories(&worktree, cx).await {
+                        project_skills_results.push(vec![Err(SkillLoadError {
+                            path: PathBuf::from(project_skills_relative_path()),
+                            message: format!("Failed to scan project skills: {}", error),
+                        })]);
+                        continue;
+                    }
+
+                    let skill_files = worktree.update(cx, |worktree, _cx| {
+                        project_skill_files_from_worktree(worktree)
+                    });
+                    let source = SkillSource::ProjectLocal {
+                        worktree_id: SkillScopeId(worktree_id.to_usize()),
+                        worktree_root_name,
+                    };
+
+                    let mut worktree_results = Vec::new();
+                    for skill_file in skill_files {
+                        if skill_file.size > MAX_SKILL_FILE_SIZE as u64 {
+                            worktree_results.push(Err(SkillLoadError {
+                                path: skill_file.display_path.clone(),
+                                message: format!(
+                                    "SKILL.md file exceeds maximum size of {}KB",
+                                    MAX_SKILL_FILE_SIZE / 1024
+                                ),
+                            }));
+                            continue;
+                        }
+
+                        let buffer = match project
+                            .update(cx, |project, cx| {
+                                project.open_buffer(
+                                    (worktree_id, skill_file.relative_path.clone()),
+                                    cx,
+                                )
+                            })
+                            .await
+                        {
+                            Ok(buffer) => buffer,
+                            Err(error) => {
+                                worktree_results.push(Err(SkillLoadError {
+                                    path: skill_file.display_path.clone(),
+                                    message: format!("Failed to read file: {}", error),
+                                }));
+                                continue;
+                            }
+                        };
+
+                        let content = cx
+                            .update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+
+                        worktree_results.push(
+                            parse_skill_frontmatter(
+                                &skill_file.display_path,
+                                &content,
+                                source.clone(),
+                            )
+                            .map_err(|error| SkillLoadError {
+                                path: skill_file.display_path,
+                                message: error.to_string(),
+                            }),
+                        );
+                    }
+                    project_skills_results.push(worktree_results);
+                }
+                project_skills_results
+            })
+        };
         cx.spawn(async move |_cx| {
-            let (worktrees, default_user_rules) =
-                future::join(future::join_all(worktree_tasks), default_user_rules_task).await;
+            let worktrees = future::join_all(worktree_tasks).await;
 
             let worktrees = worktrees
                 .into_iter()
@@ -912,27 +1041,6 @@ impl NativeAgent {
                     //     this.update(cx, |_, cx| cx.emit(rules_error)).ok();
                     // }
                     worktree
-                })
-                .collect::<Vec<_>>();
-
-            let default_user_rules = default_user_rules
-                .into_iter()
-                .flat_map(|(contents, prompt_metadata)| match contents {
-                    Ok(contents) => Some(UserRulesContext {
-                        uuid: prompt_metadata.id.as_user()?,
-                        title: prompt_metadata.title.map(|title| title.to_string()),
-                        contents,
-                    }),
-                    Err(_err) => {
-                        // TODO: show error message
-                        // this.update(cx, |_, cx| {
-                        //     cx.emit(RulesLoadingError {
-                        //         message: format!("{err:?}").into(),
-                        //     });
-                        // })
-                        // .ok();
-                        None
-                    }
                 })
                 .collect::<Vec<_>>();
 
@@ -959,8 +1067,7 @@ impl NativeAgent {
             let (catalog_skills, budget_errors) = select_catalog_skills(&overridden);
             skill_errors.extend(budget_errors);
 
-            let project_context =
-                ProjectContext::new(worktrees, default_user_rules).with_skills(catalog_skills);
+            let project_context = ProjectContext::new(worktrees).with_skills(catalog_skills);
             (project_context, skills, skill_errors)
         })
     }
@@ -1110,7 +1217,7 @@ impl NativeAgent {
                     RULES_FILE_REL_PATHS
                         .iter()
                         .any(|rules_path| path_ref == rules_path.as_ref())
-                        || SKILLS_PREFIX
+                        || AGENTS_PREFIX
                             .as_ref()
                             .is_some_and(|prefix| path_ref.starts_with(prefix))
                 }) {
@@ -1118,17 +1225,6 @@ impl NativeAgent {
                 }
             }
             _ => {}
-        }
-    }
-
-    fn handle_prompts_updated_event(
-        &mut self,
-        _prompt_store: Entity<PromptStore>,
-        _event: &prompt_store::PromptsUpdatedEvent,
-        _cx: &mut Context<Self>,
-    ) {
-        for state in self.projects.values_mut() {
-            state.project_context_needs_refresh.send(()).ok();
         }
     }
 
@@ -1659,7 +1755,8 @@ impl NativeAgent {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
         let path_style = state.project.read(cx).path_style(cx);
-        let fs = self.fs.clone();
+        let read_skill_body =
+            skill_body_resolver_for_project(state.project.clone(), self.fs.clone());
 
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
@@ -1683,14 +1780,12 @@ impl NativeAgent {
             let body = if let Some(embedded) = skill.embedded_body {
                 embedded.to_string()
             } else {
-                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to read skill body from {}",
-                            skill.skill_file_path.display()
-                        )
-                    })?
+                read_skill_body(skill.clone(), cx).await.with_context(|| {
+                    format!(
+                        "Failed to read skill body from {}",
+                        skill.skill_file_path.display()
+                    )
+                })?
             };
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
@@ -1766,6 +1861,16 @@ impl NativeAgentConnection {
             .update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
     }
 
+    pub fn refresh_skills_for_project(&self, project: Entity<Project>, cx: &mut App) {
+        self.0.update(cx, |agent, cx| {
+            let project_id = agent.get_or_create_project_state(&project, cx);
+            agent.ensure_skills_scan_started(cx);
+            if let Some(state) = agent.projects.get_mut(&project_id) {
+                state.project_context_needs_refresh.send(()).ok();
+            }
+        });
+    }
+
     pub fn available_skills(
         &self,
         session_id: &acp::SessionId,
@@ -1834,10 +1939,10 @@ impl NativeAgentConnection {
                         match event {
                             ThreadEvent::UserMessage(message) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    for content in message.content {
+                                    for content in &*message.content {
                                         thread.push_user_content_block(
                                             Some(message.id.clone()),
-                                            content.into(),
+                                            content.clone().into(),
                                             cx,
                                         );
                                     }
@@ -1900,6 +2005,11 @@ impl NativeAgentConnection {
                             ThreadEvent::Retry(status) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_retry_status(status, cx)
+                                })?;
+                            }
+                            ThreadEvent::ContextCompaction => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.push_context_compaction(cx);
                                 })?;
                             }
                             ThreadEvent::Stop(stop_reason) => {
@@ -2659,12 +2769,54 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
+        extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>> {
+        // Use a per-thread temp directory for all terminal commands, even when
+        // sandboxing is disabled, so the model can't infer sandbox state from
+        // `$TMPDIR` changing between conversations.
+        let mut extra_env = extra_env;
+        let mut sandbox_wrap = sandbox_wrap;
+        match self
+            .thread
+            .update(cx, |thread, cx| thread.sandboxed_terminal_temp_dir(cx))
+        {
+            Ok(Ok(temp_dir)) => {
+                // Canonicalize so the path matches what the sandbox resolves
+                // symlinks to (e.g. `/var` -> `/private/var` on macOS).
+                // `$TMPDIR` and the writable-scope entry below must agree, and
+                // they must agree with the path the kernel actually checks.
+                let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
+                let temp_dir_string = temp_dir.to_string_lossy().into_owned();
+                extra_env.extend([
+                    acp::EnvVariable::new("TMPDIR", &temp_dir_string),
+                    acp::EnvVariable::new("TMP", &temp_dir_string),
+                    acp::EnvVariable::new("TEMP", &temp_dir_string),
+                ]);
+                // The command's `$TMPDIR` must live inside the sandbox's
+                // writable scope. The per-thread temp directory is owned here
+                // (not in the terminal tool that assembles the rest of the
+                // writable set), so add it whenever the command is sandboxed.
+                if let Some(sandbox_wrap) = &mut sandbox_wrap {
+                    sandbox_wrap.writable_paths.push(temp_dir);
+                }
+            }
+            Ok(Err(error)) => return Task::ready(Err(error)),
+            Err(error) => return Task::ready(Err(error)),
+        };
         let task = self.acp_thread.update(cx, |thread, cx| {
-            thread.create_terminal(command, vec![], vec![], cwd, output_byte_limit, cx)
+            thread.create_terminal(
+                command,
+                vec![],
+                extra_env,
+                cwd,
+                output_byte_limit,
+                sandbox_wrap,
+                cx,
+            )
         });
 
         let acp_thread = self.acp_thread.clone();
@@ -2969,7 +3121,7 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
 /// same entry the model sees in its catalog. Run at invocation time
 /// (not thread-build time) so skill changes after thread construction
 /// become visible without re-registering the tool.
-pub(crate) fn skills_resolver_for_project(
+pub fn skills_resolver_for_project(
     weak_agent: WeakEntity<NativeAgent>,
     project_id: EntityId,
 ) -> impl Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static {
@@ -2984,6 +3136,50 @@ pub(crate) fn skills_resolver_for_project(
                     .map(|state| Arc::new(apply_skill_overrides(&state.skills)))
             })
             .unwrap_or_else(|| Arc::new(Vec::new()))
+    }
+}
+
+pub fn skill_body_resolver_for_project(
+    project: Entity<Project>,
+    fs: Arc<dyn Fs>,
+) -> impl Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static {
+    move |skill, cx| match skill.source.clone() {
+        SkillSource::ProjectLocal { worktree_id, .. } => {
+            let project = project.clone();
+            cx.spawn(async move |cx| {
+                let worktree_id = WorktreeId::from_usize(worktree_id.0);
+                let worktree = project
+                    .update(cx, |project, cx| project.worktree_for_id(worktree_id, cx))
+                    .context("no such worktree")?;
+                expand_project_skills_directories(&worktree, cx).await?;
+                let relative_path = worktree.update(cx, |worktree, _cx| {
+                    let worktree_root = worktree.abs_path();
+                    worktree
+                        .path_style()
+                        .strip_prefix(&skill.skill_file_path, &worktree_root)
+                        .map(|relative_path| relative_path.into_arc())
+                        .context("skill file is not inside its worktree")
+                })?;
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer((worktree_id, relative_path), cx)
+                    })
+                    .await?;
+                let content =
+                    cx.update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+
+                read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
+            })
+        }
+        SkillSource::BuiltIn | SkillSource::Global => {
+            let fs = fs.clone();
+            cx.background_spawn(async move {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .map_err(Into::into)
+            })
+        }
     }
 }
 
@@ -3491,7 +3687,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         // Creating a session registers the project and triggers context building.
         let connection = NativeAgentConnection(agent.clone());
@@ -3582,7 +3778,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         // Simulate the user-interaction trigger that the agent panel
         // fires (input focus, slash autocomplete, or submit). In tests
@@ -3645,7 +3841,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         // First scan trigger: nothing on disk yet, state stays idle.
         cx.update(|cx| {
@@ -3722,7 +3918,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         // First scan trigger: nothing on disk yet.
         cx.update(|cx| {
@@ -3868,7 +4064,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         // Open a parent session through the connection, the same way
         // production does. This triggers project-context refresh which
@@ -3981,7 +4177,7 @@ mod internal_tests {
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         let connection = NativeAgentConnection(agent.clone());
         let acp_thread = cx
@@ -4086,7 +4282,7 @@ mod internal_tests {
             Project::test_with_worktree_trust(fs.clone(), [Path::new("/project")], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
 
         let connection = NativeAgentConnection(agent.clone());
         let acp_thread = cx
@@ -4160,6 +4356,292 @@ mod internal_tests {
         });
     }
 
+    /// Open a session against a freshly created project and trust its only
+    /// worktree, so project-local skills load. Returns the agent, the
+    /// project, and the worktree id of the project root.
+    async fn open_trusted_project_skills(
+        cx: &mut TestAppContext,
+        fs: Arc<FakeFs>,
+        root: &str,
+    ) -> (Entity<NativeAgent>, Entity<Project>, WorktreeId) {
+        use collections::{HashMap, HashSet};
+        use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
+
+        cx.update(|cx| {
+            trusted_worktrees::init(HashMap::default(), cx);
+        });
+
+        let project = Project::test_with_worktree_trust(fs.clone(), [Path::new(root)], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(root)]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.update(|cx| {
+            let trusted_worktrees = TrustedWorktrees::try_get_global(cx)
+                .expect("trusted worktrees global initialized by test_with_worktree_trust");
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        (agent, project, worktree_id)
+    }
+
+    /// The body resolver for a project-local skill must read the file
+    /// through a project buffer rather than the local filesystem. This is
+    /// what makes project skills resolvable in remote workspaces, where
+    /// the `fs` the agent holds is the client's filesystem and not where
+    /// the project files actually live. We prove the buffer path is used
+    /// by editing the buffer in memory (without saving) and asserting the
+    /// resolver returns the edited body, not the on-disk body.
+    #[gpui::test]
+    async fn test_project_skill_body_resolves_through_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: A project skill\n---\n\ndisk body"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        let skill = agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            user_skills(&state.skills)
+                .into_iter()
+                .find(|s| s.name == "my-skill")
+                .cloned()
+                .expect("project skill should be loaded")
+        });
+        assert!(matches!(skill.source, SkillSource::ProjectLocal { .. }));
+
+        let resolver =
+            cx.update(|_cx| super::skill_body_resolver_for_project(project.clone(), fs.clone()));
+
+        let body = cx
+            .update(|cx| resolver(skill.clone(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        assert_eq!(body, "disk body");
+
+        // Edit the buffer in memory without writing to disk.
+        let relative_path: Arc<RelPath> = rel_path(".agents/skills/my-skill/SKILL.md").into();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, relative_path), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(
+                "---\nname: my-skill\ndescription: A project skill\n---\n\nedited body",
+                cx,
+            );
+        });
+
+        let body = cx
+            .update(|cx| resolver(skill.clone(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        assert_eq!(
+            body, "edited body",
+            "resolver must read the in-memory buffer, not the on-disk file"
+        );
+    }
+
+    /// A project SKILL.md whose on-disk size exceeds the cap must be
+    /// rejected with a size-limit error and excluded from the loaded
+    /// skills, exercising the size guard in `load_project_skills`.
+    #[gpui::test]
+    async fn test_oversized_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let oversized = format!(
+            "---\nname: huge-skill\ndescription: Too big\n---\n\n{}",
+            "a".repeat(MAX_SKILL_FILE_SIZE + 1)
+        );
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": { "skills": { "huge-skill": { "SKILL.md": oversized } } }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert!(
+                user_skills(&state.skills).is_empty(),
+                "oversized skill must not load: {:?}",
+                user_skills(&state.skills)
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                state
+                    .skill_loading_errors
+                    .iter()
+                    .any(|error| error.message.to_string().contains("maximum size")),
+                "expected a size-limit error, got {:?}",
+                state.skill_loading_errors
+            );
+        });
+    }
+
+    /// A malformed project SKILL.md must surface a per-skill load error
+    /// without preventing sibling skills in the same worktree from
+    /// loading.
+    #[gpui::test]
+    async fn test_malformed_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "good": {
+                            "SKILL.md": "---\nname: good\ndescription: Fine\n---\n\nbody"
+                        },
+                        "bad": {
+                            "SKILL.md": "this file has no frontmatter"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let names: Vec<&str> = user_skills(&state.skills)
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect();
+            assert_eq!(names, vec!["good"], "only the valid skill should load");
+            assert!(
+                state
+                    .skill_loading_errors
+                    .iter()
+                    .any(|error| error.path.ends_with("bad/SKILL.md")),
+                "expected an error for the malformed skill, got {:?}",
+                state.skill_loading_errors
+            );
+        });
+    }
+
+    /// The skill catalog (metadata) is also loaded through project
+    /// buffers, and the broadened `.agents` refresh trigger must rebuild
+    /// it when files under `.agents` change. We edit the SKILL.md buffer
+    /// in memory, then touch an unrelated file directly under `.agents`
+    /// (not under `.agents/skills`) and assert the catalog reflects the
+    /// in-memory edit. Under the previous `.agents/skills`-only trigger
+    /// this refresh would not have fired.
+    #[gpui::test]
+    async fn test_project_skill_metadata_refreshes_from_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: Original\n---\n\nbody"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let skill = user_skills(&state.skills)
+                .into_iter()
+                .find(|s| s.name == "my-skill")
+                .expect("skill should be loaded");
+            assert_eq!(skill.description, "Original");
+        });
+
+        let relative_path: Arc<RelPath> = rel_path(".agents/skills/my-skill/SKILL.md").into();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, relative_path), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(
+                "---\nname: my-skill\ndescription: Edited in buffer\n---\n\nbody",
+                cx,
+            );
+        });
+
+        // Touch a file directly under `.agents` (not under
+        // `.agents/skills`) to trigger the broadened refresh path.
+        fs.insert_file("/project/.agents/marker.txt", b"hello".to_vec())
+            .await;
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let skill = user_skills(&state.skills)
+                .into_iter()
+                .find(|s| s.name == "my-skill")
+                .expect("skill should still be loaded");
+            assert_eq!(
+                skill.description, "Edited in buffer",
+                "catalog must reflect the in-memory buffer after a refresh"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_listing_models(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4167,10 +4649,9 @@ mod internal_tests {
         fs.insert_tree("/", json!({ "a": {}  })).await;
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let connection =
-            NativeAgentConnection(cx.update(|cx| {
-                NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx)
-            }));
+        let connection = NativeAgentConnection(
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx)),
+        );
 
         // Create a thread/session
         let acp_thread = cx
@@ -4244,7 +4725,7 @@ mod internal_tests {
 
         // Create the agent and connection
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
         let connection = NativeAgentConnection(agent.clone());
 
         // Create a thread/session
@@ -4341,7 +4822,7 @@ mod internal_tests {
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
         let connection = NativeAgentConnection(agent.clone());
 
         let acp_thread = cx
@@ -4432,7 +4913,7 @@ mod internal_tests {
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         let acp_thread = cx
@@ -4483,9 +4964,8 @@ mod internal_tests {
         fs.insert_tree("/", json!({ "a": {} })).await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         // Register a thinking model.
@@ -4586,9 +5066,8 @@ mod internal_tests {
         fs.insert_tree("/", json!({ "a": {} })).await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         // Register a model where id() != name(), like real Anthropic models
@@ -4702,9 +5181,8 @@ mod internal_tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         let acp_thread = cx
@@ -4884,9 +5362,8 @@ mod internal_tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         let acp_thread = cx
@@ -4965,9 +5442,8 @@ mod internal_tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         let acp_thread = cx
@@ -5049,9 +5525,8 @@ mod internal_tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         let acp_thread = cx
@@ -5194,9 +5669,8 @@ mod internal_tests {
         fs.insert_tree("/", json!({ "a": {} })).await;
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
         let acp_thread = cx

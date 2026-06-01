@@ -1,0 +1,27 @@
+[package]
+name = "mermaid_render"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/mermaid_render.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+merman = { version = "0.4", features = ["render"] }
+quick-xml.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+mermaid_render = { path = ".", features = ["test-support"] }
