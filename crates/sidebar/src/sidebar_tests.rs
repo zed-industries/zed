@@ -14771,6 +14771,14 @@ fn test_split_leading_icon_char() {
     assert_eq!(icon.as_ref(), "\u{2026}");
     assert_eq!(title.as_ref(), "working");
 
+    let (icon, title, _) = split_leading_icon_char(&"[...] working".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "\u{2026}");
+    assert_eq!(title.as_ref(), "working");
+
+    let (icon, title, _) = split_leading_icon_char(&"[…] working".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "\u{2026}");
+    assert_eq!(title.as_ref(), "working");
+
     // Multi-codepoint emoji are kept intact rather than sliced mid-cluster.
     let (icon, title, _) = split_leading_icon_char(&"🇺🇸 flag".into(), &[]).unwrap();
     assert_eq!(icon.as_ref(), "🇺🇸");

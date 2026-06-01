@@ -271,11 +271,6 @@ fn pick_icon_glyph(prefix: &str) -> Option<SharedString> {
         return None;
     }
 
-    // Condense a leading run of dots (`...`) into a single ellipsis.
-    if prefix.starts_with("..") {
-        return Some("\u{2026}".into());
-    }
-
     // Strip a single pair of surrounding ASCII brackets, e.g. `[!]` -> `!`.
     let unwrapped = match prefix.chars().next() {
         Some('[') => prefix.strip_prefix('[').and_then(|s| s.strip_suffix(']')),
@@ -288,6 +283,11 @@ fn pick_icon_glyph(prefix: &str) -> Option<SharedString> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or(prefix);
+
+    // Condense a leading run of dots (`...`) into a single ellipsis.
+    if prefix.starts_with("..") {
+        return Some("\u{2026}".into());
+    }
 
     // Take the first grapheme cluster so multi-codepoint emoji stay intact.
     let first_grapheme = prefix.graphemes(true).next()?;
