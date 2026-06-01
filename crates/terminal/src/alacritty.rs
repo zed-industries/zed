@@ -49,6 +49,9 @@ pub(super) type AlacrittyPty = tty::Pty;
 pub(super) type AlacrittyTerm = Term<ZedListener>;
 pub(super) type AlacrittyTermConfig = Config;
 pub(super) type AlacrittyTermLock = FairMutex<AlacrittyTerm>;
+pub(super) type AlacrittyCell = AlacCell;
+pub(super) type AlacrittyGridIterator<'a> = GridIterator<'a, AlacCell>;
+pub(super) type AlacrittyHyperlink = AlacHyperlink;
 
 #[derive(Clone)]
 pub(super) struct ZedListener(UnboundedSender<PtyEvent>);
@@ -143,6 +146,10 @@ pub(super) fn set_default_cursor_style(
     config.default_cursor_style = alacritty_cursor_style(cursor_shape);
 }
 
+pub(super) fn apply_config(term: &AlacrittyTermLock, config: &AlacrittyTermConfig) {
+    term.lock().set_options(config.clone());
+}
+
 #[cfg(not(windows))]
 pub(super) fn current_child_signal_mask() -> io::Result<tty::SignalMask> {
     tty::SignalMask::current()
@@ -204,6 +211,55 @@ pub(super) fn spawn_event_loop(
     Ok(PtySender {
         notifier: Notifier(pty_tx),
     })
+}
+
+pub(super) fn resize(term: &mut AlacrittyTerm, bounds: TerminalBounds) {
+    term.resize(bounds);
+}
+
+pub(super) fn display_offset(term: &AlacrittyTerm) -> usize {
+    term.grid().display_offset()
+}
+
+pub(super) fn scroll_display(term: &mut AlacrittyTerm, scroll: Scroll) {
+    term.scroll_display(scroll.to_alacritty());
+}
+
+pub(super) fn set_selection(term: &mut AlacrittyTerm, selection: Option<&Selection>) {
+    term.selection = selection.map(Selection::to_alacritty);
+}
+
+pub(super) fn update_selection(
+    term: &mut AlacrittyTerm,
+    point: Point,
+    side: SelectionSide,
+) -> bool {
+    let Some(mut selection) = term.selection.take() else {
+        return false;
+    };
+    selection.update(point.to_alacritty(), side.to_alacritty());
+    term.selection = Some(selection);
+    true
+}
+
+pub(super) fn selection_text(term: &AlacrittyTerm) -> Option<String> {
+    term.selection_to_string()
+}
+
+pub(super) fn scroll_to_point(term: &mut AlacrittyTerm, point: Point) {
+    term.scroll_to_point(point.to_alacritty());
+}
+
+pub(super) fn vi_goto_point(term: &mut AlacrittyTerm, point: Point) {
+    term.vi_goto_point(point.to_alacritty());
+}
+
+pub(super) fn toggle_vi_mode(term: &mut AlacrittyTerm) {
+    term.toggle_vi_mode();
+}
+
+pub(super) fn vi_motion(term: &mut AlacrittyTerm, motion: ViMotion) {
+    term.vi_motion(motion.to_alacritty());
 }
 
 pub(super) fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
@@ -991,5 +1047,56 @@ mod tests {
             (Some(extra), Some(converted_extra)) => assert!(Arc::ptr_eq(extra, converted_extra)),
             _ => panic!("expected extra storage on both cells"),
         }
+    }
+
+    #[test]
+    fn terminal_modes_round_trip_alacritty_flags() {
+        let alacritty_modes = TermMode::APP_CURSOR
+            | TermMode::BRACKETED_PASTE
+            | TermMode::ALT_SCREEN
+            | TermMode::MOUSE_DRAG
+            | TermMode::SGR_MOUSE
+            | TermMode::VI;
+
+        let terminal_modes = terminal_modes_from_alacritty(alacritty_modes);
+        assert!(terminal_modes.contains(Modes::APP_CURSOR));
+        assert!(terminal_modes.contains(Modes::BRACKETED_PASTE));
+        assert!(terminal_modes.contains(Modes::ALT_SCREEN));
+        assert!(terminal_modes.contains(Modes::MOUSE_DRAG));
+        assert!(terminal_modes.intersects(Modes::MOUSE_MODE));
+        assert!(terminal_modes.contains(Modes::SGR_MOUSE));
+        assert!(terminal_modes.contains(Modes::VI));
+        assert!(!terminal_modes.contains(Modes::MOUSE_REPORT_CLICK));
+
+        let alacritty_modes = terminal_modes.to_alacritty();
+        assert!(alacritty_modes.contains(TermMode::APP_CURSOR));
+        assert!(alacritty_modes.contains(TermMode::BRACKETED_PASTE));
+        assert!(alacritty_modes.contains(TermMode::ALT_SCREEN));
+        assert!(alacritty_modes.contains(TermMode::MOUSE_DRAG));
+        assert!(alacritty_modes.contains(TermMode::SGR_MOUSE));
+        assert!(alacritty_modes.contains(TermMode::VI));
+        assert!(!alacritty_modes.contains(TermMode::MOUSE_REPORT_CLICK));
+    }
+
+    #[test]
+    fn terminal_selection_range_round_trip_alacritty_range() {
+        let alacritty_range = AlacSelectionRange {
+            start: AlacPoint::new(Line(-2), Column(3)),
+            end: AlacPoint::new(Line(4), Column(8)),
+            is_block: true,
+        };
+
+        let terminal_range = terminal_selection_range_from_alacritty(alacritty_range);
+        assert_eq!(
+            terminal_range,
+            SelectionRange {
+                start: Point {
+                    line: -2,
+                    column: 3
+                },
+                end: Point { line: 4, column: 8 },
+                is_block: true,
+            }
+        );
     }
 }

@@ -4,10 +4,6 @@ mod alacritty;
 mod pty_info;
 pub mod terminal_settings;
 
-use alacritty_terminal::{
-    grid::GridIterator,
-    term::cell::{Cell as AlacCell, Hyperlink as AlacHyperlink},
-};
 use anyhow::{Context as _, Result, bail};
 use futures_lite::future::yield_now;
 use log::trace;
@@ -60,15 +56,16 @@ use gpui::{
 #[cfg(not(windows))]
 use crate::alacritty::current_child_signal_mask;
 use crate::alacritty::{
-    AlacrittySearch, AlacrittyTerm, AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch,
-    PtySender, RegexSearches, append_text_to_term, clear_saved_screen, content_text,
+    AlacrittyCell, AlacrittyGridIterator, AlacrittyHyperlink, AlacrittySearch, AlacrittyTerm,
+    AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch, PtySender, RegexSearches,
+    append_text_to_term, apply_config, clear_saved_screen, content_text, display_offset,
     display_only_term_config, find_from_terminal_point, full_content_range, last_non_empty_lines,
-    make_content, new_term, open_pty, pty_options, pty_term_config, screen_lines, search_matches,
-    set_default_cursor_style, spawn_event_loop, total_lines, update_selection_to_vi_cursor,
-    update_vi_cursor_for_scroll,
+    make_content, new_term, open_pty, pty_options, pty_term_config, resize, screen_lines,
+    scroll_display, scroll_to_point, search_matches, selection_text, set_default_cursor_style,
+    set_selection as set_term_selection, spawn_event_loop, toggle_vi_mode as toggle_term_vi_mode,
+    total_lines, update_selection as update_term_selection, update_selection_to_vi_cursor,
+    update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
 };
-#[cfg(test)]
-use crate::alacritty::{terminal_modes_from_alacritty, terminal_selection_range_from_alacritty};
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
 
@@ -300,17 +297,17 @@ pub struct Hyperlink {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum HyperlinkData {
-    Alacritty(AlacHyperlink),
+    Alacritty(AlacrittyHyperlink),
     Owned { id: Option<Arc<str>>, uri: Arc<str> },
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct Cell {
-    cell: AlacCell,
+    cell: AlacrittyCell,
 }
 
 pub struct RenderableCells<'a> {
-    cells: GridIterator<'a, AlacCell>,
+    cells: AlacrittyGridIterator<'a>,
 }
 
 #[derive(Debug, Clone)]
@@ -1478,7 +1475,7 @@ impl Terminal {
                     pty_tx.resize(new_bounds);
                 }
 
-                term.resize(new_bounds);
+                resize(term, new_bounds);
                 // If there are matches we need to emit a wake up event to
                 // invalidate the matches and recalculate their locations
                 // in the new terminal layout
@@ -1493,14 +1490,14 @@ impl Terminal {
             }
             InternalEvent::Scroll(scroll) => {
                 trace!("Scrolling: scroll={scroll:?}");
-                term.scroll_display(scroll.to_alacritty());
+                scroll_display(term, *scroll);
                 self.refresh_hovered_word(window);
 
                 if self.vi_mode_enabled {
                     update_vi_cursor_for_scroll(term, *scroll);
                     if let Some(selection_head) = update_selection_to_vi_cursor(term) {
                         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                        if let Some(selection_text) = term.selection_to_string() {
+                        if let Some(selection_text) = selection_text(term) {
                             cx.write_to_primary(ClipboardItem::new_string(selection_text));
                         }
 
@@ -1511,10 +1508,10 @@ impl Terminal {
             }
             InternalEvent::SetSelection(selection) => {
                 trace!("Setting selection: selection={selection:?}");
-                term.selection = selection.as_ref().map(Selection::to_alacritty);
+                set_term_selection(term, selection.as_ref());
 
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                if let Some(selection_text) = term.selection_to_string() {
+                if let Some(selection_text) = selection_text(term) {
                     cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
 
@@ -1525,18 +1522,15 @@ impl Terminal {
             }
             InternalEvent::UpdateSelection(position) => {
                 trace!("Updating selection: position={position:?}");
-                if let Some(mut selection) = term.selection.take() {
-                    let (point, side) = grid_point_and_side(
-                        *position,
-                        self.last_content.terminal_bounds,
-                        term.grid().display_offset(),
-                    );
+                let (point, side) = grid_point_and_side(
+                    *position,
+                    self.last_content.terminal_bounds,
+                    display_offset(term),
+                );
 
-                    selection.update(point.to_alacritty(), side.to_alacritty());
-                    term.selection = Some(selection);
-
+                if update_term_selection(term, point, side) {
                     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                    if let Some(selection_text) = term.selection_to_string() {
+                    if let Some(selection_text) = selection_text(term) {
                         cx.write_to_primary(ClipboardItem::new_string(selection_text));
                     }
 
@@ -1547,7 +1541,7 @@ impl Terminal {
 
             InternalEvent::Copy(keep_selection) => {
                 trace!("Copying selection: keep_selection={keep_selection:?}");
-                if let Some(txt) = term.selection_to_string() {
+                if let Some(txt) = selection_text(term) {
                     cx.write_to_clipboard(ClipboardItem::new_string(txt));
                     if !keep_selection.unwrap_or_else(|| {
                         let settings = TerminalSettings::get_global(cx);
@@ -1559,22 +1553,22 @@ impl Terminal {
             }
             InternalEvent::ScrollToPoint(point) => {
                 trace!("Scrolling to point: point={point:?}");
-                term.scroll_to_point(point.to_alacritty());
+                scroll_to_point(term, *point);
                 self.refresh_hovered_word(window);
             }
             InternalEvent::MoveViCursorToPoint(point) => {
                 trace!("Move vi cursor to point: point={point:?}");
-                term.vi_goto_point(point.to_alacritty());
+                vi_goto_point(term, *point);
                 self.refresh_hovered_word(window);
             }
             InternalEvent::ToggleViMode => {
                 trace!("Toggling vi mode");
                 self.vi_mode_enabled = !self.vi_mode_enabled;
-                term.toggle_vi_mode();
+                toggle_term_vi_mode(term);
             }
             InternalEvent::ViMotion(motion) => {
                 trace!("Performing vi motion: motion={motion:?}");
-                term.vi_motion(motion.to_alacritty());
+                vi_motion(term, *motion);
             }
             InternalEvent::FindHyperlink(position, open) => {
                 trace!("Finding hyperlink at position: position={position:?}, open={open:?}");
@@ -1582,7 +1576,7 @@ impl Terminal {
                 let point = grid_point(
                     *position,
                     self.last_content.terminal_bounds,
-                    term.grid().display_offset(),
+                    display_offset(term),
                 );
 
                 match find_from_terminal_point(
@@ -1692,7 +1686,7 @@ impl Terminal {
 
     pub fn set_cursor_shape(&mut self, cursor_shape: SettingsCursorShape) {
         set_default_cursor_style(&mut self.term_config, cursor_shape);
-        self.term.lock().set_options(self.term_config.clone());
+        apply_config(&self.term, &self.term_config);
     }
 
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
@@ -2892,11 +2886,6 @@ mod tests {
         Cell, Content, IndexedCell, TerminalBounds, TerminalBuilder, content_index_for_mouse,
         rgb_for_index,
     };
-    use alacritty_terminal::{
-        index::{Column, Line, Point as AlacPoint},
-        selection::SelectionRange as AlacSelectionRange,
-        term::TermMode,
-    };
     use async_channel::Receiver;
     use collections::HashMap;
     use gpui::MouseMoveEvent;
@@ -3350,57 +3339,6 @@ mod tests {
             let (r, g, b) = rgb_for_index(i);
             assert_eq!(i, 16 + 36 * r + 6 * g + b);
         }
-    }
-
-    #[test]
-    fn test_terminal_modes_round_trip_alacritty_flags() {
-        let alacritty_modes = TermMode::APP_CURSOR
-            | TermMode::BRACKETED_PASTE
-            | TermMode::ALT_SCREEN
-            | TermMode::MOUSE_DRAG
-            | TermMode::SGR_MOUSE
-            | TermMode::VI;
-
-        let terminal_modes = terminal_modes_from_alacritty(alacritty_modes);
-        assert!(terminal_modes.contains(Modes::APP_CURSOR));
-        assert!(terminal_modes.contains(Modes::BRACKETED_PASTE));
-        assert!(terminal_modes.contains(Modes::ALT_SCREEN));
-        assert!(terminal_modes.contains(Modes::MOUSE_DRAG));
-        assert!(terminal_modes.intersects(Modes::MOUSE_MODE));
-        assert!(terminal_modes.contains(Modes::SGR_MOUSE));
-        assert!(terminal_modes.contains(Modes::VI));
-        assert!(!terminal_modes.contains(Modes::MOUSE_REPORT_CLICK));
-
-        let alacritty_modes = terminal_modes.to_alacritty();
-        assert!(alacritty_modes.contains(TermMode::APP_CURSOR));
-        assert!(alacritty_modes.contains(TermMode::BRACKETED_PASTE));
-        assert!(alacritty_modes.contains(TermMode::ALT_SCREEN));
-        assert!(alacritty_modes.contains(TermMode::MOUSE_DRAG));
-        assert!(alacritty_modes.contains(TermMode::SGR_MOUSE));
-        assert!(alacritty_modes.contains(TermMode::VI));
-        assert!(!alacritty_modes.contains(TermMode::MOUSE_REPORT_CLICK));
-    }
-
-    #[test]
-    fn test_terminal_selection_range_round_trip_alacritty_range() {
-        let alacritty_range = AlacSelectionRange {
-            start: AlacPoint::new(Line(-2), Column(3)),
-            end: AlacPoint::new(Line(4), Column(8)),
-            is_block: true,
-        };
-
-        let terminal_range = terminal_selection_range_from_alacritty(alacritty_range);
-        assert_eq!(
-            terminal_range,
-            SelectionRange {
-                start: Point {
-                    line: -2,
-                    column: 3
-                },
-                end: Point { line: 4, column: 8 },
-                is_block: true,
-            }
-        );
     }
 
     #[gpui::test]
