@@ -291,8 +291,28 @@ enum WorktreeEntry {
     },
     CheckoutBranchInNewWorktree {
         branch_name: String,
-        disabled_reason: Option<String>,
+        status: CheckoutBranchWorktreeStatus,
     },
+}
+
+#[derive(Clone)]
+enum CheckoutBranchWorktreeStatus {
+    Create,
+    MultipleRepositories,
+    BranchAlreadyCheckedOut { worktree: GitWorktree },
+    WorktreeNameTaken,
+}
+
+impl CheckoutBranchWorktreeStatus {
+    fn disabled_tooltip(&self) -> Option<SharedString> {
+        match self {
+            Self::Create | Self::BranchAlreadyCheckedOut { .. } => None,
+            Self::MultipleRepositories => Some(
+                "Cannot create a branch worktree in a project with multiple repositories".into(),
+            ),
+            Self::WorktreeNameTaken => Some("A worktree with this name already exists".into()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -486,20 +506,68 @@ impl WorktreePickerDelegate {
         self.modifiers.alt && self.hovered_delete_index == Some(index)
     }
 
-    fn open_branch_disabled_reason(
+    fn checkout_branch_worktree_status(
         &self,
         branch_name: &str,
         has_named_worktree: bool,
-    ) -> Option<String> {
-        if self.has_multiple_repositories {
-            Some("Cannot create a branch worktree in a project with multiple repositories".into())
-        } else if branch_checked_out_in_worktree(&self.all_worktrees, branch_name) {
-            Some("This branch is already checked out in a worktree".into())
+    ) -> CheckoutBranchWorktreeStatus {
+        if let Some(worktree) = worktree_for_checked_out_branch(&self.all_worktrees, branch_name) {
+            CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { worktree }
+        } else if self.has_multiple_repositories {
+            CheckoutBranchWorktreeStatus::MultipleRepositories
         } else if has_named_worktree {
-            Some("A worktree with this name already exists".into())
+            CheckoutBranchWorktreeStatus::WorktreeNameTaken
         } else {
-            None
+            CheckoutBranchWorktreeStatus::Create
         }
+    }
+
+    fn open_worktree(
+        &self,
+        worktree: &GitWorktree,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        if self.deleting_worktree_paths.contains(&worktree.path) {
+            return false;
+        }
+
+        let is_current = self.project_worktree_paths.contains(&worktree.path);
+        if is_current {
+            return true;
+        }
+
+        if secondary {
+            window.dispatch_action(
+                Box::new(OpenWorktreeInNewWindow {
+                    path: worktree.path.clone(),
+                }),
+                cx,
+            );
+        } else {
+            let main_worktree_path = self
+                .all_worktrees
+                .iter()
+                .find(|wt| wt.is_main)
+                .map(|wt| wt.path.as_path());
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    crate::worktree_service::handle_switch_worktree(
+                        workspace,
+                        &SwitchWorktree {
+                            path: worktree.path.clone(),
+                            display_name: worktree.directory_name(main_worktree_path),
+                        },
+                        window,
+                        self.focused_dock,
+                        cx,
+                    );
+                });
+            }
+        }
+
+        true
     }
 
     fn delete_worktree(
@@ -512,7 +580,7 @@ impl WorktreePickerDelegate {
         let Some(entry) = self.matches.get(ix) else {
             return;
         };
-        let WorktreeEntry::Worktree { worktree, .. } = entry else {
+        let Some(worktree) = existing_worktree_for_entry(entry) else {
             return;
         };
         if !self.can_delete_worktree(worktree)
@@ -657,7 +725,7 @@ impl WorktreePickerDelegate {
             picker.update_in(cx, |picker, _window, cx| {
                 picker.delegate.deleting_worktree_paths.remove(&path);
                 picker.delegate.matches.retain(|e| {
-                    !matches!(e, WorktreeEntry::Worktree { worktree, .. } if worktree.path == path)
+                    !existing_worktree_for_entry(e).is_some_and(|worktree| worktree.path == path)
                 });
                 picker.delegate.all_worktrees.retain(|w| w.path != path);
                 if picker.delegate.matches.is_empty() {
@@ -770,8 +838,8 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .as_ref()
                     .is_none_or(|current| current != &default.branch_name)
             });
-        let open_branch_disabled_reason = matching_branch.as_deref().and_then(|branch_name| {
-            self.open_branch_disabled_reason(branch_name, has_named_worktree)
+        let checkout_branch_status = matching_branch.as_deref().map(|branch_name| {
+            self.checkout_branch_worktree_status(branch_name, has_named_worktree)
         });
 
         if query.is_empty() {
@@ -860,7 +928,9 @@ impl PickerDelegate for WorktreePickerDelegate {
                     if let Some(branch_name) = matching_branch.clone() {
                         new_matches.push(WorktreeEntry::CheckoutBranchInNewWorktree {
                             branch_name,
-                            disabled_reason: open_branch_disabled_reason.clone(),
+                            status: checkout_branch_status
+                                .clone()
+                                .unwrap_or(CheckoutBranchWorktreeStatus::Create),
                         });
                     }
                     if show_default_branch_create {
@@ -938,41 +1008,8 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
             }
             WorktreeEntry::Worktree { worktree, .. } => {
-                if self.deleting_worktree_paths.contains(&worktree.path) {
+                if !self.open_worktree(worktree, secondary, window, cx) {
                     return;
-                }
-
-                let is_current = self.project_worktree_paths.contains(&worktree.path);
-
-                if !is_current {
-                    if secondary {
-                        window.dispatch_action(
-                            Box::new(OpenWorktreeInNewWindow {
-                                path: worktree.path.clone(),
-                            }),
-                            cx,
-                        );
-                    } else {
-                        let main_worktree_path = self
-                            .all_worktrees
-                            .iter()
-                            .find(|wt| wt.is_main)
-                            .map(|wt| wt.path.as_path());
-                        if let Some(workspace) = self.workspace.upgrade() {
-                            workspace.update(cx, |workspace, cx| {
-                                crate::worktree_service::handle_switch_worktree(
-                                    workspace,
-                                    &SwitchWorktree {
-                                        path: worktree.path.clone(),
-                                        display_name: worktree.directory_name(main_worktree_path),
-                                    },
-                                    window,
-                                    self.focused_dock,
-                                    cx,
-                                );
-                            });
-                        }
-                    }
                 }
             }
             WorktreeEntry::CreateNamed {
@@ -1010,7 +1047,7 @@ impl PickerDelegate for WorktreePickerDelegate {
             }
             WorktreeEntry::CheckoutBranchInNewWorktree {
                 branch_name,
-                disabled_reason: None,
+                status: CheckoutBranchWorktreeStatus::Create,
             } => {
                 if self.creation_blocked_reason(cx).is_some() {
                     return;
@@ -1033,7 +1070,17 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
             }
             WorktreeEntry::CheckoutBranchInNewWorktree {
-                disabled_reason: Some(_),
+                status: CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { worktree },
+                ..
+            } => {
+                if !self.open_worktree(worktree, secondary, window, cx) {
+                    return;
+                }
+            }
+            WorktreeEntry::CheckoutBranchInNewWorktree {
+                status:
+                    CheckoutBranchWorktreeStatus::MultipleRepositories
+                    | CheckoutBranchWorktreeStatus::WorktreeNameTaken,
                 ..
             } => {
                 return;
@@ -1318,17 +1365,26 @@ impl PickerDelegate for WorktreePickerDelegate {
             }
             WorktreeEntry::CheckoutBranchInNewWorktree {
                 branch_name,
-                disabled_reason,
+                status,
             } => {
+                let main_worktree_path = self
+                    .all_worktrees
+                    .iter()
+                    .find(|wt| wt.is_main)
+                    .map(|wt| wt.path.as_path());
                 let item = create_new_list_item(
                     format!("checkout-branch-in-worktree-{branch_name}").into(),
                     IconName::GitBranch,
-                    checkout_branch_worktree_title(branch_name).into(),
-                    Some(checkout_branch_worktree_detail(branch_name).into()),
-                    disabled_reason
-                        .clone()
-                        .map(SharedString::from)
-                        .or_else(|| self.creation_blocked_reason(cx)),
+                    checkout_branch_worktree_title(branch_name, status).into(),
+                    Some(
+                        checkout_branch_worktree_detail(branch_name, status, main_worktree_path)
+                            .into(),
+                    ),
+                    status.disabled_tooltip().or_else(|| {
+                        matches!(status, CheckoutBranchWorktreeStatus::Create)
+                            .then(|| self.creation_blocked_reason(cx))
+                            .flatten()
+                    }),
                     selected,
                 );
 
@@ -1345,32 +1401,24 @@ impl PickerDelegate for WorktreePickerDelegate {
         let focus_handle = self.focus_handle.clone();
         let selected_entry = self.matches.get(self.selected_index);
 
-        let is_creating = selected_entry.is_some_and(|e| {
-            matches!(
-                e,
-                WorktreeEntry::CreateFromCurrentBranch
-                    | WorktreeEntry::CreateFromDefaultBranch { .. }
-                    | WorktreeEntry::CreateNamed { .. }
-                    | WorktreeEntry::CheckoutBranchInNewWorktree { .. }
-            )
-        });
+        let is_creating = selected_entry.is_some_and(is_create_action_entry);
 
-        let create_button_label = create_worktree_button_label(selected_entry);
+        let create_button_label = primary_action_button_label(selected_entry);
 
-        let is_existing_worktree =
-            selected_entry.is_some_and(|e| matches!(e, WorktreeEntry::Worktree { .. }));
+        let selected_worktree = selected_entry.and_then(existing_worktree_for_entry);
+        let is_existing_worktree = selected_worktree.is_some();
 
-        let can_delete = selected_entry.is_some_and(|e| {
-            matches!(e, WorktreeEntry::Worktree { worktree, .. } if self.can_delete_worktree(worktree))
-        });
+        let can_delete = selected_worktree
+            .map(|worktree| self.can_delete_worktree(worktree))
+            .unwrap_or(false);
 
-        let is_current = selected_entry.is_some_and(|e| {
-            matches!(e, WorktreeEntry::Worktree { worktree, .. } if self.project_worktree_paths.contains(&worktree.path))
-        });
+        let is_current = selected_worktree
+            .map(|worktree| self.project_worktree_paths.contains(&worktree.path))
+            .unwrap_or(false);
 
-        let is_deleting = selected_entry.is_some_and(|e| {
-            matches!(e, WorktreeEntry::Worktree { worktree, .. } if self.deleting_worktree_paths.contains(&worktree.path))
-        });
+        let is_deleting = selected_worktree
+            .map(|worktree| self.deleting_worktree_paths.contains(&worktree.path))
+            .unwrap_or(false);
 
         let footer = h_flex()
             .w_full()
@@ -1462,28 +1510,75 @@ fn matching_local_branch_name(branches: &[Branch], query: &str) -> Option<String
         .map(|branch| branch.name().to_string())
 }
 
-fn branch_checked_out_in_worktree(worktrees: &[GitWorktree], branch_name: &str) -> bool {
+fn worktree_for_checked_out_branch(
+    worktrees: &[GitWorktree],
+    branch_name: &str,
+) -> Option<GitWorktree> {
     worktrees
         .iter()
-        .any(|worktree| worktree.branch_name() == Some(branch_name))
+        .find(|worktree| worktree.branch_name() == Some(branch_name))
+        .cloned()
 }
 
-fn checkout_branch_worktree_title(branch_name: &str) -> String {
-    format!("Create worktree for branch \"{branch_name}\"")
+fn existing_worktree_for_entry(entry: &WorktreeEntry) -> Option<&GitWorktree> {
+    match entry {
+        WorktreeEntry::Worktree { worktree, .. }
+        | WorktreeEntry::CheckoutBranchInNewWorktree {
+            status: CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { worktree },
+            ..
+        } => Some(worktree),
+        _ => None,
+    }
 }
 
-fn checkout_branch_worktree_detail(branch_name: &str) -> String {
+fn is_create_action_entry(entry: &WorktreeEntry) -> bool {
+    matches!(
+        entry,
+        WorktreeEntry::CreateFromCurrentBranch
+            | WorktreeEntry::CreateFromDefaultBranch { .. }
+            | WorktreeEntry::CreateNamed { .. }
+            | WorktreeEntry::CheckoutBranchInNewWorktree {
+                status: CheckoutBranchWorktreeStatus::Create
+                    | CheckoutBranchWorktreeStatus::MultipleRepositories
+                    | CheckoutBranchWorktreeStatus::WorktreeNameTaken,
+                ..
+            }
+    )
+}
+
+fn checkout_branch_worktree_title(
+    branch_name: &str,
+    status: &CheckoutBranchWorktreeStatus,
+) -> String {
+    if matches!(
+        status,
+        CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { .. }
+    ) {
+        format!("Branch \"{branch_name}\" is already checked out")
+    } else {
+        format!("Create worktree for branch \"{branch_name}\"")
+    }
+}
+
+fn checkout_branch_worktree_detail(
+    branch_name: &str,
+    status: &CheckoutBranchWorktreeStatus,
+    main_worktree_path: Option<&Path>,
+) -> String {
+    if let CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { worktree } = status {
+        return format!(
+            "Open existing worktree \"{}\"",
+            worktree.directory_name(main_worktree_path)
+        );
+    }
+
     format!("Checks out existing branch \"{branch_name}\"")
 }
 
-fn create_worktree_button_label(selected_entry: Option<&WorktreeEntry>) -> &'static str {
-    if matches!(
-        selected_entry,
-        Some(WorktreeEntry::CheckoutBranchInNewWorktree { .. })
-    ) {
-        "Create Worktree"
-    } else {
-        "Create"
+fn primary_action_button_label(selected_entry: Option<&WorktreeEntry>) -> &'static str {
+    match selected_entry {
+        Some(WorktreeEntry::CheckoutBranchInNewWorktree { .. }) => "Create Worktree",
+        _ => "Create",
     }
 }
 
@@ -1529,41 +1624,78 @@ mod branch_matching_tests {
     }
 
     #[test]
-    fn test_branch_checked_out_in_worktree() {
+    fn test_worktree_for_checked_out_branch() {
         let worktrees = vec![
             worktree(Some("refs/heads/main")),
             worktree(Some("refs/heads/feat/new-feature-foo")),
             worktree(None),
         ];
 
-        assert!(branch_checked_out_in_worktree(
-            &worktrees,
-            "feat/new-feature-foo"
-        ));
-        assert!(!branch_checked_out_in_worktree(&worktrees, "feat/other"));
+        assert!(
+            worktree_for_checked_out_branch(&worktrees, "feat/new-feature-foo")
+                .is_some_and(|worktree| worktree.branch_name() == Some("feat/new-feature-foo"))
+        );
+        assert!(worktree_for_checked_out_branch(&worktrees, "feat/other").is_none());
     }
 
     #[test]
     fn test_checkout_branch_worktree_copy() {
+        let create_status = CheckoutBranchWorktreeStatus::Create;
         assert_eq!(
-            checkout_branch_worktree_title("feat/new-feature-foo"),
+            checkout_branch_worktree_title("feat/new-feature-foo", &create_status),
             "Create worktree for branch \"feat/new-feature-foo\""
         );
         assert_eq!(
-            checkout_branch_worktree_detail("feat/new-feature-foo"),
+            checkout_branch_worktree_detail("feat/new-feature-foo", &create_status, None),
             "Checks out existing branch \"feat/new-feature-foo\""
+        );
+
+        let existing_worktree = GitWorktree {
+            path: PathBuf::from("/root/worktrees/feat-new-feature-foo/project"),
+            ref_name: Some("refs/heads/feat/new-feature-foo".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        };
+        let checked_out_status = CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut {
+            worktree: existing_worktree,
+        };
+        assert_eq!(
+            checkout_branch_worktree_title("feat/new-feature-foo", &checked_out_status),
+            "Branch \"feat/new-feature-foo\" is already checked out"
+        );
+        assert_eq!(
+            checkout_branch_worktree_detail(
+                "feat/new-feature-foo",
+                &checked_out_status,
+                Some(Path::new("/root/project"))
+            ),
+            "Open existing worktree \"feat-new-feature-foo\""
         );
 
         let branch_entry = WorktreeEntry::CheckoutBranchInNewWorktree {
             branch_name: "feat/new-feature-foo".to_string(),
-            disabled_reason: None,
+            status: CheckoutBranchWorktreeStatus::Create,
         };
         assert_eq!(
-            create_worktree_button_label(Some(&branch_entry)),
+            primary_action_button_label(Some(&branch_entry)),
             "Create Worktree"
         );
+        assert!(is_create_action_entry(&branch_entry));
+        assert!(existing_worktree_for_entry(&branch_entry).is_none());
+
+        let existing_branch_entry = WorktreeEntry::CheckoutBranchInNewWorktree {
+            branch_name: "feat/new-feature-foo".to_string(),
+            status: checked_out_status,
+        };
+        assert!(!is_create_action_entry(&existing_branch_entry));
         assert_eq!(
-            create_worktree_button_label(Some(&WorktreeEntry::CreateFromCurrentBranch)),
+            existing_worktree_for_entry(&existing_branch_entry)
+                .map(|worktree| worktree.directory_name(Some(Path::new("/root/project")))),
+            Some("feat-new-feature-foo".to_string())
+        );
+        assert_eq!(
+            primary_action_button_label(Some(&WorktreeEntry::CreateFromCurrentBranch)),
             "Create"
         );
     }
@@ -2023,7 +2155,7 @@ mod tests {
                             entry,
                             WorktreeEntry::CheckoutBranchInNewWorktree {
                                 branch_name,
-                                disabled_reason: None
+                                status: CheckoutBranchWorktreeStatus::Create
                             } if branch_name == "feature"
                         )
                     })
@@ -2062,30 +2194,193 @@ mod tests {
 
         worktree_picker.update(&mut cx, |worktree_picker, cx| {
             worktree_picker.picker.update(cx, |picker, _| {
-                let disabled_reason = picker
+                let status = picker
                     .delegate
                     .matches
                     .iter()
                     .find_map(|entry| {
                         if let WorktreeEntry::CheckoutBranchInNewWorktree {
                             branch_name,
-                            disabled_reason,
+                            status,
                         } = entry
                             && branch_name == "feature"
                         {
-                            disabled_reason.as_deref()
+                            Some(status)
                         } else {
                             None
                         }
                     })
                     .expect("checkout-branch worktree entry should be disabled");
 
+                assert!(matches!(
+                    status,
+                    CheckoutBranchWorktreeStatus::MultipleRepositories
+                ));
                 assert_eq!(
-                    disabled_reason,
+                    status.disabled_tooltip().unwrap().to_string(),
                     "Cannot create a branch worktree in a project with multiple repositories"
                 );
             })
         });
+    }
+
+    #[gpui::test]
+    async fn test_checkout_branch_worktree_shows_checked_out_copy(cx: &mut TestAppContext) {
+        let (_fs, worktree_picker, _repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker.delegate.all_branches = vec![local_branch("dirty-wt")];
+            })
+        });
+
+        update_worktree_picker_matches(&worktree_picker, "dirty-wt", &mut cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                let main_worktree_path = picker
+                    .delegate
+                    .all_worktrees
+                    .iter()
+                    .find(|worktree| worktree.is_main)
+                    .map(|worktree| worktree.path.as_path());
+                let status = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .find_map(|entry| {
+                        if let WorktreeEntry::CheckoutBranchInNewWorktree {
+                            branch_name,
+                            status,
+                        } = entry
+                            && branch_name == "dirty-wt"
+                        {
+                            Some(status)
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("checkout-branch worktree entry should be present");
+
+                assert!(matches!(
+                    status,
+                    CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { .. }
+                ));
+                assert_eq!(
+                    checkout_branch_worktree_title("dirty-wt", status),
+                    "Branch \"dirty-wt\" is already checked out"
+                );
+                assert_eq!(
+                    checkout_branch_worktree_detail("dirty-wt", status, main_worktree_path),
+                    "Open existing worktree \"dirty-wt\""
+                );
+                assert!(status.disabled_tooltip().is_none());
+            })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_checkout_branch_worktree_opens_existing_worktree(cx: &mut TestAppContext) {
+        let (fs, worktree_picker, _repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+        cx.update(|_, cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker.delegate.all_branches = vec![local_branch("dirty-wt")];
+            })
+        });
+
+        update_worktree_picker_matches(&worktree_picker, "dirty-wt", &mut cx).await;
+
+        let workspace = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker
+                    .delegate
+                    .workspace
+                    .upgrade()
+                    .expect("workspace should exist")
+            })
+        });
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.selected_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|entry| {
+                        matches!(
+                            entry,
+                            WorktreeEntry::CheckoutBranchInNewWorktree {
+                                branch_name,
+                                status: CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { .. },
+                            } if branch_name == "dirty-wt"
+                        )
+                    })
+                    .expect("checked-out branch entry should be present");
+                picker.delegate.confirm(false, window, cx);
+            })
+        });
+
+        workspace.read_with(&cx, |workspace, _| {
+            let active_switch = workspace.active_worktree_creation();
+            assert_eq!(
+                active_switch.label.as_ref().map(ToString::to_string),
+                Some("dirty-wt".to_string())
+            );
+            assert!(active_switch.is_switch);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_checkout_branch_worktree_deletes_existing_worktree(cx: &mut TestAppContext) {
+        let (_fs, worktree_picker, repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker.delegate.all_branches = vec![local_branch("dirty-wt")];
+            })
+        });
+
+        update_worktree_picker_matches(&worktree_picker, "dirty-wt", &mut cx).await;
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                let index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|entry| {
+                        matches!(
+                            entry,
+                            WorktreeEntry::CheckoutBranchInNewWorktree {
+                                branch_name,
+                                status: CheckoutBranchWorktreeStatus::BranchAlreadyCheckedOut { .. },
+                            } if branch_name == "dirty-wt"
+                        )
+                    })
+                    .expect("checked-out branch entry should be present");
+                picker.delegate.delete_worktree(index, false, window, cx);
+            })
+        });
+
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).contains(&worktree_path));
+
+        cx.run_until_parked();
+
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
+        assert!(!picker_contains_worktree(
+            &worktree_picker,
+            &worktree_path,
+            &mut cx
+        ));
+        assert!(
+            !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
+            "existing worktree should be removed from the checked-out branch entry"
+        );
     }
 
     #[gpui::test]
