@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 
 use agent_client_protocol::schema as acp;
+use acp_thread::{AgentThreadEntry, AssistantMessageChunk};
 use anyhow::{Context, Result};
 use collections::HashMap;
 use fs::Fs;
@@ -132,6 +133,7 @@ pub struct PromptResponse {
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +143,7 @@ pub struct AgentStatusResponse {
     pub workdir: String,
     pub entry_count: usize,
     pub status: String,
+    pub current_output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,6 +482,30 @@ fn handle_preflight(request: tiny_http::Request) {
     request.respond(response).ok();
 }
 
+fn latest_assistant_output(thread: &acp_thread::AcpThread, cx: &App) -> Option<String> {
+    thread.entries().iter().rev().find_map(|entry| {
+        let AgentThreadEntry::AssistantMessage(message) = entry else {
+            return None;
+        };
+
+        let output = message
+            .chunks
+            .iter()
+            .filter_map(|chunk| {
+                let block = match chunk {
+                    AssistantMessageChunk::Message { block } => block,
+                    AssistantMessageChunk::Thought { block } => block,
+                };
+                let text = block.to_markdown(cx).to_string();
+                (!text.trim().is_empty()).then_some(text)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        (!output.trim().is_empty()).then_some(output)
+    })
+}
+
 async fn run_command_loop(
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
@@ -632,6 +659,7 @@ async fn run_command_loop(
                 };
 
                 let res = fut.await;
+                let output = acp.read_with(cx, |t, cx| latest_assistant_output(t, cx));
                 let resp = match res {
                     Ok(Some(r)) => {
                         let u = acp.read_with(cx, |t, _| {
@@ -640,6 +668,7 @@ async fn run_command_loop(
                                 stop_reason: Some(format!("{:?}", r.stop_reason)),
                                 input_tokens: Some(u.input_tokens),
                                 output_tokens: Some(u.output_tokens),
+                                output: output.clone(),
                             })
                         });
                         u.unwrap_or(PromptResponse {
@@ -647,6 +676,7 @@ async fn run_command_loop(
                             stop_reason: Some(format!("{:?}", r.stop_reason)),
                             input_tokens: None,
                             output_tokens: None,
+                            output: output.clone(),
                         })
                     }
                     Ok(None) => PromptResponse {
@@ -654,6 +684,7 @@ async fn run_command_loop(
                         stop_reason: Some("completed".into()),
                         input_tokens: None,
                         output_tokens: None,
+                        output: output.clone(),
                     },
                     Err(e) => {
                         reply
@@ -689,12 +720,14 @@ async fn run_command_loop(
                         .context("Session not loaded")?;
                     let (ec, st) =
                         acp.read_with(cx, |t, _| (t.entries().len(), format!("{:?}", t.status())));
+                    let current_output = acp.read_with(cx, |t, cx| latest_assistant_output(t, cx));
                     Ok(AgentStatusResponse {
                         session_id: session_id.clone(),
                         model: meta.model.clone(),
                         workdir: meta.workdir.display().to_string(),
                         entry_count: ec,
                         status: st,
+                        current_output,
                     })
                 });
                 reply.send(r).await.ok();
