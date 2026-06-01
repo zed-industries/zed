@@ -601,17 +601,7 @@ impl Interactivity {
         T: 'static,
         W: 'static + Render,
     {
-        debug_assert!(
-            self.drag_listener.is_none(),
-            "calling on_drag more than once on the same element is not supported"
-        );
-        self.drag_listener = Some((
-            Arc::new(value),
-            Box::new(move |value, offset, window, cx| {
-                constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
-            }),
-            None,
-        ));
+        self.set_drag_listener(value, constructor, None);
     }
 
     /// On drag initiation, resolve real on-disk paths to expose this drag to the platform.
@@ -620,6 +610,25 @@ impl Interactivity {
         value: T,
         external_paths: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalPaths> + 'static,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+    ) where
+        Self: Sized,
+        T: 'static,
+        W: 'static + Render,
+    {
+        self.set_drag_listener(
+            value,
+            constructor,
+            Some(Box::new(move |value, window, cx| {
+                external_paths(value.downcast_ref::<T>()?, window, cx)
+            })),
+        );
+    }
+
+    fn set_drag_listener<T, W>(
+        &mut self,
+        value: T,
+        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+        external_paths: Option<ExternalPathsExtractor>,
     ) where
         Self: Sized,
         T: 'static,
@@ -634,9 +643,7 @@ impl Interactivity {
             Box::new(move |value, offset, window, cx| {
                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
-            Some(Box::new(move |value, window, cx| {
-                external_paths(value.downcast_ref::<T>()?, window, cx)
-            })),
+            external_paths,
         ));
     }
 
@@ -2831,12 +2838,15 @@ impl Interactivity {
                                 cursor_style: drag_cursor_style,
                                 external_paths,
                             });
-                            let _ = cx
+                            // Set `active_drag` first, then hand the paths to the OS: the
+                            // session-end cleanup clears `active_drag`, so it must already be set.
+                            if let Some(paths) = cx
                                 .active_drag
                                 .as_ref()
                                 .and_then(|drag| drag.external_paths.as_ref())
-                                .map(|paths| window.platform_window.start_file_drag(paths))
-                                .unwrap_or(false);
+                            {
+                                window.platform_window.start_file_drag(paths);
+                            }
                             pending_mouse_down.take();
                             window.refresh();
                             cx.stop_propagation();

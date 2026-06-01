@@ -12,7 +12,7 @@ use cocoa::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
         NSColor, NSEvent, NSEventModifierFlags, NSEventType, NSFilenamesPboardType, NSPasteboard,
         NSRequestUserAttentionType, NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable,
-        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
         NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
         NSWindowStyleMask, NSWindowTitleVisibility,
     },

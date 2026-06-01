@@ -4756,24 +4756,18 @@ impl ProjectPanel {
         selections: &DraggedSelection,
         cx: &App,
     ) -> Option<ExternalPaths> {
-        let candidate_paths = {
-            let project = project.read(cx);
-            selections
-                .items()
-                .filter_map(|selection| {
-                    let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
-                    if !worktree.is_local() {
-                        return None;
-                    }
-                    let project_path = project.path_for_entry(selection.entry_id, cx)?.path;
-                    Some(worktree.absolutize(&project_path))
-                })
-                .collect::<SmallVec<[_; 2]>>()
-        };
-
-        let paths = candidate_paths
-            .into_iter()
-            .filter(|absolute_path| absolute_path.exists())
+        let project = project.read(cx);
+        let paths = selections
+            .items()
+            .filter_map(|selection| {
+                let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                if !worktree.is_local() {
+                    return None;
+                }
+                let project_path = project.path_for_entry(selection.entry_id, cx)?.path;
+                let absolute_path = worktree.absolutize(&project_path);
+                absolute_path.exists().then_some(absolute_path)
+            })
             .collect::<SmallVec<[_; 2]>>();
 
         (!paths.is_empty()).then_some(ExternalPaths(paths))
