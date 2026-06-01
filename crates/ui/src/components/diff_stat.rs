@@ -63,7 +63,12 @@ impl Component for DiffStat {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A compact summary of additions and deletions for a diff, \
+        displayed as colored insertion and deletion counts."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             h_flex()
                 .py_4()
@@ -81,10 +86,8 @@ impl Component for DiffStat {
                 .into_any_element(),
         )];
 
-        Some(
-            example_group(diff_stat_example)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(diff_stat_example)
+            .vertical()
+            .into_any_element()
     }
 }

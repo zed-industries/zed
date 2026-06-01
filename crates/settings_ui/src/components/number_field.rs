@@ -727,43 +727,41 @@ impl Component for NumberField<usize> {
         "Number Field"
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A numeric input element with increment and decrement buttons.")
+    fn description() -> &'static str {
+        "A numeric input element with increment and decrement buttons."
     }
 
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
         let default_ex = window.use_state(cx, |_, _| 100.0);
         let edit_ex = window.use_state(cx, |_, _| 500.0);
 
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    single_example(
-                        "Button-Only Number Field",
-                        NumberField::new("number-field", *default_ex.read(cx), window, cx)
-                            .on_change({
-                                let default_ex = default_ex.clone();
-                                move |value, _, cx| default_ex.write(cx, *value)
-                            })
-                            .min(1.0)
-                            .max(100.0)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Editable Number Field",
-                        NumberField::new("editable-number-field", *edit_ex.read(cx), window, cx)
-                            .on_change({
-                                let edit_ex = edit_ex.clone();
-                                move |value, _, cx| edit_ex.write(cx, *value)
-                            })
-                            .min(100.0)
-                            .max(500.0)
-                            .mode(NumberFieldMode::Edit, cx)
-                            .into_any_element(),
-                    ),
-                ])
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .children(vec![
+                single_example(
+                    "Button-Only Number Field",
+                    NumberField::new("number-field", *default_ex.read(cx), window, cx)
+                        .on_change({
+                            let default_ex = default_ex.clone();
+                            move |value, _, cx| default_ex.write(cx, *value)
+                        })
+                        .min(1.0)
+                        .max(100.0)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Editable Number Field",
+                    NumberField::new("editable-number-field", *edit_ex.read(cx), window, cx)
+                        .on_change({
+                            let edit_ex = edit_ex.clone();
+                            move |value, _, cx| edit_ex.write(cx, *value)
+                        })
+                        .min(100.0)
+                        .max(500.0)
+                        .mode(NumberFieldMode::Edit, cx)
+                        .into_any_element(),
+                ),
+            ])
+            .into_any_element()
     }
 }

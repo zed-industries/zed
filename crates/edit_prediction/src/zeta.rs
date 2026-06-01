@@ -1,11 +1,12 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
     ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     prediction::EditPredictionResult,
 };
 use anyhow::Result;
+use buffer_diff::BufferDiff;
 use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
@@ -48,7 +49,11 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
-    capture_data: Option<Vec<StoredEvent>>,
+    capture_data: Option<(
+        Vec<crate::StoredEvent>,
+        Task<Result<collections::HashMap<Arc<Path>, Entity<BufferDiff>>>>,
+    )>,
+    repo_url: Option<String>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let settings = &all_language_settings(None, cx).edit_predictions;
@@ -69,17 +74,7 @@ pub fn request_prediction_with_zeta(
 
     let excerpt_path = buffer_path_with_id_fallback(snapshot.file(), &snapshot.text, cx);
 
-    let repo_url = if can_collect_data {
-        let buffer_id = buffer.read(cx).remote_id();
-        project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .repository_and_path_for_buffer_id(buffer_id, cx)
-            .and_then(|(repo, _)| repo.read(cx).default_remote_url())
-    } else {
-        None
-    };
+    let repo_url = repo_url.filter(|_| can_collect_data);
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store
@@ -412,17 +407,33 @@ pub fn request_prediction_with_zeta(
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
             let model_version = prediction.model_version.clone();
-            let example_task = capture_data.and_then(|stored_events| {
-                cx.update(|cx| {
-                    crate::capture_example(
-                        project.clone(),
-                        edited_buffer.clone(),
-                        position,
-                        stored_events,
-                        false,
-                        cx,
-                    )
-                })
+            let example_task = capture_data.and_then(|(events, uncommitted_diffs)| {
+                let (recently_opened_files, recently_viewed_files) = this
+                    .read_with(cx, |this, cx| this.recent_paths_for_project(&project, cx))
+                    .ok()?;
+                Some(cx.spawn({
+                    let project = project.clone();
+                    let edited_buffer = edited_buffer.clone();
+                    async move |cx| {
+                        let uncommitted_diffs = uncommitted_diffs.await?;
+                        let Some(task) = cx.update(|cx| {
+                            crate::capture_example::capture_example(
+                                project.clone(),
+                                edited_buffer.clone(),
+                                position,
+                                events,
+                                recently_opened_files,
+                                recently_viewed_files,
+                                uncommitted_diffs,
+                                false,
+                                cx,
+                            )
+                        }) else {
+                            return Err(anyhow::anyhow!("failed to capture example"));
+                        };
+                        task.await
+                    }
+                }))
             });
             cx.spawn(async move |cx| {
                 let example_spec = if let Some(task) = example_task {
