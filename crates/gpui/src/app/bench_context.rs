@@ -1,11 +1,12 @@
-use std::{future::Future, rc::Rc, sync::Arc};
+use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc};
 
 use anyhow::{Result, anyhow};
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
-    Entity, EntityId, Focusable, ForegroundExecutor, Global, Render, Reservation, Task,
-    TestDispatcher, TestPlatform, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    Entity, EntityId, Focusable, ForegroundExecutor, Global, IntoElement, Render, Reservation,
+    Task, TestDispatcher, TestPlatform, VisualContext, Window, WindowBounds, WindowHandle,
+    WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 
@@ -16,26 +17,38 @@ use crate::{
 /// benchmark setup. Criterion remains responsible for the measured loop via its
 /// `Bencher` API.
 #[derive(Clone)]
-pub struct BenchAppContext {
+pub struct BenchAppContext<'a, 'measurement> {
     app: Rc<AppCell>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     dispatcher: TestDispatcher,
     benchmark_name: Option<&'static str>,
+    bencher: Rc<RefCell<Option<&'a mut criterion::Bencher<'measurement>>>>,
 }
 
-impl BenchAppContext {
+impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Creates a new benchmark app context.
-    pub fn new(benchmark_name: Option<&'static str>) -> Self {
-        Self::with_seed(benchmark_name, 0)
+    pub fn new(
+        benchmark_name: Option<&'static str>,
+        bencher: &'a mut criterion::Bencher<'measurement>,
+    ) -> Self {
+        Self::with_seed(benchmark_name, 0, bencher)
     }
 
     /// Creates a new benchmark app context with the provided scheduler seed.
-    pub fn with_seed(benchmark_name: Option<&'static str>, seed: u64) -> Self {
-        Self::build(TestDispatcher::new(seed), benchmark_name)
+    pub fn with_seed(
+        benchmark_name: Option<&'static str>,
+        seed: u64,
+        bencher: &'a mut criterion::Bencher<'measurement>,
+    ) -> Self {
+        Self::build(TestDispatcher::new(seed), benchmark_name, bencher)
     }
 
-    fn build(dispatcher: TestDispatcher, benchmark_name: Option<&'static str>) -> Self {
+    fn build(
+        dispatcher: TestDispatcher,
+        benchmark_name: Option<&'static str>,
+        bencher: &'a mut criterion::Bencher<'measurement>,
+    ) -> Self {
         let dispatcher = Arc::new(dispatcher);
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
@@ -51,6 +64,7 @@ impl BenchAppContext {
             foreground_executor,
             dispatcher: (*dispatcher).clone(),
             benchmark_name,
+            bencher: Rc::new(RefCell::new(Some(bencher))),
         }
     }
 
@@ -86,8 +100,50 @@ impl BenchAppContext {
         read(&app)
     }
 
+    /// Measures a generic benchmark workload using Criterion's iteration loop.
+    ///
+    /// The closure is invoked once per Criterion iteration and receives this
+    /// benchmark app context so it can update GPUI state.
+    pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
+        let bencher = self.take_bencher("bench_iter");
+        let mut benchmark = || benchmark(self);
+        bencher.iter(&mut benchmark);
+        self.replace_bencher(bencher);
+    }
+
+    /// Measures the foreground render pipeline for a GPUI entity.
+    ///
+    /// Each iteration runs `update` against the entity in its current window,
+    /// lets GPUI flush synchronous effects from that update, then renders the
+    /// entity by running layout, prepaint, and paint.
+    pub fn bench_renderer<V>(
+        &mut self,
+        view: Entity<V>,
+        mut update: impl FnMut(&mut V, &mut Window, &mut Context<V>),
+    ) where
+        V: 'static + Render,
+    {
+        let bencher = self.take_bencher("bench_renderer");
+        let mut benchmark = || {
+            self.with_window(view.entity_id(), |window, cx| {
+                view.update(cx, |view, cx| update(view, window, cx));
+            })
+            .expect("cannot benchmark renderer for entity without a current window");
+
+            self.with_window(view.entity_id(), |window, cx| {
+                let mut element = view.clone().into_any_element();
+                let _ = element.request_layout(window, cx);
+                let _ = element.prepaint(window, cx);
+                element.paint(window, cx);
+            })
+            .expect("cannot benchmark renderer for entity without a current window");
+        };
+        bencher.iter(&mut benchmark);
+        self.replace_bencher(bencher);
+    }
+
     /// Adds a window with an empty root view for benchmark setup.
-    pub fn add_empty_window(&mut self) -> BenchWindowContext {
+    pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
         let window = {
             let mut app = self.app.borrow_mut();
             let bounds = Bounds::maximized(None, &app);
@@ -111,6 +167,20 @@ impl BenchAppContext {
         }
     }
 
+    fn take_bencher(&self, benchmark_kind: &str) -> &'a mut criterion::Bencher<'measurement> {
+        self.bencher.borrow_mut().take().unwrap_or_else(|| {
+            panic!("cannot start {benchmark_kind}: benchmark measurement is already running")
+        })
+    }
+
+    fn replace_bencher(&self, bencher: &'a mut criterion::Bencher<'measurement>) {
+        let previous = self.bencher.borrow_mut().replace(bencher);
+        assert!(
+            previous.is_none(),
+            "benchmark bencher was unexpectedly present after measurement"
+        );
+    }
+
     /// Runs GPUI benchmark teardown.
     pub fn teardown(mut self) {
         self.run_until_idle();
@@ -122,7 +192,7 @@ impl BenchAppContext {
     }
 }
 
-impl AppContext for BenchAppContext {
+impl AppContext for BenchAppContext<'_, '_> {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
@@ -151,7 +221,7 @@ impl AppContext for BenchAppContext {
         app.update_entity(handle, update)
     }
 
-    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> GpuiBorrow<'a, T>
+    fn as_mut<'b, T>(&'b mut self, _: &Entity<T>) -> GpuiBorrow<'b, T>
     where
         T: 'static,
     {
@@ -216,14 +286,14 @@ impl AppContext for BenchAppContext {
 /// This is separate from `VisualTestContext`; it provides access to a benchmark
 /// window without exposing test-only helpers such as input simulation.
 #[derive(Clone)]
-pub struct BenchWindowContext {
-    cx: BenchAppContext,
+pub struct BenchWindowContext<'a, 'measurement> {
+    cx: BenchAppContext<'a, 'measurement>,
     window: AnyWindowHandle,
 }
 
-impl BenchWindowContext {
+impl<'a, 'measurement> BenchWindowContext<'a, 'measurement> {
     /// Returns the underlying benchmark app context.
-    pub fn app_context(&mut self) -> &mut BenchAppContext {
+    pub fn app_context(&mut self) -> &mut BenchAppContext<'a, 'measurement> {
         &mut self.cx
     }
 
@@ -245,7 +315,7 @@ impl BenchWindowContext {
     }
 }
 
-impl AppContext for BenchWindowContext {
+impl AppContext for BenchWindowContext<'_, '_> {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         self.window
             .update(&mut self.cx, |_, _, cx| cx.new(build_entity))
@@ -276,7 +346,7 @@ impl AppContext for BenchWindowContext {
         self.cx.update_entity(handle, update)
     }
 
-    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
+    fn as_mut<'b, T>(&'b mut self, handle: &Entity<T>) -> GpuiBorrow<'b, T>
     where
         T: 'static,
     {
@@ -331,7 +401,7 @@ impl AppContext for BenchWindowContext {
     }
 }
 
-impl VisualContext for BenchWindowContext {
+impl VisualContext for BenchWindowContext<'_, '_> {
     type Result<T> = Result<T>;
 
     fn window_handle(&self) -> AnyWindowHandle {

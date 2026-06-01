@@ -8111,6 +8111,7 @@ dependencies = [
  "core-graphics 0.24.0",
  "core-text",
  "core-video",
+ "criterion",
  "ctor",
  "derive_more",
  "embed-resource",
