@@ -2845,7 +2845,7 @@ impl ConversationView {
                             dismiss_if_visible(this, window, cx);
                         }
                         AgentPanelEvent::EntryChanged
-                        | AgentPanelEvent::TerminalClosed { .. }
+                        | AgentPanelEvent::TerminalCloseRequested { .. }
                         | AgentPanelEvent::ThreadInteracted { .. } => {}
                     },
                 ));
