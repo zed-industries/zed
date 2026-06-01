@@ -2147,6 +2147,7 @@ mod tests {
                         None,
                         &response_sink,
                         &app_state,
+                        false,
                         &mut cx,
                     )
                     .await
@@ -2175,6 +2176,7 @@ mod tests {
                         None,
                         &response_sink,
                         &app_state,
+                        false,
                         &mut cx,
                     )
                     .await
@@ -2222,6 +2224,7 @@ mod tests {
                         None,
                         &response_sink,
                         &app_state,
+                        false,
                         &mut cx,
                     )
                     .await
@@ -2287,6 +2290,7 @@ mod tests {
                         None,
                         &response_sink,
                         &app_state,
+                        false,
                         &mut cx,
                     )
                     .await
@@ -2342,6 +2346,7 @@ mod tests {
                         None,
                         &response_sink,
                         &app_state,
+                        false,
                         &mut cx,
                     )
                     .await
@@ -2382,6 +2387,7 @@ mod tests {
             open_behavior,
             env: None,
             user_data_dir: None,
+            stdin_cursor_at_end: false,
             dev_container: false,
             cwd: None,
         }
@@ -2401,6 +2407,7 @@ mod tests {
             open_behavior,
             env: None,
             user_data_dir: None,
+            stdin_cursor_at_end: false,
             dev_container: false,
             cwd: None,
         }

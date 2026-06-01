@@ -911,7 +911,7 @@ impl TextThread {
             sorted_messages.pop();
         }
         sorted_messages.retain(|m| m.role == Role::User);
-        sorted_messages.sort_by(|a, b| b.offset_range.len().cmp(&a.offset_range.len()));
+        sorted_messages.sort_by_key(|message| std::cmp::Reverse(message.offset_range.len()));
 
         let cache_anchors = if speculative { 0 } else { 0 };
         sorted_messages.truncate(cache_anchors);

@@ -173,7 +173,7 @@ impl Editor {
         let mut cursor_on_active = false;
         let mut target = None;
 
-        for diagnostic in after.into_iter().chain(before.into_iter()) {
+        for diagnostic in after.into_iter().chain(before) {
             let contains_cursor = diagnostic.range.contains(&selection.start)
                 || diagnostic.range.end == selection.head();
 
@@ -252,7 +252,7 @@ impl Editor {
                 }
             }
         } else {
-            for diagnostic in after.into_iter().chain(before.into_iter()) {
+            for diagnostic in after.into_iter().chain(before) {
                 if diagnostic.range.start != selection.start
                     || active_group_id.is_some_and(|active| diagnostic.diagnostic.group_id > active)
                 {

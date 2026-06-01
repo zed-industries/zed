@@ -252,7 +252,7 @@ pub fn init(cx: &mut App) {
 
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let Some(picker) = workspace.active_modal::<DirectoryFilePicker>(cx) else {
-                DirectoryFilePicker::open(workspace, directory.clone(), window, cx);
+                DirectoryFilePicker::open(workspace, directory, window, cx);
                 return;
             };
 
@@ -890,7 +890,6 @@ impl PickerDelegate for DirectoryFileDelegate {
             })();
 
             if let Some(existing_window) = existing_window {
-                let path = path.clone();
                 window.defer(cx, move |_, cx| {
                     existing_window
                         .update(cx, |multi_workspace, window, cx| {
@@ -910,8 +909,6 @@ impl PickerDelegate for DirectoryFileDelegate {
                         .log_err();
                 });
             } else if let Some(workspace) = self.workspace.upgrade() {
-                let directory = directory.clone();
-                let path = path.clone();
                 window.defer(cx, move |window, cx| {
                     let _ = workspace.update(cx, |workspace, cx| {
                         workspace

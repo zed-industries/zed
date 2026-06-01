@@ -1298,19 +1298,13 @@ impl GitRepository for RealGitRepository {
     }
 
     fn show_file(&self, commit: String, path: RepoPath) -> BoxFuture<'_, Result<Option<String>>> {
-        let git_binary_path = self.any_git_binary_path.clone();
-        let working_directory = self.working_directory();
+        let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let working_directory = working_directory?;
                 let path_str = path.as_unix_str().to_string();
-                let output = new_command(git_binary_path)
-                    .current_dir(&working_directory)
-                    .args([
-                        "--no-optional-locks",
-                        "show",
-                        &format!("{}:{}", commit, path_str),
-                    ])
+                let output = git
+                    .build_command(&["show"])
+                    .arg(format!("{}:{}", commit, path_str))
                     .output()
                     .await?;
                 if output.status.success() {

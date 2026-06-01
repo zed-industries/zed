@@ -367,7 +367,7 @@ impl BufferSearchModal {
             let picker = self.picker.read(cx);
             (
                 picker.query(cx).is_empty(),
-                picker.query(cx).to_string(),
+                picker.query(cx),
                 picker.delegate.search_history_cursor.clone(),
             )
         };
@@ -757,8 +757,7 @@ impl BufferSearchDelegate {
                                         let chunk_in_trimmed_end = (current_offset + chunk_len)
                                             .saturating_sub(left_trimmed_len);
                                         if chunk_in_trimmed_start < trimmed_line.len() {
-                                            let start =
-                                                chunk_in_trimmed_start.max(0).min(preview_len);
+                                            let start = chunk_in_trimmed_start.min(preview_len);
                                             let end = chunk_in_trimmed_end
                                                 .min(trimmed_line.len())
                                                 .min(preview_len);
@@ -1175,7 +1174,7 @@ impl PickerDelegate for BufferSearchDelegate {
 
                                         // Only highlight if within the trimmed content range
                                         if chunk_in_trimmed_start < trimmed_line.len() {
-                                            let start_in_preview = chunk_in_trimmed_start.max(0);
+                                            let start_in_preview = chunk_in_trimmed_start;
                                             let end_in_preview =
                                                 chunk_in_trimmed_end.min(trimmed_line.len());
 

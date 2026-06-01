@@ -3726,7 +3726,10 @@ impl Editor {
                         let clean_name = name.trim_end_matches('/');
                         let path = base_path.join(clean_name);
 
-                        let output = std::process::Command::new("trash").arg(&path).output();
+                        let output = util::command::new_command("trash")
+                            .arg(&path)
+                            .output()
+                            .await;
 
                         match output {
                             Ok(output) => {
