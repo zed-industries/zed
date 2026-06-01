@@ -229,6 +229,37 @@ impl ThreadEntryWorkspace {
     }
 }
 
+/// If the title begins with a non-letter, non-whitespace character (such as a
+/// leading emoji or symbol the user prefixed their title with), splits that
+/// character out so it can be displayed in place of the entry's icon
+fn split_leading_icon_char(
+    title: &SharedString,
+    highlight_positions: &[usize],
+) -> Option<(SharedString, SharedString, Vec<usize>)> {
+    let first_char = title.chars().next()?;
+    if first_char.is_alphabetic() || first_char.is_whitespace() {
+        return None;
+    }
+
+    let trimmed_title = title[first_char.len_utf8()..].trim_start();
+    if trimmed_title.is_empty() {
+        return None;
+    }
+
+    let stripped_len = title.len() - trimmed_title.len();
+    let adjusted_positions = highlight_positions
+        .iter()
+        .filter(|&&position| position >= stripped_len)
+        .map(|&position| position - stripped_len)
+        .collect();
+
+    Some((
+        first_char.to_string().into(),
+        trimmed_title.to_string().into(),
+        adjusted_positions,
+    ))
+}
+
 fn draft_display_label_for_thread_metadata(
     metadata: &ThreadMetadata,
     workspace: &ThreadEntryWorkspace,
@@ -6239,14 +6270,22 @@ impl Sidebar {
         );
         let is_remote = terminal.workspace.is_remote(cx);
 
-        ThreadItem::new(id, terminal.metadata.display_title())
+        let display_title = terminal.metadata.display_title();
+        let (icon_char, title, highlight_positions) =
+            match split_leading_icon_char(&display_title, &terminal.highlight_positions) {
+                Some((icon_char, title, positions)) => (Some(icon_char), title, positions),
+                None => (None, display_title, terminal.highlight_positions.clone()),
+            };
+
+        ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
+            .when_some(icon_char, |this, icon_char| this.icon_char(icon_char))
             .is_remote(is_remote)
             .worktrees(worktrees)
             .timestamp(timestamp)
             .notified(terminal.has_notification)
-            .highlight_positions(terminal.highlight_positions.clone())
+            .highlight_positions(highlight_positions)
             .selected(is_active)
             .focused(is_focused)
             .hovered(is_hovered)

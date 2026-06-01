@@ -2778,13 +2778,23 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         // Use a per-thread temp directory for all terminal commands, even when
         // sandboxing is disabled, so the model can't infer sandbox state from
         // `$TMPDIR` changing between conversations.
+        //
+        // Only do this for local projects. For remote projects the temp
+        // directory would be created on the client, but the terminal runs on
+        // the remote host, so pointing `$TMPDIR` (and the sandbox writable
+        // scope) at a client-side path would leak client environment into the
+        // remote terminal and reference a directory that doesn't exist there.
         let mut extra_env = extra_env;
         let mut sandbox_wrap = sandbox_wrap;
-        match self
-            .thread
-            .update(cx, |thread, cx| thread.sandboxed_terminal_temp_dir(cx))
-        {
-            Ok(Ok(temp_dir)) => {
+        let temp_dir = self.thread.update(cx, |thread, cx| {
+            thread
+                .project()
+                .read(cx)
+                .is_local()
+                .then(|| thread.sandboxed_terminal_temp_dir(cx))
+        });
+        match temp_dir {
+            Ok(Some(Ok(temp_dir))) => {
                 // Canonicalize so the path matches what the sandbox resolves
                 // symlinks to (e.g. `/var` -> `/private/var` on macOS).
                 // `$TMPDIR` and the writable-scope entry below must agree, and
@@ -2804,7 +2814,8 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                     sandbox_wrap.writable_paths.push(temp_dir);
                 }
             }
-            Ok(Err(error)) => return Task::ready(Err(error)),
+            Ok(None) => {}
+            Ok(Some(Err(error))) => return Task::ready(Err(error)),
             Err(error) => return Task::ready(Err(error)),
         };
         let task = self.acp_thread.update(cx, |thread, cx| {
@@ -3824,6 +3835,113 @@ mod internal_tests {
             assert_eq!(user.len(), 1);
             assert_eq!(user[0].description, "Second version");
         });
+    }
+
+    #[gpui::test]
+    async fn test_symlinked_global_skills_load_and_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let external_skill_dir = PathBuf::from(path!("/external/my-skill"));
+        let skill_link_dir = skills_dir.join("my-skill");
+        let skill_link_path = skill_link_dir.join("SKILL.md");
+
+        fs.insert_tree(
+            &external_skill_dir,
+            json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: First symlinked version\n---\n\nbody-v1"
+            }),
+        )
+        .await;
+        fs.create_dir(&skills_dir).await.unwrap();
+        fs.create_symlink(&skill_link_dir, external_skill_dir)
+            .await
+            .unwrap();
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let project_id = project.entity_id();
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let loaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
+            assert_eq!(user[0].description, "First symlinked version");
+            assert_eq!(user[0].source, SkillSource::Global);
+            assert_eq!(user[0].skill_file_path, skill_link_path);
+
+            let catalog_skills = state.project_context.read(cx).skills();
+            let catalog_skill = catalog_skills
+                .iter()
+                .find(|skill| skill.name == "my-skill")
+                .expect("symlinked skill should be included in the model-facing catalog");
+            assert_eq!(catalog_skill.description, "First symlinked version");
+            assert_eq!(
+                catalog_skill.location,
+                skill_link_path.to_string_lossy().as_ref()
+            );
+
+            (*user[0]).clone()
+        });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
+            .await
+            .unwrap();
+        assert_eq!(body, "body-v1");
+
+        fs.write(
+            &skill_link_path,
+            b"---\nname: my-skill\ndescription: Second symlinked version\n---\n\nbody-v2",
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let reloaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
+            assert_eq!(user[0].description, "Second symlinked version");
+            assert_eq!(user[0].source, SkillSource::Global);
+            assert_eq!(user[0].skill_file_path, skill_link_path);
+
+            let catalog_skills = state.project_context.read(cx).skills();
+            let catalog_skill = catalog_skills
+                .iter()
+                .find(|skill| skill.name == "my-skill")
+                .expect("reloaded symlinked skill should be included in the model-facing catalog");
+            assert_eq!(catalog_skill.description, "Second symlinked version");
+            assert_eq!(
+                catalog_skill.location,
+                skill_link_path.to_string_lossy().as_ref()
+            );
+
+            (*user[0]).clone()
+        });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &reloaded_skill.skill_file_path)
+            .await
+            .unwrap();
+        assert_eq!(body, "body-v2");
     }
 
     #[gpui::test]
