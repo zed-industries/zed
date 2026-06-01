@@ -1589,14 +1589,8 @@ impl Sidebar {
                 }
                 threads.retain(|thread| thread.draft.is_none() || thread.metadata.title.is_some());
 
-                // An empty-draft placeholder is only meaningful while the
-                // user is actually looking at that draft. We keep it iff
-                // the active workspace's agent panel is currently viewing
-                // this exact thread; otherwise the row would persist as a
-                // stale "New {agent} Thread" entry while the user is busy
-                // in some other thread. Drafts with real content
-                // (`Some(DraftKind::WithContent)`) are preserved unconditionally
-                // — they represent user-typed state we shouldn't hide.
+                // Keep empty drafts only while their thread is active; preserve
+                // drafts with content because they hold user-typed state.
                 let pending_activation = self.pending_thread_activation;
                 let active_panel_thread_id = active_workspace
                     .as_ref()
