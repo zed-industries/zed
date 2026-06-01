@@ -12,9 +12,9 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -1502,6 +1502,14 @@ impl GitRepository for FakeGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        _commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
+        async move { Ok(vec![FileHistoryChangedFileSets::default(); paths.len()]) }.boxed()
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {

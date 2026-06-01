@@ -512,6 +512,11 @@ pub struct CommitDiff {
     pub files: Vec<CommitFile>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FileHistoryChangedFileSets {
+    pub file_sets: Vec<Vec<RepoPath>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CommitFileStatus {
     Added,
@@ -1046,6 +1051,12 @@ pub trait GitRepository: Send + Sync {
         search_args: SearchCommitArgs,
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>>;
+
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>>;
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
 
@@ -3100,6 +3111,50 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
+        let git = self.git_binary();
+
+        async move {
+            if paths.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            if commit_limit == 0 {
+                return Ok(vec![FileHistoryChangedFileSets::default(); paths.len()]);
+            }
+
+            let max_count_arg = format!("--max-count={commit_limit}");
+            let mut args = [
+                "log",
+                max_count_arg.as_str(),
+                "--full-diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                "--format=%x1e",
+                "--",
+            ]
+            .map(OsString::from)
+            .to_vec();
+            args.extend(paths.iter().map(|path| OsString::from(path.as_unix_str())));
+
+            let output = git.build_command(&args).output().await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "git log failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(parse_file_history_changed_files_output(&stdout, &paths))
+        }
+        .boxed()
+    }
+
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
         let git_binary = self.git_binary();
 
@@ -3207,6 +3262,39 @@ async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
     let content_str = String::from_utf8_lossy(&content);
     parse_cat_file_commit(*sha, &content_str)
         .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
+}
+
+fn parse_file_history_changed_files_output(
+    output: &str,
+    queried_paths: &[RepoPath],
+) -> Vec<FileHistoryChangedFileSets> {
+    let mut histories = vec![FileHistoryChangedFileSets::default(); queried_paths.len()];
+
+    for record in output.split('\x1e') {
+        let changed_files = record
+            .split('\0')
+            .filter_map(|field| {
+                let path = field.trim_start_matches('\n');
+                if path.is_empty() {
+                    return None;
+                }
+                RepoPath::new(path).ok()
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        if changed_files.is_empty() {
+            continue;
+        }
+
+        let file_set = changed_files.iter().cloned().collect::<Vec<_>>();
+        for (index, queried_path) in queried_paths.iter().enumerate() {
+            if changed_files.contains(queried_path) {
+                histories[index].file_sets.push(file_set.clone());
+            }
+        }
+    }
+
+    histories
 }
 
 fn parse_initial_graph_output<'a>(
@@ -3740,6 +3828,51 @@ mod tests {
         };
 
         assert_eq!(commit.tag_names(), ["v1.0.0", "v1.1.0"]);
+    }
+
+    #[test]
+    fn test_parse_file_history_changed_files_output() {
+        let queried_paths = vec![
+            RepoPath::new("src/a.rs").unwrap(),
+            RepoPath::new("src/b.rs").unwrap(),
+        ];
+        let output = concat!(
+            "\x1e\0\nsrc/a.rs\0src/shared.rs\0",
+            "\x1e\0\nsrc/b.rs\0src/shared.rs\0",
+            "\x1e\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
+        );
+
+        let histories = parse_file_history_changed_files_output(output, &queried_paths);
+
+        assert_eq!(histories.len(), 2);
+        assert_eq!(
+            histories[0].file_sets,
+            vec![
+                vec![
+                    RepoPath::new("src/a.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+                vec![
+                    RepoPath::new("src/a.rs").unwrap(),
+                    RepoPath::new("src/b.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+            ]
+        );
+        assert_eq!(
+            histories[1].file_sets,
+            vec![
+                vec![
+                    RepoPath::new("src/b.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+                vec![
+                    RepoPath::new("src/a.rs").unwrap(),
+                    RepoPath::new("src/b.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+            ]
+        );
     }
 
     #[gpui::test]
