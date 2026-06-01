@@ -89,103 +89,12 @@ pub struct TerminalToolInput {
     pub unsandboxed: Option<bool>,
 }
 
-/// Executes a shell one-liner and returns the combined output.
-///
-/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
-///
-/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
-///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
-///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
-///
-/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
-///
-/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
-///
-/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
-///
-/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
-///
-/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
-/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
-/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TerminalToolInputWithoutTail {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
-    ///
-    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
-    pub command: String,
-    /// Working directory for the command. This must be one of the root directories of the project.
-    pub cd: String,
-    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
-    pub timeout_ms: Option<u64>,
-    /// Request network access for this command.
-    ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. By default sandboxed commands
-    /// cannot make outbound network connections; set this to `true` only
-    /// when the command needs network access. The user will be prompted
-    /// to approve before the command runs.
-    #[serde(default)]
-    pub allow_network: Option<bool>,
-    /// Request unrestricted filesystem-write access for this command.
-    ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. By default sandboxed commands can
-    /// only write to the project worktree directories and a per-command
-    /// temporary directory; set this to `true` only when the command
-    /// needs to write elsewhere. The user will be prompted to approve
-    /// before the command runs.
-    #[serde(default)]
-    pub allow_fs_write: Option<bool>,
-    /// Request to run this command outside the sandbox entirely.
-    ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. Prefer `allow_network: true` or
-    /// `allow_fs_write: true` when one of those is enough. Set this to
-    /// `true` ONLY when the command needs behavior that the sandbox can't
-    /// grant on a per-permission basis. The user will be prompted to
-    /// approve before the command runs without sandbox restrictions.
-    #[serde(default)]
-    pub unsandboxed: Option<bool>,
-}
-
-impl From<TerminalToolInputWithoutTail> for TerminalToolInput {
-    fn from(input: TerminalToolInputWithoutTail) -> Self {
-        Self {
-            command: input.command,
-            cd: input.cd,
-            timeout_ms: input.timeout_ms,
-            head_lines: None,
-            tail_lines: None,
-            allow_network: input.allow_network,
-            allow_fs_write: input.allow_fs_write,
-            unsandboxed: input.unsandboxed,
-        }
-    }
-}
-
 pub struct TerminalTool {
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
 }
 
 impl TerminalTool {
-    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
-        Self {
-            project,
-            environment,
-        }
-    }
-}
-
-pub struct TerminalToolWithoutTail {
-    project: Entity<Project>,
-    environment: Rc<dyn ThreadEnvironment>,
-}
-
-impl TerminalToolWithoutTail {
     pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
         Self {
             project,
@@ -224,44 +133,6 @@ impl AgentTool for TerminalTool {
                 self.project.clone(),
                 self.environment.clone(),
                 input,
-                event_stream,
-                cx,
-            )
-            .await
-        })
-    }
-}
-
-impl AgentTool for TerminalToolWithoutTail {
-    type Input = TerminalToolInputWithoutTail;
-    type Output = String;
-
-    const NAME: &'static str = "terminal";
-
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
-    }
-
-    fn initial_title(
-        &self,
-        input: Result<Self::Input, serde_json::Value>,
-        _cx: &mut App,
-    ) -> SharedString {
-        terminal_initial_title(input.map(|input| input.command))
-    }
-
-    fn run(
-        self: Arc<Self>,
-        input: ToolInput<Self::Input>,
-        event_stream: ToolCallEventStream,
-        cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |cx| {
-            let input = input.recv().await.map_err(|e| e.to_string())?;
-            run_terminal_tool(
-                self.project.clone(),
-                self.environment.clone(),
-                input.into(),
                 event_stream,
                 cx,
             )
@@ -1708,21 +1579,6 @@ mod tests {
         assert!(schema_text.contains("Do not pipe output to `head`"));
         assert!(schema_text.contains("Do not pipe output to `tail`"));
         assert!(schema_text.contains("waste tokens or exceed the context window"));
-    }
-
-    #[test]
-    fn test_terminal_tool_without_tail_schema_omits_head_and_tail_parameters() {
-        let description = <TerminalToolWithoutTail as crate::AgentTool>::description().to_string();
-        let schema = <TerminalToolWithoutTail as crate::AgentTool>::input_schema(
-            language_model::LanguageModelToolSchemaFormat::JsonSchema,
-        );
-        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
-        let schema_text = schema_json.to_string();
-
-        assert!(!description.contains("head_lines"));
-        assert!(!description.contains("tail_lines"));
-        assert!(!schema_text.contains("head_lines"));
-        assert!(!schema_text.contains("tail_lines"));
     }
 
     async fn assert_rejected_before_terminal_creation(
