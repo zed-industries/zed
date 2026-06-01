@@ -4,6 +4,7 @@ pub mod pages;
 
 use agent_skills::SkillIndex;
 use anyhow::{Context as _, Result};
+use cloud_api_types::OrganizationConfiguration;
 use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
@@ -104,6 +105,11 @@ struct FocusFile(pub u32);
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
     write: fn(&mut SettingsContent, Option<T>, &App),
+    /// Tells us whether the setting is overridden by the currently selected
+    /// organization's settings. Takes the organization configuration and the
+    /// resolved settings value, and returns `Some(...)` if the organization
+    /// overrides the setting, otherwise `None`.
+    org_override: Option<for<'a> fn(&OrganizationConfiguration, &'a T) -> Option<&'a T>>,
 
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
@@ -153,7 +159,8 @@ impl<T: 'static> SettingField<T> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
             write: |_, _, _| unreachable!(),
-            json_path: self.json_path,
+            org_override: None,
+            json_path: None,
         }
     }
 }
@@ -4213,6 +4220,35 @@ fn update_project_setting_file(
     Ok(())
 }
 
+struct CurrentSettingsValue<'a, T> {
+    value: &'a T,
+    file: settings::SettingsFile,
+    disabled: bool,
+}
+
+fn get_current_value<'a, T>(
+    settings_store: &'a SettingsStore,
+    file: &SettingsUiFile,
+    field: &'a SettingField<T>,
+    cx: &'a App,
+) -> Option<CurrentSettingsValue<'a, T>> {
+    let user_store = AppState::global(cx).user_store.read(cx);
+    let org_config = user_store.current_organization_configuration();
+
+    let (file, value) = settings_store.get_value_from_file(file.to_settings(), field.pick);
+    let value = value?;
+
+    let org_value = org_config
+        .zip(field.org_override)
+        .and_then(|(org_config, org_override)| (org_override)(org_config, value));
+
+    Some(CurrentSettingsValue {
+        disabled: org_value.is_some(),
+        value: org_value.unwrap_or(&value),
+        file,
+    })
+}
+
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     field: SettingField<T>,
     file: SettingsUiFile,
@@ -4333,9 +4369,10 @@ where
         .and_then(|metadata| metadata.should_do_titlecase)
         .unwrap_or(true);
 
-    let (_, current_value) =
-        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let current_value = current_value.copied().unwrap_or(variants()[0]);
+    let current_value = get_current_value(&SettingsStore::global(cx), &file, &field, cx);
+    let (current_value, disabled) = current_value
+        .map(|current_value| (*current_value.value, current_value.disabled))
+        .unwrap_or((variants()[0], false));
 
     EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
         move |value, window, cx| {
@@ -4354,6 +4391,7 @@ where
             .log_err(); // todo(settings_ui) don't log err
         }
     })
+    .disabled(disabled)
     .tab_index(0)
     .title_case(should_do_titlecase)
     .into_any_element()
