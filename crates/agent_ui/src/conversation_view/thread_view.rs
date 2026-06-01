@@ -5393,6 +5393,19 @@ impl ThreadView {
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
+            AgentThreadEntry::ContextCompaction => h_flex()
+                .id(("context_compaction", entry_ix))
+                .px_5()
+                .py_1()
+                .gap_2()
+                .child(Divider::horizontal())
+                .child(
+                    Label::new("Context Compacted")
+                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                        .color(Color::Muted),
+                )
+                .child(Divider::horizontal())
+                .into_any(),
         };
 
         let is_subagent_output = self.is_subagent()
@@ -6502,7 +6515,8 @@ impl ThreadView {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction => {}
             }
         }
 
