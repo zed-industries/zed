@@ -4,34 +4,40 @@ mod extension_version_selector;
 
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::{ops::Range, sync::Arc};
+use std::{any::TypeId, ops::Range, sync::Arc};
 
 use anyhow::Context as _;
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
+use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
-use fuzzy::{StringMatchCandidate, match_strings};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
+    Action, Anchor, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable,
     InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TaskExt, TextStyle,
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
+use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
-    ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
-    prelude::*,
+    Banner, Chip, ContextMenu, Divider, ListItem, ListItemSpacing, PopoverMenu, ScrollableHandle,
+    Switch, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
+    Tooltip, WithScrollbar, prelude::*,
 };
+use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
+    notifications::{NotificationId, simple_message_notification::MessageNotification},
 };
 use zed_actions::ExtensionCategoryFilter;
 
@@ -44,11 +50,41 @@ actions!(
     zed,
     [
         /// Installs an extension from a local directory for development.
-        InstallDevExtension
+        InstallDevExtension,
     ]
 );
 
+/// Rebuilds an installed dev extension.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, gpui::Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct RebuildDevExtension {
+    /// The ID of the dev extension to rebuild.
+    ///
+    /// Default: opens a picker if multiple dev extensions are installed.
+    #[serde(default)]
+    pub extension_id: Option<String>,
+}
+
+fn update_rebuild_dev_extension_visibility(store: &Entity<ExtensionStore>, cx: &mut App) {
+    let has_dev_extensions = store.read(cx).dev_extensions().next().is_some();
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        if has_dev_extensions {
+            filter.show_action_types(&[TypeId::of::<RebuildDevExtension>()]);
+        } else {
+            filter.hide_action_types(&[TypeId::of::<RebuildDevExtension>()]);
+        }
+    });
+}
+
 pub fn init(cx: &mut App) {
+    let store = ExtensionStore::global(cx);
+    update_rebuild_dev_extension_visibility(&store, cx);
+    cx.observe(&store, |store, cx| {
+        update_rebuild_dev_extension_visibility(&store, cx);
+    })
+    .detach();
+
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -163,6 +199,87 @@ pub fn init(cx: &mut App) {
                         Some(())
                     })
                     .detach();
+            })
+            .register_action(move |workspace, action: &RebuildDevExtension, window, cx| {
+                if let Some(target_id) = action.extension_id.as_deref() {
+                    let extension_id = ExtensionStore::global(cx)
+                        .read(cx)
+                        .dev_extensions()
+                        .find_map(|m| {
+                            if m.id.as_ref() == target_id {
+                                Some(m.id.clone())
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(extension_id) = extension_id {
+                        ExtensionStore::global(cx).update(cx, |store, cx| {
+                            store.rebuild_dev_extension(extension_id, cx);
+                        });
+                    } else {
+                        struct DevExtensionNotInstalledNotification;
+                        workspace.show_notification(
+                            NotificationId::composite::<DevExtensionNotInstalledNotification>(
+                                SharedString::from(target_id),
+                            ),
+                            cx,
+                            |cx| {
+                                cx.new(|cx| {
+                                    MessageNotification::new(
+                                        format!("Dev extension '{target_id}' is not installed."),
+                                        cx,
+                                    )
+                                    .primary_message("Install Dev Extension")
+                                    .primary_on_click(
+                                        move |window, cx| {
+                                            window
+                                                .dispatch_action(Box::new(InstallDevExtension), cx);
+                                        },
+                                    )
+                                })
+                            },
+                        );
+                    }
+                    return;
+                }
+
+                let dev_extensions = ExtensionStore::global(cx)
+                    .read(cx)
+                    .dev_extensions()
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                match dev_extensions.len() {
+                    0 => {
+                        struct NoDevExtensionsInstalledNotification;
+                        workspace.show_notification(
+                            NotificationId::unique::<NoDevExtensionsInstalledNotification>(),
+                            cx,
+                            |cx| {
+                                cx.new(|cx| {
+                                    MessageNotification::new("No dev extensions are installed.", cx)
+                                        .primary_message("Install Dev Extension")
+                                        .primary_on_click(move |window, cx| {
+                                            window
+                                                .dispatch_action(Box::new(InstallDevExtension), cx);
+                                        })
+                                })
+                            },
+                        );
+                    }
+                    1 => {
+                        let extension_id = dev_extensions[0].id.clone();
+                        ExtensionStore::global(cx).update(cx, |store, cx| {
+                            store.rebuild_dev_extension(extension_id, cx);
+                        });
+                    }
+                    _ => {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            let delegate = DevExtensionRebuildPickerDelegate::new(dev_extensions);
+                            Picker::uniform_list(delegate, window, cx).width(rems(34.))
+                        });
+                    }
+                }
             });
 
         cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
@@ -1631,6 +1748,167 @@ impl ExtensionsPage {
         }
 
         container
+    }
+}
+
+struct DevExtensionRebuildPickerDelegate {
+    entries: Vec<Arc<ExtensionManifest>>,
+    matches: Vec<StringMatch>,
+    selected_index: usize,
+}
+
+impl DevExtensionRebuildPickerDelegate {
+    fn new(manifests: Vec<Arc<ExtensionManifest>>) -> Self {
+        let matches = manifests
+            .iter()
+            .enumerate()
+            .map(|(ix, manifest)| StringMatch {
+                candidate_id: ix,
+                score: 0.0,
+                positions: Vec::new(),
+                string: manifest.name.clone(),
+            })
+            .collect();
+
+        Self {
+            entries: manifests,
+            matches,
+            selected_index: 0,
+        }
+    }
+}
+
+impl PickerDelegate for DevExtensionRebuildPickerDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut Window, &mut App) + 'static>> {
+        None
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let background = cx.background_executor().clone();
+        let candidates = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(ix, manifest)| StringMatchCandidate::new(ix, manifest.name.as_ref()))
+            .collect::<Vec<_>>();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let matches = if query.is_empty() {
+                candidates
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, candidate)| StringMatch {
+                        candidate_id: index,
+                        string: candidate.string,
+                        positions: Vec::new(),
+                        score: 0.0,
+                    })
+                    .collect()
+            } else {
+                match_strings(
+                    &candidates,
+                    &query,
+                    false,
+                    true,
+                    100,
+                    &Default::default(),
+                    background,
+                )
+                .await
+            };
+
+            this.update(cx, |this, _cx| {
+                this.delegate.matches = matches;
+                this.delegate.selected_index = this
+                    .delegate
+                    .selected_index
+                    .min(this.delegate.matches.len().saturating_sub(1));
+            })
+            .log_err();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(mat) = self.matches.get(self.selected_index) else {
+            return;
+        };
+
+        let extension_id = self.entries[mat.candidate_id].id.clone();
+        ExtensionStore::global(cx).update(cx, |store, cx| {
+            store.rebuild_dev_extension(extension_id, cx);
+        });
+
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        Arc::from("Rebuild dev extension…")
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let mat = self.matches.get(ix)?;
+        let entry = self.entries.get(mat.candidate_id)?;
+
+        let item = ListItem::new(("dev-extension-list-item", mat.candidate_id))
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
+            .child(
+                h_flex()
+                    .w_full()
+                    .py_px()
+                    .justify_between()
+                    .gap_2()
+                    .child(Label::new(entry.name.clone()))
+                    .child(
+                        Label::new(format!("{} • v{}", entry.id, entry.version))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            );
+
+        Some(item)
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No dev extensions found".into())
     }
 }
 
