@@ -73,6 +73,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
+    /// Whether to close the window when the last tab is closed in a workspace with no project.
+    ///
+    /// Default: false
+    pub on_last_tab_closed_if_no_project: Option<bool>,
     /// Whether to use the system provided dialogs for Open and Save As.
     /// When set to false, Zed will use the built-in keyboard-first pickers.
     ///
