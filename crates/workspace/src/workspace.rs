@@ -91,7 +91,8 @@ pub use persistence::{
         DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
     },
-    read_serialized_multi_workspaces,
+    project_display_name, project_name_for_key, read_serialized_multi_workspaces,
+    set_project_name_for_key,
 };
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
@@ -262,6 +263,8 @@ actions!(
         ActivatePreviousWindow,
         /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Rebuilds the current project by rescanning its worktrees.
+        RebuildProject,
         /// Clears all bookmarks in the project.
         ClearBookmarks,
         /// Clears all notifications.
@@ -7392,6 +7395,25 @@ impl Workspace {
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
                 },
             ))
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &RebuildProject, _, cx| {
+                    let refreshes = workspace
+                        .visible_worktrees(cx)
+                        .filter_map(|worktree| {
+                            worktree.read(cx).as_local().map(|worktree| {
+                                worktree.refresh_entries_for_paths(vec![RelPath::empty().into()])
+                            })
+                        })
+                        .collect::<Vec<_>>();
+
+                    cx.spawn(async move |_, _| {
+                        for mut refresh in refreshes {
+                            refresh.next().await;
+                        }
+                    })
+                    .detach();
+                }),
+            )
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
                     if !workspace.close_active_dock(window, cx) {

@@ -237,6 +237,12 @@ impl Render for TitleBar {
                 }
             }
         }
+        if let Some(workspace) = self.workspace.upgrade() {
+            let key = workspace.read(cx).project_group_key(cx);
+            if let Some(name) = workspace::project_name_for_key(&key, cx) {
+                project_name = Some(name);
+            }
+        }
 
         children.push(
             h_flex()
