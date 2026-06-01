@@ -1652,7 +1652,10 @@ impl Sidebar {
                             group_key.path_list(),
                             group_host.as_ref(),
                         )
-                        .filter(|metadata| self.content_matches.contains(&metadata.thread_id))
+                        .filter(|metadata| {
+                            self.content_matches.contains(&metadata.thread_id)
+                                || self.closed_search_matches.contains(&metadata.thread_id)
+                        })
                         .cloned()
                         .collect::<Vec<_>>()
                     {
@@ -3265,7 +3268,6 @@ impl Sidebar {
             .entries()
             .any(|metadata| {
                 metadata.agent_id.as_ref() != agent::ZED_AGENT_ID.as_ref()
-                    && !metadata.archived
                     && metadata.session_id.is_some()
                     && !self.content_matches.contains(&metadata.thread_id)
                     && !self.closed_search_matches.contains(&metadata.thread_id)
@@ -3308,11 +3310,14 @@ impl Sidebar {
             }
         }
 
+        // Includes archived threads: archived external/ACP threads have no
+        // locally-readable content either, so the "Search more" pass is their
+        // only way to be content-searched. Matches render demoted via the
+        // archived-injection in `rebuild_contents`.
         let candidates: Vec<ClosedAcpCandidate> = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
             .filter(|m| m.agent_id.as_ref() != agent::ZED_AGENT_ID.as_ref())
-            .filter(|m| !m.archived)
             .filter_map(|m| {
                 let session_id = m.session_id.clone()?;
                 let thread_id = m.thread_id;

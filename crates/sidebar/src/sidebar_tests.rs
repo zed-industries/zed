@@ -4037,6 +4037,38 @@ async fn test_search_narrows_visible_threads_to_matches(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_search_by_project_name_shows_its_threads(cx: &mut TestAppContext) {
+    // Typing a project name should surface that project's threads, even when
+    // the query matches neither their titles nor their content.
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for (id, title, hour) in [("t-1", "Fix crash", 3), ("t-2", "Add diff view", 2)] {
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from(id)),
+            Some(title.into()),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
+            None,
+            &project,
+            cx,
+        );
+    }
+    cx.run_until_parked();
+
+    type_in_search(&sidebar, "my-project", cx);
+    let visible = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        visible.iter().any(|row| row.contains("Fix crash"))
+            && visible.iter().any(|row| row.contains("Add diff view")),
+        "typing the project name should surface its threads, got: {:?}",
+        visible
+    );
+}
+
+#[gpui::test]
 async fn test_search_matches_thread_message_content(cx: &mut TestAppContext) {
     // Scenario: the user remembers something they *said* in a thread, but not
     // the thread's title. Searching for that phrase should surface the thread
