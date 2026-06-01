@@ -1,13 +1,15 @@
 use crate::project_search_picker::delegate::TextPickerDelegate;
+use crate::{SearchOptions, project_search_picker::SearchMatch};
 use std::{ops::Range, sync::Arc, time::Duration};
 
 use editor::Editor;
 use futures::StreamExt;
-use gpui::{Action, DismissEvent, Entity, HighlightStyle, StyledText, Task};
-use language::LanguageAwareStyling;
+use gpui::{Action, AsyncApp, DismissEvent, Entity, HighlightStyle, StyledText, Task};
+use language::{Buffer, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::{SearchResults, search::SearchResult};
+use project::{ProjectPath, SearchResults, search::SearchQuery, search::SearchResult};
 use settings::Settings;
+use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, App, Color, Context, Div, Divider, FluentBuilder, InteractiveElement, ListItem,
@@ -16,6 +18,7 @@ use ui::{
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
+use util::paths::PathMatcher;
 
 use super::InputPanel;
 
@@ -110,7 +113,7 @@ impl PickerDelegate for TextPickerDelegate {
                     match result {
                         SearchResult::Buffer { buffer, ranges } => {
                             let matches =
-                                PickerDelegate::process_search_result(&buffer, &ranges, cx);
+                                TextPickerDelegate::process_search_result(&buffer, &ranges, cx);
                             batch_matches.extend(matches);
                         }
                         SearchResult::LimitReached => {
@@ -380,5 +383,105 @@ impl PickerDelegate for TextPickerDelegate {
                         ),
                 ),
         )
+    }
+}
+
+impl TextPickerDelegate {
+    pub(crate) fn build_search_query(
+        &mut self,
+        query: &str,
+        open_buffers: Option<Vec<Entity<Buffer>>>,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<SearchQuery> {
+        if query.is_empty() {
+            return None;
+        }
+
+        let files_to_include = PathMatcher::default();
+        let files_to_exclude = PathMatcher::default();
+
+        // If the project contains multiple visible worktrees, we match the
+        // include/exclude patterns against full paths to allow them to be
+        // disambiguated. For single worktree projects we use worktree relative
+        // paths for convenience.
+        let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
+
+        let result = if self.search_options.contains(SearchOptions::REGEX) {
+            SearchQuery::regex(
+                query,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                self.search_options
+                    .contains(SearchOptions::ONE_MATCH_PER_LINE),
+                files_to_include,
+                files_to_exclude,
+                match_full_paths,
+                open_buffers,
+            )
+        } else {
+            SearchQuery::text(
+                query,
+                self.search_options.contains(SearchOptions::WHOLE_WORD),
+                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
+                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                files_to_include,
+                files_to_exclude,
+                match_full_paths,
+                open_buffers,
+            )
+        };
+
+        result.log_err()
+    }
+
+    pub(crate) fn process_search_result(
+        buffer: &Entity<Buffer>,
+        ranges: &[Range<Anchor>],
+        cx: &AsyncApp,
+    ) -> Vec<SearchMatch> {
+        if ranges.is_empty() {
+            return Vec::new();
+        }
+
+        buffer.read_with(cx, |buf, cx| {
+            let file = buf.file();
+                let path = file.map(|f| ProjectPath {
+                    worktree_id: f.worktree_id(cx),
+                    path: f.path().clone(),
+                });
+                let text = buf.text();
+
+                let mut matches = Vec::new();
+                for anchor_range in ranges {
+                    let start_offset: usize = buf.summary_for_anchor(&anchor_range.start);
+                    let end_offset: usize = buf.summary_for_anchor(&anchor_range.end);
+                    let match_row = buf.offset_to_point(start_offset).row;
+                    let line_number = match_row + 1;
+                    let line_start =
+                        text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    let line_end = text[start_offset..]
+                        .find('\n')
+                        .map(|i| start_offset + i)
+                        .unwrap_or(text.len());
+                    let line_text = text[line_start..line_end].to_string();
+
+                    let relative_start = start_offset - line_start;
+                    let relative_end = end_offset - line_start;
+
+                    if let Some(path) = &path {
+                        matches.push(SearchMatch {
+                            path: path.clone(),
+                            buffer: buffer.clone(),
+                            anchor_range: anchor_range.clone(),
+                            range: start_offset..end_offset,
+                            relative_range: relative_start..relative_end,
+                            line_text,
+                            line_number,
+                        });
+                    }
+                }
+            matches
+        })
     }
 }

@@ -19,9 +19,7 @@ use serde::Deserialize;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
-use ui::{
-    Divider, DocumentationAside, prelude::*, v_flex,
-};
+use ui::{Divider, DocumentationAside, prelude::*, v_flex};
 use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::ModalView;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -42,7 +40,11 @@ actions!(
     picker,
     [
         /// Confirms the selected completion in the picker.
-        ConfirmCompletion
+        ConfirmCompletion,
+        /// TODO!(yara)
+        ToggleLayout,
+        /// TODO!(yara)
+        ToggleSplitMenu,
     ]
 );
 
@@ -64,6 +66,51 @@ struct PendingUpdateMatches {
     _task: Task<Result<()>>,
 }
 
+// TODO!(yara) make this persistent.
+// TODO!(yara) enforce a maximum on the shape
+/// The picker starts centered however the left and right can be extended by
+/// dragging. The sizes are in Rems so the picker scales up and down with the font size.
+pub struct Shape {
+    base_width: Rems,
+    left_extend: Rems,
+    right_extend: Rems,
+    // TODO!(yara) something screen size based?
+    min_width: Rems,
+    // TODO!(yara) vertical resize done later
+    // base_height: Pixels,
+    // top_extend: Pixels,
+    // bottom_extend: Pixels,
+}
+
+impl Shape {
+    fn min_width(&self, window: &Window) -> Pixels {
+        self.min_width.to_pixels(window.rem_size())
+    }
+    fn max_width(&self, window: &Window) -> Pixels {
+        window.viewport_size().width * 0.9
+    }
+    fn base_width(&self, window: &Window) -> Pixels {
+        self.base_width.to_pixels(window.rem_size())
+    }
+    fn left_extend(&self, window: &Window) -> Pixels {
+        self.left_extend.to_pixels(window.rem_size())
+    }
+    fn right_extend(&self, window: &Window) -> Pixels {
+        self.right_extend.to_pixels(window.rem_size())
+    }
+}
+
+impl Default for Shape {
+    fn default() -> Self {
+        Self {
+            min_width: Rems(10.0),
+            base_width: Rems(30.0), // TODO!(yara) look up old default width for picker
+            left_extend: Rems::ZERO,
+            right_extend: Rems::ZERO,
+        }
+    }
+}
+
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
@@ -71,7 +118,7 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
-    width: Option<Length>,
+    shape: Shape,
     widest_item: Option<usize>,
     max_height: Option<Length>,
     /// An external control to display a scrollbar in the `Picker`.
@@ -84,9 +131,6 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
-
-    picker_height: Pixels,
-    picker_width: Pixels,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -380,7 +424,9 @@ impl<D: PickerDelegate> Picker<D> {
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
-            width: None,
+            // TODO1(yara) vertical resize done later
+            // height: rems(42.0).to_pixels(window.rem_size()),
+            shape: Shape::default(),
             widest_item: None,
             max_height: Some(rems(24.).into()),
             show_scrollbar: false,
@@ -406,8 +452,8 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn width(mut self, width: impl Into<gpui::Length>) -> Self {
-        self.width = Some(width.into());
+    pub fn width(mut self, width: impl Into<gpui::Rems>) -> Self {
+        self.shape.base_width = width.into();
         self
     }
 

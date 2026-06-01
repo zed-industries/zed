@@ -1,5 +1,4 @@
 use std::ops::Range;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use editor::scroll::Autoscroll;
@@ -38,12 +37,21 @@ impl Preview {
         }
     }
 
+    pub fn width(&self) -> ui::Pixels {
+         match self.content.layout_mode {
+            LayoutMode::Stacked(_) => ui::Pixels::ZERO,
+            LayoutMode::Telescope(telescope_layout) => telescope_layout.preview_width,
+        }
+    }
+
     pub fn update(&mut self, update: Match, window: &mut Window, cx: &mut impl AppContext) {
+         // self.content since this will become a match to support non editor previews
         self.content.update(update, window, cx)
     }
 
-    pub fn render(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.content.render(self.layout, window, cx);
+    pub fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // self.content since this will become a match to support non editor previews
+        self.content.render(self.layout, window, cx)
     }
 }
 
@@ -54,12 +62,9 @@ pub(crate) struct Update {
 }
 
 /// TODO! rename relative position
+/// - wire up autosave for the editor
 
 struct SearchMatchLineHighlight;
-
-/// TODO!
-/// - wire up autosave for the editor
-///
 
 pub struct EditorPreview {
     current_path: Option<Arc<RelPath>>,
@@ -109,6 +114,9 @@ impl EditorPreview {
             layout_mode,
             stacked,
             telescope,
+            current_path: None,
+            split_popover_menu_handle: PopoverMenuHandle::default(),
+            focus_handle: cx.focus_handle(),
         }
     }
 

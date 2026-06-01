@@ -1,5 +1,7 @@
-use ui::Pixels;
+use gpui::{AppContext, Entity};
+use ui::{App, Pixels, Window};
 
+use crate::render::window_controls::DragPreview;
 
 fn highlighted_drag_preview<T>(
     is_highlighted: gpui::Entity<bool>,
