@@ -4855,7 +4855,10 @@ mod askpass_command_tests {
         // Without ask_pass.cancel() in the Timedout branch, this hangs forever
         // because the delegate never answers and git never exits.
         let git_process = new_command("sh")
-            .args(["-c", &format!("sleep 2 && {script} 'Password:' && sleep 60")])
+            .args([
+                "-c",
+                &format!("sleep 2 && {script} 'Password:' && sleep 60"),
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -4892,7 +4895,9 @@ mod askpass_command_tests {
         smol::spawn(async move {
             smol::Timer::after(Duration::from_secs(2)).await;
             if let Ok(mut stream) = net::async_net::UnixStream::connect(&socket_path).await {
-                smol::io::AsyncWriteExt::write_all(&mut stream, b"Password:\0").await.ok();
+                smol::io::AsyncWriteExt::write_all(&mut stream, b"Password:\0")
+                    .await
+                    .ok();
                 smol::Timer::after(Duration::from_secs(60)).await; // hold open like SSH would
             }
         })

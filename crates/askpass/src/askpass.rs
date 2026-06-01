@@ -10,8 +10,8 @@ use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use futures::channel::{mpsc, oneshot};
