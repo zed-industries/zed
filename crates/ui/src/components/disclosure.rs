@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{ClickEvent, CursorStyle, SharedString};
+use gpui::{AnyView, ClickEvent, CursorStyle, SharedString};
 
 use crate::prelude::*;
 
@@ -15,6 +15,7 @@ pub struct Disclosure {
     opened_icon: IconName,
     closed_icon: IconName,
     visible_on_hover: Option<SharedString>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl Disclosure {
@@ -29,7 +30,13 @@ impl Disclosure {
             opened_icon: IconName::ChevronDown,
             closed_icon: IconName::ChevronRight,
             visible_on_hover: None,
+            tooltip: None,
         }
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
+        self
     }
 
     pub fn on_toggle_expanded(
@@ -98,6 +105,7 @@ impl RenderOnce for Disclosure {
         .when_some(self.visible_on_hover.clone(), |this, group_name| {
             this.visible_on_hover(group_name)
         })
+        .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
         .when_some(self.on_toggle_expanded, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })

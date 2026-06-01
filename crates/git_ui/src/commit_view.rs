@@ -557,6 +557,14 @@ impl CommitView {
             (IconName::Copy, Color::Muted)
         };
 
+        let has_more = self.commit.message.trim().contains('\n');
+        let is_expanded = self.message_expanded;
+        let expand_tooltip = if is_expanded {
+            "Fold Commit Description"
+        } else {
+            "Expand Commit Description"
+        };
+
         v_flex()
             .w_full()
             .py_2p5()
@@ -584,26 +592,45 @@ impl CommitView {
                                     )),
                             )
                             .child(
-                                v_flex().child(Label::new(author_name)).child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(
-                                            Label::new(date_string)
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
-                                        )
-                                        .child(
-                                            Label::new("•")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .alpha(0.5),
-                                        )
-                                        .child(
-                                            Label::new(author_email)
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
-                                        ),
-                                ),
+                                v_flex()
+                                    .child(h_flex().gap_1().child(Label::new(author_name)).when(
+                                        has_more,
+                                        |this| {
+                                            this.child(
+                                                Disclosure::new(
+                                                    "commit-message-disclosure",
+                                                    is_expanded,
+                                                )
+                                                .closed_icon(IconName::ExpandVertical)
+                                                .opened_icon(IconName::FoldVertical)
+                                                .tooltip(Tooltip::text(expand_tooltip))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.message_expanded = !this.message_expanded;
+                                                    cx.notify();
+                                                })),
+                                            )
+                                        },
+                                    ))
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(
+                                                Label::new(date_string)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("•")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .alpha(0.5),
+                                            )
+                                            .child(
+                                                Label::new(author_email)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            ),
+                                    ),
                             ),
                     )
                     .when(self.stash.is_none(), |this| {
@@ -660,20 +687,7 @@ impl CommitView {
             h_flex()
                 .w_full()
                 .pr_2p5()
-                .items_start()
-                .child(h_flex().flex_none().w(avatar_spacer).justify_center().when(
-                    has_more,
-                    |this| {
-                        this.child(
-                            Disclosure::new("commit-message-disclosure", is_expanded)
-                                .closed_icon(IconName::ChevronRight)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.message_expanded = !this.message_expanded;
-                                    cx.notify();
-                                })),
-                        )
-                    },
-                ))
+                .child(h_flex().flex_none().w(avatar_spacer))
                 .child(
                     div()
                         .relative()
