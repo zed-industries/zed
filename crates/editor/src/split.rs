@@ -512,7 +512,7 @@ impl SplittableEditor {
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
-        let mut subscriptions = vec![
+        let subscriptions = vec![
             cx.subscribe(
                 &rhs_editor,
                 |this, _, event: &EditorEvent, cx| match event {
@@ -536,21 +536,14 @@ impl SplittableEditor {
                     cx.emit(event.clone());
                 }
             }),
-        ];
-        let mut previous_diff_view_style = style;
-        subscriptions.push(cx.observe_global_in::<SettingsStore>(
-            window,
-            move |this, window, cx| {
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let diff_view_style = EditorSettings::get_global(cx).diff_view_style;
-                if diff_view_style != previous_diff_view_style {
-                    if this.diff_view_style() != diff_view_style {
-                        this.toggle_split(&ToggleSplitDiff, window, cx);
-                    }
-                    previous_diff_view_style = diff_view_style;
+                if this.diff_view_style() != diff_view_style {
+                    this.toggle_split(&ToggleSplitDiff, window, cx);
                     cx.notify();
                 }
-            },
-        ));
+            }),
+        ];
 
         let this = cx.weak_entity();
         window.defer(cx, {
