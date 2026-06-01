@@ -854,6 +854,18 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Specific handler for the [`editor::actions::Copy`] action in order for
+    /// the `Edit > Copy` menu item to not be disabled, as the app expects a
+    /// handler for this action in order to enable/disable the menu item.
+    fn editor_copy(
+        &mut self,
+        _: &editor::actions::Copy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.copy(&Copy, window, cx);
+    }
+
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         let Some(clipboard) = cx.read_from_clipboard() else {
@@ -874,6 +886,18 @@ impl TerminalView {
                 }
             }
         }
+    }
+
+    /// Specific handler for the [`editor::actions::Paste`] action in order for
+    /// the `Edit > Paste` menu item to not be disabled, as the app expects a
+    /// handler for this action in order to enable/disable the menu item.
+    fn editor_paste(
+        &mut self,
+        _: &editor::actions::Paste,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.paste(&Paste, window, cx);
     }
 
     ///Attempt to paste the clipboard text into the terminal
@@ -1284,7 +1308,9 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::send_text))
             .on_action(cx.listener(TerminalView::send_keystroke))
             .on_action(cx.listener(TerminalView::copy))
+            .on_action(cx.listener(TerminalView::editor_copy))
             .on_action(cx.listener(TerminalView::paste))
+            .on_action(cx.listener(TerminalView::editor_paste))
             .on_action(cx.listener(TerminalView::paste_text))
             .on_action(cx.listener(TerminalView::clear))
             .on_action(cx.listener(TerminalView::scroll_line_up))
@@ -1378,7 +1404,7 @@ impl Item for TerminalView {
                 v_flex()
                     .gap_1()
                     .child(Label::new(title.clone()))
-                    .child(h_flex().flex_grow().child(Divider::horizontal()))
+                    .child(h_flex().flex_grow_1().child(Divider::horizontal()))
                     .child(
                         Label::new(format!("Process ID (PID): {}", pid))
                             .color(Color::Muted)
@@ -2147,6 +2173,32 @@ mod tests {
 
     // CSI `1;2A` = cursor-up with the xterm Shift modifier (`1 + 1` for Shift).
     const SHIFT_UP_ESCAPE: &[u8] = b"\x1b[1;2A";
+
+    #[gpui::test]
+    async fn edit_menu_copy_and_paste_are_available_when_terminal_is_focused(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, _terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert!(window.is_action_available(&editor::actions::Copy, cx));
+            assert!(window.is_action_available(&editor::actions::Paste, cx));
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("foo".to_string()));
+            terminal.update(cx, |terminal, _| terminal.take_input_log());
+            window.dispatch_action(Box::new(editor::actions::Paste), cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
+            assert_eq!(input_log, vec![b"foo".to_vec()]);
+        });
+    }
 
     #[gpui::test]
     async fn shift_up_scrolls_history_in_normal_screen(cx: &mut TestAppContext) {

@@ -172,7 +172,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
                 .spacing(ui::ListItemSpacing::Sparse)
                 .child(
                     h_flex()
-                        .flex_grow()
+                        .flex_grow_1()
                         .gap_3()
                         .child(Icon::new(IconName::Linux))
                         .child(v_flex().child(HighlightedLabel::new(

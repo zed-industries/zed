@@ -176,7 +176,7 @@ impl Render for InputField {
                     .w_full()
                     .px_2()
                     .py_1p5()
-                    .flex_grow()
+                    .flex_grow_1()
                     .text_color(style.text_color)
                     .rounded_md()
                     .bg(style.background_color)
