@@ -2311,7 +2311,8 @@ impl Window {
         self.platform_window.set_title(title);
     }
 
-    /// Sets the position of the macOS traffic light buttons
+    /// Sets the position of the macOS traffic light buttons.
+    #[cfg(target_os = "macos")]
     pub fn set_traffic_light_position(&self, position: Point<Pixels>) {
         self.platform_window.set_traffic_light_position(position);
     }
