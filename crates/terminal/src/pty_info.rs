@@ -1,10 +1,5 @@
-use alacritty_terminal::tty::Pty;
 use gpui::{Context, Task};
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
-#[cfg(target_os = "windows")]
-use std::num::NonZeroU32;
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
 use std::{path::PathBuf, sync::Arc};
 
 #[cfg(target_os = "windows")]
@@ -21,6 +16,13 @@ pub struct ProcessIdGetter {
 }
 
 impl ProcessIdGetter {
+    pub(crate) fn new(handle: i32, fallback_pid: u32) -> ProcessIdGetter {
+        ProcessIdGetter {
+            handle,
+            fallback_pid,
+        }
+    }
+
     pub fn fallback_pid(&self) -> Pid {
         Pid::from_u32(self.fallback_pid)
     }
@@ -28,13 +30,6 @@ impl ProcessIdGetter {
 
 #[cfg(unix)]
 impl ProcessIdGetter {
-    fn new(pty: &Pty) -> ProcessIdGetter {
-        ProcessIdGetter {
-            handle: pty.file().as_raw_fd(),
-            fallback_pid: pty.child().id(),
-        }
-    }
-
     fn pid(&self) -> Option<Pid> {
         // Negative pid means error.
         // Zero pid means no foreground process group is set on the PTY yet.
@@ -54,19 +49,6 @@ impl ProcessIdGetter {
 
 #[cfg(windows)]
 impl ProcessIdGetter {
-    fn new(pty: &Pty) -> ProcessIdGetter {
-        let child = pty.child_watcher();
-        let handle = child.raw_handle();
-        let fallback_pid = child.pid().unwrap_or_else(|| unsafe {
-            NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle as _)))
-        });
-
-        ProcessIdGetter {
-            handle: handle as i32,
-            fallback_pid: u32::from(fallback_pid),
-        }
-    }
-
     fn pid(&self) -> Option<Pid> {
         let pid = unsafe { GetProcessId(HANDLE(self.handle as _)) };
         // the GetProcessId may fail and returns zero, which will lead to a stack overflow issue
@@ -100,7 +82,7 @@ pub struct PtyProcessInfo {
 }
 
 impl PtyProcessInfo {
-    pub fn new(pty: &Pty) -> PtyProcessInfo {
+    pub fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
         let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
@@ -111,7 +93,7 @@ impl PtyProcessInfo {
         PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
-            pid_getter: ProcessIdGetter::new(pty),
+            pid_getter,
             current: RwLock::new(None),
             task: Mutex::new(None),
         }

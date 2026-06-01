@@ -1,26 +1,227 @@
-use std::ops::RangeInclusive;
+#[cfg(target_os = "windows")]
+use std::num::NonZeroU32;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+use std::{borrow::Cow, ops::RangeInclusive, sync::Arc};
+
+mod hyperlinks;
 
 use alacritty_terminal::{
-    grid::{GridIterator, Scroll as AlacScroll},
-    index::{Column, Direction as AlacDirection, Line, Point as AlacPoint},
+    event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
+    event_loop::{EventLoop, Msg, Notifier},
+    grid::{Dimensions, Grid, GridIterator, Row, Scroll as AlacScroll},
+    index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
     selection::{
         Selection as AlacSelection, SelectionRange as AlacSelectionRange,
         SelectionType as AlacSelectionType,
     },
+    sync::FairMutex,
     term::{
-        RenderableCursor, TermMode,
-        cell::{Cell as AlacCell, Hyperlink as AlacHyperlink},
-        search::RegexSearch,
+        Config, Osc52, RenderableCursor, Term, TermMode,
+        cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
+        search::{Match, RegexIter, RegexSearch},
     },
-    vi_mode::ViMotion as AlacViMotion,
-    vte::ansi::CursorShape as AlacCursorShape,
+    tty,
+    vi_mode::{ViModeCursor, ViMotion as AlacViMotion},
+    vte::ansi::{
+        ClearMode, CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
+        NamedPrivateMode, PrivateMode,
+    },
 };
+use anyhow::{Context as _, Result};
+use futures::channel::mpsc::UnboundedSender;
+use util::paths::PathStyle;
+use vte::ansi::Handler;
+#[cfg(target_os = "windows")]
+use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use crate::{
-    Cell, Cursor, CursorShape, Hyperlink, HyperlinkData, IndexedCell, Modes, Point, Range,
-    RenderableCells, Scroll, Search, Selection, SelectionRange, SelectionSide, SelectionType,
-    ViMotion,
+    Cell, Content, Cursor, CursorShape, Hyperlink, HyperlinkData, IndexedCell, Modes, Point,
+    PtyEvent, Range, RenderableCells, Scroll, Search, Selection, SelectionRange, SelectionSide,
+    SelectionType, TerminalBackendEvent, TerminalBounds, ViMotion, ZedListener,
+    pty_info::ProcessIdGetter,
+    terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape},
 };
+
+pub(super) use hyperlinks::{HyperlinkMatch, RegexSearches};
+
+pub(super) type AlacrittyPty = tty::Pty;
+pub(super) type AlacrittyTerm = Term<ZedListener>;
+pub(super) type AlacrittyTermConfig = Config;
+pub(super) type AlacrittyTermLock = FairMutex<AlacrittyTerm>;
+
+#[cfg(unix)]
+impl From<&AlacrittyPty> for ProcessIdGetter {
+    fn from(pty: &AlacrittyPty) -> Self {
+        Self::new(pty.file().as_raw_fd(), pty.child().id())
+    }
+}
+
+#[cfg(windows)]
+impl From<&AlacrittyPty> for ProcessIdGetter {
+    fn from(pty: &AlacrittyPty) -> Self {
+        let child = pty.child_watcher();
+        let handle = child.raw_handle();
+        let fallback_pid = child.pid().unwrap_or_else(|| unsafe {
+            NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle as _)))
+        });
+
+        Self::new(handle as i32, u32::from(fallback_pid))
+    }
+}
+
+pub(super) struct PtySender {
+    notifier: Notifier,
+}
+
+impl PtySender {
+    pub(super) fn notify(&self, input: impl Into<Cow<'static, [u8]>>) {
+        self.notifier.notify(input);
+    }
+
+    pub(super) fn resize(&self, bounds: TerminalBounds) {
+        if let Err(error) = self
+            .notifier
+            .0
+            .send(Msg::Resize(window_size_from_terminal_bounds(bounds)))
+        {
+            log::error!("failed to resize alacritty pty: {error}");
+        }
+    }
+
+    pub(super) fn shutdown(&self) {
+        if let Err(error) = self.notifier.0.send(Msg::Shutdown) {
+            log::debug!("failed to shut down alacritty pty loop: {error}");
+        }
+    }
+}
+
+pub(super) fn window_size_from_terminal_bounds(bounds: TerminalBounds) -> WindowSize {
+    WindowSize {
+        num_lines: bounds.num_lines() as u16,
+        num_cols: bounds.num_columns() as u16,
+        cell_width: f32::from(bounds.cell_width()) as u16,
+        cell_height: f32::from(bounds.line_height()) as u16,
+    }
+}
+
+pub(super) fn display_only_term_config(
+    scrolling_history: usize,
+    cursor_shape: SettingsCursorShape,
+) -> AlacrittyTermConfig {
+    Config {
+        scrolling_history,
+        default_cursor_style: alacritty_cursor_style(cursor_shape),
+        osc52: Osc52::Disabled,
+        ..Config::default()
+    }
+}
+
+pub(super) fn pty_term_config(
+    scrolling_history: usize,
+    cursor_shape: SettingsCursorShape,
+) -> AlacrittyTermConfig {
+    Config {
+        scrolling_history,
+        default_cursor_style: alacritty_cursor_style(cursor_shape),
+        ..Config::default()
+    }
+}
+
+pub(super) fn new_term(
+    config: &AlacrittyTermConfig,
+    bounds: TerminalBounds,
+    events_tx: UnboundedSender<PtyEvent>,
+    alternate_scroll: AlternateScroll,
+) -> Arc<AlacrittyTermLock> {
+    let mut term = Term::new(config.clone(), &bounds, ZedListener(events_tx));
+
+    if let AlternateScroll::Off = alternate_scroll {
+        term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
+    }
+
+    Arc::new(FairMutex::new(term))
+}
+
+pub(super) fn spawn_event_loop(
+    term: Arc<AlacrittyTermLock>,
+    events_tx: UnboundedSender<PtyEvent>,
+    pty: AlacrittyPty,
+    drain_on_exit: bool,
+) -> Result<PtySender> {
+    let event_loop = EventLoop::new(term, ZedListener(events_tx), pty, drain_on_exit, false)
+        .context("failed to create event loop")?;
+    let pty_tx = event_loop.channel();
+    let _io_thread = event_loop.spawn();
+
+    Ok(PtySender {
+        notifier: Notifier(pty_tx),
+    })
+}
+
+pub(super) fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
+    AlacCursorStyle {
+        shape: alacritty_cursor_shape(cursor_shape),
+        blinking: false,
+    }
+}
+
+fn alacritty_cursor_shape(cursor_shape: SettingsCursorShape) -> AlacCursorShape {
+    match cursor_shape {
+        SettingsCursorShape::Block => AlacCursorShape::Block,
+        SettingsCursorShape::Underline => AlacCursorShape::Underline,
+        SettingsCursorShape::Bar => AlacCursorShape::Beam,
+        SettingsCursorShape::Hollow => AlacCursorShape::HollowBlock,
+    }
+}
+
+impl Dimensions for TerminalBounds {
+    /// Note: this is supposed to be for the back buffer's length,
+    /// but we exclusively use it to resize the terminal, which does not
+    /// use this method. We still have to implement it for the trait though,
+    /// hence, this comment.
+    fn total_lines(&self) -> usize {
+        self.screen_lines()
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.num_lines()
+    }
+
+    fn columns(&self) -> usize {
+        self.num_columns()
+    }
+}
+
+impl From<AlacTermEvent> for TerminalBackendEvent {
+    fn from(event: AlacTermEvent) -> Self {
+        match event {
+            AlacTermEvent::MouseCursorDirty => Self::MouseCursorDirty,
+            AlacTermEvent::Title(title) => Self::Title(title),
+            AlacTermEvent::ResetTitle => Self::ResetTitle,
+            AlacTermEvent::ClipboardStore(_, data) => Self::ClipboardStore(data),
+            AlacTermEvent::ClipboardLoad(_, format) => Self::ClipboardLoad(format),
+            AlacTermEvent::ColorRequest(index, format) => Self::ColorRequest(index, format),
+            AlacTermEvent::PtyWrite(output) => Self::PtyWrite(output),
+            AlacTermEvent::TextAreaSizeRequest(format) => {
+                Self::TextAreaSizeRequest(Arc::new(move |bounds| {
+                    format(window_size_from_terminal_bounds(bounds))
+                }))
+            }
+            AlacTermEvent::CursorBlinkingChange => Self::CursorBlinkingChange,
+            AlacTermEvent::Wakeup => Self::Wakeup,
+            AlacTermEvent::Bell => Self::Bell,
+            AlacTermEvent::Exit => Self::Exit,
+            AlacTermEvent::ChildExit(status) => Self::ChildExit(status),
+        }
+    }
+}
+
+impl EventListener for ZedListener {
+    fn send_event(&self, event: AlacTermEvent) {
+        self.0.unbounded_send(PtyEvent::Event(event.into())).ok();
+    }
+}
 
 impl Scroll {
     pub(super) fn to_alacritty(self) -> AlacScroll {
@@ -352,6 +553,233 @@ pub(super) fn terminal_selection_range_from_alacritty(range: AlacSelectionRange)
         end: terminal_point_from_alacritty(range.end),
         is_block: range.is_block,
     }
+}
+
+pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
+    term.clear_screen(ClearMode::Saved);
+
+    let cursor = term.grid().cursor.point;
+
+    term.grid_mut().reset_region(..cursor.line);
+
+    let line = term.grid()[cursor.line][..Column(term.grid().columns())]
+        .iter()
+        .cloned()
+        .enumerate()
+        .collect::<Vec<(usize, AlacCell)>>();
+
+    for (index, cell) in line {
+        term.grid_mut()[Line(0)][Column(index)] = cell;
+    }
+
+    term.grid_mut().cursor.point = AlacPoint::new(Line(0), term.grid_mut().cursor.point.column);
+    let new_cursor = term.grid().cursor.point;
+
+    if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {
+        term.grid_mut().reset_region((new_cursor.line + 1)..);
+    }
+}
+
+pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
+    let content = term.renderable_content();
+
+    let estimated_size = content.display_iter.size_hint().0;
+    let mut cells = Vec::with_capacity(estimated_size);
+
+    cells.extend(content.display_iter.map(|ic| IndexedCell {
+        point: terminal_point_from_alacritty(ic.point),
+        cell: terminal_cell_from_alacritty(ic.cell),
+    }));
+
+    let selection_text = if content.selection.is_some() {
+        term.selection_to_string()
+    } else {
+        None
+    };
+
+    Content {
+        cells,
+        mode: terminal_modes_from_alacritty(content.mode),
+        display_offset: content.display_offset,
+        selection_text,
+        selection: content
+            .selection
+            .map(terminal_selection_range_from_alacritty),
+        cursor: Cursor::from_alacritty(content.cursor),
+        cursor_char: term.grid()[content.cursor.point].c,
+        terminal_bounds: last_content.terminal_bounds,
+        last_hovered_word: last_content.last_hovered_word.clone(),
+        scrolled_to_top: content.display_offset == term.history_size(),
+        scrolled_to_bottom: content.display_offset == 0,
+    }
+}
+
+pub(super) fn content_text(term: &Term<ZedListener>) -> String {
+    let start = AlacPoint::new(term.topmost_line(), Column(0));
+    let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+    term.bounds_to_string(start, end)
+}
+
+pub(super) fn total_lines(term: &Term<ZedListener>) -> usize {
+    term.total_lines()
+}
+
+pub(super) fn screen_lines(term: &Term<ZedListener>) -> usize {
+    term.screen_lines()
+}
+
+pub(super) fn full_content_range(term: &Term<ZedListener>) -> Range {
+    let start = AlacPoint::new(term.topmost_line(), Column(0));
+    let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+    Range::from_alacritty(start..=end)
+}
+
+pub(super) fn last_non_empty_lines(term: &Term<ZedListener>, line_count: usize) -> Vec<String> {
+    let grid = term.grid();
+    let mut lines = Vec::new();
+
+    let mut current_line = grid.bottommost_line().0;
+    let topmost_line = grid.topmost_line().0;
+
+    while current_line >= topmost_line && lines.len() < line_count {
+        let (logical_line_start, logical_line) =
+            logical_line_for_row(grid, current_line, topmost_line);
+
+        if let Some(line) = process_line(logical_line) {
+            lines.push(line);
+        }
+
+        current_line = logical_line_start - 1;
+    }
+
+    lines.reverse();
+    lines
+}
+
+pub(super) fn update_vi_cursor_for_scroll(term: &mut Term<ZedListener>, scroll: Scroll) {
+    match scroll {
+        Scroll::Delta(delta) => {
+            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, delta);
+        }
+        Scroll::PageUp => {
+            let lines = term.screen_lines() as i32;
+            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
+        }
+        Scroll::PageDown => {
+            let lines = -(term.screen_lines() as i32);
+            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
+        }
+        Scroll::Top => {
+            let point = AlacPoint::new(term.topmost_line(), Column(0));
+            term.vi_mode_cursor = ViModeCursor::new(point);
+        }
+        Scroll::Bottom => {
+            let point = AlacPoint::new(term.bottommost_line(), Column(0));
+            term.vi_mode_cursor = ViModeCursor::new(point);
+        }
+    }
+}
+
+pub(super) fn update_selection_to_vi_cursor(term: &mut Term<ZedListener>) -> Option<Point> {
+    let mut selection = term.selection.take()?;
+    let point = term.vi_mode_cursor.point;
+    selection.update(point, AlacDirection::Right);
+    term.selection = Some(selection);
+    Some(terminal_point_from_alacritty(point))
+}
+
+pub(super) fn find_from_terminal_point(
+    term: &AlacrittyTerm,
+    point: Point,
+    regex_searches: &mut RegexSearches,
+    path_style: PathStyle,
+) -> Option<HyperlinkMatch> {
+    let point = point.to_alacritty().grid_clamp(term, Boundary::Grid);
+    hyperlinks::find_from_grid_point(term, point, regex_searches, path_style)
+}
+
+fn logical_line_for_row(grid: &Grid<AlacCell>, current: i32, topmost: i32) -> (i32, String) {
+    let start = find_logical_line_start(grid, current, topmost);
+    let mut line = String::new();
+    for row in start..=current {
+        line.push_str(&row_to_string(&grid[Line(row)]));
+    }
+    (start, line)
+}
+
+fn find_logical_line_start(grid: &Grid<AlacCell>, current: i32, topmost: i32) -> i32 {
+    let mut line_start = current;
+    while line_start > topmost {
+        let previous_line = Line(line_start - 1);
+        let last_cell = &grid[previous_line][Column(grid.columns() - 1)];
+        if !last_cell.flags.contains(Flags::WRAPLINE) {
+            break;
+        }
+        line_start -= 1;
+    }
+    line_start
+}
+
+fn row_to_string(row: &Row<AlacCell>) -> String {
+    row[..Column(row.len())]
+        .iter()
+        .map(|cell| cell.c)
+        .collect::<String>()
+}
+
+fn process_line(line: String) -> Option<String> {
+    let trimmed = line.trim_end().to_string();
+    if !trimmed.is_empty() {
+        Some(trimmed)
+    } else {
+        None
+    }
+}
+
+/// Appends a stringified task summary to the terminal, after its output.
+///
+/// SAFETY: This function should only be called after terminal's PTY is no longer alive.
+/// New text being added to the terminal here, uses "less public" APIs,
+/// which are not maintaining the entire terminal state intact.
+///
+///
+/// The library
+///
+/// * does not increment inner grid cursor's _lines_ on `input` calls
+///   (but displaying the lines correctly and incrementing cursor's columns)
+///
+/// * ignores `\n` and \r` character input, requiring the `newline` call instead
+///
+/// * does not alter grid state after `newline` call
+///   so its `bottommost_line` is always the same additions, and
+///   the cursor's `point` is not updated to the new line and column values
+///
+/// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.
+///   Still, subsequent `append_text_to_term` invocations are possible and display the contents correctly.
+///
+/// Despite the quirks, this is the simplest approach to appending text to the terminal: its alternative, `grid_mut` manipulations,
+/// do not properly set the scrolling state and display odd text after appending; also those manipulations are more tedious and error-prone.
+/// The function achieves proper display and scrolling capabilities, at a cost of grid state not properly synchronized.
+/// This is enough for printing moderately-sized texts like task summaries, but might break or perform poorly for larger texts.
+pub(super) unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str]) {
+    term.newline();
+    term.grid_mut().cursor.point.column = Column(0);
+    for line in text_lines {
+        for character in line.chars() {
+            term.input(character);
+        }
+        term.newline();
+        term.grid_mut().cursor.point.column = Column(0);
+    }
+}
+
+pub(super) fn all_search_matches<'a, T>(
+    term: &'a Term<T>,
+    regex: &'a mut RegexSearch,
+) -> impl Iterator<Item = Match> + 'a {
+    let start = AlacPoint::new(term.grid().topmost_line(), Column(0));
+    let end = AlacPoint::new(term.grid().bottommost_line(), term.grid().last_column());
+    RegexIter::new(start, end, AlacDirection::Right, term, regex)
 }
 
 #[cfg(test)]

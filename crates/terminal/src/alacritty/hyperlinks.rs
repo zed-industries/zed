@@ -24,17 +24,17 @@ const WIDE_CHAR_SPACERS: Flags =
     Flags::from_bits(Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits())
         .unwrap();
 
-pub(super) struct RegexSearches {
+pub(crate) struct RegexSearches {
     url_regex: Option<RegexSearch>,
     path_hyperlink_regexes: Vec<Regex>,
     path_hyperlink_timeout: Duration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct HyperlinkMatch {
-    pub(super) text: String,
-    pub(super) is_url: bool,
-    pub(super) range: Range,
+pub(crate) struct HyperlinkMatch {
+    pub(crate) text: String,
+    pub(crate) is_url: bool,
+    pub(crate) range: Range,
 }
 
 impl From<(String, bool, Match)> for HyperlinkMatch {
@@ -53,7 +53,7 @@ impl Default for RegexSearches {
     }
 }
 impl RegexSearches {
-    pub(super) fn new(
+    pub(crate) fn new(
         path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
         path_hyperlink_timeout_ms: u64,
     ) -> Self {
@@ -87,7 +87,7 @@ impl RegexSearches {
     }
 }
 
-pub(super) fn find_from_grid_point<T: EventListener>(
+pub(crate) fn find_from_grid_point<T: EventListener>(
     term: &Term<T>,
     point: AlacPoint,
     regex_searches: &mut RegexSearches,
@@ -631,7 +631,7 @@ mod tests {
 
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $hyperlink_kind:ident) => { {
-            use crate::terminal_hyperlinks::tests::line_cells_count;
+            use crate::alacritty::hyperlinks::tests::line_cells_count;
             use std::cmp;
 
             let test_lines = vec![$($lines),+];
@@ -657,7 +657,7 @@ mod tests {
         } };
 
         ($columns:expr; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
-            use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
+            use crate::alacritty::hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
 
             let source_location = format!("{}:{}", std::file!(), std::line!());
             for columns in $columns {

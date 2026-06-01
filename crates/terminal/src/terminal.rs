@@ -2,25 +2,15 @@ pub mod mappings;
 
 mod alacritty;
 mod pty_info;
-mod terminal_hyperlinks;
 pub mod terminal_settings;
 
-use alacritty_terminal::event::Notify;
-use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
 use alacritty_terminal::{
-    Term,
-    event::{Event as AlacTermEvent, EventListener, WindowSize},
-    grid::{Dimensions, Grid, GridIterator, Row},
-    index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
-    sync::FairMutex,
+    grid::GridIterator,
     term::{
-        Config, Osc52,
         cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
-        search::{Match, RegexIter, RegexSearch},
+        search::RegexSearch,
     },
-    tty::{self},
-    vi_mode::ViModeCursor,
-    vte::ansi::{ClearMode, CursorStyle as AlacCursorStyle, NamedPrivateMode, PrivateMode},
+    tty,
 };
 use anyhow::{Context as _, Result, bail};
 use futures_lite::future::yield_now;
@@ -45,7 +35,6 @@ use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{HideStrategy, Shell, SpawnInTerminal};
-use terminal_hyperlinks::{HyperlinkMatch, RegexSearches};
 use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
@@ -64,7 +53,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use vte::ansi::{Attr, CursorShape as AlacCursorShape, Handler, Processor, StdSyncHandler};
+use vte::ansi::{Attr, Handler, Processor, StdSyncHandler};
 pub use vte::ansi::{Color, NamedColor, Rgb};
 
 use gpui::{
@@ -74,9 +63,15 @@ use gpui::{
 };
 
 use crate::alacritty::{
-    terminal_cell_from_alacritty, terminal_hyperlink_from_alacritty, terminal_modes_from_alacritty,
-    terminal_point_from_alacritty, terminal_selection_range_from_alacritty,
+    AlacrittyTerm, AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch, PtySender,
+    RegexSearches, alacritty_cursor_style, all_search_matches, append_text_to_term,
+    clear_saved_screen, content_text, display_only_term_config, find_from_terminal_point,
+    full_content_range, last_non_empty_lines, make_content, new_term, pty_term_config,
+    screen_lines, spawn_event_loop, terminal_hyperlink_from_alacritty, total_lines,
+    update_selection_to_vi_cursor, update_vi_cursor_for_scroll, window_size_from_terminal_bounds,
 };
+#[cfg(test)]
+use crate::alacritty::{terminal_modes_from_alacritty, terminal_selection_range_from_alacritty};
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
 
@@ -835,30 +830,6 @@ pub(crate) enum TerminalBackendEvent {
     ChildExit(ExitStatus),
 }
 
-impl From<AlacTermEvent> for TerminalBackendEvent {
-    fn from(event: AlacTermEvent) -> Self {
-        match event {
-            AlacTermEvent::MouseCursorDirty => Self::MouseCursorDirty,
-            AlacTermEvent::Title(title) => Self::Title(title),
-            AlacTermEvent::ResetTitle => Self::ResetTitle,
-            AlacTermEvent::ClipboardStore(_, data) => Self::ClipboardStore(data),
-            AlacTermEvent::ClipboardLoad(_, format) => Self::ClipboardLoad(format),
-            AlacTermEvent::ColorRequest(index, format) => Self::ColorRequest(index, format),
-            AlacTermEvent::PtyWrite(output) => Self::PtyWrite(output),
-            AlacTermEvent::TextAreaSizeRequest(format) => {
-                Self::TextAreaSizeRequest(Arc::new(move |bounds| {
-                    format(window_size_from_terminal_bounds(bounds))
-                }))
-            }
-            AlacTermEvent::CursorBlinkingChange => Self::CursorBlinkingChange,
-            AlacTermEvent::Wakeup => Self::Wakeup,
-            AlacTermEvent::Bell => Self::Bell,
-            AlacTermEvent::Exit => Self::Exit,
-            AlacTermEvent::ChildExit(status) => Self::ChildExit(status),
-        }
-    }
-}
-
 impl fmt::Debug for TerminalBackendEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -886,12 +857,6 @@ enum PtyEvent {
 ///A translation struct for Alacritty to communicate with us from their event loop
 #[derive(Clone)]
 pub struct ZedListener(UnboundedSender<PtyEvent>);
-
-impl EventListener for ZedListener {
-    fn send_event(&self, event: AlacTermEvent) {
-        self.0.unbounded_send(PtyEvent::Event(event.into())).ok();
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalBounds {
@@ -955,53 +920,10 @@ impl Default for TerminalBounds {
     }
 }
 
-fn window_size_from_terminal_bounds(bounds: TerminalBounds) -> WindowSize {
-    WindowSize {
-        num_lines: bounds.num_lines() as u16,
-        num_cols: bounds.num_columns() as u16,
-        cell_width: f32::from(bounds.cell_width()) as u16,
-        cell_height: f32::from(bounds.line_height()) as u16,
-    }
-}
-
 fn normalize_terminal_bounds(mut bounds: TerminalBounds) -> TerminalBounds {
     bounds.bounds.size.height = cmp::max(bounds.line_height, bounds.height());
     bounds.bounds.size.width = cmp::max(bounds.cell_width, bounds.width());
     bounds
-}
-
-fn alacritty_cursor_shape(cursor_shape: SettingsCursorShape) -> AlacCursorShape {
-    match cursor_shape {
-        SettingsCursorShape::Block => AlacCursorShape::Block,
-        SettingsCursorShape::Underline => AlacCursorShape::Underline,
-        SettingsCursorShape::Bar => AlacCursorShape::Beam,
-        SettingsCursorShape::Hollow => AlacCursorShape::HollowBlock,
-    }
-}
-
-fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
-    AlacCursorStyle {
-        shape: alacritty_cursor_shape(cursor_shape),
-        blinking: false,
-    }
-}
-
-impl Dimensions for TerminalBounds {
-    /// Note: this is supposed to be for the back buffer's length,
-    /// but we exclusively use it to resize the terminal, which does not
-    /// use this method. We still have to implement it for the trait though,
-    /// hence, this comment.
-    fn total_lines(&self) -> usize {
-        self.screen_lines()
-    }
-
-    fn screen_lines(&self) -> usize {
-        self.num_lines()
-    }
-
-    fn columns(&self) -> usize {
-        self.num_columns()
-    }
 }
 
 #[derive(Error, Debug)]
@@ -1101,26 +1023,13 @@ impl TerminalBuilder {
     ) -> TerminalBuilder {
         let terminal_bounds = normalize_terminal_bounds(terminal_bounds);
 
-        // Create a display-only terminal (no actual PTY).
-        let default_cursor_style = alacritty_cursor_style(cursor_shape);
         let scrolling_history = max_scroll_history_lines
             .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
             .min(MAX_SCROLL_HISTORY_LINES);
-        let config = Config {
-            scrolling_history,
-            default_cursor_style,
-            osc52: Osc52::Disabled,
-            ..Config::default()
-        };
+        let config = display_only_term_config(scrolling_history, cursor_shape);
 
         let (events_tx, events_rx) = unbounded();
-        let mut term = Term::new(config.clone(), &terminal_bounds, ZedListener(events_tx));
-
-        if let AlternateScroll::Off = alternate_scroll {
-            term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
-        }
-
-        let term = Arc::new(FairMutex::new(term));
+        let term = new_term(&config, terminal_bounds, events_tx, alternate_scroll);
 
         let terminal = Terminal {
             task: None,
@@ -1281,13 +1190,13 @@ impl TerminalBuilder {
 
             let pty_options = {
                 let alac_shell = shell_params.as_ref().map(|params| {
-                    alacritty_terminal::tty::Shell::new(
+                    tty::Shell::new(
                         params.program.clone(),
                         params.args.clone().unwrap_or_default(),
                     )
                 });
 
-                alacritty_terminal::tty::Options {
+                tty::Options {
                     shell: alac_shell,
                     working_directory: working_directory.clone(),
                     drain_on_exit: true,
@@ -1303,7 +1212,6 @@ impl TerminalBuilder {
                 }
             };
 
-            let default_cursor_style = alacritty_cursor_style(cursor_shape);
             let scrolling_history = if task.is_some() {
                 // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
                 // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
@@ -1314,11 +1222,7 @@ impl TerminalBuilder {
                     .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
                     .min(MAX_SCROLL_HISTORY_LINES)
             };
-            let config = Config {
-                scrolling_history,
-                default_cursor_style,
-                ..Config::default()
-            };
+            let config = pty_term_config(scrolling_history, cursor_shape);
 
             //Setup the pty...
             let pty = match tty::new(
@@ -1342,39 +1246,23 @@ impl TerminalBuilder {
             //TODO: Remove with a bounded sender which can be dispatched on &self
             let (events_tx, events_rx) = unbounded();
             //Set up the terminal...
-            let mut term = Term::new(
-                config.clone(),
-                &TerminalBounds::default(),
-                ZedListener(events_tx.clone()),
+            let term = new_term(
+                &config,
+                TerminalBounds::default(),
+                events_tx.clone(),
+                alternate_scroll,
             );
 
-            //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
-            if let AlternateScroll::Off = alternate_scroll {
-                term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
-            }
-
-            let term = Arc::new(FairMutex::new(term));
-
-            let pty_info = PtyProcessInfo::new(&pty);
+            let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
 
             //And connect them together
-            let event_loop = EventLoop::new(
-                term.clone(),
-                ZedListener(events_tx),
-                pty,
-                pty_options.drain_on_exit,
-                false,
-            )
-            .context("failed to create event loop")?;
-
-            let pty_tx = event_loop.channel();
-            let _io_thread = event_loop.spawn(); // DANGER
+            let pty_tx = spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
 
             let no_task = task.is_none();
             let terminal = Terminal {
                 task,
                 terminal_type: TerminalType::Pty {
-                    pty_tx: PtySender::Alacritty(Notifier(pty_tx)),
+                    pty_tx,
                     info: Arc::new(pty_info),
                 },
                 completion_tx,
@@ -1544,46 +1432,11 @@ enum TerminalType {
     DisplayOnly,
 }
 
-enum PtySender {
-    Alacritty(Notifier),
-}
-
-impl PtySender {
-    fn notify(&self, input: impl Into<Cow<'static, [u8]>>) {
-        match self {
-            Self::Alacritty(notifier) => notifier.notify(input),
-        }
-    }
-
-    fn resize(&self, bounds: TerminalBounds) {
-        match self {
-            Self::Alacritty(notifier) => {
-                if let Err(error) = notifier
-                    .0
-                    .send(Msg::Resize(window_size_from_terminal_bounds(bounds)))
-                {
-                    log::error!("failed to resize alacritty pty: {error}");
-                }
-            }
-        }
-    }
-
-    fn shutdown(&self) {
-        match self {
-            Self::Alacritty(notifier) => {
-                if let Err(error) = notifier.0.send(Msg::Shutdown) {
-                    log::debug!("failed to shut down alacritty pty loop: {error}");
-                }
-            }
-        }
-    }
-}
-
 pub struct Terminal {
     terminal_type: TerminalType,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
-    term: Arc<FairMutex<Term<ZedListener>>>,
-    term_config: Config,
+    term: Arc<AlacrittyTermLock>,
+    term_config: AlacrittyTermConfig,
     output_processor: Processor<StdSyncHandler>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
@@ -1755,7 +1608,7 @@ impl Terminal {
     fn process_terminal_event(
         &mut self,
         event: &InternalEvent,
-        term: &mut Term<ZedListener>,
+        term: &mut AlacrittyTerm,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1780,35 +1633,7 @@ impl Terminal {
             }
             InternalEvent::Clear => {
                 trace!("Clearing");
-                // Clear back buffer
-                term.clear_screen(ClearMode::Saved);
-
-                let cursor = term.grid().cursor.point;
-
-                // Clear the lines above
-                term.grid_mut().reset_region(..cursor.line);
-
-                // Copy the current line up
-                let line = term.grid()[cursor.line][..Column(term.grid().columns())]
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .collect::<Vec<(usize, AlacCell)>>();
-
-                for (i, cell) in line {
-                    term.grid_mut()[Line(0)][Column(i)] = cell;
-                }
-
-                // Reset the cursor
-                term.grid_mut().cursor.point =
-                    AlacPoint::new(Line(0), term.grid_mut().cursor.point.column);
-                let new_cursor = term.grid().cursor.point;
-
-                // Clear the lines below the new cursor
-                if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {
-                    term.grid_mut().reset_region((new_cursor.line + 1)..);
-                }
-
+                clear_saved_screen(term);
                 cx.emit(Event::Wakeup);
             }
             InternalEvent::Scroll(scroll) => {
@@ -1817,38 +1642,14 @@ impl Terminal {
                 self.refresh_hovered_word(window);
 
                 if self.vi_mode_enabled {
-                    match *scroll {
-                        Scroll::Delta(delta) => {
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, delta);
-                        }
-                        Scroll::PageUp => {
-                            let lines = term.screen_lines() as i32;
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
-                        }
-                        Scroll::PageDown => {
-                            let lines = -(term.screen_lines() as i32);
-                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
-                        }
-                        Scroll::Top => {
-                            let point = AlacPoint::new(term.topmost_line(), Column(0));
-                            term.vi_mode_cursor = ViModeCursor::new(point);
-                        }
-                        Scroll::Bottom => {
-                            let point = AlacPoint::new(term.bottommost_line(), Column(0));
-                            term.vi_mode_cursor = ViModeCursor::new(point);
-                        }
-                    }
-                    if let Some(mut selection) = term.selection.take() {
-                        let point = term.vi_mode_cursor.point;
-                        selection.update(point, AlacDirection::Right);
-                        term.selection = Some(selection);
-
+                    update_vi_cursor_for_scroll(term, *scroll);
+                    if let Some(selection_head) = update_selection_to_vi_cursor(term) {
                         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                         if let Some(selection_text) = term.selection_to_string() {
                             cx.write_to_primary(ClipboardItem::new_string(selection_text));
                         }
 
-                        self.selection_head = Some(terminal_point_from_alacritty(point));
+                        self.selection_head = Some(selection_head);
                         cx.emit(Event::SelectionsChanged)
                     }
                 }
@@ -1927,11 +1728,9 @@ impl Terminal {
                     *position,
                     self.last_content.terminal_bounds,
                     term.grid().display_offset(),
-                )
-                .to_alacritty()
-                .grid_clamp(term, Boundary::Grid);
+                );
 
-                match terminal_hyperlinks::find_from_grid_point(
+                match find_from_terminal_point(
                     term,
                     point,
                     &mut self.hyperlink_regex_searches,
@@ -1989,9 +1788,9 @@ impl Terminal {
 
     fn find_hyperlink_at_point(&mut self, point: Point) -> Option<HyperlinkMatch> {
         let term_lock = self.term.lock();
-        terminal_hyperlinks::find_from_grid_point(
+        find_from_terminal_point(
             &term_lock,
-            point.to_alacritty(),
+            point,
             &mut self.hyperlink_regex_searches,
             self.path_style,
         )
@@ -2068,11 +1867,11 @@ impl Terminal {
     }
 
     pub fn total_lines(&self) -> usize {
-        self.term.lock_unfair().total_lines()
+        total_lines(&self.term.lock_unfair())
     }
 
     pub fn viewport_lines(&self) -> usize {
-        self.term.lock_unfair().screen_lines()
+        screen_lines(&self.term.lock_unfair())
     }
 
     //To test:
@@ -2106,12 +1905,9 @@ impl Terminal {
 
     pub fn select_all(&mut self) {
         let term = self.term.lock();
-        let start = AlacPoint::new(term.topmost_line(), Column(0));
-        let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+        let range = full_content_range(&term);
         drop(term);
-        self.set_selection(Some(Selection::simple_range(Range::from_alacritty(
-            start..=end,
-        ))));
+        self.set_selection(Some(Selection::simple_range(range)));
     }
 
     fn set_selection(&mut self, selection: Option<Selection>) {
@@ -2377,42 +2173,7 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, window, cx)
         }
 
-        self.last_content = Self::make_content(&terminal, &self.last_content);
-    }
-
-    fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
-        let content = term.renderable_content();
-
-        // Pre-allocate with estimated size to reduce reallocations
-        let estimated_size = content.display_iter.size_hint().0;
-        let mut cells = Vec::with_capacity(estimated_size);
-
-        cells.extend(content.display_iter.map(|ic| IndexedCell {
-            point: terminal_point_from_alacritty(ic.point),
-            cell: terminal_cell_from_alacritty(ic.cell),
-        }));
-
-        let selection_text = if content.selection.is_some() {
-            term.selection_to_string()
-        } else {
-            None
-        };
-
-        Content {
-            cells,
-            mode: terminal_modes_from_alacritty(content.mode),
-            display_offset: content.display_offset,
-            selection_text,
-            selection: content
-                .selection
-                .map(terminal_selection_range_from_alacritty),
-            cursor: Cursor::from_alacritty(content.cursor),
-            cursor_char: term.grid()[content.cursor.point].c,
-            terminal_bounds: last_content.terminal_bounds,
-            last_hovered_word: last_content.last_hovered_word.clone(),
-            scrolled_to_top: content.display_offset == term.history_size(),
-            scrolled_to_bottom: content.display_offset == 0,
-        }
+        self.last_content = make_content(&terminal, &self.last_content);
     }
 
     pub fn with_renderable_cells<R>(&self, f: impl for<'a> FnOnce(RenderableCells<'a>) -> R) -> R {
@@ -2423,64 +2184,12 @@ impl Terminal {
 
     pub fn get_content(&self) -> String {
         let term = self.term.lock_unfair();
-        let start = AlacPoint::new(term.topmost_line(), Column(0));
-        let end = AlacPoint::new(term.bottommost_line(), term.last_column());
-        term.bounds_to_string(start, end)
+        content_text(&term)
     }
 
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
         let terminal = self.term.lock_unfair();
-        let grid = terminal.grid();
-        let mut lines = Vec::new();
-
-        let mut current_line = grid.bottommost_line().0;
-        let topmost_line = grid.topmost_line().0;
-
-        while current_line >= topmost_line && lines.len() < n {
-            let logical_line_start = self.find_logical_line_start(grid, current_line, topmost_line);
-            let logical_line = self.construct_logical_line(grid, logical_line_start, current_line);
-
-            if let Some(line) = Self::process_line(logical_line) {
-                lines.push(line);
-            }
-
-            // Move to the line above the start of the current logical line
-            current_line = logical_line_start - 1;
-        }
-
-        lines.reverse();
-        lines
-    }
-
-    fn find_logical_line_start(&self, grid: &Grid<AlacCell>, current: i32, topmost: i32) -> i32 {
-        let mut line_start = current;
-        while line_start > topmost {
-            let prev_line = Line(line_start - 1);
-            let last_cell = &grid[prev_line][Column(grid.columns() - 1)];
-            if !last_cell.flags.contains(Flags::WRAPLINE) {
-                break;
-            }
-            line_start -= 1;
-        }
-        line_start
-    }
-
-    fn construct_logical_line(&self, grid: &Grid<AlacCell>, start: i32, end: i32) -> String {
-        let mut logical_line = String::new();
-        for row in start..=end {
-            let grid_row = &grid[Line(row)];
-            logical_line.push_str(&row_to_string(grid_row));
-        }
-        logical_line
-    }
-
-    fn process_line(line: String) -> Option<String> {
-        let trimmed = line.trim_end().to_string();
-        if !trimmed.is_empty() {
-            Some(trimmed)
-        } else {
-            None
-        }
+        last_non_empty_lines(&terminal, n)
     }
 
     pub fn focus_in(&self) {
@@ -3093,13 +2802,6 @@ impl Terminal {
     }
 }
 
-fn row_to_string(row: &Row<AlacCell>) -> String {
-    row[..Column(row.len())]
-        .iter()
-        .map(|cell| cell.c)
-        .collect::<String>()
-}
-
 const TASK_DELIMITER: &str = "⏵ ";
 fn task_summary(task: &TaskState, exit_status: Option<ExitStatus>) -> (bool, String, String) {
     let escaped_full_label = task
@@ -3138,43 +2840,6 @@ fn task_summary(task: &TaskState, exit_status: Option<ExitStatus>) -> (bool, Str
         .replace('\n', "\r");
     let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");
     (success, task_line, command_line)
-}
-
-/// Appends a stringified task summary to the terminal, after its output.
-///
-/// SAFETY: This function should only be called after terminal's PTY is no longer alive.
-/// New text being added to the terminal here, uses "less public" APIs,
-/// which are not maintaining the entire terminal state intact.
-///
-///
-/// The library
-///
-/// * does not increment inner grid cursor's _lines_ on `input` calls
-///   (but displaying the lines correctly and incrementing cursor's columns)
-///
-/// * ignores `\n` and \r` character input, requiring the `newline` call instead
-///
-/// * does not alter grid state after `newline` call
-///   so its `bottommost_line` is always the same additions, and
-///   the cursor's `point` is not updated to the new line and column values
-///
-/// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.
-///   Still, subsequent `append_text_to_term` invocations are possible and display the contents correctly.
-///
-/// Despite the quirks, this is the simplest approach to appending text to the terminal: its alternative, `grid_mut` manipulations,
-/// do not properly set the scrolling state and display odd text after appending; also those manipulations are more tedious and error-prone.
-/// The function achieves proper display and scrolling capabilities, at a cost of grid state not properly synchronized.
-/// This is enough for printing moderately-sized texts like task summaries, but might break or perform poorly for larger texts.
-unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str]) {
-    term.newline();
-    term.grid_mut().cursor.point.column = Column(0);
-    for line in text_lines {
-        for c in line.chars() {
-            term.input(c);
-        }
-        term.newline();
-        term.grid_mut().cursor.point.column = Column(0);
-    }
 }
 
 impl Drop for Terminal {
@@ -3267,15 +2932,6 @@ fn normalize_script_command_name(argument: &str) -> Option<String> {
         .and_then(|package_name| package_name.to_str())
         .and_then(|package_name| package_name.strip_suffix("-cli").or(Some(package_name)))
         .and_then(normalize_path_command_name)
-}
-
-fn all_search_matches<'a, T>(
-    term: &'a Term<T>,
-    regex: &'a mut RegexSearch,
-) -> impl Iterator<Item = Match> + 'a {
-    let start = AlacPoint::new(term.grid().topmost_line(), Column(0));
-    let end = AlacPoint::new(term.grid().bottommost_line(), term.grid().last_column());
-    RegexIter::new(start, end, AlacDirection::Right, term, regex)
 }
 
 fn content_index_for_mouse(pos: GpuiPoint<Pixels>, terminal_bounds: &TerminalBounds) -> usize {
@@ -3533,7 +3189,7 @@ mod tests {
 
         terminal.update(cx, |terminal, _cx| {
             let term_lock = terminal.term.lock();
-            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
+            terminal.last_content = make_content(&term_lock, &terminal.last_content);
             drop(term_lock);
 
             let terminal_bounds = TerminalBounds::new(
@@ -4079,7 +3735,7 @@ mod tests {
         // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
-            Terminal::make_content(&term, &terminal.last_content)
+            make_content(&term, &terminal.last_content)
         });
 
         // If LF is properly converted to CRLF, each line should start at column 0
@@ -4126,7 +3782,7 @@ mod tests {
         // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
-            Terminal::make_content(&term, &terminal.last_content)
+            make_content(&term, &terminal.last_content)
         });
 
         let cells = &content.cells;
@@ -4167,7 +3823,7 @@ mod tests {
         // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
-            Terminal::make_content(&term, &terminal.last_content)
+            make_content(&term, &terminal.last_content)
         });
 
         let cells = &content.cells;
