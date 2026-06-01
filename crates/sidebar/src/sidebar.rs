@@ -669,6 +669,11 @@ pub struct Sidebar {
     active_entry: Option<ActiveEntry>,
     hovered_thread_index: Option<usize>,
     renaming_thread_id: Option<ThreadId>,
+    /// Threads whose titles are currently being regenerated via the
+    /// right-click "Regenerate Thread Title" action. While a thread is in
+    /// this set, its sidebar row renders a pulsating title to signal work
+    /// in progress, even when it isn't the active thread.
+    regenerating_titles: HashSet<ThreadId>,
     /// start_renaming_thread must seed current title into the title editor
     /// so this prevents that BufferEdited event from being interpreted as user input.
     suppress_next_rename_edit: bool,
@@ -799,6 +804,7 @@ impl Sidebar {
             active_entry: None,
             hovered_thread_index: None,
             renaming_thread_id: None,
+            regenerating_titles: HashSet::new(),
             suppress_next_rename_edit: false,
 
             thread_last_accessed: HashMap::new(),
@@ -3327,66 +3333,92 @@ impl Sidebar {
     /// Loads the thread from the database, builds an LLM summarization
     /// request, and regenerates the title — all without touching the
     /// AgentPanel or changing the active thread.
-    fn regenerate_thread_title(session_id: &acp::SessionId, thread_id: ThreadId, cx: &mut App) {
+    ///
+    /// While the request is in flight the thread is added to
+    /// `regenerating_titles` so its sidebar row pulses, and it is removed
+    /// (along with persisting the new title) in a single update so the row
+    /// swaps straight to the new title without a flicker.
+    fn regenerate_thread_title(
+        &mut self,
+        session_id: &acp::SessionId,
+        thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) {
         let Some(configured_model) =
             LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
         else {
             return;
         };
         let model = configured_model.model;
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         let thread_store = ThreadStore::global(cx);
         let load_task =
             thread_store.update(cx, |store, cx| store.load_thread(session_id.clone(), cx));
 
-        cx.spawn(async move |cx| {
-            let db_thread = load_task.await?;
-            let Some(db_thread) = db_thread else {
-                anyhow::bail!("Thread not found in database");
-            };
+        // Start pulsing the title immediately.
+        self.regenerating_titles.insert(thread_id);
+        cx.notify();
 
-            // Build the summarization request from the stored messages.
-            let temperature = cx.update(|cx| AgentSettings::temperature_for_model(&model, cx));
-            let mut request = LanguageModelRequest {
-                intent: Some(CompletionIntent::ThreadSummarization),
-                temperature,
-                ..Default::default()
-            };
-            for message in &db_thread.messages {
-                request.messages.extend(message.to_request());
-            }
-            request.messages.push(LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![SUMMARIZE_THREAD_PROMPT.into()],
-                cache: false,
-                reasoning_details: None,
-            });
-
-            let mut title = String::new();
-            let mut messages = model.stream_completion(request, cx).await?;
-            while let Some(event) = messages.next().await {
-                let event = event?;
-                let text = match event {
-                    LanguageModelCompletionEvent::Text(text) => text,
-                    _ => continue,
+        cx.spawn(async move |this, cx| {
+            // Run the summarization in an inner block so we can always clear
+            // the regenerating flag afterwards, regardless of success/failure.
+            let result: anyhow::Result<SharedString> = async {
+                let db_thread = load_task.await?;
+                let Some(db_thread) = db_thread else {
+                    anyhow::bail!("Thread not found in database");
                 };
-                let mut lines = text.lines();
-                title.extend(lines.next());
-                if lines.next().is_some() {
-                    break;
-                }
-            }
 
-            // Persist the new title via the metadata store.
-            cx.update(|cx| {
-                if let Some(store) = ThreadMetadataStore::try_global(cx) {
-                    store.update(cx, |store, cx| {
-                        store.set_title_override(thread_id, title.into(), cx);
+                // Build the summarization request from the stored messages.
+                let mut request = LanguageModelRequest {
+                    intent: Some(CompletionIntent::ThreadSummarization),
+                    temperature,
+                    ..Default::default()
+                };
+                for message in &db_thread.messages {
+                    request.messages.extend(message.to_request());
+                }
+                request.messages.push(LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![SUMMARIZE_THREAD_PROMPT.into()],
+                    cache: false,
+                    reasoning_details: None,
+                });
+
+                let mut title = String::new();
+                let mut messages = model.stream_completion(request, cx).await?;
+                while let Some(event) = messages.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        _ => continue,
+                    };
+                    let mut lines = text.lines();
+                    title.extend(lines.next());
+                    if lines.next().is_some() {
+                        break;
+                    }
+                }
+
+                anyhow::Ok(SharedString::from(title))
+            }
+            .await;
+
+            // Clear the pulse and persist the new title together so the
+            // metadata-store notify and our own re-render land in the same
+            // effect cycle, swapping the row to the new title in one frame.
+            this.update(cx, |this, cx| {
+                this.regenerating_titles.remove(&thread_id);
+                if let Ok(title) = &result {
+                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                        store.set_title_override(thread_id, title.clone(), cx);
                     });
                 }
-            });
+                cx.notify();
+            })
+            .ok();
 
-            anyhow::Ok(())
+            result.map(|_| ())
         })
         .detach_and_log_err(cx);
     }
@@ -5838,7 +5870,12 @@ impl Sidebar {
             .worktrees(worktrees)
             .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
-            .title_generating(thread.is_title_generating)
+            .title_generating(
+                thread.is_title_generating
+                    || self
+                        .regenerating_titles
+                        .contains(&thread.metadata.thread_id),
+            )
             .notified(has_notification)
             .when(thread.diff_stats.lines_added > 0, |this| {
                 this.added(thread.diff_stats.lines_added as usize)
@@ -6023,10 +6060,16 @@ impl Sidebar {
                     ContextMenu::build(_window, cx, move |menu, _window, _cx| {
                         menu.entry("Regenerate Thread Title", None, {
                             let session_id = session_id.clone();
+                            let sidebar = sidebar.clone();
                             move |_window, cx| {
-                                if let Some(ref session_id) = session_id {
-                                    Self::regenerate_thread_title(session_id, thread_id, cx);
-                                }
+                                sidebar
+                                    .update(cx, |sidebar, cx| {
+                                        if let Some(ref session_id) = session_id {
+                                            sidebar
+                                                .regenerate_thread_title(session_id, thread_id, cx);
+                                        }
+                                    })
+                                    .ok();
                             }
                         })
                         .entry("Open Thread as Markdown", None, {
