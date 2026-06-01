@@ -23,7 +23,7 @@ use crate::{
     EditPredictionStore, ProjectState, StoredEvent,
     data_collection::{
         UncommittedDiffResult, compute_cursor_excerpt, compute_uncommitted_diff,
-        estimate_uncomitted_diff_byte_size, format_cursor_excerpt,
+        estimate_uncommitted_diff_byte_size, format_cursor_excerpt,
     },
     example_spec::RecentFile,
     zeta,
@@ -130,18 +130,18 @@ pub fn try_start_jump_example_capture(
             100,
         );
 
-        let uncommitted_diff = 'uncomitted_diff: {
+        let uncommitted_diff = 'uncommitted_diff: {
             if repository.is_none() {
-                break 'uncomitted_diff None;
+                break 'uncommitted_diff None;
             }
             let uncommitted_diff_snapshot = uncommitted_diffs
                 .await
                 .map_err(|error| anyhow::anyhow!("{error:?}"))
                 .context("failed to capture uncommitted diff")?;
             let estimated_byte_size =
-                estimate_uncomitted_diff_byte_size(&uncommitted_diff_snapshot);
+                estimate_uncommitted_diff_byte_size(&uncommitted_diff_snapshot);
             if estimated_byte_size > JUMP_EXAMPLE_MAX_UNCOMMITTED_DIFF_SIZE {
-                break 'uncomitted_diff None;
+                break 'uncommitted_diff None;
             }
 
             let uncommitted_diff = cx
@@ -149,7 +149,7 @@ pub fn try_start_jump_example_capture(
                 .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshot) })
                 .await;
             if uncommitted_diff.len() > JUMP_EXAMPLE_MAX_UNCOMMITTED_DIFF_SIZE {
-                break 'uncomitted_diff None;
+                break 'uncommitted_diff None;
             }
             Some(uncommitted_diff)
         };

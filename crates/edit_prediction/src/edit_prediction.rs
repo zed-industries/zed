@@ -476,7 +476,7 @@ impl ProjectState {
         if self.events.len() + 1 >= EVENT_COUNT_MAX {
             self.events.pop_front();
         }
-        self.events.push_back(event.clone());
+        self.events.push_back(event);
     }
 }
 
@@ -2733,14 +2733,14 @@ impl EditPredictionStore {
                         uncommitted_diff_snapshot.clone(),
                         inputs.project.clone(),
                         inputs.snapshot.clone(),
-                        inputs.position.clone(),
+                        inputs.position,
                         match trigger {
                             PredictEditsRequestTrigger::Diagnostics => {
                                 JumpExampleTrigger::Diagnostic
                             }
                             _ => JumpExampleTrigger::Prediction,
                         },
-                        stored_events.clone(),
+                        stored_events,
                         inputs.diagnostic_search_range.clone(),
                         can_collect_data,
                         is_open_source,

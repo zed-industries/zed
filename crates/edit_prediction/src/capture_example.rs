@@ -354,9 +354,28 @@ mod tests {
         );
 
         let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
-        let uncommitted_diffs_by_path = ep_store
+        let failed_capture = ep_store
             .update(cx, |_store, cx| {
                 uncommitted_diffs_for_events(project.clone(), worktree_id, events.clone(), cx)
+            })
+            .await;
+        assert!(failed_capture.is_err());
+
+        let project_events = events
+            .into_iter()
+            .filter(|event| {
+                let zeta_prompt::Event::BufferChange { path, .. } = event.event.as_ref();
+                path.as_ref() != "/external/external.rs"
+            })
+            .collect::<Vec<_>>();
+        let uncommitted_diffs_by_path = ep_store
+            .update(cx, |_store, cx| {
+                uncommitted_diffs_for_events(
+                    project.clone(),
+                    worktree_id,
+                    project_events.clone(),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -367,7 +386,7 @@ mod tests {
                     project.clone(),
                     buffer.clone(),
                     Anchor::min_for_buffer(buffer.read(cx).remote_id()),
-                    events,
+                    project_events,
                     Vec::new(),
                     Vec::new(),
                     uncommitted_diffs_by_path,

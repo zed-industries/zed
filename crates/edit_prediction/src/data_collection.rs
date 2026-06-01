@@ -214,7 +214,7 @@ pub(crate) fn compute_uncommitted_diff(snapshot: UncommittedDiffSnapshot) -> Str
     uncommitted_diff
 }
 
-pub(crate) fn estimate_uncomitted_diff_byte_size(snapshot: &UncommittedDiffSnapshot) -> usize {
+pub(crate) fn estimate_uncommitted_diff_byte_size(snapshot: &UncommittedDiffSnapshot) -> usize {
     let mut size = 0;
     for (_, buffer_snapshot, diff_snapshot) in snapshot {
         for hunk in diff_snapshot.hunks(buffer_snapshot) {
