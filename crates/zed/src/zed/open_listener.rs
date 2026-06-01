@@ -14,14 +14,14 @@ use futures::future;
 
 use futures::{FutureExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
-use language::{Bias, Point};
 use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
-use std::collections::HashMap;
+use language::{Bias, Point};
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -970,9 +970,9 @@ async fn open_workspaces(
                     responses,
                     &app_state,
                     stdin_cursor_at_end,
-                        cx,
-                    )
-                    .await;
+                    cx,
+                )
+                .await;
 
                 if workspace_failed_to_open {
                     errored = true

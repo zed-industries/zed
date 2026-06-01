@@ -2,10 +2,9 @@ use anyhow::Result;
 use fs::Fs;
 
 use gpui::{
-    Animation, AnimationExt, AnyView, App, Context, DragMoveEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, ManagedView, MouseButton, Pixels, Render,
-    Subscription, Task, TaskExt, Tiling, WeakEntity, Window, WindowId, actions, deferred,
-    ease_out_cubic, px,
+    Animation, AnimationExt, AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt,
+    Tiling, WeakEntity, Window, WindowId, actions, deferred, ease_out_cubic, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};

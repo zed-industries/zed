@@ -2084,7 +2084,9 @@ impl Render for SplittableEditor {
         let is_split = self.lhs.is_some();
         let inner = if is_split {
             let mut style = self.rhs_editor.read(cx).create_style(cx);
-            let decrease = EditorSettings::get_global(cx).split_diff_font_decrease.clamp(0.0, 1.0);
+            let decrease = EditorSettings::get_global(cx)
+                .split_diff_font_decrease
+                .clamp(0.0, 1.0);
             style.text.font_size =
                 (style.text.font_size.to_pixels(px(16.0)) * (1.0 - decrease)).into();
             SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
@@ -2102,7 +2104,6 @@ impl Render for SplittableEditor {
                 key_context.add("editor_side_right");
             }
         }
-
 
         let this = cx.entity().downgrade();
         let last_width = self.last_width;

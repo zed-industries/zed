@@ -6338,13 +6338,12 @@ impl MultiBufferSnapshot {
         let mut current_range_end = None;
         let mut current_text = None;
 
-        let push_current_item = |
-            items: &mut Vec<OutlineItem<Anchor>>,
-            range_start: Option<Anchor>,
-            range_end: Option<Anchor>,
-            text: Option<String>,
-        | {
-            if let (Some(range_start), Some(range_end), Some(text)) = (range_start, range_end, text) {
+        let push_current_item = |items: &mut Vec<OutlineItem<Anchor>>,
+                                 range_start: Option<Anchor>,
+                                 range_end: Option<Anchor>,
+                                 text: Option<String>| {
+            if let (Some(range_start), Some(range_end), Some(text)) = (range_start, range_end, text)
+            {
                 let text_len = text.len();
                 items.push(OutlineItem {
                     depth: 0,

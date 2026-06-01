@@ -36,7 +36,12 @@ pub(crate) struct SmoothCursorTrail {
 }
 
 impl SmoothCursorAnimationState {
-    pub(crate) fn new(bounds: Bounds<Pixels>, now: Instant, scroll_x: gpui::Pixels, scroll_y: f64) -> Self {
+    pub(crate) fn new(
+        bounds: Bounds<Pixels>,
+        now: Instant,
+        scroll_x: gpui::Pixels,
+        scroll_y: f64,
+    ) -> Self {
         Self {
             target_bounds: bounds,
             corners: bounds_corners(bounds),
@@ -47,7 +52,13 @@ impl SmoothCursorAnimationState {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn snap_to(&mut self, bounds: Bounds<Pixels>, now: Instant, scroll_x: gpui::Pixels, scroll_y: f64) {
+    pub(crate) fn snap_to(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        now: Instant,
+        scroll_x: gpui::Pixels,
+        scroll_y: f64,
+    ) {
         self.target_bounds = bounds;
         self.corners = bounds_corners(bounds);
         self.last_frame = now;
@@ -134,7 +145,10 @@ impl SmoothCursorAnimationState {
             if lh > 0.0 {
                 let max_dy = dy.iter().copied().map(f32::abs).fold(0.0f32, f32::max);
                 let line_distance = max_dy / lh;
-                if line_distance >= 20.0 && settings.large_jump_multiplier > 0.0 && settings.large_jump_multiplier != 1.0 {
+                if line_distance >= 20.0
+                    && settings.large_jump_multiplier > 0.0
+                    && settings.large_jump_multiplier != 1.0
+                {
                     decay_fast *= settings.large_jump_multiplier;
                     decay_slow *= settings.large_jump_multiplier;
                 }
@@ -172,8 +186,7 @@ impl SmoothCursorAnimationState {
                 .fold(0.0f32, f32::max);
 
             if max_dist > settings.trail_min_distance {
-                let visibility_ratio =
-                    (max_dist / (height * 0.5)).clamp(0.0, 1.0);
+                let visibility_ratio = (max_dist / (height * 0.5)).clamp(0.0, 1.0);
                 let trail_alpha = settings.trail_opacity.clamp(0.0, 1.0) * visibility_ratio;
 
                 Some(SmoothCursorTrail {

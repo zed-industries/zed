@@ -1003,7 +1003,8 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let allow_targets_in_selection = self.mode.has_selection();
-        let Some(labels) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx) else {
+        let Some(labels) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx)
+        else {
             return;
         };
 
@@ -1308,7 +1309,6 @@ impl Vim {
             HELIX_JUMP_ALPHABET[index % HELIX_JUMP_ALPHABET.len()],
         ]
     }
-
 }
 
 const HELIX_JUMP_ALPHABET: &[char; 23] = &[
@@ -1331,7 +1331,6 @@ struct HelixJumpSkipData {
     points: Vec<MultiBufferOffset>,
     ranges: Vec<Range<MultiBufferOffset>>,
 }
-
 
 #[cfg(test)]
 mod test {
@@ -1464,8 +1463,7 @@ mod test {
                 &skip_data,
             );
 
-            data
-                .into_iter()
+            data.into_iter()
                 .map(|label| {
                     let jump_label = label.label.iter().collect::<String>();
                     let word = buffer_snapshot
