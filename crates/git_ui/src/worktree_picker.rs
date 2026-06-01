@@ -289,7 +289,7 @@ enum WorktreeEntry {
         from_branch: Option<RemoteBranchName>,
         disabled_reason: Option<String>,
     },
-    OpenBranchInNewWorktree {
+    CheckoutBranchInNewWorktree {
         branch_name: String,
         disabled_reason: Option<String>,
     },
@@ -492,7 +492,7 @@ impl WorktreePickerDelegate {
         has_named_worktree: bool,
     ) -> Option<String> {
         if self.has_multiple_repositories {
-            Some("Cannot create a named worktree in a project with multiple repositories".into())
+            Some("Cannot create a branch worktree in a project with multiple repositories".into())
         } else if branch_checked_out_in_worktree(&self.all_worktrees, branch_name) {
             Some("This branch is already checked out in a worktree".into())
         } else if has_named_worktree {
@@ -688,7 +688,7 @@ impl WorktreePickerDelegate {
         } else if let Some(index) = self
             .matches
             .iter()
-            .position(|entry| matches!(entry, WorktreeEntry::OpenBranchInNewWorktree { .. }))
+            .position(|entry| matches!(entry, WorktreeEntry::CheckoutBranchInNewWorktree { .. }))
         {
             self.selected_index = index;
         } else if let Some(index) = self
@@ -858,7 +858,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                         new_matches.push(WorktreeEntry::Separator);
                     }
                     if let Some(branch_name) = matching_branch.clone() {
-                        new_matches.push(WorktreeEntry::OpenBranchInNewWorktree {
+                        new_matches.push(WorktreeEntry::CheckoutBranchInNewWorktree {
                             branch_name,
                             disabled_reason: open_branch_disabled_reason.clone(),
                         });
@@ -1008,7 +1008,7 @@ impl PickerDelegate for WorktreePickerDelegate {
             } => {
                 return;
             }
-            WorktreeEntry::OpenBranchInNewWorktree {
+            WorktreeEntry::CheckoutBranchInNewWorktree {
                 branch_name,
                 disabled_reason: None,
             } => {
@@ -1032,7 +1032,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                     });
                 }
             }
-            WorktreeEntry::OpenBranchInNewWorktree {
+            WorktreeEntry::CheckoutBranchInNewWorktree {
                 disabled_reason: Some(_),
                 ..
             } => {
@@ -1074,7 +1074,9 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 let item = create_new_list_item(
                     "create-from-current".to_string().into(),
+                    IconName::Plus,
                     label.into(),
+                    None,
                     self.creation_blocked_reason(cx),
                     selected,
                 );
@@ -1087,7 +1089,9 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 let item = create_new_list_item(
                     "create-from-main".to_string().into(),
+                    IconName::Plus,
                     label.into(),
+                    None,
                     self.creation_blocked_reason(cx),
                     selected,
                 );
@@ -1310,13 +1314,15 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 Some(item.into_any_element())
             }
-            WorktreeEntry::OpenBranchInNewWorktree {
+            WorktreeEntry::CheckoutBranchInNewWorktree {
                 branch_name,
                 disabled_reason,
             } => {
                 let item = create_new_list_item(
-                    format!("open-branch-in-worktree-{branch_name}").into(),
-                    format!("Open branch \"{branch_name}\" in a new worktree").into(),
+                    format!("checkout-branch-in-worktree-{branch_name}").into(),
+                    IconName::GitBranch,
+                    checkout_branch_worktree_title(branch_name).into(),
+                    Some(checkout_branch_worktree_detail(branch_name).into()),
                     disabled_reason
                         .clone()
                         .map(SharedString::from)
@@ -1343,18 +1349,11 @@ impl PickerDelegate for WorktreePickerDelegate {
                 WorktreeEntry::CreateFromCurrentBranch
                     | WorktreeEntry::CreateFromDefaultBranch { .. }
                     | WorktreeEntry::CreateNamed { .. }
-                    | WorktreeEntry::OpenBranchInNewWorktree { .. }
+                    | WorktreeEntry::CheckoutBranchInNewWorktree { .. }
             )
         });
 
-        let create_button_label = if matches!(
-            selected_entry,
-            Some(WorktreeEntry::OpenBranchInNewWorktree { .. })
-        ) {
-            "Open"
-        } else {
-            "Create"
-        };
+        let create_button_label = create_worktree_button_label(selected_entry);
 
         let is_existing_worktree =
             selected_entry.is_some_and(|e| matches!(e, WorktreeEntry::Worktree { .. }));
@@ -1467,6 +1466,25 @@ fn branch_checked_out_in_worktree(worktrees: &[GitWorktree], branch_name: &str) 
         .any(|worktree| worktree.branch_name() == Some(branch_name))
 }
 
+fn checkout_branch_worktree_title(branch_name: &str) -> String {
+    format!("Create worktree for branch \"{branch_name}\"")
+}
+
+fn checkout_branch_worktree_detail(branch_name: &str) -> String {
+    format!("Checks out existing branch \"{branch_name}\"")
+}
+
+fn create_worktree_button_label(selected_entry: Option<&WorktreeEntry>) -> &'static str {
+    if matches!(
+        selected_entry,
+        Some(WorktreeEntry::CheckoutBranchInNewWorktree { .. })
+    ) {
+        "Create Worktree"
+    } else {
+        "Create"
+    }
+}
+
 #[cfg(test)]
 mod branch_matching_tests {
     use super::*;
@@ -1526,7 +1544,9 @@ mod branch_matching_tests {
 
 fn create_new_list_item(
     id: SharedString,
+    icon: IconName,
     label: SharedString,
+    detail: Option<SharedString>,
     disabled_tooltip: Option<SharedString>,
     selected: bool,
 ) -> AnyElement {
@@ -1541,7 +1561,7 @@ fn create_new_list_item(
                 .w_full()
                 .gap_2p5()
                 .child(
-                    Icon::new(IconName::Plus)
+                    Icon::new(icon)
                         .map(|this| {
                             if is_disabled {
                                 this.color(Color::Disabled)
@@ -1551,7 +1571,30 @@ fn create_new_list_item(
                         })
                         .size(IconSize::Small),
                 )
-                .child(Label::new(label).when(is_disabled, |this| this.color(Color::Disabled))),
+                .child(
+                    v_flex()
+                        .w_full()
+                        .min_w_0()
+                        .child(
+                            Label::new(label)
+                                .single_line()
+                                .truncate()
+                                .when(is_disabled, |this| this.color(Color::Disabled)),
+                        )
+                        .when_some(detail, |this, detail| {
+                            this.child(
+                                Label::new(detail)
+                                    .size(LabelSize::Small)
+                                    .color(if is_disabled {
+                                        Color::Disabled
+                                    } else {
+                                        Color::Muted
+                                    })
+                                    .single_line()
+                                    .truncate(),
+                            )
+                        }),
+                ),
         )
         .when_some(disabled_tooltip, |this, reason| {
             this.tooltip(Tooltip::text(reason))
@@ -1795,6 +1838,31 @@ mod tests {
                 picker.delegate.deleting_worktree_paths.clone()
             })
         })
+    }
+
+    fn local_branch(name: &str) -> Branch {
+        Branch {
+            is_head: false,
+            ref_name: format!("refs/heads/{name}").into(),
+            upstream: None,
+            most_recent_commit: None,
+        }
+    }
+
+    async fn update_worktree_picker_matches(
+        worktree_picker: &Entity<WorktreePicker>,
+        query: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let update_matches = worktree_picker.update_in(cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker
+                    .delegate
+                    .update_matches(query.to_string(), window, cx)
+            })
+        });
+        update_matches.await;
+        cx.run_until_parked();
     }
 
     async fn repo_contains_worktree(
