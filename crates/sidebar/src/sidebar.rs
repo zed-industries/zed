@@ -1591,11 +1591,15 @@ impl Sidebar {
 
                 // Keep empty drafts only while their thread is active; preserve
                 // drafts with content because they hold user-typed state.
+                //
+                // An empty draft belongs to whichever workspace's
+                // panel still holds it as the active thread.
                 let pending_activation = self.pending_thread_activation;
-                let active_panel_thread_id = active_workspace
-                    .as_ref()
-                    .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-                    .and_then(|panel| panel.read(cx).active_thread_id(cx));
+                let active_panel_thread_ids: HashSet<ThreadId> = group_workspaces
+                    .iter()
+                    .filter_map(|ws| ws.read(cx).panel::<AgentPanel>(cx))
+                    .filter_map(|panel| panel.read(cx).active_thread_id(cx))
+                    .collect();
                 threads.retain(|thread| {
                     if thread.draft != Some(DraftKind::Empty) {
                         return true;
@@ -1603,7 +1607,7 @@ impl Sidebar {
                     if pending_activation.is_some() {
                         return false;
                     }
-                    Some(thread.metadata.thread_id) == active_panel_thread_id
+                    active_panel_thread_ids.contains(&thread.metadata.thread_id)
                 });
 
                 // Build a lookup from live_infos and compute running/waiting
