@@ -123,11 +123,39 @@ enum RetryStrategy {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
     Resume,
+    Compaction(CompactionInfo),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub enum CompactionInfo {
+    Summary(SharedString),
+    ProviderNative {
+        provider: LanguageModelProviderId,
+        items: Vec<serde_json::Value>,
+    },
+}
+
+impl CompactionInfo {
+    fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+        match self {
+            Self::Summary(summary) => vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![format!(
+                    "The previous conversation was compacted. Use this summary as context:\n\n{}",
+                    summary
+                )
+                .into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            Self::ProviderNative { .. } => Vec::new(),
+        }
+    }
 }
 
 impl Message {
@@ -148,6 +176,7 @@ impl Message {
                 }
             }
             Message::Agent(message) => message.to_request(),
+            Message::Compaction(info) => info.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
@@ -162,12 +191,13 @@ impl Message {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
             Message::Resume => "[resume]\n".into(),
+            Message::Compaction(_) => "--- Context Compacted ---\n".into(),
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
-            Message::User(_) | Message::Resume => Role::User,
+            Message::User(_) | Message::Resume | Message::Compaction(_) => Role::User,
             Message::Agent(_) => Role::Assistant,
         }
     }
@@ -315,17 +345,6 @@ impl UserMessage {
                         }
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::Rule { .. } => {
-                            write!(
-                                &mut rules_context,
-                                "\n{}",
-                                MarkdownCodeBlock {
-                                    tag: "",
-                                    text: content
-                                }
-                            )
-                            .ok();
                         }
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
@@ -699,6 +718,7 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
+    ContextCompaction,
     Stop(acp::StopReason),
 }
 
@@ -1236,6 +1256,7 @@ impl Thread {
                     }
                 }
                 Message::Resume => {}
+                Message::Compaction(_) => stream.send_context_compaction(),
             }
         }
         rx
@@ -1845,7 +1866,7 @@ impl Thread {
                 Message::User(message) => {
                     self.request_token_usage.remove(&message.id);
                 }
-                Message::Agent(_) | Message::Resume => {}
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => {}
             }
         }
         self.clear_summary();
@@ -2930,8 +2951,7 @@ impl Thread {
             .rev()
             .find_map(|message| match &**message {
                 Message::User(user_message) => Some(user_message),
-                Message::Agent(_) => None,
-                Message::Resume => None,
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => None,
             })
     }
 
@@ -3236,7 +3256,7 @@ impl Thread {
             match &**message {
                 Message::User(_) => markdown.push_str("## User\n\n"),
                 Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
-                Message::Resume => {}
+                Message::Resume | Message::Compaction(_) => {}
             }
             markdown.push_str(&message.to_markdown());
         }
@@ -3810,6 +3830,12 @@ impl ThreadEventStream {
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
+    }
+
+    fn send_context_compaction(&self) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompaction))
+            .ok();
     }
 
     fn send_stop(&self, reason: acp::StopReason) {
@@ -4552,6 +4578,75 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    #[test]
+    fn test_summary_compaction_renders_for_request_and_markdown() {
+        let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
+
+        assert_eq!(message.role(), Role::User);
+        assert_eq!(message.to_markdown(), "--- Context Compacted ---\n");
+
+        let request_messages = message.to_request();
+        assert_eq!(request_messages.len(), 1);
+        assert_eq!(request_messages[0].role, Role::User);
+        assert!(!request_messages[0].cache);
+        assert_eq!(request_messages[0].reasoning_details, None);
+        assert_eq!(request_messages[0].content.len(), 1);
+        let language_model::MessageContent::Text(text) = &request_messages[0].content[0] else {
+            panic!("expected text summary context");
+        };
+        assert_eq!(
+            text.as_str(),
+            "The previous conversation was compacted. Use this summary as context:\n\nOlder context"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let user_message_id = UserMessageId::new();
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.messages.push(Arc::new(Message::User(UserMessage {
+                    id: user_message_id.clone(),
+                    content: vec![UserMessageContent::Text("before".to_string())].into(),
+                })));
+                thread
+                    .messages
+                    .push(Arc::new(Message::Compaction(CompactionInfo::Summary(
+                        "summary".into(),
+                    ))));
+                thread.messages.push(Arc::new(Message::Agent(AgentMessage {
+                    content: vec![AgentMessageContent::Text("after".to_string())],
+                    ..Default::default()
+                })));
+
+                thread.replay(cx)
+            })
+        });
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(
+                &event,
+                Some(Ok(ThreadEvent::UserMessage(UserMessage { id, .. }))) if id == &user_message_id
+            ),
+            "expected replayed user message, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::ContextCompaction))),
+            "expected context compaction event, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::AgentText(text))) if text == "after"),
+            "expected replayed agent text, got {event:?}"
+        );
     }
 
     fn setup_parent_with_subagents(

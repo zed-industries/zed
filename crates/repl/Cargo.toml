@@ -16,7 +16,6 @@ path = "src/repl.rs"
 doctest = false
 
 [dependencies]
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true
 async-task.workspace = true
