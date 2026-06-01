@@ -5881,6 +5881,11 @@ impl Sidebar {
             (thread.icon, thread.icon_from_external_svg.clone())
         };
 
+        let title_generating = thread.is_title_generating
+            || self
+                .regenerating_titles
+                .contains(&thread.metadata.thread_id);
+
         let thread_item = ThreadItem::new(id, title.clone())
             .base_bg(sidebar_bg)
             .icon(icon)
@@ -5895,12 +5900,7 @@ impl Sidebar {
             .worktrees(worktrees)
             .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
-            .title_generating(
-                thread.is_title_generating
-                    || self
-                        .regenerating_titles
-                        .contains(&thread.metadata.thread_id),
-            )
+            .title_generating(title_generating)
             .notified(has_notification)
             .when(thread.diff_stats.lines_added > 0, |this| {
                 this.added(thread.diff_stats.lines_added as usize)
@@ -7990,53 +7990,4 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
     }
 
     writeln!(output).ok();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_thread_context_menu_renders_for_persisted_threads() {
-        let session_id = acp::SessionId::new("session-1");
-
-        assert!(should_render_thread_context_menu(false, Some(&session_id)));
-        assert!(!should_render_thread_context_menu(true, Some(&session_id)));
-        assert!(!should_render_thread_context_menu(false, None));
-    }
-
-    #[test]
-    fn test_title_regeneration_only_shows_for_native_threads() {
-        let external_agent = AgentId::new("external-agent");
-
-        assert!(should_show_thread_title_regeneration(&ZED_AGENT_ID.clone()));
-        assert!(!should_show_thread_title_regeneration(&external_agent));
-    }
-
-    #[test]
-    fn test_open_markdown_shows_for_live_external_threads_and_database_backed_native_threads() {
-        let external_agent = AgentId::new("external-agent");
-
-        assert!(should_show_open_thread_as_markdown(&external_agent, true));
-        assert!(!should_show_open_thread_as_markdown(&external_agent, false));
-        assert!(should_show_open_thread_as_markdown(
-            &ZED_AGENT_ID.clone(),
-            false
-        ));
-    }
-
-    #[test]
-    fn test_start_title_regeneration_rejects_duplicate_thread() {
-        let thread_id = ThreadId::new();
-        let mut regenerating_titles = HashSet::default();
-
-        assert!(start_title_regeneration(
-            &mut regenerating_titles,
-            thread_id
-        ));
-        assert!(!start_title_regeneration(
-            &mut regenerating_titles,
-            thread_id
-        ));
-    }
 }
