@@ -89,7 +89,7 @@ impl ThreadSwitcherEntry {
     fn title(&self) -> SharedString {
         match self {
             Self::Thread(entry) => entry.title.clone(),
-            Self::Terminal(entry) => entry.metadata.title.clone(),
+            Self::Terminal(entry) => entry.metadata.display_title(),
         }
     }
 
