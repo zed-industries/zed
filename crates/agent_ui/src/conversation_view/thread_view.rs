@@ -683,7 +683,6 @@ impl ThreadView {
         project: WeakEntity<Project>,
         code_span_resolver: AgentCodeSpanResolver,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
         window: &mut Window,
@@ -703,7 +702,6 @@ impl ThreadView {
                 workspace.clone(),
                 project.clone(),
                 thread_store,
-                prompt_store,
                 session_capabilities.clone(),
                 agent_id.clone(),
                 &placeholder,
@@ -997,6 +995,9 @@ impl ThreadView {
         ) {
             if let Some(connection) = self.as_native_connection(cx) {
                 connection.ensure_skills_scan_started(cx);
+                if let Some(project) = self.project.upgrade() {
+                    connection.refresh_skills_for_project(project, cx);
+                }
             }
         }
 
@@ -2626,7 +2627,7 @@ impl ThreadView {
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .flex_grow_0()
                     .max_w_full()
                     .bg(self.activity_bar_bg(cx))
@@ -3047,15 +3048,6 @@ impl ThreadView {
         )
     }
 
-    /// Returns true when the entry has been measured and sits entirely below
-    /// the current viewport.
-    fn entry_is_below_viewport(&self, entry_ix: usize) -> bool {
-        let viewport_bounds = self.list_state.viewport_bounds();
-        self.list_state
-            .bounds_for_item(entry_ix)
-            .is_some_and(|entry_bounds| entry_bounds.top() >= viewport_bounds.bottom())
-    }
-
     pub(crate) fn render_main_agent_awaiting_permission(
         &self,
         window: &Window,
@@ -3073,9 +3065,13 @@ impl ThreadView {
         let thread = self.thread.read(cx);
         let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
 
-        if !self.entry_is_below_viewport(entry_ix) {
+        let scroll_icon = if self.list_state.item_is_above_viewport(entry_ix)? {
+            IconName::ArrowUp
+        } else if self.list_state.item_is_below_viewport(entry_ix)? {
+            IconName::ArrowDown
+        } else {
             return None;
-        }
+        };
 
         let focus_handle = self.focus_handle(cx);
 
@@ -3118,7 +3114,7 @@ impl ThreadView {
                 Button::new("main-agent-permission-scroll-to", "Scroll")
                     .label_size(LabelSize::Small)
                     .end_icon(
-                        Icon::new(IconName::ArrowDown)
+                        Icon::new(scroll_icon)
                             .size(IconSize::XSmall)
                             .color(Color::Default),
                     )
@@ -3733,7 +3729,7 @@ impl ThreadView {
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
                     .when(fills_container, |this| this.h_full())
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .flex_grow_0()
                     .justify_between()
                     .gap_2()
@@ -4190,9 +4186,6 @@ impl ThreadView {
     }
 
     fn fast_mode_available(&self, cx: &Context<Self>) -> bool {
-        if !cx.is_staff() {
-            return false;
-        }
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
             .map(|model| model.supports_fast_mode())
@@ -5107,7 +5100,7 @@ impl ThreadView {
             }),
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-        .flex_grow()
+        .flex_grow_1()
     }
 
     fn render_entry(
@@ -5400,6 +5393,19 @@ impl ThreadView {
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
+            AgentThreadEntry::ContextCompaction => h_flex()
+                .id(("context_compaction", entry_ix))
+                .px_5()
+                .py_1()
+                .gap_2()
+                .child(Divider::horizontal())
+                .child(
+                    Label::new("Context Compacted")
+                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                        .color(Color::Muted),
+                )
+                .child(Divider::horizontal())
+                .into_any(),
         };
 
         let is_subagent_output = self.is_subagent()
@@ -6509,7 +6515,8 @@ impl ThreadView {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction => {}
             }
         }
 
@@ -9656,7 +9663,7 @@ impl ThreadView {
         });
     }
 
-    fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
+    fn cycle_native_agent_thinking_effort(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
@@ -9707,18 +9714,6 @@ impl ThreadView {
                     }
                 }
             });
-        });
-    }
-
-    fn toggle_thinking_effort_menu(
-        &mut self,
-        _action: &ToggleThinkingEffortMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let menu_handle = self.thinking_effort_menu_handle.clone();
-        window.defer(cx, move |window, cx| {
-            menu_handle.toggle(window, cx);
         });
     }
 }
@@ -9797,14 +9792,41 @@ impl Render for ThreadView {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
                 }
-                this.cycle_thinking_effort(cx);
+                if let Some(config_options_view) = this.config_options_view.clone() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.cycle_category_option(
+                            acp::SessionConfigOptionCategory::ThoughtLevel,
+                            false,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+                this.cycle_native_agent_thinking_effort(cx);
             }))
             .on_action(
-                cx.listener(|this, action: &ToggleThinkingEffortMenu, window, cx| {
+                cx.listener(|this, _: &ToggleThinkingEffortMenu, window, cx| {
                     if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                    this.toggle_thinking_effort_menu(action, window, cx);
+                    if let Some(config_options_view) = this.config_options_view.clone() {
+                        let handled = config_options_view.update(cx, |view, cx| {
+                            view.toggle_category_picker(
+                                acp::SessionConfigOptionCategory::ThoughtLevel,
+                                window,
+                                cx,
+                            )
+                        });
+                        if handled {
+                            return;
+                        }
+                    }
+                    let menu_handle = this.thinking_effort_menu_handle.clone();
+                    window.defer(cx, move |window, cx| {
+                        menu_handle.toggle(window, cx);
+                    });
                 }),
             )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
@@ -10013,17 +10035,6 @@ pub(crate) fn open_link(
                         panel.open_thread(id, None, Some(name.into()), window, cx)
                     });
                 }
-            }
-            MentionUri::Rule { id, .. } => {
-                let PromptId::User { uuid } = id else {
-                    return;
-                };
-                window.dispatch_action(
-                    Box::new(OpenRulesLibrary {
-                        prompt_to_select: Some(uuid.0),
-                    }),
-                    cx,
-                )
             }
             MentionUri::Fetch { url } => {
                 cx.open_url(url.as_str());

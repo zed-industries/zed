@@ -58,7 +58,7 @@ use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
-use prompt_store::{PromptBuilder, rules_to_skills_migration};
+use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -550,7 +550,7 @@ pub fn init(
     cx: &mut App,
 ) {
     agent::ThreadStore::init_global(cx);
-    rules_library::init(cx);
+    prompt_store::init(cx);
     skill_creator::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
@@ -860,6 +860,7 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],

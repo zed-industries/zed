@@ -11,7 +11,7 @@ use http_client::{
 pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, future::Future, time::Duration};
+use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;
 
@@ -684,8 +684,6 @@ pub enum RequestError {
         body: String,
         headers: HeaderMap<HeaderValue>,
     },
-    #[error("response headers from {provider}'s API timed out after {timeout:?}")]
-    ResponseHeaderTimeout { provider: String, timeout: Duration },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -905,10 +903,6 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
 
                 Self::from_http_status(provider.into(), status_code, body, retry_after)
             }
-            RequestError::ResponseHeaderTimeout { provider, timeout } => Self::HttpSend {
-                provider: provider.into(),
-                error: anyhow!("response headers timed out after {timeout:?}"),
-            },
             RequestError::Other(e) => Self::Other(e),
         }
     }

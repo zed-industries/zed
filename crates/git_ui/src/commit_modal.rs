@@ -419,11 +419,11 @@ impl CommitModal {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .overflow_x_hidden()
                     .child(
                         h_flex()
-                            .flex_shrink()
+                            .flex_shrink_1()
                             .overflow_x_hidden()
                             .child(branch_picker),
                     )
