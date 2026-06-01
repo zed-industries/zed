@@ -419,7 +419,7 @@ impl Render for ConfigOptionSelector {
                                 KeyBinding::for_action(&ToggleModelSelector, cx),
                             ))
                             .child(action_tooltip_container(
-                                "Cycle Favorite Model",
+                                "Cycle Favorite Models",
                                 KeyBinding::for_action(&CycleFavoriteModels, cx),
                             ));
                     }
