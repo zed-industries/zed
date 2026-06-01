@@ -1307,7 +1307,9 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 let item = create_new_list_item(
                     element_id.into(),
+                    IconName::Plus,
                     label.into(),
+                    None,
                     disabled_reason.clone().map(SharedString::from),
                     selected,
                 );
@@ -1539,6 +1541,31 @@ mod branch_matching_tests {
             "feat/new-feature-foo"
         ));
         assert!(!branch_checked_out_in_worktree(&worktrees, "feat/other"));
+    }
+
+    #[test]
+    fn test_checkout_branch_worktree_copy() {
+        assert_eq!(
+            checkout_branch_worktree_title("feat/new-feature-foo"),
+            "Create worktree for branch \"feat/new-feature-foo\""
+        );
+        assert_eq!(
+            checkout_branch_worktree_detail("feat/new-feature-foo"),
+            "Checks out existing branch \"feat/new-feature-foo\""
+        );
+
+        let branch_entry = WorktreeEntry::CheckoutBranchInNewWorktree {
+            branch_name: "feat/new-feature-foo".to_string(),
+            disabled_reason: None,
+        };
+        assert_eq!(
+            create_worktree_button_label(Some(&branch_entry)),
+            "Create Worktree"
+        );
+        assert_eq!(
+            create_worktree_button_label(Some(&WorktreeEntry::CreateFromCurrentBranch)),
+            "Create"
+        );
     }
 }
 
@@ -1967,6 +1994,97 @@ mod tests {
                     }
                     _ => panic!("named worktree creation should prefer the remote default branch"),
                 })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_exact_local_branch_query_prefers_checkout_branch_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, worktree_picker, _repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker.delegate.all_branches = vec![local_branch("feature")];
+            })
+        });
+
+        update_worktree_picker_matches(&worktree_picker, "feature", &mut cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                let checkout_branch_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|entry| {
+                        matches!(
+                            entry,
+                            WorktreeEntry::CheckoutBranchInNewWorktree {
+                                branch_name,
+                                disabled_reason: None
+                            } if branch_name == "feature"
+                        )
+                    })
+                    .expect("exact local branch query should add a checkout-branch worktree entry");
+                let create_named_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|entry| matches!(entry, WorktreeEntry::CreateNamed { .. }))
+                    .expect("named worktree creation should still be available");
+
+                assert_eq!(picker.delegate.selected_index, checkout_branch_index);
+                assert!(
+                    checkout_branch_index < create_named_index,
+                    "checkout-branch worktree entry should appear before named worktree creation"
+                );
+            })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_checkout_branch_worktree_uses_specific_disabled_reason_for_multiple_repos(
+        cx: &mut TestAppContext,
+    ) {
+        let (_fs, worktree_picker, _repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker.delegate.all_branches = vec![local_branch("feature")];
+                picker.delegate.has_multiple_repositories = true;
+            })
+        });
+
+        update_worktree_picker_matches(&worktree_picker, "feature", &mut cx).await;
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                let disabled_reason = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .find_map(|entry| {
+                        if let WorktreeEntry::CheckoutBranchInNewWorktree {
+                            branch_name,
+                            disabled_reason,
+                        } = entry
+                            && branch_name == "feature"
+                        {
+                            disabled_reason.as_deref()
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("checkout-branch worktree entry should be disabled");
+
+                assert_eq!(
+                    disabled_reason,
+                    "Cannot create a branch worktree in a project with multiple repositories"
+                );
+            })
         });
     }
 
