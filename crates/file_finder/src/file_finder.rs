@@ -354,7 +354,7 @@ impl FileFinder {
 
         match width_setting {
             FileFinderWidth::Small => small_width,
-            FileFinderWidth::Full => window_width,
+            FileFinderWidth::Full => window_width - px(128.),
             FileFinderWidth::XLarge => (window_width - px(512.)).max(small_width),
             FileFinderWidth::Large => (window_width - px(768.)).max(small_width),
             FileFinderWidth::Medium => (window_width - px(1024.)).max(small_width),
