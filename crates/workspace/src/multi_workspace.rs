@@ -2,9 +2,10 @@ use anyhow::Result;
 use fs::Fs;
 
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, Tiling, WeakEntity,
-    Window, WindowId, actions, deferred, px,
+    Animation, AnimationExt, AnyView, App, Context, DragMoveEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, ManagedView, MouseButton, Pixels, Render,
+    Subscription, Task, TaskExt, Tiling, WeakEntity, Window, WindowId, actions, deferred,
+    ease_out_cubic, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
@@ -24,6 +25,8 @@ use settings::SidebarDockPosition;
 use ui::{ContextMenu, right_click_menu};
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
+const SIDEBAR_OPEN_DURATION: std::time::Duration = std::time::Duration::from_millis(150);
+const SIDEBAR_CLOSE_DURATION: std::time::Duration = std::time::Duration::from_millis(100);
 
 use crate::open_remote_project_with_existing_connection;
 use crate::{
@@ -290,8 +293,11 @@ pub struct MultiWorkspace {
     active_workspace: Entity<Workspace>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
+    sidebar_is_closing: bool,
     sidebar_overlay: Option<AnyView>,
     pending_removal_tasks: Vec<Task<()>>,
+    sidebar_animation_generation: usize,
+    _sidebar_close_task: Option<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     previous_focus_handle: Option<FocusHandle>,
@@ -308,7 +314,7 @@ impl MultiWorkspace {
 
     pub fn sidebar_render_state(&self, cx: &App) -> SidebarRenderState {
         SidebarRenderState {
-            open: self.sidebar_open() && self.multi_workspace_enabled(cx),
+            open: self.sidebar_visible() && self.multi_workspace_enabled(cx),
             side: self.sidebar_side(cx),
         }
     }
@@ -316,6 +322,9 @@ impl MultiWorkspace {
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let release_subscription = cx.on_release(|this: &mut MultiWorkspace, _cx| {
             if let Some(task) = this._serialize_task.take() {
+                task.detach();
+            }
+            if let Some(task) = this._sidebar_close_task.take() {
                 task.detach();
             }
             for task in std::mem::take(&mut this.pending_removal_tasks) {
@@ -347,8 +356,11 @@ impl MultiWorkspace {
             active_workspace: workspace,
             sidebar: None,
             sidebar_open: false,
+            sidebar_is_closing: false,
             sidebar_overlay: None,
             pending_removal_tasks: Vec::new(),
+            sidebar_animation_generation: 0,
+            _sidebar_close_task: None,
             _serialize_task: None,
             _subscriptions: vec![
                 release_subscription,
@@ -384,6 +396,10 @@ impl MultiWorkspace {
 
     pub fn sidebar_open(&self) -> bool {
         self.sidebar_open
+    }
+
+    pub fn sidebar_visible(&self) -> bool {
+        self.sidebar_open || self.sidebar_is_closing
     }
 
     pub fn sidebar_has_notifications(&self, cx: &App) -> bool {
@@ -475,6 +491,13 @@ impl MultiWorkspace {
     }
 
     fn apply_open_sidebar(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar_is_closing {
+            self._sidebar_close_task = None;
+            self.sidebar_is_closing = false;
+        }
+        if !self.sidebar_open {
+            self.sidebar_animation_generation = self.sidebar_animation_generation.wrapping_add(1);
+        }
         self.sidebar_open = true;
         self.retain_active_workspace(cx);
         let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
@@ -494,6 +517,21 @@ impl MultiWorkspace {
         };
         telemetry::event!("Sidebar Toggled", action = "close", side = side);
         self.sidebar_open = false;
+        self.sidebar_is_closing = true;
+        self.sidebar_animation_generation = self.sidebar_animation_generation.wrapping_add(1);
+        let close_generation = self.sidebar_animation_generation;
+        self._sidebar_close_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SIDEBAR_CLOSE_DURATION).await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| {
+                    if this.sidebar_animation_generation == close_generation {
+                        this.sidebar_is_closing = false;
+                        this._sidebar_close_task = None;
+                        cx.notify();
+                    }
+                });
+            }
+        }));
         for workspace in self.retained_workspaces.clone() {
             workspace.update(cx, |workspace, _cx| {
                 workspace.set_sidebar_focus_handle(None);
@@ -2056,9 +2094,11 @@ impl Render for MultiWorkspace {
         let sidebar_side = self.sidebar_side(cx);
         let sidebar_on_right = sidebar_side == SidebarSide::Right;
 
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open() {
+        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_visible() {
             self.sidebar.as_ref().map(|sidebar_handle| {
                 let weak = cx.weak_entity();
+                let is_closing = self.sidebar_is_closing;
+                let animation_generation = self.sidebar_animation_generation;
 
                 let sidebar_width = sidebar_handle.width(cx);
                 let resize_handle = deferred(
@@ -2102,14 +2142,36 @@ impl Render for MultiWorkspace {
                         .occlude(),
                 );
 
+                let target_width = f32::from(sidebar_width);
                 div()
                     .id("sidebar-container")
                     .relative()
                     .h_full()
-                    .w(sidebar_width)
+                    .overflow_hidden()
                     .flex_shrink_0()
-                    .child(sidebar_handle.to_any())
-                    .child(resize_handle)
+                    .child(
+                        div()
+                            .relative()
+                            .h_full()
+                            .w(sidebar_width)
+                            .flex()
+                            .when(sidebar_on_right, |this| this.justify_end())
+                            .child(sidebar_handle.to_any())
+                            .child(resize_handle),
+                    )
+                    .with_animation(
+                        ("sidebar-width", animation_generation as u64),
+                        Animation::new(if is_closing {
+                            SIDEBAR_CLOSE_DURATION
+                        } else {
+                            SIDEBAR_OPEN_DURATION
+                        })
+                        .with_easing(ease_out_cubic),
+                        move |this, delta| {
+                            let progress = if is_closing { 1.0 - delta } else { delta };
+                            this.w(px(target_width * progress))
+                        },
+                    )
                     .into_any_element()
             })
         } else {
@@ -2241,8 +2303,8 @@ impl Render for MultiWorkspace {
             window,
             cx,
             Tiling {
-                left: !sidebar_on_right && multi_workspace_enabled && self.sidebar_open(),
-                right: sidebar_on_right && multi_workspace_enabled && self.sidebar_open(),
+                left: !sidebar_on_right && multi_workspace_enabled && self.sidebar_visible(),
+                right: sidebar_on_right && multi_workspace_enabled && self.sidebar_visible(),
                 ..Tiling::default()
             },
         )
