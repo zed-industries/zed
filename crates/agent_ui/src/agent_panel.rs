@@ -2199,7 +2199,7 @@ impl AgentPanel {
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
-                    this.close_terminal_from_terminal_event(terminal_id, window, cx);
+                    this.request_close_terminal_from_terminal_event(terminal_id, cx);
                 }
                 TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
@@ -2270,7 +2270,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_terminal_internal(terminal_id, true, None, window, cx);
+        self.close_terminal_internal(terminal_id, true, window, cx);
     }
 
     pub fn close_terminal_without_activating_draft(
@@ -2279,14 +2279,13 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_terminal_internal(terminal_id, false, None, window, cx);
+        self.close_terminal_internal(terminal_id, false, window, cx);
     }
 
     fn close_terminal_internal(
         &mut self,
         terminal_id: TerminalId,
         activate_draft_after_close: bool,
-        terminal_closed_metadata: Option<TerminalThreadMetadata>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2312,21 +2311,18 @@ impl AgentPanel {
             }
         }
 
-        if let Some(metadata) = terminal_closed_metadata {
-            cx.emit(AgentPanelEvent::TerminalClosed { metadata });
-        }
         cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
     }
 
-    fn close_terminal_from_terminal_event(
+    fn request_close_terminal_from_terminal_event(
         &mut self,
         terminal_id: TerminalId,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let metadata = self.terminal_metadata(terminal_id, cx);
-        self.close_terminal_internal(terminal_id, false, metadata, window, cx);
+        if let Some(metadata) = self.terminal_metadata(terminal_id, cx) {
+            cx.emit(AgentPanelEvent::TerminalCloseRequested { metadata });
+        }
     }
 
     fn emit_terminal_thread_started(
@@ -2768,7 +2764,7 @@ impl AgentPanel {
                     this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
                 }
                 AgentPanelEvent::EntryChanged
-                | AgentPanelEvent::TerminalClosed { .. }
+                | AgentPanelEvent::TerminalCloseRequested { .. }
                 | AgentPanelEvent::ThreadInteracted { .. } => {}
             }
         });
@@ -4945,7 +4941,7 @@ pub enum AgentPanelEvent {
     ActiveViewChanged,
     ActiveViewFocused,
     EntryChanged,
-    TerminalClosed { metadata: TerminalThreadMetadata },
+    TerminalCloseRequested { metadata: TerminalThreadMetadata },
     ThreadInteracted { thread_id: ThreadId },
 }
 
@@ -9436,39 +9432,6 @@ mod tests {
             cx.debug_bounds("KEY_BINDING-l").is_some(),
             "Skills menu item should show the ManageSkills shortcut"
         );
-    }
-
-    #[gpui::test]
-    async fn test_terminal_close_event_closes_without_sidebar(cx: &mut TestAppContext) {
-        let (panel, mut cx) = setup_panel(cx).await;
-        cx.update(|_, cx| {
-            TerminalThreadMetadataStore::init_global(cx);
-        });
-
-        let terminal_id = panel
-            .update_in(&mut cx, |panel, window, cx| {
-                panel.insert_test_terminal("Dev Server", true, window, cx)
-            })
-            .expect("test terminal should be inserted");
-        cx.run_until_parked();
-
-        panel.update(&mut cx, |panel, cx| {
-            panel.emit_test_terminal_close(terminal_id, cx);
-        });
-        cx.run_until_parked();
-
-        panel.read_with(&cx, |panel, _cx| {
-            assert!(!panel.has_terminal(terminal_id));
-        });
-        cx.update(|_, cx| {
-            assert!(
-                TerminalThreadMetadataStore::global(cx)
-                    .read(cx)
-                    .entry(terminal_id)
-                    .is_none(),
-                "terminal metadata should be deleted by the fallback close"
-            );
-        });
     }
 
     #[gpui::test]

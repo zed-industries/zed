@@ -2931,6 +2931,46 @@ async fn test_terminal_close_event_closes_sidebar_terminal(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_terminal_close_event_activates_neighbor(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        panel.emit_test_terminal_close(server_terminal_id, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.has_terminal(server_terminal_id));
+        assert_eq!(panel.active_terminal_id(), Some(build_terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id, .. }) if *terminal_id == build_terminal_id),
+            "expected remaining terminal to become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Build"]
+    );
+}
+
+#[gpui::test]
 async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
