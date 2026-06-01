@@ -4948,7 +4948,7 @@ impl AgentPanel {
         h_flex()
             .key_context("TitleEditor")
             .group("title_editor")
-            .flex_grow()
+            .flex_grow_1()
             .w_full()
             .min_w_0()
             .max_w_full()

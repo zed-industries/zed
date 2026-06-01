@@ -4887,7 +4887,7 @@ impl GitPanel {
             .border_color(cx.theme().colors().border.opacity(0.8))
             .child(
                 div()
-                    .flex_grow()
+                    .flex_grow_1()
                     .overflow_hidden()
                     .max_w(relative(0.85))
                     .child(
@@ -5803,7 +5803,7 @@ impl GitPanel {
                         })
                         .group("entries")
                         .size_full()
-                        .flex_grow()
+                        .flex_grow_1()
                         .with_width_from_item(self.max_width_item_index)
                         .track_scroll(&self.scroll_handle),
                     )

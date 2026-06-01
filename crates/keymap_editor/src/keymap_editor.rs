@@ -3469,7 +3469,7 @@ impl Render for ActionArgumentsEditor {
             .min_h_8()
             .min_w_48()
             .px_2()
-            .flex_grow()
+            .flex_grow_1()
             .rounded_md()
             .bg(cx.theme().colors().editor_background)
             .border_1()
