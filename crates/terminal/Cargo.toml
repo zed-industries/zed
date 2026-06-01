@@ -21,15 +21,17 @@ doctest = false
 
 [dependencies]
 async-channel.workspace = true
-alacritty_terminal.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 collections.workspace = true
 futures.workspace = true
 futures-lite.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 libc.workspace = true
+libghostty-vt.workspace = true
 log.workspace = true
+portable-pty.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 schemars.workspace = true

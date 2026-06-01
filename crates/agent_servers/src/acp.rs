@@ -4260,14 +4260,22 @@ fn handle_session_notification(
 
                     thread
                         .update(cx, |thread, cx| {
-                            let builder = TerminalBuilder::new_display_only(
+                            let builder = match TerminalBuilder::new_display_only(
                                 CursorShape::default(),
                                 AlternateScroll::On,
                                 None,
                                 0,
                                 cx.background_executor(),
                                 thread.project().read(cx).path_style(cx),
-                            );
+                            ) {
+                                Ok(builder) => builder,
+                                Err(error) => {
+                                    log::error!(
+                                        "failed to initialize ACP display-only terminal: {error}"
+                                    );
+                                    return;
+                                }
+                            };
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(
                                 TerminalProviderEvent::Created {

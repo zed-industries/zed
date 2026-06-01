@@ -614,7 +614,7 @@ impl TerminalElement {
             fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
-        // Use a dim multiplier that stays close to the existing Alacritty look.
+        // Use a dim multiplier that stays close to the existing terminal look.
         if cell.is_dim() {
             fg.a *= 0.7;
         }
@@ -1024,7 +1024,7 @@ impl Element for TerminalElement {
 
                     // https://github.com/zed-industries/zed/issues/2750
                     // if the terminal is one column wide, rendering 🦀
-                    // causes alacritty to misbehave.
+                    // causes terminal layout issues.
                     if size.width < cell_width * 2.0 {
                         size.width = cell_width * 2.0;
                     }

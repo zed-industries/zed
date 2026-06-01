@@ -1,0 +1,19 @@
+[package]
+name = "libghostty-vt-sys"
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.93"
+links = "ghostty-vt"
+build = "build.rs"
+description = "Raw FFI bindings for libghostty-vt, the Ghostty terminal emulation library"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/uzaaft/libghostty-rs"
+
+[features]
+default = ["vendored"]
+vendored = []
+bindgen-tool = ["dep:bindgen"]
+
+[dependencies]
+bindgen = { version = "0.72.1", optional = true }

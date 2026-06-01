@@ -42,7 +42,12 @@ use crate::repl_settings::ReplSettings;
 ///
 pub struct TerminalOutput {
     full_buffer: Option<Entity<Buffer>>,
-    terminal: Entity<Terminal>,
+    renderer: TerminalOutputRenderer,
+}
+
+enum TerminalOutputRenderer {
+    Terminal(Entity<Terminal>),
+    Text(String),
 }
 
 /// Returns the default text style for the terminal output.
@@ -135,7 +140,7 @@ impl TerminalOutput {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let terminal_bounds = terminal_size(window, cx);
         let background_executor = cx.background_executor().clone();
-        let terminal_builder = TerminalBuilder::new_display_only_with_bounds(
+        let renderer = match TerminalBuilder::new_display_only_with_bounds(
             TerminalSettings::get_global(cx).cursor_shape,
             TerminalSettings::get_global(cx).alternate_scroll,
             None,
@@ -143,10 +148,16 @@ impl TerminalOutput {
             &background_executor,
             PathStyle::local(),
             terminal_bounds,
-        );
+        ) {
+            Ok(builder) => TerminalOutputRenderer::Terminal(cx.new(|cx| builder.subscribe(cx))),
+            Err(error) => {
+                log::error!("failed to initialize REPL terminal output: {error}");
+                TerminalOutputRenderer::Text(String::new())
+            }
+        };
 
         Self {
-            terminal: cx.new(|cx| terminal_builder.subscribe(cx)),
+            renderer,
             full_buffer: None,
         }
     }
@@ -196,9 +207,14 @@ impl TerminalOutput {
     ///
     /// * `text` - A string slice containing the text to be appended.
     pub fn append_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.terminal.update(cx, |terminal, cx| {
-            terminal.write_output(text.as_bytes(), cx);
-        });
+        match &mut self.renderer {
+            TerminalOutputRenderer::Terminal(terminal) => {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.write_output(text.as_bytes(), cx);
+                });
+            }
+            TerminalOutputRenderer::Text(full_text) => full_text.push_str(text),
+        }
 
         // This will keep the buffer up to date, though with some terminal codes it won't be perfect
         if let Some(buffer) = self.full_buffer.as_ref() {
@@ -209,7 +225,12 @@ impl TerminalOutput {
     }
 
     pub fn full_text(&self, cx: &App) -> String {
-        Self::sanitize_terminal_text(self.terminal.read(cx).get_content())
+        match &self.renderer {
+            TerminalOutputRenderer::Terminal(terminal) => {
+                Self::sanitize_terminal_text(terminal.read(cx).get_content())
+            }
+            TerminalOutputRenderer::Text(full_text) => full_text.clone(),
+        }
     }
 
     fn sanitize_terminal_text(text: String) -> String {
@@ -300,12 +321,13 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_full_text_reads_terminal_output(cx: &mut TestAppContext) {
+    fn test_append_text_updates_full_text(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         cx.update(|window, cx| {
             let output = cx.new(|cx| TerminalOutput::new(window, cx));
             output.update(cx, |output, cx| {
                 output.append_text("hello\n", cx);
+
                 assert_eq!(output.full_text(cx), "hello\n");
             });
         });
@@ -358,7 +380,10 @@ impl Render for TerminalOutput {
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let terminal = self.terminal.clone();
+        let TerminalOutputRenderer::Terminal(terminal) = &self.renderer else {
+            return div().child(self.full_text(cx)).into_any_element();
+        };
+        let terminal = terminal.clone();
 
         let text_style = text_style(window, cx);
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;

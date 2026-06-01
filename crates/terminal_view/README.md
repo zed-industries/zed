@@ -14,13 +14,13 @@ The TerminalView struct abstracts over failed and successful terminals, passing 
 
 `terminal.rs` exposes backend-neutral domain types such as terminal content, cells, modes, points, ranges, scroll commands, vi motions, hyperlinks, and search matches. UI code should depend on those types instead of importing backend-specific terminal types directly.
 
-The current implementation is still Alacritty-backed, but the abstraction boundary keeps backend details concentrated in the terminal crate:
+The current implementation is Ghostty-backed, and the abstraction boundary keeps backend details concentrated in the terminal crate:
 
-- `terminal_view` renders `TerminalContent` and dispatches backend-neutral actions.
+- `terminal_view` renders terminal `Content` and dispatches backend-neutral actions.
 - Panels and tools use terminal-domain types for mode, cursor, range, hyperlink, and search behavior.
 - Backend-specific conversions stay near the terminal event loop and render snapshot code.
 
-This keeps the user-facing terminal behavior unchanged while making future backend experiments reviewable as backend implementations instead of UI-wide refactors.
+This keeps user-facing terminal behavior isolated from backend implementation details while making future backend changes reviewable as terminal-crate work instead of UI-wide refactors.
 
 ## Input
 

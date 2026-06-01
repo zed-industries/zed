@@ -3331,7 +3331,9 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             );
-            builder.subscribe(cx)
+            builder
+                .expect("failed to create display-only terminal")
+                .subscribe(cx)
         });
 
         thread.update(cx, |thread, cx| {
@@ -3411,7 +3413,9 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             );
-            builder.subscribe(cx)
+            builder
+                .expect("failed to create display-only terminal")
+                .subscribe(cx)
         });
 
         thread.update(cx, |thread, cx| {
@@ -5025,7 +5029,9 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             );
-            builder.subscribe(cx)
+            builder
+                .expect("failed to create display-only terminal")
+                .subscribe(cx)
         });
 
         thread.update(cx, |thread, cx| {
@@ -5071,7 +5077,9 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             );
-            builder.subscribe(cx)
+            builder
+                .expect("failed to create display-only terminal")
+                .subscribe(cx)
         });
 
         thread.update(cx, |thread, cx| {
@@ -5131,7 +5139,9 @@ mod tests {
                 cx.background_executor(),
                 PathStyle::local(),
             );
-            builder.subscribe(cx)
+            builder
+                .expect("failed to create display-only terminal")
+                .subscribe(cx)
         });
 
         // Register the terminal as created
