@@ -32,6 +32,7 @@ line_comments = ["# "]
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
 - `first_line_pattern` is a regular expression that can be used alongside `path_suffixes` (above) or `file_types` in settings to match files that should use this language. For example, Zed uses this to identify Shell Scripts by matching [shebang lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
+- `code_fence_block_names` is a string or list of strings identifying this language in Markdown fenced code blocks and syntax injections. The first entry is used as the canonical name when Zed generates Markdown (e.g. when the assistant creates a code block); if omitted, the lowercase language name is used. All entries are matched case-insensitively for lookup. Use this when common code fence tags differ from the language name and file extensions — for example, Proto sets `code_fence_block_names = ["proto", "protobuf"]` so that both ` ```proto ` and ` ```protobuf ` blocks are highlighted. The old key `code_fence_block_name` is accepted as an alias for a single-entry value.
 - `debuggers` is an array of strings that are used to identify debuggers in the language. When launching a debugger's `New Process Modal`, Zed will order available debuggers by the order of entries in this array.
 
 <!--
@@ -42,7 +43,6 @@ TBD: Document `language_name/config.toml` keys
 - word_characters
 - prettier_parser_name
 - opt_into_language_servers
-- code_fence_block_name
 - scope_opt_in_language_servers
 - increase_indent_pattern, decrease_indent_pattern
 - collapsed_placeholder

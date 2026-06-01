@@ -614,6 +614,44 @@ impl LanguageRegistry {
         async move { rx.await? }
     }
 
+    /// Look up a language by the info string of a Markdown fenced code block.
+    ///
+    /// This performs a case-insensitive match against:
+    /// 1. The language name
+    /// 2. The language's path suffixes
+    /// 3. Explicit code fence names defined in the language config
+    pub fn language_for_code_fence_name(
+        self: &Arc<Self>,
+        string: &str,
+    ) -> impl Future<Output = Result<Arc<Language>>> {
+        let string = UniCase::new(string);
+        let rx = self.get_or_load_language(|name, config, current_best_match| {
+            let name_matches = || {
+                UniCase::new(&name.0) == string
+                    || config
+                        .path_suffixes
+                        .iter()
+                        .any(|suffix| UniCase::new(suffix) == string)
+                    || config
+                        .code_fence_block_names
+                        .iter()
+                        .any(|name| UniCase::new(name) == string)
+            };
+
+            match current_best_match {
+                LanguageMatchPrecedence::Undetermined => {
+                    name_matches().then_some(LanguageMatchPrecedence::PathOrContent(string.len()))
+                }
+                LanguageMatchPrecedence::PathOrContent(len) => {
+                    (string.len() > len && name_matches())
+                        .then_some(LanguageMatchPrecedence::PathOrContent(string.len()))
+                }
+                LanguageMatchPrecedence::UserConfigured(_) => None,
+            }
+        });
+        async move { rx.await? }
+    }
+
     pub fn available_language_for_name(self: &Arc<Self>, name: &str) -> Option<AvailableLanguage> {
         let state = self.state.read();
         state

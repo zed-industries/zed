@@ -500,7 +500,7 @@ impl SyntaxSnapshot {
                     unreachable!()
                 };
                 if registry
-                    .language_for_name_or_extension(language_name)
+                    .language_for_code_fence_name(language_name)
                     .now_or_never()
                     .and_then(|language| language.ok())
                     .is_some()
@@ -1573,7 +1573,7 @@ fn get_injections(
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined)
             && let Some(language) = language_registry
-                .language_for_name_or_extension(language_name)
+                .language_for_code_fence_name(language_name)
                 .now_or_never()
                 .and_then(|language| language.ok())
         {
@@ -1632,7 +1632,7 @@ fn get_injections(
 
             if let Some(language_name) = language_name {
                 let language = language_registry
-                    .language_for_name_or_extension(&language_name)
+                    .language_for_code_fence_name(&language_name)
                     .now_or_never()
                     .and_then(|language| language.ok());
                 let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);

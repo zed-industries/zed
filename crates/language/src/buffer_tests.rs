@@ -274,6 +274,41 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_code_fence_block_aliases(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+
+    languages.register_test_language(LanguageConfig {
+        name: "Proto".into(),
+        matcher: LanguageMatcher {
+            path_suffixes: vec!["proto".into()],
+            code_fence_block_names: vec!["proto".into(), "protobuf".into()],
+            ..LanguageMatcher::default()
+        },
+        ..Default::default()
+    });
+
+    // Matches by language name
+    assert_eq!(
+        languages.language_for_code_fence_name("Proto").await.unwrap().name(),
+        "Proto"
+    );
+    // Matches by path suffix
+    assert_eq!(
+        languages.language_for_code_fence_name("proto").await.unwrap().name(),
+        "Proto"
+    );
+    // Matches by alias
+    assert_eq!(
+        languages.language_for_code_fence_name("protobuf").await.unwrap().name(),
+        "Proto"
+    );
+    // Alias does not match via the general name-or-extension lookup
+    assert!(languages.language_for_name_or_extension("protobuf").await.is_err());
+}
+
+#[gpui::test]
 async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |settings| {
