@@ -47,8 +47,8 @@ use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
-    Action, App, ClipboardItem, Context, Entity, ImageSource, Resource, SharedString, SharedUri,
-    TaskExt, Window, actions,
+    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, TaskExt, Window,
+    actions,
 };
 use language::{
     LanguageRegistry,
@@ -223,9 +223,7 @@ actions!(
         CopyThreadToClipboard,
         /// Loads a thread from the clipboard JSON for debugging.
         LoadThreadFromClipboard,
-        /// Copies rules-to-skills migration debug information to the clipboard.
-        CopyRulesToSkillsMigrationDebugInfo,
-        /// Reruns the rules-to-skills migration and copies debug information to the clipboard.
+        /// Reruns the rules-to-skills migration.
         RerunRulesToSkillsMigration,
         /// Keeps the current suggestion or change.
         Keep,
@@ -620,35 +618,15 @@ pub fn init(
     {
         let fs = fs.clone();
         cx.observe_new(move |workspace: &mut Workspace, _window, _cx| {
-            let fs_for_copy = fs.clone();
-            let fs_for_rerun = fs.clone();
-            workspace
-                .register_action(
-                    move |workspace: &mut Workspace,
-                          _: &CopyRulesToSkillsMigrationDebugInfo,
-                          window: &mut Window,
-                          cx: &mut Context<Workspace>| {
-                        copy_rules_to_skills_migration_debug_info(
-                            workspace,
-                            fs_for_copy.clone(),
-                            window,
-                            cx,
-                        );
-                    },
-                )
-                .register_action(
-                    move |workspace: &mut Workspace,
-                          _: &RerunRulesToSkillsMigration,
-                          window: &mut Window,
-                          cx: &mut Context<Workspace>| {
-                        rerun_rules_to_skills_migration(
-                            workspace,
-                            fs_for_rerun.clone(),
-                            window,
-                            cx,
-                        );
-                    },
-                );
+            let fs = fs.clone();
+            workspace.register_action(
+                move |workspace: &mut Workspace,
+                      _: &RerunRulesToSkillsMigration,
+                      window: &mut Window,
+                      cx: &mut Context<Workspace>| {
+                    rerun_rules_to_skills_migration(workspace, fs.clone(), window, cx);
+                },
+            );
         })
         .detach();
     }
@@ -688,32 +666,6 @@ pub fn init(
     maybe_backfill_editor_layout(fs, is_new_install, cx);
 }
 
-fn copy_rules_to_skills_migration_debug_info(
-    _workspace: &mut Workspace,
-    fs: Arc<dyn Fs>,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let workspace = cx.weak_entity();
-    window
-        .spawn(cx, async move |cx| {
-            let report_task = cx.update(|_window, cx| {
-                rules_to_skills_migration::rules_to_skills_migration_debug_report(fs, cx)
-            })?;
-            let report = report_task.await?;
-            cx.update(|_window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(report));
-                show_rules_to_skills_migration_toast(
-                    &workspace,
-                    "Rules-to-skills migration debug info copied to clipboard",
-                    cx,
-                );
-            })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-}
-
 fn rerun_rules_to_skills_migration(
     _workspace: &mut Workspace,
     fs: Arc<dyn Fs>,
@@ -723,46 +675,22 @@ fn rerun_rules_to_skills_migration(
     let workspace = cx.weak_entity();
     window
         .spawn(cx, async move |cx| {
-            let fs_for_migration = fs.clone();
             let migration_task = cx.update(|_window, cx| {
-                rules_to_skills_migration::rerun_rules_to_skills_migration_for_debug(
-                    fs_for_migration,
-                    cx,
-                )
+                rules_to_skills_migration::rerun_rules_to_skills_migration(fs, cx)
             })?;
             let result = migration_task.await?;
             log::info!("Forced rules-to-skills migration result: {result:?}");
 
-            let report_task = cx.update(|_window, cx| {
-                rules_to_skills_migration::rules_to_skills_migration_debug_report(fs, cx)
-            })?;
-            let mut report = report_task.await?;
-            push_agent_ui_report_line(&mut report, "");
-            push_agent_ui_report_line(&mut report, "Forced rerun result:");
-            match serde_json::to_string_pretty(&result) {
-                Ok(json) => push_agent_ui_report_line(&mut report, json),
-                Err(err) => push_agent_ui_report_line(
-                    &mut report,
-                    format!("failed to serialize forced rerun result: {err:#}"),
-                ),
-            }
-
             cx.update(|_window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(report));
                 show_rules_to_skills_migration_toast(
                     &workspace,
-                    "Rules-to-skills migration rerun; debug info copied to clipboard",
+                    "Rules-to-skills migration rerun. Please double-check AGENTS.md and Skills for missing or duplicated prompts.",
                     cx,
                 );
             })?;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-}
-
-fn push_agent_ui_report_line(report: &mut String, line: impl AsRef<str>) {
-    report.push_str(line.as_ref());
-    report.push('\n');
 }
 
 fn show_rules_to_skills_migration_toast(
@@ -772,11 +700,11 @@ fn show_rules_to_skills_migration_toast(
 ) {
     if let Some(workspace) = workspace.upgrade() {
         workspace.update(cx, |workspace, cx| {
-            struct RulesToSkillsMigrationDebugToast;
+            struct RulesToSkillsMigrationRerunToast;
             workspace.show_toast(
                 workspace::Toast::new(
                     workspace::notifications::NotificationId::unique::<
-                        RulesToSkillsMigrationDebugToast,
+                        RulesToSkillsMigrationRerunToast,
                     >(),
                     message,
                 )
