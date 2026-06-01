@@ -467,7 +467,9 @@ pub mod simple_message_notification {
     use ui::{CopyButton, Tooltip, WithScrollbar, prelude::*};
 
     use crate::SuppressNotification;
-    use crate::workspace_error::{ErrorAction, ErrorActionHandler, ErrorSeverity, WorkspaceError};
+    use crate::workspace_error::{
+        ActionIcon, ErrorAction, ErrorActionHandler, ErrorSeverity, WorkspaceError,
+    };
 
     use super::{Notification, SuppressEvent};
 
@@ -631,11 +633,11 @@ pub mod simple_message_notification {
         secondary_content: Option<SharedString>,
         copy_text: Option<SharedString>,
         primary_message: Option<SharedString>,
-        primary_icon: Option<IconName>,
+        primary_icon: Option<ActionIcon>,
         primary_icon_color: Option<Color>,
         primary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         secondary_message: Option<SharedString>,
-        secondary_icon: Option<IconName>,
+        secondary_icon: Option<ActionIcon>,
         secondary_icon_color: Option<Color>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         more_info_message: Option<SharedString>,
@@ -708,8 +710,15 @@ pub mod simple_message_notification {
             self
         }
 
+        /// Show `icon` at the start (left) of the primary action button label.
         pub fn primary_icon(mut self, icon: IconName) -> Self {
-            self.primary_icon = Some(icon);
+            self.primary_icon = Some(ActionIcon::start(icon));
+            self
+        }
+
+        /// Show `icon` at the end (right) of the primary action button label.
+        pub fn primary_end_icon(mut self, icon: IconName) -> Self {
+            self.primary_icon = Some(ActionIcon::end(icon));
             self
         }
 
@@ -742,8 +751,15 @@ pub mod simple_message_notification {
             self
         }
 
+        /// Show `icon` at the start (left) of the secondary action button label.
         pub fn secondary_icon(mut self, icon: IconName) -> Self {
-            self.secondary_icon = Some(icon);
+            self.secondary_icon = Some(ActionIcon::start(icon));
+            self
+        }
+
+        /// Show `icon` at the end (right) of the secondary action button label.
+        pub fn secondary_end_icon(mut self, icon: IconName) -> Self {
+            self.secondary_icon = Some(ActionIcon::end(icon));
             self
         }
 
@@ -853,7 +869,10 @@ pub mod simple_message_notification {
                     } = primary_action;
 
                     this.primary_message(label)
-                        .when_some(icon, |this, icon| this.primary_icon(icon))
+                        .when_some(icon, |this, icon| match icon.position {
+                            IconPosition::Start => this.primary_icon(icon.name),
+                            IconPosition::End => this.primary_end_icon(icon.name),
+                        })
                         .map(|this| match handler {
                             ErrorActionHandler::Action(action) => {
                                 this.primary_on_click(move |window, cx| {
@@ -874,7 +893,10 @@ pub mod simple_message_notification {
                     } = action;
 
                     this.secondary_message(label)
-                        .when_some(icon, |this, icon| this.secondary_icon(icon))
+                        .when_some(icon, |this, icon| match icon.position {
+                            IconPosition::Start => this.secondary_icon(icon.name),
+                            IconPosition::End => this.secondary_end_icon(icon.name),
+                        })
                         .map(|this| match handler {
                             ErrorActionHandler::Action(handler) => {
                                 this.secondary_on_click(move |window, cx| {
@@ -935,51 +957,7 @@ pub mod simple_message_notification {
             };
 
             let main_content = (self.build_content)(window, cx);
-            // Mirrors the icon-alignment pattern used by `ui::Callout`: wrap the icon in a
-            // box that matches the surrounding line height and center it, so the icon
-            // visually aligns with the first line of text instead of being top-anchored.
             let line_height = window.line_height();
-            let body = h_flex()
-                .gap_2()
-                .items_start()
-                .when_some(
-                    self.content_icon.zip(self.content_icon_color),
-                    |el, (icon, color)| {
-                        el.child(
-                            h_flex()
-                                .h(line_height)
-                                .justify_center()
-                                .child(Icon::new(icon).size(IconSize::Small).color(color)),
-                        )
-                    },
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .gap_1()
-                        .child(
-                            div()
-                                .child(
-                                    div()
-                                        .id("message-notification-content")
-                                        .max_h(vh(0.6, window))
-                                        .overflow_y_scroll()
-                                        .track_scroll(&self.scroll_handle.clone())
-                                        .child(main_content),
-                                )
-                                .vertical_scrollbar_for(&self.scroll_handle, window, cx),
-                        )
-                        .when_some(self.secondary_content.clone(), |el, secondary| {
-                            // Sits in the same indent column as the primary message and uses
-                            // `Small` so it still reads as a body line rather than a caption.
-                            el.child(
-                                Label::new(secondary)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                        }),
-                );
 
             let copy_text = self.copy_text.clone();
             let header_actions = h_flex()
@@ -1022,6 +1000,9 @@ pub mod simple_message_notification {
                     )
                 });
 
+            let has_suffix = self.primary_message.is_some()
+                || self.secondary_message.is_some()
+                || self.more_info_message.is_some();
             let suffix = h_flex()
                 .gap_1()
                 .children(self.primary_message.iter().map(|message| {
@@ -1034,11 +1015,13 @@ pub mod simple_message_notification {
                             this.dismiss(cx)
                         }))
                         .when_some(self.primary_icon, |button, icon| {
-                            button.start_icon(
-                                Icon::new(icon)
-                                    .size(IconSize::Small)
-                                    .color(self.primary_icon_color.unwrap_or(Color::Muted)),
-                            )
+                            let element = Icon::new(icon.name)
+                                .size(IconSize::Small)
+                                .color(self.primary_icon_color.unwrap_or(Color::Muted));
+                            match icon.position {
+                                IconPosition::Start => button.start_icon(element),
+                                IconPosition::End => button.end_icon(element),
+                            }
                         })
                 }))
                 .children(self.secondary_message.iter().map(|message| {
@@ -1051,11 +1034,13 @@ pub mod simple_message_notification {
                             this.dismiss(cx)
                         }))
                         .when_some(self.secondary_icon, |button, icon| {
-                            button.start_icon(
-                                Icon::new(icon)
-                                    .size(IconSize::Small)
-                                    .color(self.secondary_icon_color.unwrap_or(Color::Muted)),
-                            )
+                            let element = Icon::new(icon.name)
+                                .size(IconSize::Small)
+                                .color(self.secondary_icon_color.unwrap_or(Color::Muted));
+                            match icon.position {
+                                IconPosition::Start => button.start_icon(element),
+                                IconPosition::End => button.end_icon(element),
+                            }
                         })
                 }))
                 .child(
@@ -1077,6 +1062,55 @@ pub mod simple_message_notification {
                                     }))
                             }),
                     ),
+                );
+
+            // Wrap the icon to vertically align with the first line of the primary
+            // message (mirrors `ui::Callout`'s alignment pattern). The body, secondary
+            // text and suffix all share a single column to the right of the icon so
+            // they line up under one another even when an icon is present.
+            let body = h_flex()
+                .gap_2()
+                .items_start()
+                .when_some(
+                    self.content_icon.zip(self.content_icon_color),
+                    |el, (icon, color)| {
+                        el.child(
+                            h_flex()
+                                .h(line_height)
+                                .justify_center()
+                                .child(Icon::new(icon).size(IconSize::Small).color(color)),
+                        )
+                    },
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap_2()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .child(
+                                            div()
+                                                .id("message-notification-content")
+                                                .max_h(vh(0.6, window))
+                                                .overflow_y_scroll()
+                                                .track_scroll(&self.scroll_handle.clone())
+                                                .child(main_content),
+                                        )
+                                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                                )
+                                .when_some(self.secondary_content.clone(), |el, secondary| {
+                                    el.child(
+                                        Label::new(secondary)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }),
+                        )
+                        .when(has_suffix, |this| this.child(suffix)),
                 );
 
             div()
@@ -1111,8 +1145,7 @@ pub mod simple_message_notification {
                                         .child(div().max_w_96().child(body)),
                                 )
                                 .child(header_actions),
-                        )
-                        .child(suffix),
+                        ),
                 )
         }
     }
@@ -1141,6 +1174,13 @@ pub mod simple_message_notification {
                     .with_title("Update Available")
                     .primary_message("Restart Now")
                     .primary_icon(IconName::ArrowCircle)
+            });
+
+            let with_end_icon_action = cx.new(|cx| {
+                MessageNotification::new("Release notes for this version are available online.", cx)
+                    .with_title("What’s New")
+                    .primary_message("Read Release Notes")
+                    .primary_end_icon(IconName::ArrowUpRight)
             });
 
             // Mirrors the shape of notifications such as the keymap parse error: a long,
@@ -1290,8 +1330,12 @@ pub mod simple_message_notification {
                                 container().child(with_title).into_any_element(),
                             ),
                             single_example(
-                                "With Primary Action",
+                                "With Primary Action (start icon)",
                                 container().child(with_primary_action).into_any_element(),
+                            ),
+                            single_example(
+                                "With Primary Action (end icon)",
+                                container().child(with_end_icon_action).into_any_element(),
                             ),
                             single_example(
                                 "Long Content + Primary Action",

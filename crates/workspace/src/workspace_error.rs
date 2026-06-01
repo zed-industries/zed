@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use gpui::{Action, SharedString};
-use ui::IconName;
+use ui::{IconName, IconPosition};
 use zed_actions::OpenBrowser;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,9 +30,37 @@ pub enum ErrorActionHandler {
     Dismiss,
 }
 
+/// An icon to display on an action button, with its position relative to the label.
+///
+/// Bundled together so the position is only carried around when an icon is actually set
+/// — there's no meaningful "position" without an icon to position.
+#[derive(Debug, Clone, Copy)]
+pub struct ActionIcon {
+    pub name: IconName,
+    pub position: IconPosition,
+}
+
+impl ActionIcon {
+    /// Show `name` at the start (left) of the action button label.
+    pub fn start(name: IconName) -> Self {
+        Self {
+            name,
+            position: IconPosition::Start,
+        }
+    }
+
+    /// Show `name` at the end (right) of the action button label.
+    pub fn end(name: IconName) -> Self {
+        Self {
+            name,
+            position: IconPosition::End,
+        }
+    }
+}
+
 pub struct ErrorAction {
     pub label: SharedString,
-    pub icon: Option<IconName>,
+    pub icon: Option<ActionIcon>,
     pub tooltip: Option<SharedString>,
     pub handler: ErrorActionHandler,
 }
@@ -60,8 +88,18 @@ impl ErrorAction {
         }
     }
 
+    /// Show `icon` at the start (left) of the action button label.
     pub fn with_icon(mut self, icon: IconName) -> Self {
-        self.icon = Some(icon);
+        self.icon = Some(ActionIcon::start(icon));
+        self
+    }
+
+    /// Show `icon` at the end (right) of the action button label.
+    ///
+    /// Useful for actions that navigate the user elsewhere — for example the trailing
+    /// `⇗` produced by [`Self::link`].
+    pub fn with_end_icon(mut self, icon: IconName) -> Self {
+        self.icon = Some(ActionIcon::end(icon));
         self
     }
 
@@ -71,7 +109,7 @@ impl ErrorAction {
     }
 
     pub fn link(label: impl Into<SharedString>, url: impl Into<Arc<str>>) -> Self {
-        Self::new(label, OpenBrowser { url: url.into() }).with_icon(IconName::ArrowUpRight)
+        Self::new(label, OpenBrowser { url: url.into() }).with_end_icon(IconName::ArrowUpRight)
     }
 }
 
