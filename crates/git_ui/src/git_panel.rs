@@ -9267,6 +9267,82 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_panel_shows_unsafe_repo_ui(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+        // Simulate the error git emits when the .git directory is owned by a different user
+        fs.set_open_repo_error(
+            Path::new(path!("/root/project/.git")),
+            "fatal: detected dubious ownership in repository at '/root/project'".to_string(),
+        );
+
+        let project =
+            Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                matches!(panel.git_access, GitAccess::No),
+                "`git_access` should be `No` when the repo is owned by a different user"
+            );
+        });
+
+        // When the repo is owned by a different user, the panel should render
+        // the unsafe repository UI (with the "Trust Directory" button)
+        panel.read_with(cx, |panel, cx| {
+            let has_open_error = panel
+                .active_repository
+                .as_ref()
+                .map_or(false, |repo| repo.read(cx).error().is_some());
+            assert!(
+                !has_open_error,
+                "`panel` should not treat a dubious ownership failure as an open error; \
+                 it should render the unsafe repository UI instead so the user can trust the directory"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_panel_editor_style_uses_buffer_font_size(cx: &mut TestAppContext) {
         init_test(cx);
 
