@@ -162,36 +162,44 @@ mod tests {
     use super::PackageJsonData;
 
     #[test]
-    fn package_manager_detection() -> anyhow::Result<()> {
-        #[track_caller]
-        fn case(source: &str, expected: Option<&'static str>) -> anyhow::Result<()> {
-            let package_json = serde_json_lenient::from_str::<HashMap<String, Value>>(source)?;
-            let package_json =
-                PackageJsonData::new(Path::new("/root/package.json").into(), package_json);
-
-            assert_eq!(package_json.package_manager, expected);
-
-            Ok(())
+    fn package_manager_detection() {
+        fn package_manager(source: &str) -> Option<&'static str> {
+            PackageJsonData::new(
+                Path::new("/root/package.json").into(),
+                serde_json_lenient::from_str(source).expect("provided source should be valid JSON"),
+            )
+            .package_manager
         }
 
-        case(r#"{"packageManager": "pnpm@11.1.3"}"#, Some("pnpm"))?;
-        case(
-            r#"{"devEngines": {"packageManager": {"name": "pnpm", "version": "^11.1.3", "onFail": "download"}}}"#,
-            Some("pnpm"),
-        )?;
-        case(
-            r#"{"devEngines": {"packageManager": [{"name": "foo"}, {"name": "yarn", "version": "^4.0.0"}]}}"#,
-            Some("yarn"),
-        )?;
-        case(
-            r#"{"packageManager": "npm@10.0.0", "devEngines": {"packageManager": {"name": "pnpm"}}}"#,
-            Some("npm"),
-        )?;
-        case(
-            r#"{"devEngines": {"packageManager": {"version": "^11.1.3"}}}"#,
-            None,
-        )?;
+        assert_eq!(
+            package_manager(r#"{"packageManager": "pnpm@11.1.3"}"#),
+            Some("pnpm")
+        );
 
-        Ok(())
+        assert_eq!(
+            package_manager(
+                r#"{"devEngines": {"packageManager": {"name": "pnpm", "version": "^11.1.3", "onFail": "download"}}}"#
+            ),
+            Some("pnpm"),
+        );
+
+        assert_eq!(
+            package_manager(
+                r#"{"devEngines": {"packageManager": [{"name": "foo"}, {"name": "yarn", "version": "^4.0.0"}]}}"#
+            ),
+            Some("yarn"),
+        );
+
+        assert_eq!(
+            package_manager(
+                r#"{"packageManager": "npm@10.0.0", "devEngines": {"packageManager": {"name": "pnpm"}}}"#
+            ),
+            Some("npm"),
+        );
+
+        assert_eq!(
+            package_manager(r#"{"devEngines": {"packageManager": {"version": "^11.1.3"}}}"#),
+            None,
+        );
     }
 }
