@@ -5,66 +5,40 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 on:
-  merge_group: {}
   pull_request:
     branches:
     - '**'
   push:
     branches:
     - main
-    - v[0-9]+.[0-9]+.x
 jobs:
   check_fmt:
-    runs-on: namespace-profile-4x8-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - name: checkout
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      with:
-        clean: false
+      uses: actions/checkout@v4
     - name: cargo_fmt
       run: cargo fmt --all -- --check
     timeout-minutes: 60
   clippy:
-    runs-on: namespace-profile-16x32-ubuntu-2204
-    env:
-      CC: clang
-      CXX: clang++
+    runs-on: ubuntu-latest
     steps:
     - name: checkout
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      uses: actions/checkout@v4
+    - name: cache_cargo
+      uses: actions/cache@v4
       with:
-        clean: false
-    - name: setup_cargo_config
-      run: |
-        mkdir -p ./../.cargo
-        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: cache_rust_dependencies
-      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
-      with:
-        cache: rust
-        path: ~/.rustup
-    - name: setup_linux
-      run: ./script/linux
-    - name: download_wasi_sdk
-      run: ./script/download-wasi-sdk
-    - name: setup_sccache
-      run: ./script/setup-sccache
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-
     - name: clippy
       run: cargo clippy --all-targets --all-features -- --deny warnings
-    - name: show_sccache_stats
-      run: sccache --show-stats || true
-    - name: cleanup_cargo_config
-      if: always()
-      run: |
-        rm -rf ./../.cargo
-    timeout-minutes: 60
+    timeout-minutes: 120
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 defaults:
   run:
