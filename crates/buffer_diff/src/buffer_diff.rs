@@ -286,7 +286,14 @@ impl BufferDiffSnapshot {
         buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let unstaged_counterpart = self.secondary_diff.as_deref();
-        self.hunks_intersecting_range_impl(range, buffer, unstaged_counterpart)
+        let range = range.to_offset(buffer);
+        let filter = move |summary: &DiffHunkSummary| {
+            let summary_range = summary.buffer_range.to_offset(buffer);
+            let before_start = summary_range.end < range.start;
+            let after_end = summary_range.start > range.end;
+            !before_start && !after_end
+        };
+        self.hunks_intersecting_range_impl(filter, buffer, unstaged_counterpart)
     }
 
     pub fn hunks_intersecting_range_rev<'a>(
@@ -313,7 +320,7 @@ impl BufferDiffSnapshot {
             let after_end = summary.diff_base_byte_range.start > range.end;
             !before_start && !after_end
         };
-        self.hunks_intersecting_range_filtered_impl(filter, main_buffer, unstaged_counterpart)
+        self.hunks_intersecting_range_impl(filter, main_buffer, unstaged_counterpart)
     }
 
     pub fn hunks_intersecting_base_text_range_rev<'a>(
@@ -923,22 +930,6 @@ impl BufferDiff {
 
 impl BufferDiffSnapshot {
     fn hunks_intersecting_range_impl<'a>(
-        &'a self,
-        range: Range<Anchor>,
-        buffer: &'a text::BufferSnapshot,
-        secondary: Option<&'a Self>,
-    ) -> impl 'a + Iterator<Item = DiffHunk> {
-        let range = range.to_offset(buffer);
-        let filter = move |summary: &DiffHunkSummary| {
-            let summary_range = summary.buffer_range.to_offset(buffer);
-            let before_start = summary_range.end < range.start;
-            let after_end = summary_range.start > range.end;
-            !before_start && !after_end
-        };
-        self.hunks_intersecting_range_filtered_impl(filter, buffer, secondary)
-    }
-
-    fn hunks_intersecting_range_filtered_impl<'a>(
         &'a self,
         filter: impl 'a + Fn(&DiffHunkSummary) -> bool,
         buffer: &'a text::BufferSnapshot,
