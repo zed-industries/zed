@@ -50,7 +50,10 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
-use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use dock::{
+    DOCK_CLOSE_DURATION, DOCK_OPEN_DURATION, Dock, DockPosition, PanelButtons, PanelHandle,
+    RESIZE_HANDLE_SIZE,
+};
 use fs::Fs;
 use futures::{
     Future, FutureExt, StreamExt,
@@ -61,12 +64,13 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
-    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds, WindowHandle,
-    WindowId, WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    Action, Animation, AnimationExt, AnyElement, AnyEntity, AnyView, AnyWeakView, App, AsyncApp,
+    AsyncWindowContext, Axis, Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity,
+    EntityId, EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext,
+    Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
+    ResizeEdge, Size, Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling,
+    WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
+    ease_out_cubic, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -7865,7 +7869,7 @@ impl Workspace {
         dock: &Entity<Dock>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Div> {
+    ) -> Option<AnyElement> {
         if self.zoomed_position == Some(position) {
             return None;
         }
@@ -7890,6 +7894,8 @@ impl Workspace {
         if let Some(panel) = dock.visible_panel() {
             let size_state = dock.stored_panel_size_state(panel.as_ref());
             let min_size = panel.min_size(window, cx);
+            let is_closing = dock.is_closing();
+            let animation_generation = dock.animation_generation();
             if position.axis() == Axis::Horizontal {
                 let use_flexible = panel.has_flexible_size(window, cx);
                 let flex_grow = if use_flexible {
@@ -7909,13 +7915,36 @@ impl Workspace {
                     let size = size_state
                         .and_then(|state| state.size)
                         .unwrap_or_else(|| panel.default_size(window, cx));
-                    container = container.w(size);
-                    // Allow the fixed-width dock to shrink when there isn't
-                    // enough space (e.g. when the sidebar is open). The
-                    // stored size is preserved so the dock expands back
-                    // when space becomes available.
                     let style = container.style();
                     style.flex_shrink = Some(1.0);
+                    if let Some(min) = min_size {
+                        container = container.min_w(min);
+                    }
+                    let animation_side = match position {
+                        DockPosition::Left => "left",
+                        DockPosition::Bottom => "bottom",
+                        DockPosition::Right => "right",
+                    };
+                    let animation_id =
+                        gpui::ElementId::from(("dock-size-anim", animation_generation as u64));
+                    let target_size = f32::from(size);
+                    return Some(
+                        container
+                            .with_animation(
+                                (animation_id, animation_side),
+                                Animation::new(if is_closing {
+                                    DOCK_CLOSE_DURATION
+                                } else {
+                                    DOCK_OPEN_DURATION
+                                })
+                                .with_easing(ease_out_cubic),
+                                move |this, delta| {
+                                    let progress = if is_closing { 1.0 - delta } else { delta };
+                                    this.w(px(target_size * progress))
+                                },
+                            )
+                            .into_any_element(),
+                    );
                 }
                 if let Some(min) = min_size {
                     container = container.min_w(min);
@@ -7924,11 +7953,31 @@ impl Workspace {
                 let size = size_state
                     .and_then(|state| state.size)
                     .unwrap_or_else(|| panel.default_size(window, cx));
-                container = container.h(size);
+                let animation_side = "bottom";
+                let animation_id =
+                    gpui::ElementId::from(("dock-size-anim", animation_generation as u64));
+                let target_size = f32::from(size);
+                return Some(
+                    container
+                        .with_animation(
+                            (animation_id, animation_side),
+                            Animation::new(if is_closing {
+                                DOCK_CLOSE_DURATION
+                            } else {
+                                DOCK_OPEN_DURATION
+                            })
+                            .with_easing(ease_out_cubic),
+                            move |this, delta| {
+                                let progress = if is_closing { 1.0 - delta } else { delta };
+                                this.h(px(target_size * progress))
+                            },
+                        )
+                        .into_any_element(),
+                );
             }
         }
 
-        Some(container)
+        Some(container.into_any_element())
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {

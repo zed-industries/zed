@@ -24,8 +24,8 @@ use ui::{
 use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
-const DOCK_OPEN_DURATION: Duration = Duration::from_millis(150);
-const DOCK_CLOSE_DURATION: Duration = Duration::from_millis(100);
+pub(crate) const DOCK_OPEN_DURATION: Duration = Duration::from_millis(150);
+pub(crate) const DOCK_CLOSE_DURATION: Duration = Duration::from_millis(100);
 
 pub enum PanelEvent {
     ZoomIn,
@@ -484,6 +484,14 @@ impl Dock {
 
     pub fn is_open(&self) -> bool {
         self.is_open
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.is_closing
+    }
+
+    pub fn animation_generation(&self) -> usize {
+        self.animation_generation
     }
 
     fn resizable(&self, cx: &App) -> bool {
@@ -1131,7 +1139,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
@@ -1197,6 +1205,13 @@ impl Render for Dock {
             let is_closing = self.is_closing;
             let animation_generation = self.animation_generation;
 
+            let use_flexible_width =
+                panel_uses_flexible_width(self.position, entry.panel.as_ref(), _window, cx);
+            let size = entry
+                .size_state
+                .size
+                .unwrap_or_else(|| entry.panel.default_size(_window, cx));
+
             div()
                 .id("dock-panel")
                 .key_context(dispatch_context)
@@ -1207,10 +1222,14 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    // Width and height are always set on the workspace wrapper in
-                    // render_dock, so fill whatever space the wrapper provides.
-                    Axis::Horizontal => this.w_full().h_full().flex_row(),
-                    Axis::Vertical => this.h_full().w_full().flex_col(),
+                    Axis::Horizontal => {
+                        if use_flexible_width {
+                            this.w_full().h_full().flex_row()
+                        } else {
+                            this.w(size).h_full().flex_row()
+                        }
+                    }
+                    Axis::Vertical => this.h(size).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r_1(),
@@ -1243,14 +1262,13 @@ impl Render for Dock {
                     .with_easing(ease_out_cubic),
                     {
                         let position = self.position;
-                        let size = entry.size_state.size.unwrap_or_else(|| entry.panel.default_size(window, cx));
-                        let target_size = f32::from(size);
                         move |this, delta| {
                             let progress = if is_closing { 1.0 - delta } else { delta };
-                            let animated_size = px(target_size * progress);
-                            match position.axis() {
-                                Axis::Horizontal => this.w(animated_size),
-                                Axis::Vertical => this.h(animated_size),
+                            let hidden_fraction = 1.0 - progress;
+                            match position {
+                                DockPosition::Left => this.left(relative(-hidden_fraction)),
+                                DockPosition::Right => this.right(relative(-hidden_fraction)),
+                                DockPosition::Bottom => this.bottom(relative(-hidden_fraction)),
                             }
                         }
                     },
