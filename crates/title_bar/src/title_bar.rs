@@ -184,7 +184,7 @@ impl Render for TitleBar {
 
         let show_menus = show_menus(cx);
 
-        let mut children = <ArrayVec<_, 4>>::new();
+        let mut children = <ArrayVec<_, 5>>::new();
 
         let mut project_name = None;
         let mut repository = None;

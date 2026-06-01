@@ -4,11 +4,11 @@ use crate::{
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, UserAgentsMd, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use agent_settings::UserAgentsMd;
 use feature_flags::{
     FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
     UpdateTitleToolFeatureFlag,
@@ -40,8 +40,8 @@ use language_model::{
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason,
-    TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
+    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -51,22 +51,25 @@ use serde::{Deserialize, Serialize};
 use settings::{
     LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
 };
+use std::fmt::Write;
 use std::{
     collections::BTreeMap,
     marker::PhantomData,
     ops::RangeInclusive,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
-use std::{fmt::Write, path::PathBuf};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+
+// Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
+const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
@@ -123,11 +126,39 @@ enum RetryStrategy {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
     Resume,
+    Compaction(CompactionInfo),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub enum CompactionInfo {
+    Summary(SharedString),
+    ProviderNative {
+        provider: LanguageModelProviderId,
+        items: Vec<serde_json::Value>,
+    },
+}
+
+impl CompactionInfo {
+    fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+        match self {
+            Self::Summary(summary) => vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![format!(
+                    "The previous conversation was compacted. Use this summary as context:\n\n{}",
+                    summary
+                )
+                .into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            Self::ProviderNative { .. } => Vec::new(),
+        }
+    }
 }
 
 impl Message {
@@ -148,6 +179,7 @@ impl Message {
                 }
             }
             Message::Agent(message) => message.to_request(),
+            Message::Compaction(info) => info.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
@@ -162,12 +194,13 @@ impl Message {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
             Message::Resume => "[resume]\n".into(),
+            Message::Compaction(_) => "--- Context Compacted ---\n".into(),
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
-            Message::User(_) | Message::Resume => Role::User,
+            Message::User(_) | Message::Resume | Message::Compaction(_) => Role::User,
             Message::Agent(_) => Role::Assistant,
         }
     }
@@ -176,13 +209,16 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub id: UserMessageId,
-    pub content: Vec<UserMessageContent>,
+    pub content: Arc<[UserMessageContent]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserMessageContent {
     Text(String),
-    Mention { uri: MentionUri, content: String },
+    Mention {
+        uri: MentionUri,
+        content: SharedString,
+    },
     Image(LanguageModelImage),
 }
 
@@ -190,7 +226,7 @@ impl UserMessage {
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
 
-        for content in &self.content {
+        for content in &*self.content {
             match content {
                 UserMessageContent::Text(text) => {
                     markdown.push_str(text);
@@ -250,7 +286,7 @@ impl UserMessage {
         let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
         let mut skills_context = OPEN_SKILLS_TAG.to_string();
 
-        for chunk in &self.content {
+        for chunk in &*self.content {
             let chunk = match chunk {
                 UserMessageContent::Text(text) => {
                     language_model::MessageContent::Text(text.clone())
@@ -266,7 +302,7 @@ impl UserMessage {
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: &codeblock_tag(abs_path, None),
-                                    text: &content.to_string(),
+                                    text: content,
                                 }
                             )
                             .ok();
@@ -312,17 +348,6 @@ impl UserMessage {
                         }
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::Rule { .. } => {
-                            write!(
-                                &mut rules_context,
-                                "\n{}",
-                                MarkdownCodeBlock {
-                                    tag: "",
-                                    text: content
-                                }
-                            )
-                            .ok();
                         }
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
@@ -627,9 +652,9 @@ impl AgentMessage {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentMessage {
-    pub content: Vec<AgentMessageContent>,
-    pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
-    pub reasoning_details: Option<serde_json::Value>,
+    pub(crate) content: Vec<AgentMessageContent>,
+    pub(crate) tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
+    pub(crate) reasoning_details: Option<Arc<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -665,8 +690,10 @@ pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
+        extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 
@@ -694,6 +721,7 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
+    ContextCompaction,
     Stop(acp::StopReason),
 }
 
@@ -963,7 +991,7 @@ pub struct Thread {
     title_generation_failed: bool,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
-    messages: Vec<Message>,
+    messages: Vec<Arc<Message>>,
     user_store: Entity<UserStore>,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -1002,6 +1030,7 @@ pub struct Thread {
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
     inherits_parent_model_settings: bool,
+    sandboxed_terminal_temp_dir: Option<PathBuf>,
 }
 
 impl Thread {
@@ -1128,6 +1157,7 @@ impl Thread {
             ui_scroll_position: None,
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
+            sandboxed_terminal_temp_dir: None,
         }
     }
 
@@ -1171,6 +1201,30 @@ impl Thread {
         &self.id
     }
 
+    pub(crate) fn sandboxed_terminal_temp_dir(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<PathBuf> {
+        if let Some(temp_dir) = &self.sandboxed_terminal_temp_dir {
+            std::fs::create_dir_all(temp_dir).with_context(|| {
+                format!(
+                    "failed to recreate sandboxed terminal temp directory {}",
+                    temp_dir.display()
+                )
+            })?;
+            return Ok(temp_dir.clone());
+        }
+
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-agent-terminal-")
+            .tempdir()
+            .context("failed to create sandboxed terminal temp directory")?;
+        let temp_dir = temp_dir.keep();
+        self.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
+        cx.notify();
+        Ok(temp_dir)
+    }
+
     /// Returns true if this thread was imported from a shared thread.
     pub fn is_imported(&self) -> bool {
         self.imported
@@ -1183,7 +1237,7 @@ impl Thread {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream(tx);
         for message in &self.messages {
-            match message {
+            match &**message {
                 Message::User(user_message) => stream.send_user_message(user_message),
                 Message::Agent(assistant_message) => {
                     for content in &assistant_message.content {
@@ -1205,6 +1259,7 @@ impl Thread {
                     }
                 }
                 Message::Resume => {}
+                Message::Compaction(_) => stream.send_context_compaction(),
             }
         }
         rx
@@ -1446,6 +1501,7 @@ impl Thread {
             }),
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
+            sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
         }
     }
 
@@ -1476,6 +1532,7 @@ impl Thread {
                     offset_in_item: lo.offset_in_item.as_f32(),
                 }
             }),
+            sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
         };
 
         cx.background_spawn(async move {
@@ -1639,13 +1696,13 @@ impl Thread {
     }
 
     pub fn last_message(&self) -> Option<&Message> {
-        self.messages.last()
+        self.messages.last().map(std::ops::Deref::deref)
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn last_received_or_pending_message(&self) -> Option<Message> {
+    pub fn last_received_or_pending_message(&self) -> Option<Arc<Message>> {
         if let Some(message) = self.pending_message.clone() {
-            Some(Message::Agent(message))
+            Some(Arc::new(Message::Agent(message)))
         } else {
             self.messages.last().cloned()
         }
@@ -1802,17 +1859,17 @@ impl Thread {
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
         let Some(position) = self.messages.iter().position(
-            |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
+            |msg| matches!(&**msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
             return Err(anyhow!("Message not found"));
         };
 
         for message in self.messages.drain(position..) {
-            match message {
+            match &*message {
                 Message::User(message) => {
                     self.request_token_usage.remove(&message.id);
                 }
-                Message::Agent(_) | Message::Resume => {}
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => {}
             }
         }
         self.clear_summary();
@@ -1850,7 +1907,7 @@ impl Thread {
         let mut previous_user_message_id: Option<&UserMessageId> = None;
 
         for message in &self.messages {
-            if let Message::User(user_msg) = message {
+            if let Message::User(user_msg) = &**message {
                 if &user_msg.id == target_id {
                     let prev_id = previous_user_message_id?;
                     let usage = self.request_token_usage.get(prev_id)?;
@@ -1895,7 +1952,7 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.messages.push(Message::Resume);
+        self.messages.push(Arc::new(Message::Resume));
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
@@ -1914,11 +1971,11 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
+        let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
         self.messages
-            .push(Message::User(UserMessage { id, content }));
+            .push(Arc::new(Message::User(UserMessage { id, content })));
         cx.notify();
 
         self.send_existing(cx)
@@ -1949,9 +2006,9 @@ impl Thread {
         let content = blocks
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
-            .collect::<Vec<_>>();
+            .collect::<Arc<_>>();
         self.messages
-            .push(Message::User(UserMessage { id, content }));
+            .push(Arc::new(Message::User(UserMessage { id, content })));
         cx.notify();
     }
 
@@ -1969,10 +2026,10 @@ impl Thread {
             _ => "[unknown]".to_string(),
         };
 
-        self.messages.push(Message::Agent(AgentMessage {
+        self.messages.push(Arc::new(Message::Agent(AgentMessage {
             content: vec![AgentMessageContent::Text(text)],
             ..Default::default()
-        }));
+        })));
         cx.notify();
     }
 
@@ -2230,10 +2287,10 @@ impl Thread {
                     }
                 }
                 this.update(cx, |this, _cx| {
-                    if let Some(Message::Agent(message)) = this.messages.last() {
+                    if let Some(Message::Agent(message)) = this.last_message() {
                         if message.tool_results.is_empty() {
                             intent = CompletionIntent::UserPrompt;
-                            this.messages.push(Message::Resume);
+                            this.messages.push(Arc::new(Message::Resume));
                         }
                     }
                 })?;
@@ -2356,12 +2413,12 @@ impl Thread {
                 let last_message = self.pending_message();
                 // Store the last non-empty reasoning_details (overwrites earlier ones)
                 // This ensures we keep the encrypted reasoning with signatures, not the early text reasoning
-                if let serde_json::Value::Array(ref arr) = details {
+                if let serde_json::Value::Array(arr) = &details {
                     if !arr.is_empty() {
-                        last_message.reasoning_details = Some(details);
+                        last_message.reasoning_details = Some(Arc::new(details));
                     }
                 } else {
-                    last_message.reasoning_details = Some(details);
+                    last_message.reasoning_details = Some(Arc::new(details));
                 }
             }
             ToolUse(tool_use) => {
@@ -2895,10 +2952,9 @@ impl Thread {
         self.messages
             .iter()
             .rev()
-            .find_map(|message| match message {
+            .find_map(|message| match &**message {
                 Message::User(user_message) => Some(user_message),
-                Message::Agent(_) => None,
-                Message::Resume => None,
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => None,
             })
     }
 
@@ -2936,7 +2992,7 @@ impl Thread {
             }
         }
 
-        self.messages.push(Message::Agent(message));
+        self.messages.push(Arc::new(Message::Agent(message)));
         self.updated_at = Utc::now();
         self.clear_summary();
         cx.notify()
@@ -3168,6 +3224,7 @@ impl Thread {
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
+            sandboxing: crate::sandboxing::sandboxing_enabled(cx),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -3178,9 +3235,7 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        for message in &self.messages {
-            messages.extend(message.to_request());
-        }
+        self.extend_request_history(&mut messages);
 
         if let Some(last_message) = messages.last_mut() {
             last_message.cache = true;
@@ -3193,16 +3248,77 @@ impl Thread {
         messages
     }
 
+    fn extend_request_history(&self, messages: &mut Vec<LanguageModelRequestMessage>) {
+        let Some(compaction_ix) = self.latest_compaction_message_ix() else {
+            for message in &self.messages {
+                messages.extend(message.to_request());
+            }
+            return;
+        };
+
+        if matches!(
+            &*self.messages[compaction_ix],
+            Message::Compaction(CompactionInfo::Summary(_))
+        ) {
+            messages.extend(self.retained_user_request_messages_before(compaction_ix));
+        }
+
+        for message in &self.messages[compaction_ix..] {
+            messages.extend(message.to_request());
+        }
+    }
+
+    fn latest_compaction_message_ix(&self) -> Option<usize> {
+        self.messages
+            .iter()
+            .rposition(|message| matches!(&**message, Message::Compaction(_)))
+    }
+
+    fn retained_user_request_messages_before(
+        &self,
+        compaction_ix: usize,
+    ) -> Vec<LanguageModelRequestMessage> {
+        let mut remaining_bytes = COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
+        let mut retained_messages = Vec::new();
+
+        for message in self.messages[..compaction_ix].iter().rev() {
+            let Message::User(user_message) = &**message else {
+                continue;
+            };
+            if user_message.content.is_empty() {
+                continue;
+            }
+
+            let request_message = user_message.to_request();
+            let byte_count = user_message_byte_len(&request_message);
+            if let Some(bytes) = remaining_bytes.checked_sub(byte_count) {
+                remaining_bytes = bytes;
+                retained_messages.push(request_message);
+            } else {
+                if remaining_bytes > 0
+                    && let Some(request_message) =
+                        truncate_user_message_to_byte_budget(request_message, remaining_bytes)
+                {
+                    retained_messages.push(request_message);
+                }
+                break;
+            }
+        }
+
+        retained_messages.reverse();
+        retained_messages
+    }
+
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
         for (ix, message) in self.messages.iter().enumerate() {
             if ix > 0 {
                 markdown.push('\n');
             }
-            match message {
+            match &**message {
                 Message::User(_) => markdown.push_str("## User\n\n"),
                 Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
-                Message::Resume => {}
+                Message::Resume | Message::Compaction(_) => {}
             }
             markdown.push_str(&message.to_markdown());
         }
@@ -3329,6 +3445,83 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
+    message
+        .content
+        .iter()
+        .map(|content| match content {
+            MessageContent::Text(text) => text.len(),
+            MessageContent::Image(image) => image.len(),
+            // These can never occur in a user message
+            MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_)
+            | MessageContent::ToolResult(_)
+            | MessageContent::ToolUse(_) => 0,
+        })
+        .sum()
+}
+
+fn truncate_user_message_to_byte_budget(
+    mut message: LanguageModelRequestMessage,
+    byte_budget: usize,
+) -> Option<LanguageModelRequestMessage> {
+    let mut remaining_bytes = byte_budget;
+    let mut content = Vec::with_capacity(message.content.len());
+
+    for item in message.content {
+        match item {
+            MessageContent::Text(text) => {
+                let fits = text.len() <= remaining_bytes;
+                if let Some(text) = take_text_within_byte_budget(text, &mut remaining_bytes) {
+                    content.push(MessageContent::Text(text));
+                }
+                if !fits {
+                    break;
+                }
+            }
+            MessageContent::Image(image) => {
+                let byte_len = image.len();
+                if let Some(bytes) = remaining_bytes.checked_sub(byte_len) {
+                    remaining_bytes = bytes;
+                    content.push(MessageContent::Image(image));
+                } else {
+                    break;
+                }
+            }
+            // These can never occur in a user message
+            MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_)
+            | MessageContent::ToolResult(_)
+            | MessageContent::ToolUse(_) => {}
+        }
+    }
+
+    if content.is_empty() {
+        None
+    } else {
+        message.content = content;
+        Some(message)
+    }
+}
+
+fn take_text_within_byte_budget(text: String, remaining_bytes: &mut usize) -> Option<String> {
+    if text.is_empty() || *remaining_bytes == 0 {
+        return None;
+    }
+
+    if let Some(bytes) = remaining_bytes.checked_sub(text.len()) {
+        *remaining_bytes = bytes;
+        return Some(text);
+    }
+
+    let end = text.floor_char_boundary((*remaining_bytes).min(text.len()));
+    *remaining_bytes = 0;
+
+    let text = text[..end].to_string();
+
+    if text.is_empty() { None } else { Some(text) }
 }
 
 struct RunningTurn {
@@ -3776,6 +3969,12 @@ impl ThreadEventStream {
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
+    }
+
+    fn send_context_compaction(&self) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompaction))
+            .ok();
     }
 
     fn send_stop(&self, reason: acp::StopReason) {
@@ -4411,7 +4610,7 @@ impl UserMessageContent {
                 match MentionUri::parse(&resource_link.uri, path_style) {
                     Ok(uri) => Self::Mention {
                         uri,
-                        content: String::new(),
+                        content: SharedString::default(),
                     },
                     Err(err) => {
                         log::error!("Failed to parse mention link: {}", err);
@@ -4424,7 +4623,7 @@ impl UserMessageContent {
                     match MentionUri::parse(&resource.uri, path_style) {
                         Ok(uri) => Self::Mention {
                             uri,
-                            content: resource.text,
+                            content: resource.text.into(),
                         },
                         Err(err) => {
                             log::error!("Failed to parse mention link: {}", err);
@@ -4518,6 +4717,221 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    #[test]
+    fn test_summary_compaction_renders_for_request_and_markdown() {
+        let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
+
+        assert_eq!(message.role(), Role::User);
+        assert_eq!(message.to_markdown(), "--- Context Compacted ---\n");
+
+        let request_messages = message.to_request();
+        assert_eq!(request_messages.len(), 1);
+        assert_eq!(request_messages[0].role, Role::User);
+        assert!(!request_messages[0].cache);
+        assert_eq!(request_messages[0].reasoning_details, None);
+        assert_eq!(request_messages[0].content.len(), 1);
+        let language_model::MessageContent::Text(text) = &request_messages[0].content[0] else {
+            panic!("expected text summary context");
+        };
+        assert_eq!(
+            text.as_str(),
+            "The previous conversation was compacted. Use this summary as context:\n\nOlder context"
+        );
+    }
+
+    fn user_text_message(id: UserMessageId, text: &str) -> Arc<Message> {
+        Arc::new(Message::User(UserMessage {
+            id,
+            content: vec![UserMessageContent::Text(text.to_string())].into(),
+        }))
+    }
+
+    fn agent_text_message(text: &str) -> Arc<Message> {
+        Arc::new(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(text.to_string())],
+            ..Default::default()
+        }))
+    }
+
+    fn summary_compaction(summary: &str) -> Arc<Message> {
+        Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())))
+    }
+
+    fn summary_request_text(summary: &str) -> String {
+        format!(
+            "The previous conversation was compacted. Use this summary as context:\n\n{summary}"
+        )
+    }
+
+    fn request_texts_after_system(messages: &[LanguageModelRequestMessage]) -> Vec<String> {
+        messages
+            .iter()
+            .skip(1)
+            .map(LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let user_message_id = UserMessageId::new();
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "before"));
+                thread.messages.push(summary_compaction("summary"));
+                thread.messages.push(agent_text_message("after"));
+
+                thread.replay(cx)
+            })
+        });
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(
+                &event,
+                Some(Ok(ThreadEvent::UserMessage(UserMessage { id, .. }))) if id == &user_message_id
+            ),
+            "expected replayed user message, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::ContextCompaction))),
+            "expected context compaction event, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::AgentText(text))) if text == "after"),
+            "expected replayed agent text, got {event:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_compaction_boundary(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let request_messages = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "before native"));
+                thread.messages.push(Arc::new(Message::Compaction(
+                    CompactionInfo::ProviderNative {
+                        provider: LanguageModelProviderId::from("openai".to_string()),
+                        items: vec![json!({"type": "compaction"})],
+                    },
+                )));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "after native"));
+
+                thread.build_request_messages(Vec::new(), cx)
+            })
+        });
+
+        assert_eq!(
+            request_texts_after_system(&request_messages),
+            vec!["after native".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_retained_users_truncate_oldest(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let mut long_text = "START".to_string();
+        long_text.push_str(&"x".repeat(COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET));
+        long_text.push_str("END");
+
+        let request_messages = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.messages.push(user_text_message(
+                    UserMessageId::new(),
+                    "dropped older user",
+                ));
+                thread
+                    .messages
+                    .push(agent_text_message("dropped assistant"));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), &long_text));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "new"));
+                thread.messages.push(summary_compaction("summary context"));
+                thread.messages.push(agent_text_message("after assistant"));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "after user"));
+
+                thread.build_request_messages(Vec::new(), cx)
+            })
+        });
+
+        let request_texts = request_texts_after_system(&request_messages);
+        assert_eq!(request_texts.len(), 5);
+        assert_eq!(
+            request_texts[0],
+            format!(
+                "START{}",
+                "x".repeat(
+                    COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET - "START".len() - "new".len()
+                )
+            )
+        );
+        assert_eq!(request_texts[1], "new");
+        assert_eq!(request_texts[2], summary_request_text("summary context"));
+        assert_eq!(request_texts[3], "after assistant");
+        assert_eq!(request_texts[4], "after user");
+        assert!(request_texts.iter().all(
+            |text| !text.contains("dropped older user") && !text.contains("dropped assistant")
+        ));
+    }
+
+    #[test]
+    fn test_truncate_text_utf8_boundary() {
+        let message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("hello 👋 world".to_string())],
+            cache: false,
+            reasoning_details: None,
+        };
+
+        let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();
+        assert_eq!(
+            truncated.content,
+            vec![MessageContent::Text("hello ".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_truncate_keeps_fitting_images() {
+        let image = LanguageModelImage {
+            source: "image".into(),
+        };
+        let message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                MessageContent::Text("abc".to_string()),
+                MessageContent::Image(image.clone()),
+            ],
+            cache: false,
+            reasoning_details: None,
+        };
+
+        let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();
+        assert_eq!(
+            truncated.content,
+            vec![
+                MessageContent::Text("abc".to_string()),
+                MessageContent::Image(image),
+            ]
+        );
     }
 
     fn setup_parent_with_subagents(
@@ -4626,14 +5040,14 @@ mod tests {
                     },
                 );
 
-                thread.messages.push(Message::Agent(AgentMessage {
+                thread.messages.push(Arc::new(Message::Agent(AgentMessage {
                     content: vec![
                         AgentMessageContent::ToolUse(registered_tool_use),
                         AgentMessageContent::ToolUse(missing_tool_use),
                     ],
                     tool_results,
                     reasoning_details: None,
-                }));
+                })));
 
                 thread.replay(cx)
             })
@@ -4784,11 +5198,11 @@ mod tests {
             },
         );
 
-        thread.messages.push(Message::Agent(AgentMessage {
+        thread.messages.push(Arc::new(Message::Agent(AgentMessage {
             content: vec![AgentMessageContent::ToolUse(tool_use)],
             tool_results,
             reasoning_details: None,
-        }));
+        })));
     }
 
     #[gpui::test]

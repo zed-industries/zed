@@ -34,6 +34,12 @@ impl Editor {
             cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
+
+        cx.emit(EditorEvent::InputHandled {
+            utf16_range_to_replace: relative_utf16_range.clone(),
+            text: text.into(),
+        });
+
         if let Some(relative_utf16_range) = relative_utf16_range {
             let selections = self
                 .selections
@@ -642,11 +648,11 @@ impl Editor {
                                 let row_start =
                                     buffer.point_to_offset(Point::new(start_point.row, 0));
                                 let tab_size = buffer.language_settings_at(start, cx).tab_size;
-                                let tab_size_indent = IndentSize::spaces(tab_size.get());
-                                let reduced_indent =
-                                    existing_indent.with_delta(Ordering::Less, tab_size_indent);
+                                existing_indent.len = existing_indent
+                                    .len
+                                    .saturating_sub(existing_indent.outdent_len(tab_size));
                                 let mut new_text = String::new();
-                                new_text.extend(reduced_indent.chars());
+                                new_text.extend(existing_indent.chars());
                                 new_text.push_str(continuation);
                                 (row_start, new_text, true)
                             }
