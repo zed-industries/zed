@@ -995,6 +995,9 @@ impl ThreadView {
         ) {
             if let Some(connection) = self.as_native_connection(cx) {
                 connection.ensure_skills_scan_started(cx);
+                if let Some(project) = self.project.upgrade() {
+                    connection.refresh_skills_for_project(project, cx);
+                }
             }
         }
 

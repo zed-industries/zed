@@ -15500,8 +15500,10 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "action_log",
  "agent",
+ "agent-client-protocol",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
