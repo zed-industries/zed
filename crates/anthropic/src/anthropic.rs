@@ -15,7 +15,14 @@ pub mod batches;
 pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
-const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+
+pub fn supports_fast_mode(model_id: &str) -> bool {
+    matches!(
+        model_id,
+        "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
+    )
+}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -145,10 +152,7 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = matches!(
-            entry.id.as_str(),
-            "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
-        );
+        let supports_speed = supports_fast_mode(&entry.id);
 
         let mut extra_beta_headers = Vec::new();
         if supports_speed {

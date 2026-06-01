@@ -322,6 +322,17 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
     );
     let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking);
+    let supports_speed = available
+        .supports_fast_mode
+        .unwrap_or_else(|| anthropic::supports_fast_mode(&available.name));
+    let mut extra_beta_headers = available.extra_beta_headers.clone();
+    if supports_speed
+        && !extra_beta_headers
+            .iter()
+            .any(|header| header.trim() == anthropic::FAST_MODE_BETA_HEADER)
+    {
+        extra_beta_headers.push(anthropic::FAST_MODE_BETA_HEADER.to_string());
+    }
 
     anthropic::Model {
         display_name: available
@@ -336,7 +347,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         supports_thinking,
         supports_adaptive_thinking,
         supports_images: true,
-        supports_speed: false,
+        supports_speed,
         supported_effort_levels: if supports_adaptive_thinking {
             vec![
                 anthropic::Effort::Low,
@@ -349,7 +360,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
             vec![]
         },
         tool_override: available.tool_override.clone(),
-        extra_beta_headers: available.extra_beta_headers.clone(),
+        extra_beta_headers,
     }
 }
 
@@ -658,5 +669,48 @@ impl Render for ConfigurationView {
                 })
                 .into_any_element()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn available_model(name: &str, supports_fast_mode: Option<bool>) -> AvailableModel {
+        AvailableModel {
+            name: name.to_string(),
+            display_name: None,
+            max_tokens: 200_000,
+            tool_override: None,
+            cache_configuration: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            extra_beta_headers: Vec::new(),
+            supports_fast_mode,
+            mode: None,
+        }
+    }
+
+    #[test]
+    fn available_model_can_opt_into_fast_mode() {
+        let model = available_model_to_anthropic_model(&available_model(
+            "claude-custom-fast-mode",
+            Some(true),
+        ));
+
+        assert!(model.supports_speed);
+        assert_eq!(
+            model.beta_headers().as_deref(),
+            Some(anthropic::FAST_MODE_BETA_HEADER)
+        );
+    }
+
+    #[test]
+    fn available_model_does_not_enable_fast_mode_by_default() {
+        let model =
+            available_model_to_anthropic_model(&available_model("claude-custom-fast-mode", None));
+
+        assert!(!model.supports_speed);
+        assert_eq!(model.beta_headers(), None);
     }
 }
