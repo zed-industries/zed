@@ -13,8 +13,6 @@ interface platform {
     enum architecture {
         /// AArch64 (e.g., Apple Silicon).
         aarch64,
-        /// x86.
-        x86,
         /// x86-64.
         x8664,
     }

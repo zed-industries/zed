@@ -869,7 +869,6 @@ impl platform::Host for WasmState {
             },
             match env::consts::ARCH {
                 "aarch64" => platform::Architecture::Aarch64,
-                "x86" => platform::Architecture::X86,
                 "x86_64" => platform::Architecture::X8664,
                 _ => panic!("unsupported architecture"),
             },
