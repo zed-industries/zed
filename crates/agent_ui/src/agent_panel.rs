@@ -6263,7 +6263,7 @@ impl AgentPanel {
             cx.entity_id().as_u64(),
             cx.background_executor(),
             path_style,
-        )?;
+        );
         let terminal = cx.new(|cx| builder.subscribe(cx));
         let terminal_view = cx.new(|cx| {
             TerminalView::new(
