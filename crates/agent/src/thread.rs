@@ -3,9 +3,9 @@ use crate::{
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool,
-    SandboxedTerminalTool, SandboxedTerminalToolWithoutTail, SpawnAgentTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, TerminalToolWithoutTail, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1762,19 +1762,10 @@ impl Thread {
             self.action_log.clone(),
             update_agent_location,
         ));
-        // Register all terminal tool variants; `enabled_tools` exposes the
-        // one matching the current sandbox and terminal-tail feature state to
-        // the model as `terminal`.
+        // Register terminal tool variants; `enabled_tools` exposes the one
+        // matching the current sandbox state to the model as `terminal`.
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
-        self.add_tool(TerminalToolWithoutTail::new(
-            self.project.clone(),
-            environment.clone(),
-        ));
         self.add_tool(SandboxedTerminalTool::new(
-            self.project.clone(),
-            environment.clone(),
-        ));
-        self.add_tool(SandboxedTerminalToolWithoutTail::new(
             self.project.clone(),
             environment.clone(),
         ));
@@ -3106,10 +3097,9 @@ impl Thread {
         }
 
         // Terminal variants are configured by users under the canonical
-        // `terminal` name. Expose the one matching the current sandbox and
-        // terminal-tail feature state to the model under that name.
+        // `terminal` name. Expose the one matching the current sandbox state
+        // to the model under that name.
         let use_sandboxed_terminal = sandboxing_enabled(cx);
-        let use_terminal_tail = cx.has_flag::<TerminalTailFeatureFlag>();
 
         let mut tools = self
             .tools
@@ -3117,10 +3107,7 @@ impl Thread {
             .filter_map(|(tool_name, tool)| {
                 let terminal_variant = matches!(
                     tool_name.as_ref(),
-                    TerminalTool::NAME
-                        | TerminalToolWithoutTail::NAME
-                        | SandboxedTerminalTool::NAME
-                        | SandboxedTerminalToolWithoutTail::NAME
+                    TerminalTool::NAME | SandboxedTerminalTool::NAME
                 );
                 let profile_tool_name = if terminal_variant {
                     TerminalTool::NAME
@@ -3131,25 +3118,11 @@ impl Thread {
                 if tool.supports_provider(&model.provider_id())
                     && profile.is_tool_enabled(profile_tool_name)
                 {
-                    match (
-                        tool_name.as_ref(),
-                        use_sandboxed_terminal,
-                        use_terminal_tail,
-                    ) {
-                        (TerminalTool::NAME, false, true)
-                        | (TerminalToolWithoutTail::NAME, false, false)
-                        | (SandboxedTerminalTool::NAME, true, true)
-                        | (SandboxedTerminalToolWithoutTail::NAME, true, false) => {
+                    match (tool_name.as_ref(), use_sandboxed_terminal) {
+                        (TerminalTool::NAME, false) | (SandboxedTerminalTool::NAME, true) => {
                             Some((SharedString::from(TerminalTool::NAME), tool.clone()))
                         }
-                        (
-                            TerminalTool::NAME
-                            | TerminalToolWithoutTail::NAME
-                            | SandboxedTerminalTool::NAME
-                            | SandboxedTerminalToolWithoutTail::NAME,
-                            _,
-                            _,
-                        ) => None,
+                        (TerminalTool::NAME | SandboxedTerminalTool::NAME, _) => None,
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
                 } else {

@@ -67,51 +67,6 @@ pub struct TerminalToolInput {
 ///
 /// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
 ///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values before calling this tool, or ask the user for the literal value to use.
-///
-/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
-///
-/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
-///
-/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
-///
-/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
-///
-/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
-/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
-/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TerminalToolInputWithoutTail {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
-    ///
-    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
-    pub command: String,
-    /// Working directory for the command. This must be one of the root directories of the project.
-    pub cd: String,
-    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
-    pub timeout_ms: Option<u64>,
-}
-
-impl From<TerminalToolInputWithoutTail> for TerminalToolInput {
-    fn from(input: TerminalToolInputWithoutTail) -> Self {
-        Self {
-            command: input.command,
-            cd: input.cd,
-            timeout_ms: input.timeout_ms,
-            head_lines: None,
-            tail_lines: None,
-        }
-    }
-}
-
-/// Executes a shell one-liner and returns the combined output.
-///
-/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
-///
-/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
-///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
-///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
 ///
 /// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
@@ -182,67 +137,6 @@ pub struct SandboxedTerminalToolInput {
     pub unsandboxed: Option<bool>,
 }
 
-/// Executes a shell one-liner and returns the combined output.
-///
-/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
-///
-/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
-///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
-///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
-///
-/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
-///
-/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
-///
-/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
-///
-/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
-///
-/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
-/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
-/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct SandboxedTerminalToolInputWithoutTail {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
-    ///
-    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
-    pub command: String,
-    /// Working directory for the command. This must be one of the root directories of the project.
-    pub cd: String,
-    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
-    pub timeout_ms: Option<u64>,
-    /// Set to `true` only if the command needs outbound network access.
-    #[serde(default)]
-    pub allow_network: Option<bool>,
-    /// Paths the command needs to write to outside the default-writable locations.
-    #[serde(default)]
-    pub fs_write_paths: Vec<String>,
-    /// Set to `true` only when the command needs to write outside the default-writable locations but the specific paths cannot be enumerated up front.
-    #[serde(default, alias = "allow_fs_write")]
-    pub allow_fs_write_all: Option<bool>,
-    /// Set to `true` only as a last resort, to run the command fully outside the sandbox.
-    #[serde(default)]
-    pub unsandboxed: Option<bool>,
-}
-
-impl From<SandboxedTerminalToolInputWithoutTail> for SandboxedTerminalToolInput {
-    fn from(input: SandboxedTerminalToolInputWithoutTail) -> Self {
-        Self {
-            command: input.command,
-            cd: input.cd,
-            timeout_ms: input.timeout_ms,
-            head_lines: None,
-            tail_lines: None,
-            allow_network: input.allow_network,
-            fs_write_paths: input.fs_write_paths,
-            allow_fs_write_all: input.allow_fs_write_all,
-            unsandboxed: input.unsandboxed,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 struct TerminalSandboxInput {
     allow_network: Option<bool>,
@@ -274,12 +168,6 @@ impl From<TerminalToolInput> for TerminalToolRequest {
     }
 }
 
-impl From<TerminalToolInputWithoutTail> for TerminalToolRequest {
-    fn from(input: TerminalToolInputWithoutTail) -> Self {
-        TerminalToolInput::from(input).into()
-    }
-}
-
 impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
     fn from(input: SandboxedTerminalToolInput) -> Self {
         Self {
@@ -300,12 +188,6 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
     }
 }
 
-impl From<SandboxedTerminalToolInputWithoutTail> for TerminalToolRequest {
-    fn from(input: SandboxedTerminalToolInputWithoutTail) -> Self {
-        SandboxedTerminalToolInput::from(input).into()
-    }
-}
-
 pub struct TerminalTool {
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
@@ -320,40 +202,12 @@ impl TerminalTool {
     }
 }
 
-pub struct TerminalToolWithoutTail {
-    project: Entity<Project>,
-    environment: Rc<dyn ThreadEnvironment>,
-}
-
-impl TerminalToolWithoutTail {
-    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
-        Self {
-            project,
-            environment,
-        }
-    }
-}
-
 pub struct SandboxedTerminalTool {
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
 }
 
 impl SandboxedTerminalTool {
-    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
-        Self {
-            project,
-            environment,
-        }
-    }
-}
-
-pub struct SandboxedTerminalToolWithoutTail {
-    project: Entity<Project>,
-    environment: Rc<dyn ThreadEnvironment>,
-}
-
-impl SandboxedTerminalToolWithoutTail {
     pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
         Self {
             project,
@@ -400,87 +254,11 @@ impl AgentTool for TerminalTool {
     }
 }
 
-impl AgentTool for TerminalToolWithoutTail {
-    type Input = TerminalToolInputWithoutTail;
-    type Output = String;
-
-    const NAME: &'static str = "terminal_without_tail";
-
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
-    }
-
-    fn initial_title(
-        &self,
-        input: Result<Self::Input, serde_json::Value>,
-        _cx: &mut App,
-    ) -> SharedString {
-        terminal_initial_title(input.map(|input| input.command))
-    }
-
-    fn run(
-        self: Arc<Self>,
-        input: ToolInput<Self::Input>,
-        event_stream: ToolCallEventStream,
-        cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |cx| {
-            let input = input.recv().await.map_err(|e| e.to_string())?;
-            run_terminal_tool(
-                self.project.clone(),
-                self.environment.clone(),
-                input.into(),
-                event_stream,
-                cx,
-            )
-            .await
-        })
-    }
-}
-
 impl AgentTool for SandboxedTerminalTool {
     type Input = SandboxedTerminalToolInput;
     type Output = String;
 
     const NAME: &'static str = "sandboxed_terminal";
-
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Execute
-    }
-
-    fn initial_title(
-        &self,
-        input: Result<Self::Input, serde_json::Value>,
-        _cx: &mut App,
-    ) -> SharedString {
-        terminal_initial_title(input.map(|input| input.command))
-    }
-
-    fn run(
-        self: Arc<Self>,
-        input: ToolInput<Self::Input>,
-        event_stream: ToolCallEventStream,
-        cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |cx| {
-            let input = input.recv().await.map_err(|e| e.to_string())?;
-            run_terminal_tool(
-                self.project.clone(),
-                self.environment.clone(),
-                input.into(),
-                event_stream,
-                cx,
-            )
-            .await
-        })
-    }
-}
-
-impl AgentTool for SandboxedTerminalToolWithoutTail {
-    type Input = SandboxedTerminalToolInputWithoutTail;
-    type Output = String;
-
-    const NAME: &'static str = "sandboxed_terminal_without_tail";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute
