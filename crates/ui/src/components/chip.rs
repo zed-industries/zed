@@ -115,10 +115,22 @@ impl RenderOnce for Chip {
             .bg(bg_color)
             .overflow_hidden()
             .when_some(self.icon, |this, icon| {
-                this.child(
-                    Icon::new(icon)
-                        .size(IconSize::XSmall)
-                        .color(self.icon_color),
+                this.pl_0().child(
+                    h_flex()
+                        .flex_grow()
+                        .h_full()
+                        .border_r_1()
+                        .px_1()
+                        .bg(bg_color) // this will overlay the background color on the icon container which eventually make icon section looks like it has a different background color than the rest of the chip when bg_color is set to some color with opacity less than 1.0
+                        .border_color(border_color)
+                        .rounded_l_sm()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Icon::new(icon)
+                                .size(IconSize::XSmall)
+                                .color(self.icon_color),
+                        ),
                 )
             })
             .child(
