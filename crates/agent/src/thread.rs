@@ -3391,12 +3391,11 @@ pub async fn stream_thread_title(
         let LanguageModelCompletionEvent::Text(text) = event? else {
             continue;
         };
-        let mut lines = text.lines();
-        title.extend(lines.next());
-        // Stop if the LLM generated multiple lines.
-        if lines.next().is_some() {
+        if let Some(newline_ix) = text.find(|ch| ch == '\n' || ch == '\r') {
+            title.push_str(&text[..newline_ix]);
             break;
         }
+        title.push_str(&text);
     }
     Ok(title)
 }
