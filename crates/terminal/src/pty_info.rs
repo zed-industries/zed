@@ -66,23 +66,23 @@ impl ProcessIdGetter {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProcessInfo {
-    pub name: String,
-    pub cwd: PathBuf,
-    pub argv: Vec<String>,
+pub(crate) struct ProcessInfo {
+    pub(crate) name: String,
+    pub(crate) cwd: PathBuf,
+    pub(crate) argv: Vec<String>,
 }
 
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
-pub struct PtyProcessInfo {
+pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
-    pub current: RwLock<Option<ProcessInfo>>,
+    pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
 }
 
 impl PtyProcessInfo {
-    pub fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
+    pub(crate) fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
         let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
@@ -99,7 +99,7 @@ impl PtyProcessInfo {
         }
     }
 
-    pub fn pid_getter(&self) -> &ProcessIdGetter {
+    pub(crate) fn pid_getter(&self) -> &ProcessIdGetter {
         &self.pid_getter
     }
 
@@ -173,7 +173,7 @@ impl PtyProcessInfo {
     }
 
     /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
-    pub fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
+    pub(crate) fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {
             return;
         }
@@ -202,7 +202,7 @@ impl PtyProcessInfo {
         }));
     }
 
-    pub fn pid(&self) -> Option<Pid> {
+    pub(crate) fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
     }
 }

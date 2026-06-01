@@ -44,7 +44,7 @@ impl TerminalModifiers {
     }
 }
 
-pub fn to_esc_str(
+pub(crate) fn to_esc_str(
     keystroke: &Keystroke,
     mode: Modes,
     option_as_meta: bool,

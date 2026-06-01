@@ -107,7 +107,7 @@ impl PtySender {
     }
 }
 
-pub(super) fn window_size_from_terminal_bounds(bounds: TerminalBounds) -> WindowSize {
+fn window_size_from_terminal_bounds(bounds: TerminalBounds) -> WindowSize {
     WindowSize {
         num_lines: bounds.num_lines() as u16,
         num_cols: bounds.num_columns() as u16,
@@ -262,7 +262,7 @@ pub(super) fn vi_motion(term: &mut AlacrittyTerm, motion: ViMotion) {
     term.vi_motion(motion.to_alacritty());
 }
 
-pub(super) fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
+fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
     AlacCursorStyle {
         shape: alacritty_cursor_shape(cursor_shape),
         blinking: false,
@@ -327,7 +327,7 @@ impl EventListener for ZedListener {
 }
 
 impl Scroll {
-    pub(super) fn to_alacritty(self) -> AlacScroll {
+    fn to_alacritty(self) -> AlacScroll {
         match self {
             Self::Delta(delta) => AlacScroll::Delta(delta),
             Self::PageUp => AlacScroll::PageUp,
@@ -339,7 +339,7 @@ impl Scroll {
 }
 
 impl ViMotion {
-    pub(super) fn to_alacritty(self) -> AlacViMotion {
+    fn to_alacritty(self) -> AlacViMotion {
         match self {
             Self::Up => AlacViMotion::Up,
             Self::Down => AlacViMotion::Down,
@@ -368,13 +368,13 @@ impl Search {
         })
     }
 
-    pub(super) fn into_alacritty(self) -> RegexSearch {
+    fn into_alacritty(self) -> RegexSearch {
         self.search.search
     }
 }
 
 impl SelectionSide {
-    pub(super) fn to_alacritty(self) -> AlacDirection {
+    fn to_alacritty(self) -> AlacDirection {
         match self {
             Self::Left => AlacDirection::Left,
             Self::Right => AlacDirection::Right,
@@ -393,7 +393,7 @@ impl SelectionType {
 }
 
 impl Selection {
-    pub(super) fn to_alacritty(&self) -> AlacSelection {
+    fn to_alacritty(&self) -> AlacSelection {
         let mut selection = AlacSelection::new(
             self.ty.to_alacritty(),
             self.start.point.to_alacritty(),
@@ -437,7 +437,7 @@ impl Hyperlink {
     }
 }
 
-pub(super) fn terminal_hyperlink_from_alacritty(hyperlink: AlacHyperlink) -> Hyperlink {
+fn terminal_hyperlink_from_alacritty(hyperlink: AlacHyperlink) -> Hyperlink {
     Hyperlink::from_alacritty(hyperlink)
 }
 
@@ -450,7 +450,7 @@ impl From<Hyperlink> for AlacHyperlink {
     }
 }
 
-pub(super) fn terminal_cell_from_alacritty(cell: &AlacCell) -> Cell {
+fn terminal_cell_from_alacritty(cell: &AlacCell) -> Cell {
     Cell { cell: cell.clone() }
 }
 
@@ -460,8 +460,8 @@ impl Cell {
         self.cell.c
     }
 
-    #[inline]
-    pub fn set_character(&mut self, character: char) {
+    #[cfg(test)]
+    pub(crate) fn set_character(&mut self, character: char) {
         self.cell.c = character;
     }
 
@@ -480,22 +480,9 @@ impl Cell {
         self.cell.zerowidth()
     }
 
-    #[inline]
-    pub fn push_zerowidth(&mut self, character: char) {
+    #[cfg(test)]
+    pub(crate) fn push_zerowidth(&mut self, character: char) {
         self.cell.push_zerowidth(character);
-    }
-
-    pub fn set_underline_color(&mut self, color: Option<Color>) {
-        self.cell.set_underline_color(color);
-    }
-
-    #[inline]
-    pub fn underline_color(&self) -> Option<Color> {
-        self.cell.underline_color()
-    }
-
-    pub fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
-        self.cell.set_hyperlink(hyperlink.map(Into::into));
     }
 
     #[inline]
@@ -574,7 +561,7 @@ impl Iterator for RenderableCells<'_> {
 
 impl Modes {
     #[cfg(test)]
-    pub(crate) fn to_alacritty(self) -> TermMode {
+    fn to_alacritty(self) -> TermMode {
         let mut mode = TermMode::empty();
         add_alacritty_mode(&mut mode, self, Self::APP_CURSOR, TermMode::APP_CURSOR);
         add_alacritty_mode(&mut mode, self, Self::APP_KEYPAD, TermMode::APP_KEYPAD);
@@ -617,7 +604,7 @@ impl Modes {
     }
 }
 
-pub(super) fn terminal_modes_from_alacritty(mode: TermMode) -> Modes {
+fn terminal_modes_from_alacritty(mode: TermMode) -> Modes {
     let mut terminal_modes = Modes::empty();
     add_terminal_mode(
         &mut terminal_modes,
@@ -733,7 +720,7 @@ fn add_alacritty_mode(
 }
 
 impl Cursor {
-    pub(super) fn from_alacritty(cursor: RenderableCursor) -> Self {
+    fn from_alacritty(cursor: RenderableCursor) -> Self {
         Self {
             shape: terminal_cursor_shape_from_alacritty(cursor.shape),
             point: terminal_point_from_alacritty(cursor.point),
@@ -752,12 +739,12 @@ fn terminal_cursor_shape_from_alacritty(shape: AlacCursorShape) -> CursorShape {
 }
 
 impl Point {
-    pub(super) fn to_alacritty(self) -> AlacPoint {
+    fn to_alacritty(self) -> AlacPoint {
         AlacPoint::new(Line(self.line), Column(self.column))
     }
 }
 
-pub(super) fn terminal_point_from_alacritty(point: AlacPoint) -> Point {
+fn terminal_point_from_alacritty(point: AlacPoint) -> Point {
     Point {
         line: point.line.0,
         column: point.column.0,
@@ -766,11 +753,11 @@ pub(super) fn terminal_point_from_alacritty(point: AlacPoint) -> Point {
 
 impl Range {
     #[cfg(test)]
-    pub(crate) fn to_alacritty(self) -> RangeInclusive<AlacPoint> {
+    fn to_alacritty(self) -> RangeInclusive<AlacPoint> {
         self.start.to_alacritty()..=self.end.to_alacritty()
     }
 
-    pub(crate) fn from_alacritty(range: RangeInclusive<AlacPoint>) -> Self {
+    fn from_alacritty(range: RangeInclusive<AlacPoint>) -> Self {
         Self {
             start: terminal_point_from_alacritty(*range.start()),
             end: terminal_point_from_alacritty(*range.end()),
@@ -778,7 +765,7 @@ impl Range {
     }
 }
 
-pub(super) fn terminal_selection_range_from_alacritty(range: AlacSelectionRange) -> SelectionRange {
+fn terminal_selection_range_from_alacritty(range: AlacSelectionRange) -> SelectionRange {
     SelectionRange {
         start: terminal_point_from_alacritty(range.start),
         end: terminal_point_from_alacritty(range.end),

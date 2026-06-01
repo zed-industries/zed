@@ -1,4 +1,4 @@
-pub mod mappings;
+mod mappings;
 
 mod alacritty;
 mod pty_info;
@@ -505,7 +505,7 @@ impl Default for Content {
 }
 
 #[derive(PartialEq, Eq)]
-pub enum SelectionPhase {
+enum SelectionPhase {
     Selecting,
     Ended,
 }
@@ -796,7 +796,7 @@ pub struct TerminalError {
 }
 
 impl TerminalError {
-    pub fn fmt_directory(&self) -> String {
+    fn fmt_directory(&self) -> String {
         self.directory
             .clone()
             .map(|path| {
@@ -812,7 +812,7 @@ impl TerminalError {
             .unwrap_or_else(|| "<none specified>".to_string())
     }
 
-    pub fn fmt_shell(&self) -> String {
+    fn fmt_shell(&self) -> String {
         if let Some(title_override) = &self.title_override {
             format!(
                 "{} {} ({})",
