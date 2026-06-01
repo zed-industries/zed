@@ -7,11 +7,7 @@ pub const MACOS_SDK_26_OR_LATER: bool = cfg!(macos_sdk_26_or_later);
 //
 // Magic number: There is one extra pixel of padding on the left side due to
 // the 1px border around the window on macOS apps.
-pub const TRAFFIC_LIGHT_PADDING: f32 = if MACOS_SDK_26_OR_LATER {
-    78.
-} else {
-    71.
-};
+pub const TRAFFIC_LIGHT_PADDING: f32 = if MACOS_SDK_26_OR_LATER { 78. } else { 71. };
 
 /// Returns the platform-appropriate title bar height.
 ///
