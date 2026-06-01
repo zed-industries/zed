@@ -15,6 +15,7 @@ use std::time::Instant;
 use terminal::{
     IndexedCell, Terminal, TerminalBounds, TerminalCell, TerminalColor, TerminalContent,
     TerminalCursorShape, TerminalModes, TerminalNamedColor, TerminalPoint, TerminalRange,
+    is_app_chosen_exact_color as terminal_is_app_chosen_exact_color, is_default_background_color,
     terminal_settings::TerminalSettings,
 };
 use theme::{ActiveTheme, Theme};
@@ -409,7 +410,7 @@ impl TerminalElement {
                 }
 
                 // Collect background regions (skip default background)
-                if !bg.is_default_background() {
+                if !is_default_background_color(bg) {
                     let color = convert_color(&bg, theme);
                     let col = point.column as i32;
 
@@ -584,7 +585,7 @@ impl TerminalElement {
     /// Indices 0..=15 still go through contrast adjustment since those map to
     /// theme-defined ANSI colors that can clash with the theme background.
     fn is_app_chosen_exact_color(fg: &TerminalColor) -> bool {
-        fg.is_app_chosen_exact()
+        terminal_is_app_chosen_exact_color(*fg)
     }
 
     /// Converts terminal cell styles to GPUI text styles and background color.
@@ -1626,7 +1627,7 @@ pub fn is_blank(cell: &TerminalCell) -> bool {
         return false;
     }
 
-    if !cell.background().is_default_background() {
+    if !is_default_background_color(cell.background()) {
         return false;
     }
 

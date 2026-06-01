@@ -14,7 +14,7 @@ use std::{
     ops::{BitOr, BitOrAssign, Deref, RangeInclusive},
     sync::Arc,
 };
-use vte::ansi::{Color as VteColor, NamedColor as VteNamedColor, Rgb as VteRgb};
+pub use vte::ansi::{Color as TerminalColor, NamedColor as TerminalNamedColor, Rgb as TerminalRgb};
 
 use crate::{TerminalBounds, terminal_settings::CursorShape};
 
@@ -184,175 +184,15 @@ impl TerminalSelection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TerminalColor {
-    Named(TerminalNamedColor),
-    Spec(TerminalRgb),
-    Indexed(u8),
+pub fn is_default_background_color(color: TerminalColor) -> bool {
+    matches!(color, TerminalColor::Named(TerminalNamedColor::Background))
 }
 
-impl TerminalColor {
-    #[inline]
-    pub fn is_default_background(self) -> bool {
-        self == Self::Named(TerminalNamedColor::Background)
-    }
-
-    #[inline]
-    pub fn is_app_chosen_exact(self) -> bool {
-        matches!(self, Self::Spec(_) | Self::Indexed(16..=255))
-    }
-}
-
-impl From<VteColor> for TerminalColor {
-    fn from(color: VteColor) -> Self {
-        match color {
-            VteColor::Named(color) => Self::Named(color.into()),
-            VteColor::Spec(color) => Self::Spec(color.into()),
-            VteColor::Indexed(index) => Self::Indexed(index),
-        }
-    }
-}
-
-impl From<TerminalColor> for VteColor {
-    fn from(color: TerminalColor) -> Self {
-        match color {
-            TerminalColor::Named(color) => Self::Named(color.into()),
-            TerminalColor::Spec(color) => Self::Spec(color.into()),
-            TerminalColor::Indexed(index) => Self::Indexed(index),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TerminalRgb {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-impl From<VteRgb> for TerminalRgb {
-    fn from(color: VteRgb) -> Self {
-        Self {
-            r: color.r,
-            g: color.g,
-            b: color.b,
-        }
-    }
-}
-
-impl From<TerminalRgb> for VteRgb {
-    fn from(color: TerminalRgb) -> Self {
-        Self {
-            r: color.r,
-            g: color.g,
-            b: color.b,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TerminalNamedColor {
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-    BrightBlack,
-    BrightRed,
-    BrightGreen,
-    BrightYellow,
-    BrightBlue,
-    BrightMagenta,
-    BrightCyan,
-    BrightWhite,
-    Foreground,
-    Background,
-    Cursor,
-    DimBlack,
-    DimRed,
-    DimGreen,
-    DimYellow,
-    DimBlue,
-    DimMagenta,
-    DimCyan,
-    DimWhite,
-    BrightForeground,
-    DimForeground,
-}
-
-impl From<VteNamedColor> for TerminalNamedColor {
-    fn from(color: VteNamedColor) -> Self {
-        match color {
-            VteNamedColor::Black => Self::Black,
-            VteNamedColor::Red => Self::Red,
-            VteNamedColor::Green => Self::Green,
-            VteNamedColor::Yellow => Self::Yellow,
-            VteNamedColor::Blue => Self::Blue,
-            VteNamedColor::Magenta => Self::Magenta,
-            VteNamedColor::Cyan => Self::Cyan,
-            VteNamedColor::White => Self::White,
-            VteNamedColor::BrightBlack => Self::BrightBlack,
-            VteNamedColor::BrightRed => Self::BrightRed,
-            VteNamedColor::BrightGreen => Self::BrightGreen,
-            VteNamedColor::BrightYellow => Self::BrightYellow,
-            VteNamedColor::BrightBlue => Self::BrightBlue,
-            VteNamedColor::BrightMagenta => Self::BrightMagenta,
-            VteNamedColor::BrightCyan => Self::BrightCyan,
-            VteNamedColor::BrightWhite => Self::BrightWhite,
-            VteNamedColor::Foreground => Self::Foreground,
-            VteNamedColor::Background => Self::Background,
-            VteNamedColor::Cursor => Self::Cursor,
-            VteNamedColor::DimBlack => Self::DimBlack,
-            VteNamedColor::DimRed => Self::DimRed,
-            VteNamedColor::DimGreen => Self::DimGreen,
-            VteNamedColor::DimYellow => Self::DimYellow,
-            VteNamedColor::DimBlue => Self::DimBlue,
-            VteNamedColor::DimMagenta => Self::DimMagenta,
-            VteNamedColor::DimCyan => Self::DimCyan,
-            VteNamedColor::DimWhite => Self::DimWhite,
-            VteNamedColor::BrightForeground => Self::BrightForeground,
-            VteNamedColor::DimForeground => Self::DimForeground,
-        }
-    }
-}
-
-impl From<TerminalNamedColor> for VteNamedColor {
-    fn from(color: TerminalNamedColor) -> Self {
-        match color {
-            TerminalNamedColor::Black => Self::Black,
-            TerminalNamedColor::Red => Self::Red,
-            TerminalNamedColor::Green => Self::Green,
-            TerminalNamedColor::Yellow => Self::Yellow,
-            TerminalNamedColor::Blue => Self::Blue,
-            TerminalNamedColor::Magenta => Self::Magenta,
-            TerminalNamedColor::Cyan => Self::Cyan,
-            TerminalNamedColor::White => Self::White,
-            TerminalNamedColor::BrightBlack => Self::BrightBlack,
-            TerminalNamedColor::BrightRed => Self::BrightRed,
-            TerminalNamedColor::BrightGreen => Self::BrightGreen,
-            TerminalNamedColor::BrightYellow => Self::BrightYellow,
-            TerminalNamedColor::BrightBlue => Self::BrightBlue,
-            TerminalNamedColor::BrightMagenta => Self::BrightMagenta,
-            TerminalNamedColor::BrightCyan => Self::BrightCyan,
-            TerminalNamedColor::BrightWhite => Self::BrightWhite,
-            TerminalNamedColor::Foreground => Self::Foreground,
-            TerminalNamedColor::Background => Self::Background,
-            TerminalNamedColor::Cursor => Self::Cursor,
-            TerminalNamedColor::DimBlack => Self::DimBlack,
-            TerminalNamedColor::DimRed => Self::DimRed,
-            TerminalNamedColor::DimGreen => Self::DimGreen,
-            TerminalNamedColor::DimYellow => Self::DimYellow,
-            TerminalNamedColor::DimBlue => Self::DimBlue,
-            TerminalNamedColor::DimMagenta => Self::DimMagenta,
-            TerminalNamedColor::DimCyan => Self::DimCyan,
-            TerminalNamedColor::DimWhite => Self::DimWhite,
-            TerminalNamedColor::BrightForeground => Self::BrightForeground,
-            TerminalNamedColor::DimForeground => Self::DimForeground,
-        }
-    }
+pub fn is_app_chosen_exact_color(color: TerminalColor) -> bool {
+    matches!(
+        color,
+        TerminalColor::Spec(_) | TerminalColor::Indexed(16..=255)
+    )
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -463,12 +303,12 @@ impl TerminalCell {
 
     #[inline]
     pub fn foreground(&self) -> TerminalColor {
-        self.cell.fg.into()
+        self.cell.fg
     }
 
     #[inline]
     pub fn background(&self) -> TerminalColor {
-        self.cell.bg.into()
+        self.cell.bg
     }
 
     #[inline]
@@ -482,12 +322,12 @@ impl TerminalCell {
     }
 
     pub fn set_underline_color(&mut self, color: Option<TerminalColor>) {
-        self.cell.set_underline_color(color.map(Into::into));
+        self.cell.set_underline_color(color);
     }
 
     #[inline]
     pub fn underline_color(&self) -> Option<TerminalColor> {
-        self.cell.underline_color().map(Into::into)
+        self.cell.underline_color()
     }
 
     pub fn set_hyperlink(&mut self, hyperlink: Option<TerminalHyperlink>) {

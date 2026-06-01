@@ -10,7 +10,7 @@ pub use terminal_types::{
     HoveredWord, IndexedCell, RenderableCells, SelectionPhase, TerminalCell, TerminalColor,
     TerminalContent, TerminalCursor, TerminalCursorShape, TerminalHyperlink, TerminalModes,
     TerminalNamedColor, TerminalPoint, TerminalRange, TerminalRgb, TerminalSearch,
-    TerminalSelectionRange,
+    TerminalSelectionRange, is_app_chosen_exact_color, is_default_background_color,
 };
 
 use alacritty_terminal::event::Notify;
@@ -73,7 +73,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use vte::ansi::{CursorShape as AlacCursorShape, Processor, Rgb as VteRgb, StdSyncHandler};
+use vte::ansi::{CursorShape as AlacCursorShape, Processor, StdSyncHandler};
 
 use gpui::{
     App, AppContext as _, BackgroundExecutor, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
@@ -226,9 +226,7 @@ impl From<AlacTermEvent> for TerminalBackendEvent {
             AlacTermEvent::ResetTitle => Self::ResetTitle,
             AlacTermEvent::ClipboardStore(_, data) => Self::ClipboardStore(data),
             AlacTermEvent::ClipboardLoad(_, format) => Self::ClipboardLoad(format),
-            AlacTermEvent::ColorRequest(index, format) => {
-                Self::ColorRequest(index, Arc::new(move |color| format(VteRgb::from(color))))
-            }
+            AlacTermEvent::ColorRequest(index, format) => Self::ColorRequest(index, format),
             AlacTermEvent::PtyWrite(output) => Self::PtyWrite(output),
             AlacTermEvent::TextAreaSizeRequest(format) => {
                 Self::TextAreaSizeRequest(Arc::new(move |bounds| {
@@ -1124,8 +1122,7 @@ impl Terminal {
                 // followed by a color request sequence.
 
                 let color = self.term.lock().colors()[index]
-                    .unwrap_or_else(|| to_vte_rgb(get_color_at_index(index, cx.theme().as_ref())))
-                    .into();
+                    .unwrap_or_else(|| to_vte_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
             TerminalBackendEvent::ChildExit(exit_status) => {

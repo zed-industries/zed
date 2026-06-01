@@ -229,7 +229,6 @@ impl Console {
 
                     for (range, color) in spans {
                         let Some(color) = color else { continue };
-                        let color = terminal::TerminalColor::from(color);
                         let start_offset = range.start;
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
@@ -870,9 +869,8 @@ impl ansi::Handler for ConsoleHandler {
 }
 
 fn background_color_fetcher(color: ansi::Color) -> impl Fn(&Theme) -> Hsla {
-    let color = terminal::TerminalColor::from(color);
     move |theme| {
-        if color.is_default_background() {
+        if terminal::is_default_background_color(color) {
             theme.colors().terminal_background
         } else {
             terminal_view::terminal_element::convert_color(&color, theme)
