@@ -17300,6 +17300,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "unicode-segmentation",
  "util",
  "workspace",
  "zed_actions",
