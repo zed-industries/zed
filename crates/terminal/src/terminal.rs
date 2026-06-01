@@ -1041,6 +1041,8 @@ impl Terminal {
                     cmp::max(new_bounds.line_height, new_bounds.height());
                 new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
 
+                let old_num_lines = self.last_content.terminal_bounds.num_lines();
+
                 self.last_content.terminal_bounds = new_bounds;
 
                 if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
@@ -1048,6 +1050,15 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+
+                let new_num_lines = new_bounds.num_lines();
+
+                #[cfg(target_os = "windows")]
+                if new_num_lines > old_num_lines {
+                    let delta = new_num_lines - old_num_lines;
+                    term.grid_mut()
+                        .scroll_down(&(Line(0)..Line(new_num_lines as i32)), delta);
+                }
                 // If there are matches we need to emit a wake up event to
                 // invalidate the matches and recalculate their locations
                 // in the new terminal layout
@@ -3620,6 +3631,124 @@ mod tests {
         assert!(
             content.contains("done"),
             "Output should still be present after no-op kill, got: {content}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_resize_cursor_position_preserved(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+
+        // set initial bounds: 80 columns * 10 lines
+        let cell_width = px(8.0);
+        let line_height = px(16.0);
+        let initial_bounds = TerminalBounds::new(
+            line_height,
+            cell_width,
+            bounds(Point::default(), size(px(640.0), px(160.0))),
+        );
+        terminal.update(cx, |term, cx| {
+            term.set_size(initial_bounds);
+            cx.notify();
+        });
+
+        // Write 5 lines of output to move the cursor down
+        terminal.update(cx, |term, cx| {
+            term.write_output(b"line1\nline2\nline3\nline4\nline5\n", cx);
+        });
+
+        // Record the cursor's viewport line before resize
+        let cursor_line_before = terminal.update(cx, |term, _| {
+            let context = &term.last_content;
+            context.cursor.point.line.0 + context.display_offset as i32
+        });
+
+        // Resize to a taller terminal: 80 columns x 20 lines
+        let larger_bounds = TerminalBounds::new(
+            line_height,
+            cell_width,
+            bounds(Point::default(), size(px(640.0), px(320.0))),
+        );
+        terminal.update(cx, |term, cx| {
+            term.set_size(larger_bounds);
+            cx.notify();
+        });
+
+        // The cursor's viewport line should be the same after resize
+        let cursor_line_after = terminal.update(cx, |term, _| {
+            let content = &term.last_content;
+            content.cursor.point.line.0 + content.display_offset as i32
+        });
+
+        assert_eq!(
+            cursor_line_before, cursor_line_after,
+            "cursor viewport line should not change after resize (ConPTY desync workaround)"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_resize_shrink_no_scroll(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+
+        let cell_width = px(8.0);
+        let line_height = px(16.0);
+        let initial_bounds = TerminalBounds::new(
+            line_height,
+            cell_width,
+            bounds(Point::default(), size(px(640.0), px(320.0))),
+        );
+        terminal.update(cx, |term, cx| {
+            term.set_size(initial_bounds);
+            cx.notify();
+        });
+
+        // Write some output
+        terminal.update(cx, |term, cx| {
+            term.write_output(b"line1\nline2\nline3\nline4\nline5\n", cx);
+        });
+
+        // Record display_offset before shrink
+        let display_offset_before = terminal.update(cx, |term, _| term.last_content.display_offset);
+
+        // Resize to a smaller terminal: 80 columns x 10 lines
+        let smaller_bounds = TerminalBounds::new(
+            line_height,
+            cell_width,
+            bounds(Point::default(), size(px(640.0), px(160.0))),
+        );
+        terminal.update(cx, |term, cx| {
+            term.set_size(smaller_bounds);
+            cx.notify();
+        });
+
+        let display_offset_after = terminal.update(cx, |term, _| term.last_content.display_offset);
+
+        assert_eq!(
+            display_offset_before, display_offset_after,
+            "shrinking the terminal should not trigger the scroll workaround"
         );
     }
 
