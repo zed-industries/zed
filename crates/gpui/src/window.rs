@@ -1111,7 +1111,9 @@ impl InputRateTracker {
 
 #[cfg(any(feature = "input-latency-histogram", feature = "bench"))]
 struct LatencyTracker {
+    #[cfg(feature = "input-latency-histogram")]
     input: InputLatencyTracker,
+    #[cfg(feature = "bench")]
     frame: FrameLatencyTracker,
 }
 
@@ -1119,27 +1121,34 @@ struct LatencyTracker {
 impl LatencyTracker {
     fn new() -> Result<Self> {
         Ok(Self {
+            #[cfg(feature = "input-latency-histogram")]
             input: InputLatencyTracker::new()?,
+            #[cfg(feature = "bench")]
             frame: FrameLatencyTracker::new()?,
         })
     }
 
+    #[cfg(feature = "input-latency-histogram")]
     fn record_input(&mut self, dispatch_time: Instant) {
         self.input.record_input(dispatch_time);
     }
 
+    #[cfg(feature = "input-latency-histogram")]
     fn record_mid_draw_input(&mut self) {
         self.input.record_mid_draw_input();
     }
 
+    #[cfg(feature = "input-latency-histogram")]
     fn record_frame_presented(&mut self) {
         self.input.record_frame_presented();
     }
 
+    #[cfg(feature = "input-latency-histogram")]
     fn input_snapshot(&self) -> InputLatencySnapshot {
         self.input.snapshot()
     }
 
+    #[cfg(feature = "bench")]
     fn record_frame_drawn(
         &mut self,
         dirty_at: Option<Instant>,
@@ -1151,6 +1160,7 @@ impl LatencyTracker {
             .record_drawn(dirty_at, invalidations, draw_started_at, draw_finished_at);
     }
 
+    #[cfg(feature = "bench")]
     fn frame_snapshot(&self) -> FrameLatencySnapshot {
         self.frame.snapshot()
     }
