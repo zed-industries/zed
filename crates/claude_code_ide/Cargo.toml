@@ -1,0 +1,34 @@
+[package]
+name = "claude_code_ide"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "GPL-3.0-or-later"
+description = "IDE-side of the Claude Code editor integration protocol (WebSocket MCP server) so the Claude Code CLI connects to Zed like it does to VS Code and JetBrains"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/claude_code_ide.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+async-tungstenite.workspace = true
+buffer_diff.workspace = true
+collections.workspace = true
+editor.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+paths.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+text.workspace = true
+ui.workspace = true
+util.workspace = true
+uuid.workspace = true
+workspace.workspace = true

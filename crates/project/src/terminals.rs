@@ -139,6 +139,14 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            if let Some(port) = project
+                .read_with(cx, |project, _| project.claude_code_ide_port())
+                .ok()
+                .flatten()
+            {
+                env.insert("CLAUDE_CODE_SSE_PORT".to_owned(), port.to_string());
+                env.insert("ENABLE_IDE_INTEGRATION".to_owned(), "true".to_owned());
+            }
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -382,6 +390,14 @@ impl Project {
             let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            if let Some(port) = project
+                .read_with(cx, |project, _| project.claude_code_ide_port())
+                .ok()
+                .flatten()
+            {
+                env.insert("CLAUDE_CODE_SSE_PORT".to_owned(), port.to_string());
+                env.insert("ENABLE_IDE_INTEGRATION".to_owned(), "true".to_owned());
+            }
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -548,6 +564,14 @@ impl Project {
         cx.spawn(async move |project, cx| {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            if let Some(port) = project
+                .read_with(cx, |project, _| project.claude_code_ide_port())
+                .ok()
+                .flatten()
+            {
+                env.insert("CLAUDE_CODE_SSE_PORT".to_owned(), port.to_string());
+                env.insert("ENABLE_IDE_INTEGRATION".to_owned(), "true".to_owned());
+            }
 
             project.update(cx, move |_, cx| {
                 match remote_client {

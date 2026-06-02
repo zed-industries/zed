@@ -80,6 +80,7 @@ breadcrumbs.workspace = true
 call.workspace = true
 chrono.workspace = true
 channel.workspace = true
+claude_code_ide.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
