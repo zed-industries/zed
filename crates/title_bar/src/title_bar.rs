@@ -659,7 +659,7 @@ impl TitleBar {
                 })
             });
 
-        if cfg!(macos_sdk_26) {
+        if ui::utils::MACOS_SDK_26_OR_LATER {
             // Make up for Tahoe's traffic light buttons having less spacing around them
             Some(div().child(button).ml_0p5().into_any_element())
         } else {

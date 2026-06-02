@@ -604,6 +604,18 @@ pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> 
     )
 }
 
+/// Formats a 0-based, inclusive line range as a 1-based path suffix: `:5` for a
+/// single line or `:5-9` for a span. Used for `path:line` mentions in text.
+pub fn line_range_suffix(line_range: &RangeInclusive<u32>) -> String {
+    let start = *line_range.start() + 1;
+    let end = *line_range.end() + 1;
+    if start == end {
+        format!(":{start}")
+    } else {
+        format!(":{start}-{end}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use util::{path, uri};

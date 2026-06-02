@@ -19,6 +19,7 @@ use crate::message_editor::SharedSessionCapabilities;
 
 use db::kvp::KeyValueStore;
 use gpui::List;
+use gpui::Stateful;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{
@@ -7419,34 +7420,46 @@ impl ThreadView {
         let is_open = !self
             .collapsed_sandbox_authorization_details
             .contains(tool_call_id);
-        let paths = details
-            .write_paths
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>();
+        let mut paths = details.write_paths.clone();
+        paths.sort();
 
         v_flex()
-            .p_2()
-            .gap_1()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
             .child(
                 h_flex()
                     .id(("sandbox-authorization-details-header", entry_ix))
-                    .gap_1()
-                    .pl_0p5()
-                    .rounded_xs()
+                    .p_1()
+                    .justify_between()
+                    .cursor_pointer()
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Write access")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("•")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{} {}",
+                                    paths.len(),
+                                    if paths.len() == 1 { "path" } else { "paths" }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
                     .child(
                         Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown),
-                    )
-                    .child(
-                        Label::new("Paths")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
                     )
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
@@ -7468,28 +7481,85 @@ impl ThreadView {
             .when(is_open, |this| {
                 this.child(
                     v_flex()
-                        .gap_0p5()
-                        .pl_5()
-                        .children(paths.into_iter().enumerate().map(|(path_ix, path)| {
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("•").size(LabelSize::Small).color(Color::Muted))
-                                .child(
-                                    div()
-                                        .id(format!(
-                                            "sandbox-authorization-path-{entry_ix}-{path_ix}"
-                                        ))
-                                        .w_full()
-                                        .max_w_full()
-                                        .overflow_x_scroll()
-                                        .child(
-                                            Label::new(path).buffer_font(cx).size(LabelSize::Small),
-                                        ),
-                                )
+                        .id(("sandbox-authorization-paths-list", entry_ix))
+                        .max_h_40()
+                        .overflow_y_scroll()
+                        .children(paths.iter().enumerate().map(|(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
                         })),
                 )
             })
             .into_any_element()
+    }
+
+    fn render_sandbox_authorization_path_row(
+        &self,
+        entry_ix: usize,
+        path_ix: usize,
+        path: &Path,
+        show_border: bool,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let display_path = path.display().to_string();
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| display_path.clone());
+        let parent_path = path.parent().and_then(|parent| {
+            let parent = parent.display().to_string();
+            (!parent.is_empty()).then_some(parent)
+        });
+        let path_icon = FileIcons::get_icon(path, cx)
+            .map(Icon::from_path)
+            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+            .unwrap_or_else(|| {
+                Icon::new(IconName::Folder)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+            });
+
+        h_flex()
+            .id(SharedString::from(format!(
+                "sandbox-authorization-path-{entry_ix}-{path_ix}"
+            )))
+            .min_w_0()
+            .p_1p5()
+            .gap_2()
+            .bg(cx.theme().colors().editor_background)
+            .when(show_border, |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .child(
+                h_flex()
+                    .id(SharedString::from(format!(
+                        "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
+                    )))
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(path_icon)
+                    .child(
+                        Label::new(file_name)
+                            .size(LabelSize::XSmall)
+                            .buffer_font(cx),
+                    )
+                    .when_some(parent_path, |this, parent_path| {
+                        this.child(
+                            Label::new(format!(" {parent_path}"))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
+                        )
+                    })
+                    .tooltip(move |_window, cx| {
+                        Tooltip::with_meta("Requested write path", None, display_path.clone(), cx)
+                    }),
+            )
     }
 
     fn render_permission_buttons(
@@ -7960,7 +8030,9 @@ impl ThreadView {
                                 Icon::new(IconName::CheckDouble)
                                     .size(IconSize::XSmall)
                                     .color(Color::Success),
-                                if option.option_id.0.as_ref() == "allow_thread" {
+                                if option.option_id.0.as_ref()
+                                    == acp_thread::SandboxPermission::AllowThread.as_id()
+                                {
                                     None
                                 } else {
                                     Some(&AllowAlways as &dyn Action)
