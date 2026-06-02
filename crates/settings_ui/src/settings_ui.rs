@@ -4261,7 +4261,6 @@ fn update_project_setting_file(
 
 struct CurrentSettingsValue<'a, T> {
     value: &'a T,
-    file: settings::SettingsFile,
     disabled: bool,
 }
 
@@ -4284,7 +4283,6 @@ fn get_current_value<'a, T>(
     Some(CurrentSettingsValue {
         disabled: org_value.is_some(),
         value: org_value.unwrap_or(&value),
-        file,
     })
 }
 
