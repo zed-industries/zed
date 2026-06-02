@@ -512,6 +512,11 @@ pub struct CommitDiff {
     pub files: Vec<CommitFile>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FileHistoryChangedFileSets {
+    pub file_sets: Vec<Vec<RepoPath>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CommitFileStatus {
     Added,
@@ -736,14 +741,20 @@ pub enum LogSource {
 }
 
 impl LogSource {
-    fn get_arg(&self) -> Result<&str> {
+    fn get_args(&self) -> Result<Vec<&str>> {
         match self {
-            LogSource::All => Ok("--all"),
-            LogSource::Branch(branch) => Ok(branch.as_str()),
-            LogSource::Sha(oid) => {
-                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
-            }
-            LogSource::Path(_) => Ok("--follow"),
+            LogSource::All => Ok(vec![
+                "--ignore-missing", // needed in case of unborn HEAD
+                "--branches",
+                "--remotes",
+                "--tags",
+                "HEAD",
+            ]),
+            LogSource::Branch(branch) => Ok(vec![branch.as_str()]),
+            LogSource::Sha(oid) => Ok(vec![
+                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")?,
+            ]),
+            LogSource::Path(path) => Ok(vec!["--follow", "--", path.as_unix_str()]),
         }
     }
 }
@@ -763,8 +774,6 @@ pub fn delete_branch_flag(is_remote_tracking_ref: bool, force: bool) -> &'static
 }
 
 pub trait GitRepository: Send + Sync {
-    fn reload_index(&self);
-
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
@@ -1041,6 +1050,12 @@ pub trait GitRepository: Send + Sync {
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>>;
+
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
@@ -1245,12 +1260,6 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
 }
 
 impl GitRepository for RealGitRepository {
-    fn reload_index(&self) {
-        if let Ok(mut index) = self.repository.lock().index() {
-            _ = index.read(false);
-        }
-    }
-
     fn path(&self) -> PathBuf {
         let repo = self.repository.lock();
         repo.path().into()
@@ -1547,7 +1556,8 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let repo = repo.lock();
-                let content = repo.find_blob(oid.0)?.content().to_owned();
+                let oid = git2::Oid::from_bytes(oid.as_bytes())?;
+                let content = repo.find_blob(oid)?.content().to_owned();
                 Ok(String::from_utf8(content)?)
             })
             .boxed()
@@ -2904,6 +2914,10 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
+                if git.run(&["rev-parse", "main"]).await.is_ok() {
+                    return Ok(Some("main".into()));
+                }
+
                 if git.run(&["rev-parse", "master"]).await.is_ok() {
                     return Ok(Some("master".into()));
                 }
@@ -2974,17 +2988,8 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut git_log_command = vec![
-                "log",
-                GRAPH_COMMIT_FORMAT,
-                log_order.as_arg(),
-                log_source.get_arg()?,
-            ];
-
-            if let LogSource::Path(path) = &log_source {
-                git_log_command.extend(["--", path.as_unix_str()]);
-            }
-
+            let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
+            git_log_command.extend(log_source.get_args()?);
             let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -3054,7 +3059,7 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+            let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
 
             args.push("--fixed-strings");
 
@@ -3065,10 +3070,7 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
-            if let LogSource::Path(path) = &log_source {
-                args.extend(["--", path.as_unix_str()]);
-            }
-
+            args.extend(log_source.get_args()?);
             let mut command = git.build_command(&args);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
@@ -3098,6 +3100,50 @@ impl GitRepository for RealGitRepository {
 
             child.status().await?;
             Ok(())
+        }
+        .boxed()
+    }
+
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
+        let git = self.git_binary();
+
+        async move {
+            if paths.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            if commit_limit == 0 {
+                return Ok(vec![FileHistoryChangedFileSets::default(); paths.len()]);
+            }
+
+            let max_count_arg = format!("--max-count={commit_limit}");
+            let mut args = [
+                "log",
+                max_count_arg.as_str(),
+                "--full-diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                "--format=%x1e",
+                "--",
+            ]
+            .map(OsString::from)
+            .to_vec();
+            args.extend(paths.iter().map(|path| OsString::from(path.as_unix_str())));
+
+            let output = git.build_command(&args).output().await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "git log failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(parse_file_history_changed_files_output(&stdout, &paths))
         }
         .boxed()
     }
@@ -3209,6 +3255,39 @@ async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
     let content_str = String::from_utf8_lossy(&content);
     parse_cat_file_commit(*sha, &content_str)
         .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
+}
+
+fn parse_file_history_changed_files_output(
+    output: &str,
+    queried_paths: &[RepoPath],
+) -> Vec<FileHistoryChangedFileSets> {
+    let mut histories = vec![FileHistoryChangedFileSets::default(); queried_paths.len()];
+
+    for record in output.split('\x1e') {
+        let changed_files = record
+            .split('\0')
+            .filter_map(|field| {
+                let path = field.trim_start_matches('\n');
+                if path.is_empty() {
+                    return None;
+                }
+                RepoPath::new(path).ok()
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+
+        if changed_files.is_empty() {
+            continue;
+        }
+
+        let file_set = changed_files.iter().cloned().collect::<Vec<_>>();
+        for (index, queried_path) in queried_paths.iter().enumerate() {
+            if changed_files.contains(queried_path) {
+                histories[index].file_sets.push(file_set.clone());
+            }
+        }
+    }
+
+    histories
 }
 
 fn parse_initial_graph_output<'a>(
@@ -3742,6 +3821,51 @@ mod tests {
         };
 
         assert_eq!(commit.tag_names(), ["v1.0.0", "v1.1.0"]);
+    }
+
+    #[test]
+    fn test_parse_file_history_changed_files_output() {
+        let queried_paths = vec![
+            RepoPath::new("src/a.rs").unwrap(),
+            RepoPath::new("src/b.rs").unwrap(),
+        ];
+        let output = concat!(
+            "\x1e\0\nsrc/a.rs\0src/shared.rs\0",
+            "\x1e\0\nsrc/b.rs\0src/shared.rs\0",
+            "\x1e\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
+        );
+
+        let histories = parse_file_history_changed_files_output(output, &queried_paths);
+
+        assert_eq!(histories.len(), 2);
+        assert_eq!(
+            histories[0].file_sets,
+            vec![
+                vec![
+                    RepoPath::new("src/a.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+                vec![
+                    RepoPath::new("src/a.rs").unwrap(),
+                    RepoPath::new("src/b.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+            ]
+        );
+        assert_eq!(
+            histories[1].file_sets,
+            vec![
+                vec![
+                    RepoPath::new("src/b.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+                vec![
+                    RepoPath::new("src/a.rs").unwrap(),
+                    RepoPath::new("src/b.rs").unwrap(),
+                    RepoPath::new("src/shared.rs").unwrap(),
+                ],
+            ]
+        );
     }
 
     #[gpui::test]
@@ -4655,6 +4779,67 @@ mod tests {
             moved_worktree.path.canonicalize().unwrap(),
             new_path.canonicalize().unwrap()
         );
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_ref_set(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let git = repo.git_binary();
+
+        let graph_commits = async || {
+            let (tx, rx) = smol::channel::unbounded();
+            repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, tx)
+                .await
+                .unwrap();
+            let mut commits = std::collections::HashSet::new();
+            while let Ok(chunk) = rx.try_recv() {
+                for commit in chunk {
+                    commits.insert(commit.sha);
+                }
+            }
+            commits
+        };
+
+        smol::fs::write(repo_dir.path().join("file1"), "1")
+            .await
+            .unwrap();
+        let branch_sha = repo.checkpoint().await.unwrap().commit_sha;
+        repo.update_ref("refs/heads/main".into(), branch_sha.to_string())
+            .await
+            .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file2"), "2")
+            .await
+            .unwrap();
+        let hidden_sha = repo.checkpoint().await.unwrap().commit_sha;
+        repo.update_ref("refs/custom/hidden".into(), hidden_sha.to_string())
+            .await
+            .unwrap();
+
+        let graph = graph_commits().await;
+        assert!(graph.contains(&branch_sha));
+        assert!(!graph.contains(&hidden_sha));
+
+        git.build_command(&["update-ref", "--no-deref", "HEAD", &hidden_sha.to_string()])
+            .output()
+            .await
+            .unwrap();
+
+        let graph = graph_commits().await;
+        assert!(graph.contains(&branch_sha));
+        assert!(graph.contains(&hidden_sha));
     }
 
     #[test]

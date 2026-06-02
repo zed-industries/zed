@@ -1,17 +1,18 @@
 use crate::{
     ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
-    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
-    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
-    ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
+    FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
+    RenameTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
-    UpdateTitleToolFeatureFlag,
+    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
+    UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
 };
 
 use agent_client_protocol::schema as acp;
@@ -40,8 +41,8 @@ use language_model::{
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason,
-    TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
+    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -67,6 +68,9 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+
+// Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
+const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
@@ -123,11 +127,39 @@ enum RetryStrategy {
     },
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
     Resume,
+    Compaction(CompactionInfo),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub enum CompactionInfo {
+    Summary(SharedString),
+    ProviderNative {
+        provider: LanguageModelProviderId,
+        items: Vec<serde_json::Value>,
+    },
+}
+
+impl CompactionInfo {
+    fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+        match self {
+            Self::Summary(summary) => vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![format!(
+                    "The previous conversation was compacted. Use this summary as context:\n\n{}",
+                    summary
+                )
+                .into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            Self::ProviderNative { .. } => Vec::new(),
+        }
+    }
 }
 
 impl Message {
@@ -148,6 +180,7 @@ impl Message {
                 }
             }
             Message::Agent(message) => message.to_request(),
+            Message::Compaction(info) => info.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Continue where you left off".into()],
@@ -162,12 +195,13 @@ impl Message {
             Message::User(message) => message.to_markdown(),
             Message::Agent(message) => message.to_markdown(),
             Message::Resume => "[resume]\n".into(),
+            Message::Compaction(_) => "--- Context Compacted ---\n".into(),
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
-            Message::User(_) | Message::Resume => Role::User,
+            Message::User(_) | Message::Resume | Message::Compaction(_) => Role::User,
             Message::Agent(_) => Role::Assistant,
         }
     }
@@ -675,6 +709,97 @@ pub trait ThreadEnvironment {
             "Resuming subagent sessions is not supported"
         ))
     }
+
+    /// Creates an independent sibling thread visible in the agent sidebar.
+    /// Unlike subagents, sibling threads are first-class threads that persist
+    /// and run in parallel without reporting results back to the parent.
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>> {
+        let _ = request;
+        let _ = cx;
+        Task::ready(Err(anyhow::anyhow!(
+            "Creating sibling threads is not supported in this environment"
+        )))
+    }
+
+    /// Lists the agents and models available for use with `create_sibling_thread`.
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
+        let _ = cx;
+        Err(anyhow::anyhow!(
+            "Listing available agents is not supported in this environment"
+        ))
+    }
+}
+
+/// A request to create a new sibling thread.
+#[derive(Debug, Clone)]
+pub struct SiblingThreadRequest {
+    /// A short title for the new thread, shown in the sidebar.
+    pub title: SharedString,
+    /// The initial prompt to send to the new thread.
+    pub prompt: String,
+    /// Optional agent ID to use. Defaults to the native Zed agent.
+    pub agent_id: Option<String>,
+    /// Optional model override, as `provider/model-id`.
+    /// Defaults to the user's configured default model for the agent.
+    pub model: Option<String>,
+    /// Whether to create the thread in a new git worktree workspace.
+    pub use_new_worktree: bool,
+    /// Optional worktree directory name. When `None`, the UI generates a
+    /// random non-colliding name (matching the manual "Create worktree"
+    /// flow). Only relevant when `use_new_worktree` is true.
+    pub worktree_name: Option<String>,
+    /// Git ref (branch, tag, or commit) to base the new worktree on.
+    /// Only relevant when `use_new_worktree` is true.
+    pub base_ref: Option<String>,
+}
+
+/// Information returned when a sibling thread is successfully created.
+#[derive(Debug, Clone)]
+pub struct SiblingThreadInfo {
+    /// The title assigned to the thread.
+    pub title: SharedString,
+    /// The agent ID used for the thread.
+    pub agent_id: String,
+    /// The model ID used for the thread, if known.
+    pub model: Option<String>,
+    /// An optional, non-fatal heads-up about the created thread that the
+    /// caller should relay or take into account (e.g., the project had an
+    /// unusual worktree layout that affected how the new worktree was set
+    /// up). Empty when nothing noteworthy happened.
+    pub warning: Option<String>,
+}
+
+/// A list of agents and, for each, the models available for use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableAgents {
+    pub agents: Vec<AvailableAgent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableAgent {
+    /// Identifier used when creating a thread.
+    pub id: String,
+    /// Human-readable name shown in the UI.
+    pub name: SharedString,
+    /// Whether this is Zed's built-in native agent.
+    pub is_native: bool,
+    /// Models available for this agent. May be empty if models are not
+    /// enumerated up front (e.g., external agents that choose their own).
+    pub models: Vec<AvailableModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableModel {
+    /// Identifier to pass as the `model` field when creating a thread.
+    pub id: String,
+    /// Human-readable name.
+    pub name: SharedString,
+    /// Whether this is the default model for the agent.
+    pub is_default: bool,
 }
 
 #[derive(Debug)]
@@ -688,6 +813,7 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
+    ContextCompaction,
     Stop(acp::StopReason),
 }
 
@@ -1225,6 +1351,7 @@ impl Thread {
                     }
                 }
                 Message::Resume => {}
+                Message::Compaction(_) => stream.send_context_compaction(),
             }
         }
         rx
@@ -1735,8 +1862,16 @@ impl Thread {
         self.add_tool(RenameTool::new(self.project.clone()));
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SpawnAgentTool::new(environment));
+            self.add_tool(SpawnAgentTool::new(environment.clone()));
         }
+
+        // Sibling-thread tools are exposed at every depth: a subagent should
+        // still be able to kick off independent sibling work on behalf of the
+        // user, even when it can no longer nest further subagents. Visibility
+        // to the model is gated by `CreateThreadToolFeatureFlag` in
+        // `Thread::enabled_tools`.
+        self.add_tool(CreateThreadTool::new(environment.clone()));
+        self.add_tool(ListAgentsAndModelsTool::new(environment));
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -1834,7 +1969,7 @@ impl Thread {
                 Message::User(message) => {
                     self.request_token_usage.remove(&message.id);
                 }
-                Message::Agent(_) | Message::Resume => {}
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => {}
             }
         }
         self.clear_summary();
@@ -2919,8 +3054,7 @@ impl Thread {
             .rev()
             .find_map(|message| match &**message {
                 Message::User(user_message) => Some(user_message),
-                Message::Agent(_) => None,
-                Message::Resume => None,
+                Message::Agent(_) | Message::Resume | Message::Compaction(_) => None,
             })
     }
 
@@ -3062,6 +3196,9 @@ impl Thread {
                 | GetCodeActionsTool::NAME
                 | ApplyCodeActionTool::NAME
                 | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+                CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
+                    cx.has_flag::<CreateThreadToolFeatureFlag>()
+                }
                 _ => true,
             })
             .collect::<BTreeMap<_, _>>();
@@ -3201,9 +3338,7 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        for message in &self.messages {
-            messages.extend(message.to_request());
-        }
+        self.extend_request_history(&mut messages);
 
         if let Some(last_message) = messages.last_mut() {
             last_message.cache = true;
@@ -3216,6 +3351,67 @@ impl Thread {
         messages
     }
 
+    fn extend_request_history(&self, messages: &mut Vec<LanguageModelRequestMessage>) {
+        let Some(compaction_ix) = self.latest_compaction_message_ix() else {
+            for message in &self.messages {
+                messages.extend(message.to_request());
+            }
+            return;
+        };
+
+        if matches!(
+            &*self.messages[compaction_ix],
+            Message::Compaction(CompactionInfo::Summary(_))
+        ) {
+            messages.extend(self.retained_user_request_messages_before(compaction_ix));
+        }
+
+        for message in &self.messages[compaction_ix..] {
+            messages.extend(message.to_request());
+        }
+    }
+
+    fn latest_compaction_message_ix(&self) -> Option<usize> {
+        self.messages
+            .iter()
+            .rposition(|message| matches!(&**message, Message::Compaction(_)))
+    }
+
+    fn retained_user_request_messages_before(
+        &self,
+        compaction_ix: usize,
+    ) -> Vec<LanguageModelRequestMessage> {
+        let mut remaining_bytes = COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
+        let mut retained_messages = Vec::new();
+
+        for message in self.messages[..compaction_ix].iter().rev() {
+            let Message::User(user_message) = &**message else {
+                continue;
+            };
+            if user_message.content.is_empty() {
+                continue;
+            }
+
+            let request_message = user_message.to_request();
+            let byte_count = user_message_byte_len(&request_message);
+            if let Some(bytes) = remaining_bytes.checked_sub(byte_count) {
+                remaining_bytes = bytes;
+                retained_messages.push(request_message);
+            } else {
+                if remaining_bytes > 0
+                    && let Some(request_message) =
+                        truncate_user_message_to_byte_budget(request_message, remaining_bytes)
+                {
+                    retained_messages.push(request_message);
+                }
+                break;
+            }
+        }
+
+        retained_messages.reverse();
+        retained_messages
+    }
+
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
         for (ix, message) in self.messages.iter().enumerate() {
@@ -3225,7 +3421,7 @@ impl Thread {
             match &**message {
                 Message::User(_) => markdown.push_str("## User\n\n"),
                 Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
-                Message::Resume => {}
+                Message::Resume | Message::Compaction(_) => {}
             }
             markdown.push_str(&message.to_markdown());
         }
@@ -3352,6 +3548,83 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
+    message
+        .content
+        .iter()
+        .map(|content| match content {
+            MessageContent::Text(text) => text.len(),
+            MessageContent::Image(image) => image.len(),
+            // These can never occur in a user message
+            MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_)
+            | MessageContent::ToolResult(_)
+            | MessageContent::ToolUse(_) => 0,
+        })
+        .sum()
+}
+
+fn truncate_user_message_to_byte_budget(
+    mut message: LanguageModelRequestMessage,
+    byte_budget: usize,
+) -> Option<LanguageModelRequestMessage> {
+    let mut remaining_bytes = byte_budget;
+    let mut content = Vec::with_capacity(message.content.len());
+
+    for item in message.content {
+        match item {
+            MessageContent::Text(text) => {
+                let fits = text.len() <= remaining_bytes;
+                if let Some(text) = take_text_within_byte_budget(text, &mut remaining_bytes) {
+                    content.push(MessageContent::Text(text));
+                }
+                if !fits {
+                    break;
+                }
+            }
+            MessageContent::Image(image) => {
+                let byte_len = image.len();
+                if let Some(bytes) = remaining_bytes.checked_sub(byte_len) {
+                    remaining_bytes = bytes;
+                    content.push(MessageContent::Image(image));
+                } else {
+                    break;
+                }
+            }
+            // These can never occur in a user message
+            MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_)
+            | MessageContent::ToolResult(_)
+            | MessageContent::ToolUse(_) => {}
+        }
+    }
+
+    if content.is_empty() {
+        None
+    } else {
+        message.content = content;
+        Some(message)
+    }
+}
+
+fn take_text_within_byte_budget(text: String, remaining_bytes: &mut usize) -> Option<String> {
+    if text.is_empty() || *remaining_bytes == 0 {
+        return None;
+    }
+
+    if let Some(bytes) = remaining_bytes.checked_sub(text.len()) {
+        *remaining_bytes = bytes;
+        return Some(text);
+    }
+
+    let end = text.floor_char_boundary((*remaining_bytes).min(text.len()));
+    *remaining_bytes = 0;
+
+    let text = text[..end].to_string();
+
+    if text.is_empty() { None } else { Some(text) }
 }
 
 struct RunningTurn {
@@ -3799,6 +4072,12 @@ impl ThreadEventStream {
 
     fn send_retry(&self, status: acp_thread::RetryStatus) {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
+    }
+
+    fn send_context_compaction(&self) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompaction))
+            .ok();
     }
 
     fn send_stop(&self, reason: acp::StopReason) {
@@ -4541,6 +4820,221 @@ mod tests {
 
             (thread, event_stream)
         })
+    }
+
+    #[test]
+    fn test_summary_compaction_renders_for_request_and_markdown() {
+        let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
+
+        assert_eq!(message.role(), Role::User);
+        assert_eq!(message.to_markdown(), "--- Context Compacted ---\n");
+
+        let request_messages = message.to_request();
+        assert_eq!(request_messages.len(), 1);
+        assert_eq!(request_messages[0].role, Role::User);
+        assert!(!request_messages[0].cache);
+        assert_eq!(request_messages[0].reasoning_details, None);
+        assert_eq!(request_messages[0].content.len(), 1);
+        let language_model::MessageContent::Text(text) = &request_messages[0].content[0] else {
+            panic!("expected text summary context");
+        };
+        assert_eq!(
+            text.as_str(),
+            "The previous conversation was compacted. Use this summary as context:\n\nOlder context"
+        );
+    }
+
+    fn user_text_message(id: UserMessageId, text: &str) -> Arc<Message> {
+        Arc::new(Message::User(UserMessage {
+            id,
+            content: vec![UserMessageContent::Text(text.to_string())].into(),
+        }))
+    }
+
+    fn agent_text_message(text: &str) -> Arc<Message> {
+        Arc::new(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(text.to_string())],
+            ..Default::default()
+        }))
+    }
+
+    fn summary_compaction(summary: &str) -> Arc<Message> {
+        Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())))
+    }
+
+    fn summary_request_text(summary: &str) -> String {
+        format!(
+            "The previous conversation was compacted. Use this summary as context:\n\n{summary}"
+        )
+    }
+
+    fn request_texts_after_system(messages: &[LanguageModelRequestMessage]) -> Vec<String> {
+        messages
+            .iter()
+            .skip(1)
+            .map(LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let user_message_id = UserMessageId::new();
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "before"));
+                thread.messages.push(summary_compaction("summary"));
+                thread.messages.push(agent_text_message("after"));
+
+                thread.replay(cx)
+            })
+        });
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(
+                &event,
+                Some(Ok(ThreadEvent::UserMessage(UserMessage { id, .. }))) if id == &user_message_id
+            ),
+            "expected replayed user message, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::ContextCompaction))),
+            "expected context compaction event, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::AgentText(text))) if text == "after"),
+            "expected replayed agent text, got {event:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_native_compaction_boundary(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let request_messages = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "before native"));
+                thread.messages.push(Arc::new(Message::Compaction(
+                    CompactionInfo::ProviderNative {
+                        provider: LanguageModelProviderId::from("openai".to_string()),
+                        items: vec![json!({"type": "compaction"})],
+                    },
+                )));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "after native"));
+
+                thread.build_request_messages(Vec::new(), cx)
+            })
+        });
+
+        assert_eq!(
+            request_texts_after_system(&request_messages),
+            vec!["after native".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_retained_users_truncate_oldest(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let mut long_text = "START".to_string();
+        long_text.push_str(&"x".repeat(COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET));
+        long_text.push_str("END");
+
+        let request_messages = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.messages.push(user_text_message(
+                    UserMessageId::new(),
+                    "dropped older user",
+                ));
+                thread
+                    .messages
+                    .push(agent_text_message("dropped assistant"));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), &long_text));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "new"));
+                thread.messages.push(summary_compaction("summary context"));
+                thread.messages.push(agent_text_message("after assistant"));
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "after user"));
+
+                thread.build_request_messages(Vec::new(), cx)
+            })
+        });
+
+        let request_texts = request_texts_after_system(&request_messages);
+        assert_eq!(request_texts.len(), 5);
+        assert_eq!(
+            request_texts[0],
+            format!(
+                "START{}",
+                "x".repeat(
+                    COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET - "START".len() - "new".len()
+                )
+            )
+        );
+        assert_eq!(request_texts[1], "new");
+        assert_eq!(request_texts[2], summary_request_text("summary context"));
+        assert_eq!(request_texts[3], "after assistant");
+        assert_eq!(request_texts[4], "after user");
+        assert!(request_texts.iter().all(
+            |text| !text.contains("dropped older user") && !text.contains("dropped assistant")
+        ));
+    }
+
+    #[test]
+    fn test_truncate_text_utf8_boundary() {
+        let message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("hello 👋 world".to_string())],
+            cache: false,
+            reasoning_details: None,
+        };
+
+        let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();
+        assert_eq!(
+            truncated.content,
+            vec![MessageContent::Text("hello ".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_truncate_keeps_fitting_images() {
+        let image = LanguageModelImage {
+            source: "image".into(),
+        };
+        let message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                MessageContent::Text("abc".to_string()),
+                MessageContent::Image(image.clone()),
+            ],
+            cache: false,
+            reasoning_details: None,
+        };
+
+        let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();
+        assert_eq!(
+            truncated.content,
+            vec![
+                MessageContent::Text("abc".to_string()),
+                MessageContent::Image(image),
+            ]
+        );
     }
 
     fn setup_parent_with_subagents(

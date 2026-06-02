@@ -2199,7 +2199,7 @@ impl Render for ProjectSearchBar {
         let input_base_styles = |panel: InputPanel| {
             input_base_styles(search.border_color_for(panel, cx), |div| match panel {
                 InputPanel::Query | InputPanel::Replacement => div.w(input_width),
-                InputPanel::Include | InputPanel::Exclude => div.flex_grow(),
+                InputPanel::Include | InputPanel::Exclude => div.flex_grow_1(),
             })
         };
         let theme_colors = cx.theme().colors();

@@ -70,7 +70,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ViewId,
+    ToolbarItemLocation, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -915,6 +915,49 @@ fn test_clone(cx: &mut TestAppContext) {
                 .display_ranges(&e.display_snapshot(cx)))
             .unwrap()
     );
+}
+
+#[gpui::test]
+fn test_toggle_breadcrumb_does_not_change_settings(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().breadcrumbs = Some(true);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("hello", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(
+            editor.breadcrumb_location(cx),
+            ToolbarItemLocation::PrimaryLeft
+        );
+
+        editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(editor.breadcrumb_location(cx), ToolbarItemLocation::Hidden);
+    });
+
+    // Changing unrelated settings should not affect breadcrumbs visibility.
+    update_test_editor_settings(cx, &|settings| {
+        settings.vertical_scroll_margin = Some(4.0);
+    });
+    cx.run_until_parked();
+
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(editor.breadcrumb_location(cx), ToolbarItemLocation::Hidden);
+
+        editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(
+            editor.breadcrumb_location(cx),
+            ToolbarItemLocation::PrimaryLeft
+        );
+    });
 }
 
 #[gpui::test]
@@ -30099,7 +30142,18 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
             &::git::blame::BlameEntry {
                 sha: "1b1b1b".parse().unwrap(),
                 range: 0..1,
-                ..Default::default()
+                original_line_number: 0,
+                author: None,
+                author_mail: None,
+                author_time: None,
+                author_tz: None,
+                committer_name: None,
+                committer_email: None,
+                committer_time: None,
+                committer_tz: None,
+                summary: None,
+                previous: None,
+                filename: String::new(),
             },
             gpui::point(gpui::px(0.), gpui::px(0.)),
             false,
@@ -34948,6 +35002,42 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         -
         ˇitem
     "});
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings.defaults.tab_size = Some(4.try_into().unwrap());
+    });
+
+    // Case 9: Empty list item unindent works when tab size is larger than list indentation
+    cx.set_state(indoc! {"
+        - item
+          - sub item
+          - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - item
+          - sub item
+        - ˇ
+    "});
+
+    // Case 10: Empty list item unindent moves to the previous tab stop
+    cx.set_state(
+        indoc! {"
+        $$$$$$- ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(
+        indoc! {"
+        $$$$- ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
 }
 
 #[gpui::test]
