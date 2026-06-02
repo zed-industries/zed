@@ -312,7 +312,7 @@ impl ProjectDiff {
                             window.dispatch_action(
                                 ReviewBranchDiff {
                                     diff_text: diff_text.into(),
-                                    base_ref: base_ref.to_string().into(),
+                                    base_ref,
                                 }
                                 .boxed_clone(),
                                 cx,

@@ -489,16 +489,22 @@ fn resolve_write_paths(
 
 /// Pure path-joining step of [`resolve_write_paths`], split out so it can be
 /// unit-tested without a `Project`/`App`.
+///
+/// Each path is lexically normalized (resolving `.`/`..`) so that later
+/// subtree-containment checks and the user-facing approval prompt operate on
+/// the same path the sandbox will ultimately enforce. Relative paths with no
+/// base, and paths that traverse above the filesystem root, are dropped.
 fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
     raw_paths
         .iter()
         .filter_map(|raw| {
             let path = Path::new(raw);
-            if path.is_absolute() {
-                Some(path.to_path_buf())
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
             } else {
-                base.map(|base| base.join(path))
-            }
+                base?.join(path)
+            };
+            util::paths::normalize_lexically(&absolute).ok()
         })
         .collect()
 }
@@ -2298,6 +2304,40 @@ mod tests {
         };
         let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
         assert_eq!(joined, vec![PathBuf::from(abs)]);
+    }
+
+    #[test]
+    fn test_join_write_paths_normalizes_parent_traversal() {
+        let base = PathBuf::from(if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        });
+        // `..` is resolved lexically so containment checks and the approval
+        // prompt see the real target rather than a traversal that the sandbox
+        // would canonicalize differently.
+        let joined = join_write_paths(
+            &[
+                "build/../../escape".to_string(),
+                if cfg!(windows) {
+                    "C:\\abs\\a\\..\\b".to_string()
+                } else {
+                    "/abs/a/../b".to_string()
+                },
+            ],
+            Some(base.as_path()),
+        );
+        let expected_escape = if cfg!(windows) {
+            PathBuf::from("C:\\escape")
+        } else {
+            PathBuf::from("/escape")
+        };
+        let expected_abs = if cfg!(windows) {
+            PathBuf::from("C:\\abs\\b")
+        } else {
+            PathBuf::from("/abs/b")
+        };
+        assert_eq!(joined, vec![expected_escape, expected_abs]);
     }
 
     #[test]

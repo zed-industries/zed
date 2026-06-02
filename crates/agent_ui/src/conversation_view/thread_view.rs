@@ -7960,7 +7960,9 @@ impl ThreadView {
                                 Icon::new(IconName::CheckDouble)
                                     .size(IconSize::XSmall)
                                     .color(Color::Success),
-                                if option.option_id.0.as_ref() == "allow_thread" {
+                                if option.option_id.0.as_ref()
+                                    == acp_thread::SandboxPermission::AllowThread.as_id()
+                                {
                                     None
                                 } else {
                                     Some(&AllowAlways as &dyn Action)
@@ -9650,6 +9652,18 @@ impl ThreadView {
         }
 
         let token_usage = self.thread.read(cx).token_usage()?;
+
+        // When auto-compaction is available (the handoff feature flag is enabled
+        // and the model's context window is large enough), the thread is
+        // compacted automatically before it reaches the limit, so there's no
+        // need to warn the user. Models with a context window that's too small
+        // can't be auto-compacted, so we fall back to the normal warning.
+        if cx.has_flag::<HandoffFeatureFlag>()
+            && token_usage.max_tokens >= agent::MIN_COMPACTION_CONTEXT_WINDOW
+        {
+            return None;
+        }
+
         let ratio = token_usage.ratio();
 
         let (severity, icon, title) = match ratio {
