@@ -10,6 +10,7 @@ use crate::{
     app::GpuiBorrow,
 };
 
+// todo! make this something we pass in via the macro
 const FRAME_BUDGET_NANOS: u128 = 16_666_667;
 
 /// A small report produced by GPUI benchmarks.
