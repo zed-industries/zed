@@ -175,6 +175,7 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 }
+
 fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     match provides {
         ExtensionProvides::Themes => "Themes",
