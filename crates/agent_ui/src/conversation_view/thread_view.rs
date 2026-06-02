@@ -9553,7 +9553,7 @@ impl ThreadView {
             } else {
                 format!("{warning_count} skills loaded with warnings")
             };
-            let targets = description_warnings.clone();
+            let targets = description_warnings;
             callouts.push(
                 Callout::new()
                     .icon(IconName::Warning)
