@@ -23,6 +23,37 @@ The Project Panel ({#kb project_panel::ToggleFocus}) shows a tree view of your w
 
 Open any file in your project with {#kb file_finder::Toggle}. Type part of the filename or path to narrow results.
 
+### Ranking model
+
+By default, file finder results are sorted purely by fuzzy match score. You can opt in to a richer ranking model that combines the fuzzy score with several user-shaped signals — recency, currently-open tabs, directory priority, and pinned files. All four are off by default, so adding the settings only changes behaviour for users who set them. Add any of the following to your `settings.json` to start tuning:
+
+```json [settings]
+{
+  "file_finder": {
+    // Weight (0.0–1.0) applied to recency. 0.0 disables it; 0.1 is a good
+    // starting point. A freshly-visited file with a similar fuzzy score
+    // will beat an older one.
+    "recency_boost": 0.1,
+    // Additive boost (0.0–1.0) for files currently open in any pane.
+    "open_tab_boost": 0.05,
+    // How the recency boost decays with the age of the last visit.
+    // "linear" (default), "exponential", or "step".
+    "recency_decay": "linear",
+    // Number of days a file remains eligible for the recency boost.
+    // Clamped to [1, 90].
+    "recency_horizon_days": 7,
+    // Path prefixes (must end with "/") that earn a small additive boost.
+    "directory_priority": ["src/", "lib/"],
+    // Path prefixes (must end with "/") that earn a small additive penalty.
+    "directory_deprioritize": ["test/", "vendor/", "node_modules/"],
+    // Glob patterns whose matches are pinned to the top of any query they match.
+    "pinned_files": ["**/main.rs", "**/lib.rs"]
+  }
+}
+```
+
+Setting `recency_boost` and `open_tab_boost` to `0.0` (the default) restores the pure-fuzzy ranking introduced in PR #12103. The legacy `["file_finder::Toggle", { "separate_history": true }]` keybinding still works and is unaffected by these settings.
+
 ## Project Search
 
 Search across all files with {#kb pane::DeploySearch}. Start typing in the search field to begin searching—results appear as you type.

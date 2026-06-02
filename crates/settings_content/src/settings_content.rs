@@ -799,6 +799,78 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: false
     pub include_channels: Option<bool>,
+    /// Weight (0.0–1.0) applied to the recency score when ranking results.
+    /// At 0.0 (default) recency has no effect, restoring the pure fuzzy
+    /// score ranking that has been the default since PR #12103. At 1.0 a
+    /// freshly-visited file with a similar fuzzy score will always beat an
+    /// older one. Recommended starting point if you want to opt in: 0.1.
+    ///
+    /// Default: 0.0
+    pub recency_boost: Option<f32>,
+    /// Additive boost (0.0–1.0) for files that are currently open in any
+    /// pane. Acts as a tiebreaker for same-name files between an opened
+    /// and an unopened path. Set to 0.0 to disable.
+    ///
+    /// Default: 0.0
+    pub open_tab_boost: Option<f32>,
+    /// How the recency boost decays with the age of the last visit.
+    /// `linear` falls off proportionally to elapsed time, `exponential`
+    /// heavily favours very recent visits, and `step` returns the full
+    /// boost inside the horizon and zero outside it.
+    ///
+    /// Default: linear
+    pub recency_decay: Option<RecencyDecayContent>,
+    /// Number of days a file remains eligible for the recency boost since
+    /// its last visit. Clamped to [1, 90].
+    ///
+    /// Default: 7
+    pub recency_horizon_days: Option<u32>,
+    /// Path prefixes (must end with `/`) that receive a small additive
+    /// boost. Use to express "files under `src/` should outrank files with
+    /// the same name under `test/` or `vendor/`". Invalid entries are
+    /// dropped with a warning.
+    ///
+    /// Default: []
+    pub directory_priority: Option<Vec<String>>,
+    /// Path prefixes (must end with `/`) that receive a small additive
+    /// penalty. Symmetric to `directory_priority`. Useful for
+    /// `vendor/`, `node_modules/`, `target/`, etc. Invalid entries are
+    /// dropped with a warning.
+    ///
+    /// Default: []
+    pub directory_deprioritize: Option<Vec<String>>,
+    /// Glob patterns whose matches receive a large additive boost,
+    /// effectively pinning them to the top of any query they match.
+    /// Examples: `"src/main.rs"`, `"**/lib.rs"`. Invalid patterns are
+    /// dropped with a warning.
+    ///
+    /// Default: []
+    pub pinned_files: Option<Vec<String>>,
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RecencyDecayContent {
+    /// Boost falls off proportionally to elapsed time.
+    #[default]
+    Linear,
+    /// Heavily favours very recent visits over the long tail.
+    Exponential,
+    /// Full boost inside the recency horizon, zero outside it.
+    Step,
 }
 
 #[derive(

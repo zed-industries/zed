@@ -2783,7 +2783,7 @@ async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppC
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *FileFinderSettings::get_global(cx);
+        let settings = FileFinderSettings::get_global(cx).clone();
 
         FileFinderSettings::override_global(
             FileFinderSettings {
@@ -3512,7 +3512,12 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
             "Should have exactly 0 search match (because we already opened the 2 package.json)"
         );
 
-        if let Match::History { path, panel_match } = &matches[0] {
+        if let Match::History {
+            path,
+            panel_match,
+            recency_timestamp: _,
+        } = &matches[0]
+        {
             assert_eq!(path.project.worktree_id, worktree_id2);
             assert_eq!(path.project.path.as_ref(), rel_path("package.json"));
             let panel_match = panel_match.as_ref().unwrap();
@@ -3524,7 +3529,12 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
             );
         }
 
-        if let Match::History { path, panel_match } = &matches[1] {
+        if let Match::History {
+            path,
+            panel_match,
+            recency_timestamp: _,
+        } = &matches[1]
+        {
             assert_eq!(path.project.worktree_id, worktree_id1);
             assert_eq!(path.project.path.as_ref(), rel_path("package.json"));
             let panel_match = panel_match.as_ref().unwrap();
@@ -4256,6 +4266,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             Match::History {
                 path: history_path,
                 panel_match: path_match,
+                recency_timestamp: _,
             } => {
                 if let Some(path_match) = path_match.as_ref() {
                     search_entries

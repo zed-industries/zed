@@ -1386,6 +1386,34 @@
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
     "include_channels": false,
+    // Weight (0.0–1.0) applied to the recency score when ranking results.
+    // At 0.0 recency has no effect, restoring the pure fuzzy score ranking
+    // that has been the default since PR #12103. At 1.0 a freshly-visited
+    // file with a similar fuzzy score will always beat an older one.
+    // Recommended starting point if you want to opt in: 0.1.
+    "recency_boost": 0.0,
+    // Additive boost (0.0–1.0) for files that are currently open in any
+    // pane. Acts as a tiebreaker for same-name files between an opened
+    // and an unopened path. Set to 0.0 to disable.
+    "open_tab_boost": 0.0,
+    // How the recency boost decays with the age of the last visit.
+    //   * "linear":      falls off proportionally to elapsed time
+    //   * "exponential": heavily favours very recent visits
+    //   * "step":        full boost inside the horizon, nothing outside
+    "recency_decay": "linear",
+    // Number of days a file remains eligible for the recency boost since
+    // its last visit. Clamped to [1, 90].
+    "recency_horizon_days": 7,
+    // Path prefixes (must end with "/") that earn a small additive boost.
+    // Example: ["src/", "lib/"].
+    "directory_priority": [],
+    // Path prefixes (must end with "/") that earn a small additive penalty.
+    // Example: ["test/", "vendor/", "node_modules/"].
+    "directory_deprioritize": [],
+    // Glob patterns whose matches earn a large additive boost (pinning
+    // them to the top whenever they match the query). Example:
+    // ["src/main.rs", "**/lib.rs"].
+    "pinned_files": [],
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
