@@ -160,7 +160,7 @@ impl Render for ZedPromptRenderer {
         };
         let inset = window.client_inset().unwrap_or(Pixels::ZERO);
         let inset_for_edge = |is_tiled| if is_tiled { Pixels::ZERO } else { inset };
-        let rounding = px(10.0);
+        let rounding = theme::CLIENT_SIDE_DECORATION_ROUNDING;
 
         div().size_full().occlude().child(
             v_flex()
