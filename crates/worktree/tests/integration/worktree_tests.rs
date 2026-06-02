@@ -3627,7 +3627,7 @@ struct WorktreeExpectations {
 }
 
 #[gpui::test]
-async fn test_tracked_nested_path_is_not_ignored_by_bin_rule(cx: &mut TestAppContext) {
+async fn test_tracking_nested_path_is_not_ignored_by_bin_rule(cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.background_executor.clone());
