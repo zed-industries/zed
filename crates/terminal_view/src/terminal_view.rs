@@ -928,7 +928,7 @@ impl TerminalView {
     pub fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
         let mut text = paths
             .iter()
-            .map(|path| format!(" {path:?}"))
+            .map(|path| format!(" {}", shell_escape_path(path)))
             .collect::<String>();
         text.push(' ');
         window.focus(&self.focus_handle(cx), cx);
