@@ -13,7 +13,7 @@ use futures::channel::mpsc::UnboundedSender;
 use log::{debug, error};
 use portable_pty::{Child, MasterPty, PtySize};
 
-use crate::{PtyEvent, TerminalBackendEvent, TerminalBounds};
+use crate::{PtyEvent, TerminalBackendEvent, TerminalBounds, ghostty_worker::GhosttyBackendWorker};
 
 const READ_BUFFER_SIZE: usize = 0x10_0000;
 const DRAIN_ON_EXIT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -32,12 +32,14 @@ pub(super) struct GhosttyPtyEventLoop {
     receiver: mpsc::Receiver<GhosttyPtyMsg>,
     sender: mpsc::Sender<GhosttyPtyMsg>,
     events_tx: UnboundedSender<PtyEvent>,
+    backend: GhosttyBackendWorker,
     drain_on_exit: bool,
 }
 
 impl GhosttyPtyEventLoop {
     pub(super) fn new(
         events_tx: UnboundedSender<PtyEvent>,
+        backend: GhosttyBackendWorker,
         master: Box<dyn MasterPty + Send>,
         child: Box<dyn Child + Send + Sync>,
         drain_on_exit: bool,
@@ -58,6 +60,7 @@ impl GhosttyPtyEventLoop {
             receiver,
             sender,
             events_tx,
+            backend,
             drain_on_exit,
         })
     }
@@ -77,14 +80,12 @@ impl GhosttyPtyEventLoop {
             receiver,
             sender,
             events_tx,
+            backend,
             drain_on_exit,
         } = self;
         let (reader_done_sender, reader_done_receiver) = mpsc::channel();
 
-        thread::spawn({
-            let events_tx = events_tx.clone();
-            move || Self::read_pty(reader, events_tx, reader_done_sender)
-        });
+        thread::spawn(move || Self::read_pty(reader, backend, reader_done_sender));
 
         thread::spawn({
             move || {
@@ -103,7 +104,7 @@ impl GhosttyPtyEventLoop {
 
     fn read_pty(
         mut reader: Box<dyn Read + Send>,
-        events_tx: UnboundedSender<PtyEvent>,
+        backend: GhosttyBackendWorker,
         done_sender: mpsc::Sender<()>,
     ) {
         let mut buffer = [0u8; READ_BUFFER_SIZE];
@@ -112,11 +113,7 @@ impl GhosttyPtyEventLoop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(read) => {
-                    send_pty_event(
-                        &events_tx,
-                        PtyEvent::Output(buffer[..read].to_vec()),
-                        "output",
-                    );
+                    backend.write_output_from_pty(buffer[..read].to_vec());
                 }
                 Err(error) => match error.kind() {
                     ErrorKind::Interrupted => continue,

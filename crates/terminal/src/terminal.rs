@@ -2,6 +2,7 @@ mod mappings;
 
 mod ghostty_backend;
 mod ghostty_pty;
+mod ghostty_worker;
 mod pty_info;
 mod terminal_hyperlinks;
 pub mod terminal_settings;
@@ -22,8 +23,9 @@ use mappings::mouse::{alt_scroll, grid_point, grid_point_and_side};
 use async_channel::{Receiver, Sender};
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
-use ghostty_backend::{FullContentBuilder, GhosttyBackend, GhosttyOsc52};
+use ghostty_backend::{FullContentBuilder, GhosttyOsc52};
 use ghostty_pty::{GhosttyPtyEventLoop, GhosttyPtyNotifier, portable_pty_size};
+use ghostty_worker::GhosttyBackendWorker;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -1718,7 +1720,7 @@ impl fmt::Debug for TerminalBackendEvent {
 
 enum PtyEvent {
     Event(TerminalBackendEvent),
-    Output(Vec<u8>),
+    OutputProcessed(Vec<TerminalBackendEvent>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2101,16 +2103,18 @@ pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
 const SEARCH_SNAPSHOT_ROWS_PER_TICK: usize = 512;
 
 struct SearchSnapshotBuilder {
-    builder: FullContentBuilder,
+    builder: Option<FullContentBuilder>,
     content_revision: u64,
 }
 
 impl SearchSnapshotBuilder {
     fn new(terminal: &Terminal) -> Result<Self> {
         Ok(Self {
-            builder: terminal
-                .backend
-                .start_full_content(&terminal.last_content)?,
+            builder: Some(
+                terminal
+                    .backend
+                    .start_full_content(&terminal.last_content)?,
+            ),
             content_revision: terminal.content_revision,
         })
     }
@@ -2120,13 +2124,19 @@ impl SearchSnapshotBuilder {
             *self = Self::new(terminal)?;
         }
 
-        terminal
+        let Some(builder) = self.builder.take() else {
+            bail!("terminal search snapshot builder missing");
+        };
+
+        let (builder, done) = terminal
             .backend
-            .append_full_content_rows(&mut self.builder, row_count)
+            .append_full_content_rows(builder, row_count)?;
+        self.builder = Some(builder);
+        Ok(done)
     }
 
-    fn finish(self) -> Content {
-        self.builder.finish()
+    fn finish(self) -> Option<Content> {
+        self.builder.map(FullContentBuilder::finish)
     }
 }
 
@@ -2165,14 +2175,14 @@ impl TerminalBuilder {
         terminal_bounds: TerminalBounds,
     ) -> Result<TerminalBuilder> {
         let terminal_bounds = normalize_terminal_bounds(terminal_bounds);
-        let mut backend = GhosttyBackend::new(terminal_bounds, max_scroll_history_lines)?;
+        let (_events_tx, events_rx) = unbounded();
+        let backend = GhosttyBackendWorker::new(terminal_bounds, max_scroll_history_lines, None)?;
         backend.set_default_cursor_shape(cursor_shape.into());
         backend.set_osc52(GhosttyOsc52::Disabled);
         if let AlternateScroll::Off = alternate_scroll {
             backend.set_alternate_scroll(false)?;
         }
 
-        let (_events_tx, events_rx) = unbounded();
         let terminal = Terminal {
             task: None,
             terminal_type: TerminalType::DisplayOnly,
@@ -2250,6 +2260,9 @@ impl TerminalBuilder {
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
+        let initial_dark_color_scheme = cx
+            .has_global::<GlobalTheme>()
+            .then(|| cx.theme().appearance == Appearance::Dark);
         let fut = async move {
             // Remove SHLVL so the spawned shell initializes it to 1, matching
             // the behavior of standalone terminal emulators.
@@ -2395,16 +2408,23 @@ impl TerminalBuilder {
 
             let pty_info =
                 PtyProcessInfo::new(portable_process_id_getter(master.as_ref(), child.as_ref()));
-            let mut backend =
-                GhosttyBackend::new(TerminalBounds::default(), Some(scrolling_history))?;
+            let backend = GhosttyBackendWorker::new(
+                TerminalBounds::default(),
+                Some(scrolling_history),
+                Some(events_tx.clone()),
+            )?;
             backend.set_default_cursor_shape(cursor_shape.into());
             backend.set_osc52(GhosttyOsc52::default());
+            if let Some(is_dark) = initial_dark_color_scheme {
+                backend.set_dark_color_scheme(is_dark);
+            }
             if let AlternateScroll::Off = alternate_scroll {
                 backend.set_alternate_scroll(false)?;
             }
 
-            let event_loop = GhosttyPtyEventLoop::new(events_tx, master, child, true)
-                .context("failed to create terminal backend PTY event loop")?;
+            let event_loop =
+                GhosttyPtyEventLoop::new(events_tx, backend.clone(), master, child, true)
+                    .context("failed to create terminal backend PTY event loop")?;
             let pty_tx = event_loop.channel();
             let _io_thread = event_loop.spawn();
 
@@ -2491,7 +2511,7 @@ impl TerminalBuilder {
                 events_rx,
             })
         };
-        cx.spawn(async move |_| fut.await)
+        cx.background_spawn(fut)
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
@@ -2613,7 +2633,7 @@ impl PtySender {
 pub struct Terminal {
     terminal_type: TerminalType,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
-    backend: GhosttyBackend,
+    backend: GhosttyBackendWorker,
     selection: Option<Selection>,
     vi_cursor: Option<Point>,
     cursor_blinking: bool,
@@ -2701,36 +2721,57 @@ impl Terminal {
     fn process_pty_event(&mut self, event: PtyEvent, cx: &mut Context<Self>) {
         match event {
             PtyEvent::Event(event) => self.process_event(event, cx),
-            PtyEvent::Output(output) => self.write_backend_output(&output, cx),
+            PtyEvent::OutputProcessed(events) => {
+                self.sync_backend_color_scheme(cx);
+                self.process_backend_output_events(events, cx);
+            }
         }
     }
 
     fn write_backend_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        self.sync_backend_color_scheme(cx);
+        match self.backend.write_output(bytes) {
+            Ok(events) => self.process_backend_output_events(events, cx),
+            Err(error) => log::error!("failed to write terminal backend output: {error}"),
+        }
+    }
+
+    fn process_backend_output_events(
+        &mut self,
+        events: Vec<TerminalBackendEvent>,
+        cx: &mut Context<Self>,
+    ) {
+        self.bump_content_revision();
+        self.output_since_refresh = true;
+        for event in events {
+            self.process_event(event, cx);
+        }
+        self.process_event(TerminalBackendEvent::Wakeup, cx);
+    }
+
+    fn sync_backend_color_scheme(&self, cx: &Context<Self>) {
         if cx.has_global::<GlobalTheme>() {
             self.backend
                 .set_dark_color_scheme(cx.theme().appearance == Appearance::Dark);
         }
-        self.backend.write_output(bytes);
-        self.bump_content_revision();
-        self.output_since_refresh = true;
-        for event in self.backend.drain_events() {
-            self.process_event(event, cx);
-        }
-        self.process_event(TerminalBackendEvent::Wakeup, cx);
     }
 
     fn bump_content_revision(&mut self) {
         self.content_revision = self.content_revision.wrapping_add(1);
     }
 
-    fn resize_backend(&mut self, bounds: TerminalBounds) -> Result<()> {
-        self.backend.resize(bounds)?;
+    fn resize_backend(&mut self, bounds: TerminalBounds, cx: &mut Context<Self>) -> Result<()> {
+        for event in self.backend.resize(bounds)? {
+            self.process_event(event, cx);
+        }
         self.bump_content_revision();
         Ok(())
     }
 
-    fn clear_backend(&mut self) -> Result<()> {
-        self.backend.clear()?;
+    fn clear_backend(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        for event in self.backend.clear()? {
+            self.process_event(event, cx);
+        }
         self.bump_content_revision();
         Ok(())
     }
@@ -3220,7 +3261,7 @@ impl Terminal {
                     if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
                         pty_tx.resize(new_bounds);
                     }
-                    if let Err(error) = self.resize_backend(new_bounds) {
+                    if let Err(error) = self.resize_backend(new_bounds, cx) {
                         log::error!("failed to resize terminal backend: {error}");
                     }
                     if !self.matches.is_empty() {
@@ -3228,7 +3269,7 @@ impl Terminal {
                     }
                 }
                 InternalEvent::Clear => {
-                    if let Err(error) = self.clear_backend() {
+                    if let Err(error) = self.clear_backend(cx) {
                         log::error!("failed to clear terminal backend: {error}");
                     }
                     cx.emit(Event::Wakeup);
@@ -3368,8 +3409,8 @@ impl Terminal {
         let output_since_refresh = std::mem::take(&mut self.output_since_refresh);
 
         match self.backend.content(&self.last_content) {
-            Ok(mut content) => {
-                let cursor_blinking = !self.vi_mode_enabled && self.backend.cursor_blinking();
+            Ok((mut content, backend_cursor_blinking)) => {
+                let cursor_blinking = !self.vi_mode_enabled && backend_cursor_blinking;
                 if cursor_blinking != self.cursor_blinking {
                     self.cursor_blinking = cursor_blinking;
                     cx.emit(Event::BlinkChanged(cursor_blinking));
@@ -4096,7 +4137,10 @@ impl Terminal {
                 yield_now().await;
             }
 
-            let content = builder.finish();
+            let Some(content) = builder.finish() else {
+                log::error!("failed to finish terminal backend full content search");
+                return Vec::new();
+            };
             cx.background_spawn(async move { content_search_matches(content, regex) })
                 .await
         })
@@ -5002,9 +5046,10 @@ mod tests {
                 bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
             );
             terminal.last_content.terminal_bounds = terminal_bounds;
+        });
+        terminal.update(cx, |terminal, cx| {
             terminal
-                .backend
-                .resize(terminal_bounds)
+                .resize_backend(terminal.last_content.terminal_bounds, cx)
                 .expect("failed to resize test terminal");
         });
 
@@ -5021,7 +5066,7 @@ mod tests {
         for event in terminal.backend.drain_events() {
             terminal.process_event(event, cx);
         }
-        let mut content = terminal
+        let (mut content, _) = terminal
             .backend
             .content(&terminal.last_content)
             .expect("failed to build test terminal content");
@@ -5756,7 +5801,7 @@ mod tests {
             );
 
             terminal
-                .clear_backend()
+                .clear_backend(cx)
                 .expect("failed to clear terminal during search snapshot");
             terminal.write_output(fresh_output.as_bytes(), cx);
             assert!(
@@ -5765,7 +5810,7 @@ mod tests {
                     .expect("failed to append restarted search snapshot")
             );
 
-            let content = snapshot.finish();
+            let content = snapshot.finish().expect("search snapshot should finish");
             (
                 content_search_matches(
                     content.clone(),
