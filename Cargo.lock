@@ -18589,6 +18589,7 @@ dependencies = [
  "chrono",
  "client",
  "cloud_api_types",
+ "command_palette_hooks",
  "db",
  "fs",
  "git_ui",
