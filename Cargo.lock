@@ -7620,7 +7620,6 @@ dependencies = [
  "collections",
  "derive_more",
  "futures 0.3.32",
- "git2",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -7645,18 +7644,6 @@ dependencies = [
  "util",
  "uuid",
  "ztracing",
-]
-
-[[package]]
-name = "git2"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e"
-dependencies = [
- "bitflags 2.10.0",
- "libc",
- "libgit2-sys",
- "log",
 ]
 
 [[package]]
@@ -10420,18 +10407,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libgit2-sys"
-version = "0.18.4+1.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b26f66f35e1871b22efcf7191564123d2a446ca0538cde63c23adfefa9b15b7"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "pkg-config",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10501,18 +10476,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "webrtc-sys",
-]
-
-[[package]]
-name = "libz-sys"
-version = "1.1.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b70e7a7df205e92a1a4cd9aaae7898dac0aa555503cc0a649494d0d60e7651d"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
 ]
 
 [[package]]
