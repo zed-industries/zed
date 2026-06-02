@@ -7151,7 +7151,12 @@ async fn test_remote_git_branches(
 
     cx_b.update(|cx| {
         repo_b.update(cx, |repository, _cx| {
-            repository.change_branch(new_branch.to_string())
+            repository.change_branch(git::repository::Branch {
+                is_head: false,
+                ref_name: format!("refs/heads/{new_branch}").into(),
+                upstream: None,
+                most_recent_commit: None,
+            })
         })
     })
     .await
@@ -7189,7 +7194,12 @@ async fn test_remote_git_branches(
 
     cx_b.update(|cx| {
         repo_b.update(cx, |repository, _cx| {
-            repository.change_branch("totally-new-branch".to_string())
+            repository.change_branch(git::repository::Branch {
+                is_head: false,
+                ref_name: "refs/heads/totally-new-branch".into(),
+                upstream: None,
+                most_recent_commit: None,
+            })
         })
     })
     .await

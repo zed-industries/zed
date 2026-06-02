@@ -189,7 +189,8 @@ message GitChangeBranch {
   uint64 project_id = 1;
   reserved 2;
   uint64 repository_id = 3;
-  string branch_name = 4;
+  reserved 4;
+  Branch branch = 5;
 }
 
 message GitRenameBranch {

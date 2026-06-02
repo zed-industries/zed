@@ -2999,11 +2999,16 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let branch_name = envelope.payload.branch_name;
+        let branch = envelope
+            .payload
+            .branch
+            .as_ref()
+            .map(proto_to_branch)
+            .context("missing branch")?;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.change_branch(branch_name)
+                repository_handle.change_branch(branch)
             })
             .await??;
 
@@ -7576,22 +7581,22 @@ impl Repository {
         )
     }
 
-    pub fn change_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn change_branch(&mut self, branch: Branch) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
             "change_branch",
-            Some(format!("git switch {branch_name}").into()),
+            Some(format!("git switch {}", branch.name()).into()),
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend.change_branch(branch_name).await
+                        backend.change_branch(branch).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
                             .request(proto::GitChangeBranch {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
-                                branch_name,
+                                branch: Some(branch_to_proto(&branch)),
                             })
                             .await?;
 
