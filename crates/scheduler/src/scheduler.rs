@@ -56,18 +56,25 @@ impl Priority {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SpawnTime(pub Instant);
+
 /// Metadata attached to runnables for debugging and profiling.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RunnableMeta {
     /// The source location where the task was spawned.
     pub location: &'static Location<'static>,
+    /// The moment the task was spawned.
+    pub spawned: SpawnTime,
 }
 
-impl std::fmt::Debug for RunnableMeta {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RunnableMeta")
-            .field("location", &self.location)
-            .finish()
+impl RunnableMeta {
+    #[track_caller]
+    pub fn new_with_callers_location() -> Self {
+        Self {
+            location: core::panic::Location::caller(),
+            spawned: SpawnTime(Instant::now()),
+        }
     }
 }
 

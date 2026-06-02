@@ -336,6 +336,20 @@ impl TestAppContext {
         self.test_platform.simulate_new_path_selection(select_path);
     }
 
+    /// Simulates responding to a `prompt_for_paths` ("Open") dialog.
+    pub fn simulate_path_prompt_response(
+        &self,
+        select_paths: impl FnOnce(&crate::PathPromptOptions) -> Option<Vec<std::path::PathBuf>>,
+    ) {
+        self.test_platform
+            .simulate_path_prompt_response(select_paths);
+    }
+
+    /// Returns true if there's a path selection dialog pending.
+    pub fn did_prompt_for_paths(&self) -> bool {
+        self.test_platform.did_prompt_for_paths()
+    }
+
     /// Simulates clicking a button in an platform-level alert dialog.
     #[track_caller]
     pub fn simulate_prompt_answer(&self, button: &str) {
@@ -1096,5 +1110,56 @@ impl AnyWindowHandle {
     ) -> Entity<V> {
         self.update(cx, |_, window, cx| cx.new(|cx| build_view(window, cx)))
             .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{PathPromptOptions, TestAppContext};
+    use std::path::PathBuf;
+
+    #[gpui::test]
+    async fn test_simulate_path_prompt_response(cx: &mut TestAppContext) {
+        assert!(!cx.did_prompt_for_paths());
+
+        let receiver = cx.update(|cx| {
+            cx.prompt_for_paths(PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: true,
+                prompt: None,
+            })
+        });
+        assert!(cx.did_prompt_for_paths());
+
+        let selected = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+        cx.simulate_path_prompt_response({
+            let selected = selected.clone();
+            move |options| {
+                assert!(options.multiple);
+                Some(selected)
+            }
+        });
+        assert!(!cx.did_prompt_for_paths());
+
+        let response = receiver.await.unwrap().unwrap();
+        assert_eq!(response, Some(selected));
+    }
+
+    #[gpui::test]
+    async fn test_simulate_path_prompt_cancellation(cx: &mut TestAppContext) {
+        let receiver = cx.update(|cx| {
+            cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                multiple: false,
+                prompt: None,
+            })
+        });
+
+        cx.simulate_path_prompt_response(|_options| None);
+
+        let response = receiver.await.unwrap().unwrap();
+        assert_eq!(response, None);
     }
 }
