@@ -431,7 +431,6 @@ impl AgentServerStore {
                                         distribution_env: agent.env.clone(),
                                         settings_env: env.clone(),
                                         new_version_available_tx: None,
-                                        loading_status_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -1269,7 +1268,6 @@ struct LocalRegistryNpxAgent {
     distribution_env: HashMap<String, String>,
     settings_env: HashMap<String, String>,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
-    loading_status_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalRegistryNpxAgent {
@@ -1283,14 +1281,6 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 
     fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
         self.new_version_available_tx = Some(tx);
-    }
-
-    fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
-        self.loading_status_tx.take()
-    }
-
-    fn set_loading_status_tx(&mut self, tx: watch::Sender<Option<String>>) {
-        self.loading_status_tx = Some(tx);
     }
 
     fn get_command(
@@ -1307,7 +1297,6 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
-        let mut loading_status_tx = self.loading_status_tx.take();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1323,9 +1312,6 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join(sanitize_path_component(&registry_id));
 
             if !fs.is_dir(&prefix_dir).await {
-                if let Some(tx) = loading_status_tx.as_mut() {
-                    tx.send(Some("Installing…".to_string())).ok();
-                }
                 fs.create_dir(&prefix_dir).await?;
             }
 
