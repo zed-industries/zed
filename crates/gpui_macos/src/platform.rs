@@ -31,7 +31,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
+    PlatformWindow, Result, SystemMenuType, SystemNotification, SystemNotificationId,
+    SystemNotificationPermission, Task, ThermalState, WindowAppearance, WindowParams,
 };
 use itertools::Itertools;
 use objc::{
@@ -152,6 +153,11 @@ unsafe fn build_classes() {
             decl.add_method(
                 sel!(onThermalStateChange:),
                 on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
+                crate::notifications::will_present_notification
+                    as extern "C" fn(&mut Object, Sel, id, id, id),
             );
 
             decl.register()
@@ -717,6 +723,56 @@ impl Platform for MacPlatform {
             .spawn(async { done_rx.await.map_err(|e| anyhow!(e))? })
     }
 
+    fn system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        let (headless, executor) = {
+            let state = self.0.lock();
+            (state.headless, state.background_executor.clone())
+        };
+        if headless {
+            return Task::ready(Ok(SystemNotificationPermission::Unsupported));
+        }
+
+        crate::notifications::system_notification_permission(executor)
+    }
+
+    fn request_system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        let (headless, executor) = {
+            let state = self.0.lock();
+            (state.headless, state.background_executor.clone())
+        };
+        if headless {
+            return Task::ready(Ok(SystemNotificationPermission::Unsupported));
+        }
+
+        crate::notifications::request_system_notification_permission(executor)
+    }
+
+    fn show_system_notification(&self, notification: SystemNotification) -> Task<Result<()>> {
+        let (headless, executor) = {
+            let state = self.0.lock();
+            (state.headless, state.background_executor.clone())
+        };
+        if headless {
+            return Task::ready(Err(anyhow!(
+                "system notifications are not supported in headless apps"
+            )));
+        }
+
+        crate::notifications::show_system_notification(executor, notification)
+    }
+
+    fn remove_system_notification(&self, id: SystemNotificationId) -> Task<Result<()>> {
+        let (headless, executor) = {
+            let state = self.0.lock();
+            (state.headless, state.background_executor.clone())
+        };
+        if headless {
+            return Task::ready(Ok(()));
+        }
+
+        crate::notifications::remove_system_notification(executor, id)
+    }
+
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.0.lock().open_urls = Some(callback);
     }
@@ -1188,6 +1244,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+        crate::notifications::set_delegate(this as id);
 
         let notification_center: *mut Object =
             msg_send![class!(NSNotificationCenter), defaultCenter];
