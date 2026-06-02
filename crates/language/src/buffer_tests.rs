@@ -869,10 +869,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     // of a matched container surface alongside it.
     assert_eq!(
         search(&outline, "dp p", cx).await,
-        &[
-            ("impl Drop for Person", vec![5, 14]),
-            ("fn drop", vec![]),
-        ]
+        &[("impl Drop for Person", vec![5, 14]), ("fn drop", vec![]),]
     );
     assert_eq!(
         search(&outline, "dpn", cx).await,

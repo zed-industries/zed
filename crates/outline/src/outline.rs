@@ -355,9 +355,7 @@ impl PickerDelegate for OutlineViewDelegate {
                                 .map(|m| (ix, m.score))
                         })
                         .max_by(|(ix_a, a), (ix_b, b)| {
-                            OrderedFloat(*a)
-                                .cmp(&OrderedFloat(*b))
-                                .then(ix_b.cmp(ix_a))
+                            OrderedFloat(*a).cmp(&OrderedFloat(*b)).then(ix_b.cmp(ix_a))
                         })
                         .map(|(ix, _)| ix)
                         .unwrap_or(0)
