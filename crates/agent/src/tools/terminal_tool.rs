@@ -141,6 +141,16 @@ pub struct SandboxedTerminalToolInput {
     /// triggers a user approval prompt.
     #[serde(default)]
     pub unsandboxed: Option<bool>,
+    /// A short justification for why this command needs the sandbox
+    /// permission(s) it requests (`allow_network`, `fs_write_paths`,
+    /// `allow_fs_write_all`, or `unsandboxed`).
+    ///
+    /// Required whenever you request any of those permissions; omit it for
+    /// ordinary commands that request none. Write it in your own voice — it
+    /// is shown to the user, attributed to you, when they're asked to approve
+    /// the request.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -149,6 +159,7 @@ struct TerminalSandboxInput {
     fs_write_paths: Vec<String>,
     allow_fs_write_all: Option<bool>,
     unsandboxed: Option<bool>,
+    reason: Option<String>,
 }
 
 struct TerminalToolRequest {
@@ -189,6 +200,7 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
                 fs_write_paths: input.fs_write_paths,
                 allow_fs_write_all: input.allow_fs_write_all,
                 unsandboxed: input.unsandboxed,
+                reason: input.reason,
             }),
         }
     }
@@ -371,8 +383,20 @@ async fn run_terminal_tool(
     };
 
     if request.needs_escalation() {
+        let reason = sandbox_input
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty());
+        let Some(reason) = reason else {
+            return Err("This command requests elevated sandbox permissions, so a `reason` is \
+                 required: briefly justify why the command needs them, then run it again."
+                .to_string());
+        };
         let title = sandbox_approval_title(&request);
-        let approve = cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
+        let approve = cx.update(|cx| {
+            event_stream.authorize_sandbox(title, request.clone(), reason.to_string(), cx)
+        });
         if let Err(error) = approve.await {
             if want_unsandboxed {
                 return Ok(format!(
@@ -2465,6 +2489,7 @@ mod tests {
             "command": "echo hi",
             "cd": "root",
             "allow_fs_write": true,
+            "reason": "needs to write outside the project",
         }))
         .expect("legacy allow_fs_write should deserialize");
 
@@ -2557,6 +2582,7 @@ mod tests {
             "allow_network": true,
             "allow_fs_write_all": true,
             "unsandboxed": true,
+            "reason": "needs full access for this task",
         }))
         .expect("unsandboxed input should deserialize");
 
