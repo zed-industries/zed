@@ -9538,7 +9538,7 @@ impl ThreadView {
                                 .color(Color::Muted),
                         )
                         .tooltip({
-                            let full_path = full_path.clone();
+                            let full_path = full_path;
                             move |_, cx| {
                                 Tooltip::with_meta("Open File", None, full_path.clone(), cx)
                             }
