@@ -5864,95 +5864,6 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-async fn test_terminal_tail_tool_schema_gated_by_feature_flag(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry = cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let thread_without_flag = cx.new(|cx| {
-        let environment = Rc::new(
-            FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx)),
-        );
-        let mut thread = Thread::new(
-            project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
-            Templates::new(),
-            Some(model.clone() as Arc<dyn LanguageModel>),
-            cx,
-        );
-        thread.add_default_tools(environment, cx);
-        thread
-    });
-
-    thread_without_flag
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["hello"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let completion = model.pending_completions().pop().unwrap();
-    let terminal_tool = completion
-        .tools
-        .iter()
-        .find(|tool| tool.name == TerminalTool::NAME)
-        .expect("terminal tool should be present");
-    let schema_text = terminal_tool.input_schema.to_string();
-    assert!(!schema_text.contains("head_lines"));
-    assert!(!schema_text.contains("tail_lines"));
-    assert!(!terminal_tool.description.contains("head_lines"));
-    assert!(!terminal_tool.description.contains("tail_lines"));
-    model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    cx.update(|cx| {
-        cx.update_flags(false, vec!["terminal-tail".to_string()]);
-    });
-
-    let thread_with_flag = cx.new(|cx| {
-        let environment = Rc::new(
-            FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx)),
-        );
-        let mut thread = Thread::new(
-            project,
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            Some(model.clone() as Arc<dyn LanguageModel>),
-            cx,
-        );
-        thread.add_default_tools(environment, cx);
-        thread
-    });
-
-    thread_with_flag
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["hello again"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let completion = model.pending_completions().pop().unwrap();
-    let terminal_tool = completion
-        .tools
-        .iter()
-        .find(|tool| tool.name == TerminalTool::NAME)
-        .expect("terminal tool should be present");
-    let schema_text = terminal_tool.input_schema.to_string();
-    assert!(schema_text.contains("head_lines"));
-    assert!(schema_text.contains("tail_lines"));
-    assert!(terminal_tool.description.contains("head_lines"));
-    assert!(terminal_tool.description.contains("tail_lines"));
-}
-
-#[gpui::test]
 async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -6064,6 +5975,121 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         "expected rename tool to still be exposed, \
          but completion tools were: {tool_names:?}"
     );
+}
+
+#[gpui::test]
+async fn test_sibling_thread_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // `CreateThreadToolFeatureFlag::enabled_for_staff()` returns true, which
+    // means tests in debug builds resolve it to ON unless we explicitly
+    // override it via `FeatureFlagsSettings`. Register the settings type and
+    // install an (empty) `FeatureFlagStore` global so the `cx.has_flag` path
+    // actually consults overrides instead of falling back to the
+    // staff-debug-build default.
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, _| {
+            store.register_setting::<feature_flags::FeatureFlagsSettings>();
+        });
+        cx.update_flags(false, vec![]);
+    });
+
+    fn set_flag_override(value: &str, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .feature_flags
+                        .get_or_insert_default()
+                        .insert("create-thread-tool".to_string(), value.to_string());
+                });
+            });
+        });
+    }
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone() as Arc<dyn LanguageModel>),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    let sibling_tool_names = [CreateThreadTool::NAME, ListAgentsAndModelsTool::NAME];
+
+    // Like the LSP/rename tools, sibling-thread tools are registered
+    // unconditionally and gated only at exposure time. The registration must
+    // be visible regardless of the flag's current value.
+    thread.read_with(cx, |thread, _| {
+        for name in &sibling_tool_names {
+            assert!(
+                thread.has_registered_tool(name),
+                "expected sibling-thread tool {name} to be registered"
+            );
+        }
+    });
+
+    // Flag explicitly off: a completion request must omit the tools.
+    set_flag_override("off", cx);
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = model.pending_completions().pop().unwrap();
+    let tool_names = tool_names_for_completion(&completion);
+    for name in &sibling_tool_names {
+        assert!(
+            !tool_names.iter().any(|t| t == name),
+            "expected {name} to be hidden when create-thread-tool flag is off, \
+             but completion tools were: {tool_names:?}"
+        );
+    }
+    // Sanity check: an unrelated default tool should still be exposed.
+    assert!(
+        tool_names.iter().any(|t| t == ReadFileTool::NAME),
+        "expected non-sibling-thread tools to still be exposed, got: {tool_names:?}"
+    );
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Flag explicitly on: the next completion request must include both tools.
+    set_flag_override("on", cx);
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = model.pending_completions().pop().unwrap();
+    let tool_names = tool_names_for_completion(&completion);
+    for name in &sibling_tool_names {
+        assert!(
+            tool_names.iter().any(|t| t == name),
+            "expected {name} to be exposed when create-thread-tool flag is on, \
+             but completion tools were: {tool_names:?}"
+        );
+    }
 }
 
 #[gpui::test]

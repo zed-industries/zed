@@ -70,13 +70,13 @@ use serde_json::json;
 use settings::SettingsStore;
 #[cfg(not(windows))]
 use std::os;
-use std::process::Command;
 use std::{
     cell::RefCell,
     env, mem,
     num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
+    process::Command,
     rc::Rc,
     str::FromStr,
     sync::{Arc, OnceLock, atomic},
@@ -11129,7 +11129,7 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     std::fs::write(root_path.join("project/a.txt"), "b").unwrap();
     git_add("a.txt", &repo);
     git_commit("improve letter", &repo);
-    git_cherry_pick(&commit, &repo);
+    git_cherry_pick_expect_conflict(&commit, &repo);
     std::fs::read_to_string(root_path.join("project/.git/CHERRY_PICK_HEAD"))
         .expect("No CHERRY_PICK_HEAD");
     pretty_assertions::assert_eq!(
@@ -12885,13 +12885,15 @@ fn git_rev_parse(rev: &str, work_dir: &Path) -> String {
 #[cfg(any())]
 #[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_cherry_pick(commit: &str, work_dir: &Path) {
+fn git_cherry_pick_expect_conflict(commit: &str, work_dir: &Path) {
     let output = git_cmd(work_dir)
         .args(["cherry-pick", "--no-commit", commit])
         .output()
         .expect("Failed to run git cherry-pick");
-    // cherry-pick with conflicts exits non-zero, so don't assert success
-    let _ = output;
+    assert!(
+        !output.status.success(),
+        "git cherry-pick unexpectedly succeeded"
+    );
 }
 
 #[cfg(any())]

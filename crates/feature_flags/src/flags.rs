@@ -71,6 +71,21 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
 }
 register_feature_flag!(UpdatePlanToolFeatureFlag);
 
+/// Gates the `create_thread` and `list_agents_and_models` tools, which let
+/// the agent spawn independent sibling threads that show up in the agent
+/// panel sidebar.
+pub struct CreateThreadToolFeatureFlag;
+
+impl FeatureFlag for CreateThreadToolFeatureFlag {
+    const NAME: &'static str = "create-thread-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(CreateThreadToolFeatureFlag);
+
 pub struct UpdateTitleToolFeatureFlag;
 
 impl FeatureFlag for UpdateTitleToolFeatureFlag {
@@ -162,15 +177,3 @@ impl FeatureFlag for SandboxingFeatureFlag {
     }
 }
 register_feature_flag!(SandboxingFeatureFlag);
-
-pub struct TerminalTailFeatureFlag;
-
-impl FeatureFlag for TerminalTailFeatureFlag {
-    const NAME: &'static str = "terminal-tail";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(TerminalTailFeatureFlag);
