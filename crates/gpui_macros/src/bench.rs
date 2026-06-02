@@ -34,13 +34,11 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
             criterion.bench_function(stringify!(#outer_fn_name), {
                 let report = report.clone();
                 move |bencher| {
-                    let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                        gpui_platform::current_platform(true),
+                    let mut cx = gpui::BenchAppContext::new_with_report(
                         Some(stringify!(#outer_fn_name)),
-                        bencher,
                         report.clone(),
                     );
-                    #inner_fn_name(&mut cx);
+                    #inner_fn_name(bencher, &mut cx);
                     cx.teardown();
                 }
             });

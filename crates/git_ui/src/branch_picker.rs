@@ -122,7 +122,29 @@ pub fn select_popover(
     })
 }
 
-pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut App)>;
+pub fn select_modal(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    selected_branch: Option<SharedString>,
+    on_select: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    let list = BranchList::new_select(
+        workspace,
+        repository,
+        BranchListStyle::Modal,
+        rems(34.),
+        selected_branch,
+        on_select,
+        window,
+        cx,
+    );
+    list.focus_handle(cx).focus(window, cx);
+    list
+}
+
+pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut Window, &mut App)>;
 
 pub fn create_embedded(
     workspace: WeakEntity<Workspace>,
@@ -1288,7 +1310,7 @@ impl PickerDelegate for BranchListDelegate {
                 if let BranchSelectionBehavior::Select { on_select, .. } =
                     &self.branch_selection_behavior
                 {
-                    on_select(branch.clone(), cx);
+                    on_select(branch.clone(), window, cx);
                     cx.emit(DismissEvent);
                     return;
                 }
@@ -1526,7 +1548,7 @@ impl PickerDelegate for BranchListDelegate {
                     h_flex()
                         .w_full()
                         .gap_2p5()
-                        .flex_grow()
+                        .flex_grow_1()
                         .child(
                             Icon::new(entry_icon)
                                 .color(if is_checked_branch {

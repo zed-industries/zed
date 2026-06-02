@@ -293,6 +293,18 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 
 To add custom commit instructions for the model, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
+To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
+
+```json [settings]
+{
+  "agent": {
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+These instructions are sent to the model in addition to any project rules files (such as `.rules` or `AGENTS.md`). To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
 > See [the "Migrating to Skills" docs](./ai/rules.md#migrating-to-skills) in the Rules page for more information.
 

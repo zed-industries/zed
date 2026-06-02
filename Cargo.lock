@@ -3265,6 +3265,8 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.27.2",
+ "uuid",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -4967,7 +4969,6 @@ dependencies = [
 name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "anyhow",
  "bitflags 2.10.0",
  "client",
@@ -5005,6 +5006,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "tasks_ui",
+ "terminal",
  "terminal_view",
  "text",
  "theme",
@@ -5569,6 +5571,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.32",
+ "git",
  "gpui",
  "heapless",
  "indoc",
@@ -7618,7 +7621,6 @@ dependencies = [
  "collections",
  "derive_more",
  "futures 0.3.32",
- "git2",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -7643,18 +7645,6 @@ dependencies = [
  "util",
  "uuid",
  "ztracing",
-]
-
-[[package]]
-name = "git2"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e"
-dependencies = [
- "bitflags 2.10.0",
- "libc",
- "libgit2-sys",
- "log",
 ]
 
 [[package]]
@@ -7718,7 +7708,6 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
- "alacritty_terminal",
  "anyhow",
  "askpass",
  "buffer_diff",
@@ -7764,6 +7753,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "telemetry",
+ "terminal",
  "theme",
  "theme_settings",
  "time",
@@ -10419,18 +10409,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libgit2-sys"
-version = "0.18.4+1.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b26f66f35e1871b22efcf7191564123d2a446ca0538cde63c23adfefa9b15b7"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "pkg-config",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10500,18 +10478,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "webrtc-sys",
-]
-
-[[package]]
-name = "libz-sys"
-version = "1.1.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b70e7a7df205e92a1a4cd9aaae7898dac0aa555503cc0a649494d0d60e7651d"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
 ]
 
 [[package]]
@@ -14312,7 +14278,6 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "git",
- "git2",
  "git_hosting_providers",
  "globset",
  "gpui",
@@ -15502,8 +15467,10 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "action_log",
  "agent",
+ "agent-client-protocol",
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
@@ -15524,7 +15491,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git2",
  "git_hosting_providers",
  "gpui",
  "gpui_platform",
@@ -15593,7 +15559,6 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 name = "repl"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
  "async-task",
@@ -17298,6 +17263,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "unicode-segmentation",
  "util",
  "workspace",
  "zed_actions",
@@ -18835,6 +18801,7 @@ dependencies = [
  "urlencoding",
  "util",
  "util_macros",
+ "vte",
  "windows 0.61.3",
 ]
 
@@ -20383,7 +20350,6 @@ dependencies = [
  "dunce",
  "futures 0.3.32",
  "futures-lite 1.13.0",
- "git2",
  "globset",
  "gpui_util",
  "itertools 0.14.0",
