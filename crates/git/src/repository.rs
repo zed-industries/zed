@@ -75,6 +75,11 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
     }
 }
 
+fn normalize_git_metadata_path(path: PathBuf) -> Result<PathBuf> {
+    paths::normalize_lexically(&path)
+        .map_err(|_| anyhow!("git metadata path escapes its filesystem root: {path:?}"))
+}
+
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
 pub struct CommitData {
@@ -1129,13 +1134,16 @@ impl RealGitRepository {
         log::info!(
             "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
         );
-        let working_directory = dotgit_path
-            .parent()
-            .context(".git has no parent")?
-            .to_path_buf();
+        let dotgit_parent = dotgit_path.parent().context(".git has no parent")?;
+        let has_working_directory =
+            dotgit_path.is_file() || dotgit_path.file_name() == Some(OsStr::new(".git"));
+        let working_directory = if has_working_directory {
+            normalize_git_metadata_path(dotgit_parent.to_path_buf())?
+        } else {
+            normalize_git_metadata_path(dotgit_path.to_path_buf())?
+        };
 
         let git_dir = if dotgit_path.is_file() {
-            // Worktree gitdir file: contains `gitdir: <path>`
             let content =
                 std::fs::read_to_string(dotgit_path).context("reading .git worktree file")?;
             let path_str = content
@@ -1143,13 +1151,14 @@ impl RealGitRepository {
                 .context("expected .git file to start with 'gitdir: '")?
                 .trim();
             let resolved = PathBuf::from(path_str);
-            if resolved.is_absolute() {
+            let resolved = if resolved.is_absolute() {
                 resolved
             } else {
-                working_directory.join(resolved)
-            }
+                dotgit_parent.join(resolved)
+            };
+            normalize_git_metadata_path(resolved)?
         } else {
-            dotgit_path.to_path_buf()
+            normalize_git_metadata_path(dotgit_path.to_path_buf())?
         };
 
         let common_dir = {
@@ -1159,11 +1168,12 @@ impl RealGitRepository {
                     std::fs::read_to_string(&commondir_file).context("reading commondir file")?;
                 let path_str = content.trim();
                 let resolved = PathBuf::from(path_str);
-                if resolved.is_absolute() {
+                let resolved = if resolved.is_absolute() {
                     resolved
                 } else {
                     git_dir.join(resolved)
-                }
+                };
+                normalize_git_metadata_path(resolved)?
             } else {
                 git_dir.clone()
             }
