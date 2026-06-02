@@ -13,10 +13,243 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     mem,
-    ops::Range,
+    ops::{Deref, DerefMut, Range},
     rc::Rc,
     sync::Arc,
 };
+
+/// An [`Element`] that renders text.
+///
+/// In general, [`Text`] objects should be created via the [`text`] macro:
+/// ```rust
+/// # use gpui::*;
+/// # fn render() -> impl IntoElement {
+/// div().child(text!("hello"))
+/// # }
+/// ```
+/// ## IDs and Accessibility
+///
+/// [`Text`] elements have an ID. This ID is primarily used to produce nodes in
+/// the accessibility tree, which allows the text to be visible to screen
+/// readers and other assistive technologies.
+///
+/// This ID is stable across frames. If the same text, with the same ID, is
+/// present in two consecutive frames, no updates are reported to the screen
+/// reader. If the text changes, but the ID stays the same, then the screen
+/// reader will be notified that a text node's content has changed. **However**,
+/// if the ID changes, then the screen reader will be notified that a node has
+/// been removed, and a new node has been added.
+///
+/// When using the [`text`] macro, each invocation of the macro will get a
+/// unique ID, derived from its position in the source code (filename, line, and
+/// column). For example:
+/// ```rust
+/// # use gpui::*;
+/// let x = text!("hello");
+/// let y = text!("hello");
+/// // not equal, because different `text!` invocations produced them
+/// assert_ne!(x.id(), y.id());
+///
+/// fn make_text(s: &str) -> Text { text!(s) }
+/// let x = make_text("hello");
+/// let y = make_text("hello");
+/// // equal, because the same `text!` invocation produced them
+/// assert_eq!(x.id(), y.id());
+/// ```
+/// When the contents of an invocation of [`text`] do not change, this
+/// distinction is less relevant (with the caveat that you still need to take
+/// care to ensure that duplicate IDs do not appear).
+///
+/// However, when a [`text`] invocation's argument *does* change, you should
+/// consider whether this change should be reported as a node "updating its
+/// contents", or an old node being destroyed and a new node being created.
+#[derive(Debug, Clone)]
+pub struct Text {
+    id: Option<ElementId>,
+    text: SharedString,
+}
+
+impl Text {
+    /// Create a new [`Text`] element with a specific ID.
+    ///
+    /// If you want a unique ID to be assigned automatically, use the [`text`]
+    /// macro. The docs for [`Text`] have more detail about choosing IDs.
+    #[inline]
+    pub const fn new(id: ElementId, text: SharedString) -> Self {
+        Self { id: Some(id), text }
+    }
+
+    /// Create a new [`Text`] element that is inaccessible to screen readers.
+    ///
+    /// In order for text to be accessible to screen readers, it must have an ID
+    /// provided. If you want text to be accessible, either use [`text`] to have
+    /// an ID automatically assigned, or use [`Text::new`] to manually assign an
+    /// ID.
+    ///
+    /// This function is intended for use inside custom UI components, where
+    /// accessible properties may be set on parent containers.
+    #[inline]
+    pub const fn new_inaccessible(text: SharedString) -> Self {
+        Self { id: None, text }
+    }
+
+    /// The ID of this [`Text`] element.
+    #[inline]
+    pub const fn id(&self) -> Option<&ElementId> {
+        self.id.as_ref()
+    }
+
+    /// Produce a new [`Text`] with the given `id`.
+    pub fn with_id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// The text that this [`Text`] element will display.
+    #[inline]
+    pub const fn text(&self) -> &SharedString {
+        &self.text
+    }
+}
+
+impl Deref for Text {
+    type Target = SharedString;
+    fn deref(&self) -> &Self::Target {
+        &self.text
+    }
+}
+
+impl DerefMut for Text {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.text
+    }
+}
+
+/// Trivial hash function for the location information produced by the [`text`]
+/// macro. Not covered by semver guarantees. Performance is not particularly
+/// significant because it's only used on small strings in const contexts.
+#[doc(hidden)]
+pub const fn __hash_text_macro_location_unstable_do_not_use(s: &'static str) -> u64 {
+    const BASIS: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+
+    let bytes = s.as_bytes();
+    let mut hash = BASIS;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(PRIME);
+        i += 1;
+    }
+    hash
+}
+
+/// Create a new [`Text`] element.
+///
+/// ```rust
+/// # use gpui::*;
+/// let a = text!("hello");
+/// let b = text!(id = "farewell-message", "hello");
+///
+/// ```
+///
+/// Text created with this macro is *accessible*. The macro generates an ID
+/// based on the source location. See the docs for [`Text`] for a more in-depth
+/// explanation of the significance of the ID of a [`Text`] element.
+#[macro_export]
+macro_rules! text {
+    (id = $id:expr, $text:expr) => {{ $crate::Text::new($id.into(), $text.into()) }};
+    ($text:expr) => {{
+        const ID: &'static str = concat!(file!(), "/", line!(), ":", column!());
+        const HASH: u64 = $crate::__hash_text_macro_location_unstable_do_not_use(ID);
+        $crate::Text::new($crate::ElementId::Integer(HASH), $text.into())
+    }};
+}
+
+impl IntoElement for Text {
+    type Element = Self;
+    #[inline]
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for Text {
+    type RequestLayoutState = TextLayout;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        self.id.clone()
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        if self.id.is_some() {
+            Some(accesskit::Role::Label)
+        } else {
+            None
+        }
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        node.set_value(self.text.to_string());
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        <SharedString as Element>::request_layout(&mut self.text, id, inspector_id, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        <SharedString as Element>::prepaint(
+            &mut self.text,
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            window,
+            cx,
+        )
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        <SharedString as Element>::paint(
+            &mut self.text,
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        );
+    }
+}
 
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
@@ -807,6 +1040,14 @@ impl Element for InteractiveText {
         None
     }
 
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        Some(accesskit::Role::Label)
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        node.set_value(self.text.text.to_string());
+    }
+
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -1009,6 +1250,8 @@ impl IntoElement for InteractiveText {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_into_element_for() {
         use crate::{ParentElement as _, SharedString, div};
@@ -1018,5 +1261,24 @@ mod tests {
         let _ = div().child("String".to_string());
         let _ = div().child(Cow::Borrowed("Cow"));
         let _ = div().child(SharedString::from("SharedString"));
+    }
+
+    #[test]
+    fn text_macro_id() {
+        // one call to `text!` = one id
+        fn make_text_stable_id(happy: bool) -> Text {
+            text!(if happy { "happy" } else { "sad" })
+        }
+
+        // two calls to `text!` = two ids
+        fn make_text_unstable_id(happy: bool) -> Text {
+            if happy { text!("happy") } else { text!("sad") }
+        }
+
+        assert_eq!(make_text_stable_id(false).id, make_text_stable_id(true).id);
+        assert_ne!(
+            make_text_unstable_id(false).id,
+            make_text_unstable_id(true).id
+        );
     }
 }

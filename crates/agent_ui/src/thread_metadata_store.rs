@@ -1831,6 +1831,7 @@ mod tests {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            sandboxed_terminal_temp_dir: None,
         }
     }
 
@@ -1887,7 +1888,7 @@ mod tests {
             .unwrap();
         let mut vcx = VisualTestContext::from_window(multi_workspace.into(), cx);
         let panel = workspace_entity.update_in(&mut vcx, |workspace, window, cx| {
-            cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx))
+            cx.new(|cx| crate::AgentPanel::new(workspace, window, cx))
         });
         (panel, vcx)
     }
