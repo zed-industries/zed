@@ -8,7 +8,7 @@ use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
-use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
+use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
 use agent_settings::UserAgentsMd;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
@@ -614,13 +614,13 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
-    pub skill_loading_errors: Vec<SkillLoadingError>,
-    /// Errors the user has explicitly dismissed. Each entry is matched against
-    /// emitted errors by full equality; when an error no longer appears in the
-    /// emitted list (i.e. the underlying file was fixed or removed), it's
+    pub skill_loading_issues: Vec<SkillLoadingIssue>,
+    /// Issues the user has explicitly dismissed. Each entry is matched against
+    /// emitted issues by full equality; when an issue no longer appears in the
+    /// latest replacement list (because the underlying file was fixed/removed), it's
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
-    dismissed_skill_loading_errors: HashSet<SkillLoadingError>,
+    dismissed_skill_loading_issues: HashSet<SkillLoadingIssue>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -796,9 +796,9 @@ impl ThreadView {
         ));
 
         // If this thread is backed by a NativeAgent, listen for skill loading
-        // errors so we can surface them as banners. The agent emits a single
+        // issues so we can surface them as banners. The agent emits a single
         // replacement-style event per project refresh, so we overwrite our
-        // local list rather than appending — this also clears stale errors
+        // local list rather than appending — this also clears stale issues
         // once a user resolves them.
         if let Some(native_connection) = thread
             .read(cx)
@@ -809,21 +809,21 @@ impl ThreadView {
             let project_id = thread.read(cx).project().entity_id();
             subscriptions.push(cx.subscribe(
                 &native_connection.0,
-                move |this: &mut Self, _agent, event: &SkillLoadingErrorsUpdated, cx| {
+                move |this: &mut Self, _agent, event: &SkillLoadingIssuesUpdated, cx| {
                     if event.project_id != project_id {
                         return;
                     }
-                    // Drop dismissals for errors that no longer appear in the emitted
+                    // Drop dismissals for issues that no longer appear in the emitted
                     // list — the underlying file must have been fixed or removed, so a
                     // future regression should re-show.
-                    this.dismissed_skill_loading_errors
-                        .retain(|dismissed| event.errors.contains(dismissed));
+                    this.dismissed_skill_loading_issues
+                        .retain(|dismissed| event.issues.contains(dismissed));
 
-                    // Show only errors that haven't been dismissed.
-                    this.skill_loading_errors = event
-                        .errors
+                    // Show only issues that haven't been dismissed.
+                    this.skill_loading_issues = event
+                        .issues
                         .iter()
-                        .filter(|e| !this.dismissed_skill_loading_errors.contains(e))
+                        .filter(|issue| !this.dismissed_skill_loading_issues.contains(issue))
                         .cloned()
                         .collect();
                     cx.notify();
@@ -924,8 +924,8 @@ impl ThreadView {
             show_codex_windows_warning,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
-            skill_loading_errors: Vec::new(),
-            dismissed_skill_loading_errors: HashSet::default(),
+            skill_loading_issues: Vec::new(),
+            dismissed_skill_loading_issues: HashSet::default(),
         };
 
         this.sync_generating_indicator(cx);
@@ -9475,20 +9475,27 @@ impl ThreadView {
             )
     }
 
-    fn render_skill_loading_errors(&self, cx: &mut Context<Self>) -> Vec<Callout> {
-        self.skill_loading_errors
+    fn render_skill_loading_issues(&self, cx: &mut Context<Self>) -> Vec<Callout> {
+        self.skill_loading_issues
             .iter()
             .enumerate()
-            .map(|(index, error)| {
-                let abs_path = error.path.clone();
+            .map(|(index, issue)| {
+                let abs_path = issue.path.clone();
                 let workspace = self.workspace.clone();
-                let path_label = error.path.display().to_string();
-                let target = error.clone();
+                let path_label = issue.path.display().to_string();
+                let target = issue.clone();
+                let title = match issue.kind {
+                    SkillLoadingIssueKind::LoadFailed => "Skill failed to load",
+                    SkillLoadingIssueKind::DescriptionTooLong => "Skill loaded with warning",
+                    SkillLoadingIssueKind::CatalogBudgetExceeded => {
+                        "Skill omitted from model catalog"
+                    }
+                };
                 Callout::new()
                     .icon(IconName::Warning)
                     .severity(Severity::Warning)
-                    .title("Skill failed to load")
-                    .description(format!("{}\n{path_label}", error.message))
+                    .title(title)
+                    .description(format!("{}\n{path_label}", issue.message))
                     .actions_slot(
                         Button::new(("open-skill-file", index), "Open File").on_click(cx.listener(
                             move |_, _, window, cx| {
@@ -9509,13 +9516,13 @@ impl ThreadView {
                         )),
                     )
                     .dismiss_action(
-                        IconButton::new(("dismiss-skill-error", index), IconName::Close)
+                        IconButton::new(("dismiss-skill-issue", index), IconName::Close)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Dismiss"))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.skill_loading_errors.retain(|e| *e != target);
-                                this.dismissed_skill_loading_errors.insert(target.clone());
+                                this.skill_loading_issues.retain(|issue| *issue != target);
+                                this.dismissed_skill_loading_issues.insert(target.clone());
                                 cx.notify();
                             })),
                     )
@@ -10057,7 +10064,7 @@ impl Render for ThreadView {
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
-            .children(self.render_skill_loading_errors(cx))
+            .children(self.render_skill_loading_issues(cx))
             .children(self.render_activity_bar(window, cx))
             .when(self.show_external_source_prompt_warning, |this| {
                 this.child(self.render_external_source_prompt_warning(cx))
