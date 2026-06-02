@@ -22,7 +22,7 @@ Zed is billed on a monthly basis based on the date you initially subscribe. You'
 
 ### Zed Pro threshold billing {#threshold-billing}
 
-For individual Zed Pro subscriptions, Zed uses threshold billing to ensure timely payment collection for hosted model usage. Threshold billing controls when already-allowed token usage is invoiced during the month; your [monthly spend limit](./plans-and-usage.md#usage-spend-limits) still controls when hosted model usage stops.
+For individual Zed Pro subscriptions, Zed uses threshold billing to ensure timely payment collection. Threshold billing controls when already-allowed token usage is invoiced during the month; your [monthly spend limit](./plans-and-usage.md#usage-spend-limits) still controls when hosted model usage stops.
 
 Threshold invoices start at $10 of incremental token spend. For higher token usage, Zed may automatically raise your invoicing threshold in $10 increments, up to $100, so you receive fewer mid-cycle invoices. Once raised, the invoicing threshold is not automatically lowered during the same subscription.
 
