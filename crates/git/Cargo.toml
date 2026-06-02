@@ -21,7 +21,6 @@ async-trait.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
-hex.workspace = true
 http_client.workspace = true
 itertools.workspace = true
 log.workspace = true

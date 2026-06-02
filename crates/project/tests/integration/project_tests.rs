@@ -11134,7 +11134,7 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
         .expect("No CHERRY_PICK_HEAD");
     pretty_assertions::assert_eq!(
         git_status(&repo),
-        collections::HashMap::from_iter([("a.txt".to_owned(), "UU".to_owned())])
+        collections::HashMap::from_iter([("a.txt".to_owned(), GIT_STATUS_CONFLICTED.to_owned())])
     );
     tree.flush_fs_events(cx).await;
     project
@@ -12734,6 +12734,9 @@ fn assert_entry_git_state(
         "expected {path} to have is_ignored: {is_ignored}"
     );
 }
+
+#[cfg(any())]
+const GIT_STATUS_CONFLICTED: &str = "UU";
 
 #[allow(clippy::disallowed_methods)]
 fn git_cmd(work_dir: &Path) -> Command {

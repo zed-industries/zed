@@ -1181,37 +1181,35 @@ impl RealGitRepository {
         })
     }
 
-    fn working_directory(&self) -> Result<PathBuf> {
-        Ok(self.working_directory.clone())
+    fn working_directory(&self) -> PathBuf {
+        self.working_directory.clone()
     }
 
-    fn git_binary_in_worktree(&self) -> Result<GitBinary> {
-        Ok(GitBinary::new(
+    fn git_binary_in_worktree(&self) -> GitBinary {
+        GitBinary::new(
             self.any_git_binary_path.clone(),
-            self.working_directory()
-                .with_context(|| "Can't run git commands without a working directory")?,
+            self.working_directory(),
             self.path(),
             self.executor.clone(),
             self.is_trusted(),
-        ))
+        )
     }
 
-    fn git_binary(&self) -> Result<GitBinary> {
-        Ok(GitBinary::new(
+    fn git_binary(&self) -> GitBinary {
+        GitBinary::new(
             self.any_git_binary_path.clone(),
-            self.working_directory()
-                .with_context(|| "Can't run git commands without a working directory")?,
+            self.working_directory(),
             self.path(),
             self.executor.clone(),
             self.is_trusted(),
-        ))
+        )
     }
 
     fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let args = edit.into_args();
                 git.run(&args).await?;
                 Ok(())
@@ -1227,7 +1225,7 @@ impl RealGitRepository {
         let output: SharedString = self
             .executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 git.run(&["help", "-a"]).await
             })
             .await
@@ -1308,7 +1306,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = git
                     .build_command(&[
                         "show",
@@ -1342,7 +1340,7 @@ impl GitRepository for RealGitRepository {
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
         let git_binary = self.git_binary();
         cx.background_spawn(async move {
-            let git = git_binary?;
+            let git = git_binary;
             let show_output = git
                 .build_command(&[
                     "show",
@@ -1479,7 +1477,7 @@ impl GitRepository for RealGitRepository {
                 ResetMode::Soft => "--soft",
             };
 
-            let git = git_binary?;
+            let git = git_binary;
             let output = git
                 .build_command(&["reset", mode_flag, &commit])
                 .envs(env.iter())
@@ -1507,7 +1505,7 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
-            let git = git_binary?;
+            let git = git_binary;
             let output = git
                 .build_command(&["checkout", &commit, "--"])
                 .envs(env.iter())
@@ -1529,7 +1527,7 @@ impl GitRepository for RealGitRepository {
         let path_str = format!(":{}", path.as_unix_str());
         self.executor
             .spawn(async move {
-                let git = git_binary.log_err()?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["show", &path_str])
                     .stdout(Stdio::piped())
@@ -1550,7 +1548,7 @@ impl GitRepository for RealGitRepository {
         let path_str = format!("HEAD:{}", path.as_unix_str());
         self.executor
             .spawn(async move {
-                let git = git_binary.log_err()?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["show", &path_str])
                     .stdout(Stdio::piped())
@@ -1570,28 +1568,22 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         let oid_str = oid.to_string();
         self.executor
-            .spawn(async move { git_binary?.run_raw(&["cat-file", "blob", &oid_str]).await })
+            .spawn(async move { git_binary.run_raw(&["cat-file", "blob", &oid_str]).await })
             .boxed()
     }
 
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
-        let working_directory_and_git_binary = self.working_directory().map(|working_directory| {
-            (
-                working_directory.clone(),
-                GitBinary::new(
-                    self.any_git_binary_path.clone(),
-                    working_directory,
-                    self.path(),
-                    self.executor.clone(),
-                    self.is_trusted(),
-                ),
-            )
-        });
+        let working_directory = self.working_directory();
+        let git_binary = GitBinary::new(
+            self.any_git_binary_path.clone(),
+            working_directory.clone(),
+            self.path(),
+            self.executor.clone(),
+            self.is_trusted(),
+        );
 
         self.executor
             .spawn(async move {
-                let (working_directory, git_binary) = working_directory_and_git_binary?;
-
                 let output = git_binary
                     .build_command(&["config", "--get", "commit.template"])
                     .output()
@@ -1636,7 +1628,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let mode = if is_executable { "100755" } else { "100644" };
 
                 if let Some(content) = content {
@@ -1692,7 +1684,7 @@ impl GitRepository for RealGitRepository {
         let name = name.to_owned();
         self.executor
             .spawn(async move {
-                let git = git_binary.log_err()?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["remote", "get-url", &name])
                     .output()
@@ -1716,7 +1708,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let mut process = git
                     .build_command(&["cat-file", "--batch-check=%(objectname)"])
                     .stdin(Stdio::piped())
@@ -1767,10 +1759,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
-        let git = match self.git_binary_in_worktree() {
-            Ok(git) => git,
-            Err(e) => return Task::ready(Err(e)),
-        };
+        let git = self.git_binary_in_worktree();
         let args = git_status_args(path_prefixes);
         log::debug!("Checking for git status in {path_prefixes:?}");
         self.executor.spawn(async move {
@@ -1786,10 +1775,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
-        let git = match self.git_binary_in_worktree() {
-            Ok(git) => git,
-            Err(e) => return Task::ready(Err(e)).boxed(),
-        };
+        let git = self.git_binary_in_worktree();
 
         let mut args = vec![
             OsString::from("diff-tree"),
@@ -1827,7 +1813,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["stash", "list", "--pretty=format:%gd%x00%H%x00%ct%x00%s"])
                     .output()
@@ -1847,7 +1833,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let fields = [
                     "%(HEAD)",
                     "%(objectname)",
@@ -1908,7 +1894,7 @@ impl GitRepository for RealGitRepository {
         let main_worktree_path = original_repo_path_from_common_dir(&self.common_dir);
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["worktree", "list", "--porcelain"])
                     .output()
@@ -1963,7 +1949,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 std::fs::create_dir_all(path.parent().unwrap_or(&path))?;
                 let output = git.build_command(&args).output().await?;
                 if output.status.success() {
@@ -1981,7 +1967,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let mut args: Vec<OsString> = vec!["worktree".into(), "remove".into()];
                 if force {
                     args.push("--force".into());
@@ -1999,7 +1985,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let args: Vec<OsString> = vec![
                     "worktree".into(),
                     "move".into(),
@@ -2043,7 +2029,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                git_binary?.run(&["checkout", &name]).await?;
+                git_binary.run(&["checkout", &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2065,7 +2051,7 @@ impl GitRepository for RealGitRepository {
                     args.push(&base_branch_str);
                 }
 
-                git_binary?.run(&args).await?;
+                git_binary.run(&args).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2076,7 +2062,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                git_binary?
+                git_binary
                     .run(&["branch", "-m", &branch, &new_name])
                     .await?;
                 anyhow::Ok(())
@@ -2095,7 +2081,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let flag = delete_branch_flag(is_remote, force);
-                git_binary?.run(&["branch", flag, &name]).await?;
+                git_binary.run(&["branch", flag, &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2111,7 +2097,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                crate::blame::Blame::for_path(&git?, &path, &content, line_ending).await
+                crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
             })
             .boxed()
     }
@@ -2120,7 +2106,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = match diff {
                     DiffType::HeadToIndex => {
                         git.build_command(&["diff", "--staged"]).output().await?
@@ -2152,7 +2138,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let git_binary = git_binary?;
+                let git_binary = git_binary;
                 let mut args: Vec<String> = vec![
                     "diff".into(),
                     "--numstat".into(),
@@ -2182,7 +2168,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 if !paths.is_empty() {
-                    let git = git_binary?;
+                    let git = git_binary;
                     let output = git
                         .build_command(&["update-index", "--add", "--remove", "--"])
                         .envs(env.iter())
@@ -2210,7 +2196,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 if !paths.is_empty() {
-                    let git = git_binary?;
+                    let git = git_binary;
                     let output = git
                         .build_command(&["reset", "--quiet", "--"])
                         .envs(env.iter())
@@ -2237,7 +2223,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["stash", "push", "--quiet", "--include-untracked", "--"])
                     .envs(env.iter())
@@ -2263,7 +2249,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let mut args = vec!["stash".to_string(), "pop".to_string()];
                 if let Some(index) = index {
                     args.push(format!("stash@{{{}}}", index));
@@ -2288,7 +2274,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let mut args = vec!["stash".to_string(), "apply".to_string()];
                 if let Some(index) = index {
                     args.push(format!("stash@{{{}}}", index));
@@ -2313,7 +2299,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let mut args = vec!["stash".to_string(), "drop".to_string()];
                 if let Some(index) = index {
                     args.push(format!("stash@{{{}}}", index));
@@ -2343,7 +2329,7 @@ impl GitRepository for RealGitRepository {
         // Note: Do not spawn this command on the background thread, it might pop open the credential helper
         // which we want to block on.
         async move {
-            let git = git_binary?;
+            let git = git_binary;
             let mut cmd = git.build_command(&["commit", "--quiet", "-m"]);
             cmd.envs(env.iter())
                 .arg(&message.to_string())
@@ -2387,7 +2373,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let args: Vec<OsString> = vec!["worktree".into(), "repair".into()];
                 git.run(&args).await?;
                 Ok(())
@@ -2414,7 +2400,6 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't push")?;
-            let working_directory = working_directory?;
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
@@ -2458,7 +2443,6 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't pull")?;
-            let working_directory = working_directory?;
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
@@ -2491,7 +2475,7 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
-        let working_directory = self.working_directory().unwrap_or(self.path());
+        let working_directory = self.working_directory();
         let git_directory = self.path();
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
@@ -2523,7 +2507,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["rev-parse", "--abbrev-ref"])
                     .arg(format!("{branch}@{{push}}"))
@@ -2548,7 +2532,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = git
                     .build_command(&["config", "--get"])
                     .arg(format!("branch.{branch}.remote"))
@@ -2570,7 +2554,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let output = git.build_command(&["remote", "-v"]).output().await?;
 
                 anyhow::ensure!(
@@ -2600,7 +2584,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                git_binary?.run(&["remote", "remove", &name]).await?;
+                git_binary.run(&["remote", "remove", &name]).await?;
                 Ok(())
             })
             .boxed()
@@ -2610,7 +2594,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                git_binary?.run(&["remote", "add", &name, &url]).await?;
+                git_binary.run(&["remote", "add", &name, &url]).await?;
                 Ok(())
             })
             .boxed()
@@ -2620,7 +2604,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let git_cmd = async |args: &[&str]| -> Result<String> {
                     let output = git.build_command(args).output().await?;
                     anyhow::ensure!(
@@ -2674,7 +2658,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let mut git = git_binary?.envs(checkpoint_author_envs());
+                let mut git = git_binary.envs(checkpoint_author_envs());
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
                     let mut excludes = exclude_files(git).await?;
@@ -2703,7 +2687,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 git.run(&[
                     "restore",
                     "--source",
@@ -2733,7 +2717,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let mut git = git_binary?.envs(checkpoint_author_envs());
+                let mut git = git_binary.envs(checkpoint_author_envs());
 
                 let head_sha = git
                     .run(&["rev-parse", "HEAD"])
@@ -2791,7 +2775,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
 
                 // First, set the index AND working tree to match the unstaged
                 // tree. --reset -u computes a tree-level diff between the
@@ -2821,7 +2805,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let result = git
                     .run(&[
                         "diff-tree",
@@ -2855,7 +2839,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 git.run(&[
                     "diff",
                     "--find-renames",
@@ -2875,7 +2859,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git_binary;
                 let strip_prefix = if include_remote_name {
                     "refs/remotes/"
                 } else {
@@ -2934,7 +2918,7 @@ impl GitRepository for RealGitRepository {
 
         // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
         async move {
-            let git_binary = git_binary?;
+            let git_binary = git_binary;
 
             let working_directory = git_binary.working_directory.clone();
             if !help_output
@@ -2984,7 +2968,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
 
         async move {
-            let git = git_binary?;
+            let git = git_binary;
             let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
             git_log_command.extend(log_source.get_args()?);
             let mut command = git.build_command(&git_log_command);
@@ -3056,7 +3040,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
 
         async move {
-            let git = git_binary?;
+            let git = git_binary;
             let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
 
             args.push("--fixed-strings");
@@ -3110,7 +3094,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
 
         async move {
-            let git = git_binary?;
+            let git = git_binary;
             if paths.is_empty() {
                 return Ok(Vec::new());
             }
@@ -3148,7 +3132,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
-        let git_binary = self.git_binary()?;
+        let git_binary = self.git_binary();
 
         let (request_tx, request_rx) = async_channel::bounded::<CommitDataRequest>(64);
 
@@ -4805,7 +4789,7 @@ mod tests {
             cx.executor(),
         )
         .unwrap();
-        let git = repo.git_binary().unwrap();
+        let git = repo.git_binary();
 
         let graph_commits = async || {
             let (tx, rx) = smol::channel::unbounded();
@@ -4889,7 +4873,6 @@ mod tests {
             self.executor
                 .spawn(async move {
                     let git_binary_path = git_binary_path.clone();
-                    let working_directory = working_directory?;
                     let git = GitBinary::new(
                         git_binary_path,
                         working_directory,

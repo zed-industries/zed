@@ -7621,7 +7621,6 @@ dependencies = [
  "derive_more",
  "futures 0.3.32",
  "gpui",
- "hex",
  "http_client",
  "itertools 0.14.0",
  "log",
