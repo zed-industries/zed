@@ -4404,22 +4404,22 @@ impl ToolCallEventStream {
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_ALLOW_ONCE),
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
                 "Allow once",
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_ALLOW_THREAD),
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
                 "Allow for this thread",
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_ALLOW_ALWAYS),
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
                 "Allow always",
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_DENY),
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
                 "Deny",
                 acp::PermissionOptionKind::RejectOnce,
             ),
@@ -4522,21 +4522,22 @@ impl ToolCallEventStream {
             "unexpected params for sandbox permission"
         );
 
-        match outcome.option_id.0.as_ref() {
-            acp_thread::SANDBOX_PERMISSION_ALLOW_ONCE => Ok(()),
-            acp_thread::SANDBOX_PERMISSION_ALLOW_THREAD => {
+        match acp_thread::SandboxPermission::from_id(outcome.option_id.0.as_ref()) {
+            Some(acp_thread::SandboxPermission::AllowOnce) => Ok(()),
+            Some(acp_thread::SandboxPermission::AllowThread) => {
                 sandbox_grants.borrow_mut().record(request);
                 Ok(())
             }
-            acp_thread::SANDBOX_PERMISSION_ALLOW_ALWAYS => {
+            Some(acp_thread::SandboxPermission::AllowAlways) => {
                 sandbox_grants.borrow_mut().record(request);
                 Self::persist_sandbox_always_permission(request, fs, cx);
                 Ok(())
             }
-            acp_thread::SANDBOX_PERMISSION_DENY => {
+            Some(acp_thread::SandboxPermission::Deny) => {
                 Err(anyhow!("Permission to run tool denied by user"))
             }
-            other => {
+            None => {
+                let other = outcome.option_id.0.as_ref();
                 debug_assert!(false, "unexpected sandbox permission option_id: {other}");
                 Err(anyhow!("Permission to run tool denied by user"))
             }

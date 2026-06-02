@@ -460,7 +460,7 @@ fn permission_option_for_action(
     if kind == acp::PermissionOptionKind::AllowAlways
         && let PermissionOptions::Flat(options) = options
         && let Some(option) = options.iter().find(|option| {
-            option.option_id.0.as_ref() == acp_thread::SANDBOX_PERMISSION_ALLOW_ALWAYS
+            option.option_id.0.as_ref() == acp_thread::SandboxPermission::AllowAlways.as_id()
         })
     {
         return Some(option);

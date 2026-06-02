@@ -7961,7 +7961,7 @@ impl ThreadView {
                                     .size(IconSize::XSmall)
                                     .color(Color::Success),
                                 if option.option_id.0.as_ref()
-                                    == acp_thread::SANDBOX_PERMISSION_ALLOW_THREAD
+                                    == acp_thread::SandboxPermission::AllowThread.as_id()
                                 {
                                     None
                                 } else {

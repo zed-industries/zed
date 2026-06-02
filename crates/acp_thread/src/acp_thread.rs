@@ -83,12 +83,36 @@ pub const SANDBOX_AUTHORIZATION_META_KEY: &str = "sandbox_authorization";
 ///
 /// These are shared across the option construction (in the agent), the outcome
 /// dispatch, and the UI so the distinct grant lifetimes stay in sync. Note
-/// that `ALLOW_THREAD` and `ALLOW_ALWAYS` both use
+/// that `AllowThread` and `AllowAlways` both use
 /// `PermissionOptionKind::AllowAlways`; the id is what distinguishes them.
-pub const SANDBOX_PERMISSION_ALLOW_ONCE: &str = "allow";
-pub const SANDBOX_PERMISSION_ALLOW_THREAD: &str = "allow_thread";
-pub const SANDBOX_PERMISSION_ALLOW_ALWAYS: &str = "allow_always";
-pub const SANDBOX_PERMISSION_DENY: &str = "deny";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SandboxPermission {
+    AllowOnce,
+    AllowThread,
+    AllowAlways,
+    Deny,
+}
+
+impl SandboxPermission {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "allow",
+            Self::AllowThread => "allow_thread",
+            Self::AllowAlways => "allow_always",
+            Self::Deny => "deny",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "allow" => Some(Self::AllowOnce),
+            "allow_thread" => Some(Self::AllowThread),
+            "allow_always" => Some(Self::AllowAlways),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
