@@ -30,16 +30,19 @@ pub use acp::{
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
     new_version_available: Option<watch::Sender<Option<String>>>,
+    loading_status: Option<watch::Sender<Option<String>>>,
 }
 
 impl AgentServerDelegate {
     pub fn new(
         store: Entity<AgentServerStore>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
+        loading_status_tx: Option<watch::Sender<Option<String>>>,
     ) -> Self {
         Self {
             store,
             new_version_available: new_version_tx,
+            loading_status: loading_status_tx,
         }
     }
 }

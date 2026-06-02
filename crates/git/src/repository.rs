@@ -9,7 +9,6 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
-use git2::{BranchType, ErrorCode};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
@@ -74,6 +73,11 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
     } else {
         None
     }
+}
+
+fn normalize_git_metadata_path(path: PathBuf) -> Result<PathBuf> {
+    paths::normalize_lexically(&path)
+        .map_err(|_| anyhow!("git metadata path escapes its filesystem root: {path:?}"))
 }
 
 /// Commit data needed for the git graph visualization.
@@ -1087,7 +1091,10 @@ impl std::fmt::Debug for dyn GitRepository {
 }
 
 pub struct RealGitRepository {
-    pub repository: Arc<Mutex<git2::Repository>>,
+    pub git_dir: PathBuf,
+    pub common_dir: PathBuf,
+    /// `None` only for bare repositories, which do not have a working directory.
+    pub working_directory: Option<PathBuf>,
     pub system_git_binary_path: Option<PathBuf>,
     pub any_git_binary_path: PathBuf,
     any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
@@ -1128,11 +1135,55 @@ impl RealGitRepository {
         log::info!(
             "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
         );
-        let workdir_root = dotgit_path.parent().context(".git has no parent")?;
-        let repository =
-            git2::Repository::open(workdir_root).context("creating libgit2 repository")?;
+        let dotgit_parent = dotgit_path.parent().context(".git has no parent")?;
+        let has_working_directory =
+            dotgit_path.is_file() || dotgit_path.file_name() == Some(OsStr::new(".git"));
+        let working_directory = if has_working_directory {
+            Some(normalize_git_metadata_path(dotgit_parent.to_path_buf())?)
+        } else {
+            None
+        };
+
+        let git_dir = if dotgit_path.is_file() {
+            let content =
+                std::fs::read_to_string(dotgit_path).context("reading .git worktree file")?;
+            let path_str = content
+                .strip_prefix("gitdir: ")
+                .context("expected .git file to start with 'gitdir: '")?
+                .trim();
+            let resolved = PathBuf::from(path_str);
+            let resolved = if resolved.is_absolute() {
+                resolved
+            } else {
+                dotgit_parent.join(resolved)
+            };
+            normalize_git_metadata_path(resolved)?
+        } else {
+            normalize_git_metadata_path(dotgit_path.to_path_buf())?
+        };
+
+        let common_dir = {
+            let commondir_file = git_dir.join("commondir");
+            if commondir_file.is_file() {
+                let content =
+                    std::fs::read_to_string(&commondir_file).context("reading commondir file")?;
+                let path_str = content.trim();
+                let resolved = PathBuf::from(path_str);
+                let resolved = if resolved.is_absolute() {
+                    resolved
+                } else {
+                    git_dir.join(resolved)
+                };
+                normalize_git_metadata_path(resolved)?
+            } else {
+                git_dir.clone()
+            }
+        };
+
         Ok(Self {
-            repository: Arc::new(Mutex::new(repository)),
+            git_dir,
+            common_dir,
+            working_directory,
             system_git_binary_path,
             any_git_binary_path,
             executor,
@@ -1142,18 +1193,21 @@ impl RealGitRepository {
     }
 
     fn working_directory(&self) -> Result<PathBuf> {
-        self.repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")
-            .map(Path::to_path_buf)
+        self.working_directory
+            .clone()
+            .context("bare repositories do not have a working directory")
+    }
+
+    fn command_directory(&self) -> PathBuf {
+        self.working_directory
+            .clone()
+            .unwrap_or_else(|| self.git_dir.clone())
     }
 
     fn git_binary_in_worktree(&self) -> Result<GitBinary> {
         Ok(GitBinary::new(
             self.any_git_binary_path.clone(),
-            self.working_directory()
-                .with_context(|| "Can't run git commands without a working directory")?,
+            self.working_directory()?,
             self.path(),
             self.executor.clone(),
             self.is_trusted(),
@@ -1161,24 +1215,20 @@ impl RealGitRepository {
     }
 
     fn git_binary(&self) -> GitBinary {
-        let repository = self.repository.lock();
-        let working_directory = repository
-            .workdir()
-            .unwrap_or_else(|| repository.path())
-            .to_path_buf();
         GitBinary::new(
             self.any_git_binary_path.clone(),
-            working_directory,
-            repository.path().to_path_buf(),
+            self.command_directory(),
+            self.path(),
             self.executor.clone(),
             self.is_trusted(),
         )
     }
 
     fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
-        let git = self.git_binary();
+        let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
+                let git = git_binary;
                 let args = edit.into_args();
                 git.run(&args).await?;
                 Ok(())
@@ -1261,13 +1311,11 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
 
 impl GitRepository for RealGitRepository {
     fn path(&self) -> PathBuf {
-        let repo = self.repository.lock();
-        repo.path().into()
+        self.git_dir.clone()
     }
 
     fn main_repository_path(&self) -> PathBuf {
-        let repo = self.repository.lock();
-        repo.commondir().into()
+        self.common_dir.clone()
     }
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
@@ -1436,14 +1484,14 @@ impl GitRepository for RealGitRepository {
         mode: ResetMode,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         async move {
+            let git = git?;
             let mode_flag = match mode {
                 ResetMode::Mixed => "--mixed",
                 ResetMode::Soft => "--soft",
             };
 
-            let git = git_binary?;
             let output = git
                 .build_command(&["reset", mode_flag, &commit])
                 .envs(env.iter())
@@ -1465,13 +1513,13 @@ impl GitRepository for RealGitRepository {
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         async move {
+            let git = git?;
             if paths.is_empty() {
                 return Ok(());
             }
 
-            let git = git_binary?;
             let output = git
                 .build_command(&["checkout", &commit, "--"])
                 .envs(env.iter())
@@ -1489,98 +1537,62 @@ impl GitRepository for RealGitRepository {
     }
 
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-        const GIT_MODE_SYMLINK: u32 = 0o120000;
-
-        let repo = self.repository.clone();
+        let git_binary = self.git_binary();
+        let path_str = format!(":{}", path.as_unix_str());
         self.executor
             .spawn(async move {
-                fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
-                    let mut index = repo.index()?;
-                    index.read(false)?;
-
-                    const STAGE_NORMAL: i32 = 0;
-                    // git2 unwraps internally on empty paths or `.`
-                    if path.is_empty() {
-                        bail!("empty path has no index text");
-                    }
-                    let Some(entry) = index.get_path(path.as_std_path(), STAGE_NORMAL) else {
-                        return Ok(None);
-                    };
-                    if entry.mode == GIT_MODE_SYMLINK {
-                        return Ok(None);
-                    }
-
-                    let content = repo.find_blob(entry.id)?.content().to_owned();
-                    Ok(String::from_utf8(content).ok())
+                let git = git_binary;
+                let output = git
+                    .build_command(&["show", &path_str])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+                    .await
+                    .log_err()?;
+                if !output.status.success() {
+                    return None;
                 }
-
-                logic(&repo.lock(), &path)
-                    .context("loading index text")
-                    .log_err()
-                    .flatten()
+                String::from_utf8(output.stdout).ok()
             })
             .boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let repo = self.repository.clone();
+        let git = self.git_binary();
+        let path_str = format!("HEAD:{}", path.as_unix_str());
         self.executor
             .spawn(async move {
-                fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
-                    let head = repo.head()?.peel_to_tree()?;
-                    // git2 unwraps internally on empty paths or `.`
-                    if path.is_empty() {
-                        return Err(anyhow!("empty path has no committed text"));
-                    }
-                    let Some(entry) = head.get_path(path.as_std_path()).ok() else {
-                        return Ok(None);
-                    };
-                    if entry.filemode() == i32::from(git2::FileMode::Link) {
-                        return Ok(None);
-                    }
-                    let content = repo.find_blob(entry.id())?.content().to_owned();
-                    Ok(String::from_utf8(content).ok())
+                let output = git
+                    .build_command(&["show", &path_str])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+                    .await
+                    .log_err()?;
+                if !output.status.success() {
+                    return None;
                 }
-
-                logic(&repo.lock(), &path)
-                    .context("loading committed text")
-                    .log_err()
-                    .flatten()
+                String::from_utf8(output.stdout).ok()
             })
             .boxed()
     }
 
     fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>> {
-        let repo = self.repository.clone();
+        let git_binary = self.git_binary();
+        let oid_str = oid.to_string();
         self.executor
-            .spawn(async move {
-                let repo = repo.lock();
-                let oid = git2::Oid::from_bytes(oid.as_bytes())?;
-                let content = repo.find_blob(oid)?.content().to_owned();
-                Ok(String::from_utf8(content)?)
-            })
+            .spawn(async move { git_binary.run_raw(&["cat-file", "blob", &oid_str]).await })
             .boxed()
     }
 
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
-        let working_directory_and_git_binary = self.working_directory().map(|working_directory| {
-            (
-                working_directory.clone(),
-                GitBinary::new(
-                    self.any_git_binary_path.clone(),
-                    working_directory,
-                    self.path(),
-                    self.executor.clone(),
-                    self.is_trusted(),
-                ),
-            )
-        });
+        let working_directory = self.working_directory();
+        let git_binary = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
-                let (working_directory, git_binary) = working_directory_and_git_binary?;
-
+                let working_directory = working_directory?;
+                let git_binary = git_binary?;
                 let output = git_binary
                     .build_command(&["config", "--get", "commit.template"])
                     .output()
@@ -1676,13 +1688,25 @@ impl GitRepository for RealGitRepository {
     }
 
     fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
-        let repo = self.repository.clone();
+        let git = self.git_binary();
         let name = name.to_owned();
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let remote = repo.find_remote(&name).ok()?;
-                remote.url().ok().map(|url| url.to_string())
+                let output = git
+                    .build_command(&["remote", "get-url", &name])
+                    .output()
+                    .await
+                    .log_err()?;
+                if !output.status.success() {
+                    return None;
+                }
+                let url = String::from_utf8(output.stdout).ok()?;
+                let url = url.trim();
+                if url.is_empty() {
+                    None
+                } else {
+                    Some(url.to_string())
+                }
             })
             .boxed()
     }
@@ -1741,13 +1765,11 @@ impl GitRepository for RealGitRepository {
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
-        let git = match self.git_binary_in_worktree() {
-            Ok(git) => git,
-            Err(e) => return Task::ready(Err(e)),
-        };
+        let git = self.git_binary_in_worktree();
         let args = git_status_args(path_prefixes);
         log::debug!("Checking for git status in {path_prefixes:?}");
         self.executor.spawn(async move {
+            let git = git?;
             let output = git.build_command(&args).output().await?;
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1760,10 +1782,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
-        let git = match self.git_binary_in_worktree() {
-            Ok(git) => git,
-            Err(e) => return Task::ready(Err(e)).boxed(),
-        };
+        let git = self.git_binary_in_worktree();
 
         let mut args = vec![
             OsString::from("diff-tree"),
@@ -1785,6 +1804,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
+                let git = git?;
                 let output = git.build_command(&args).output().await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1798,10 +1818,10 @@ impl GitRepository for RealGitRepository {
     }
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let output = git
                     .build_command(&["stash", "list", "--pretty=format:%gd%x00%H%x00%ct%x00%s"])
                     .output()
@@ -1878,11 +1898,7 @@ impl GitRepository for RealGitRepository {
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let git = self.git_binary();
-        let main_worktree_path = {
-            let repo = self.repository.lock();
-            let common_dir = repo.commondir().to_path_buf();
-            original_repo_path_from_common_dir(&common_dir)
-        };
+        let main_worktree_path = original_repo_path_from_common_dir(&self.common_dir);
         self.executor
             .spawn(async move {
                 let output = git
@@ -2013,43 +2029,10 @@ impl GitRepository for RealGitRepository {
     }
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        let repo = self.repository.clone();
-        let git_binary = self.git_binary_in_worktree();
-        let branch = self.executor.spawn(async move {
-            let repo = repo.lock();
-            let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
-                branch
-            } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
-                let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
-
-                let revision = revision.get();
-                let branch_commit = revision.peel_to_commit()?;
-                let mut branch = match repo.branch(&branch_name, &branch_commit, false) {
-                    Ok(branch) => branch,
-                    Err(err) if err.code() == ErrorCode::Exists => {
-                        repo.find_branch(&branch_name, BranchType::Local)?
-                    }
-                    Err(err) => {
-                        return Err(err.into());
-                    }
-                };
-
-                branch.set_upstream(Some(&name))?;
-                branch
-            } else {
-                anyhow::bail!("Branch '{}' not found", name);
-            };
-
-            Ok(branch
-                .name()?
-                .context("cannot checkout anonymous branch")?
-                .to_string())
-        });
-
+        let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let branch = branch.await?;
-                git_binary?.run(&["checkout", &branch]).await?;
+                git_binary.run(&["checkout", &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2064,6 +2047,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
+                let git_binary = git_binary?;
                 let mut args = vec!["switch", "-c", &name];
                 let base_branch_str;
                 if let Some(ref base) = base_branch {
@@ -2071,7 +2055,7 @@ impl GitRepository for RealGitRepository {
                     args.push(&base_branch_str);
                 }
 
-                git_binary?.run(&args).await?;
+                git_binary.run(&args).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2082,7 +2066,8 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                git_binary?
+                let git_binary = git_binary?;
+                git_binary
                     .run(&["branch", "-m", &branch, &new_name])
                     .await?;
                 anyhow::Ok(())
@@ -2100,8 +2085,9 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
+                let git_binary = git_binary?;
                 let flag = delete_branch_flag(is_remote, force);
-                git_binary?.run(&["branch", flag, &name]).await?;
+                git_binary.run(&["branch", flag, &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2117,16 +2103,17 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                crate::blame::Blame::for_path(&git?, &path, &content, line_ending).await
+                let git = git?;
+                crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
             })
             .boxed()
     }
 
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let output = match diff {
                     DiffType::HeadToIndex => {
                         git.build_command(&["diff", "--staged"]).output().await?
@@ -2184,11 +2171,11 @@ impl GitRepository for RealGitRepository {
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
+                let git = git?;
                 if !paths.is_empty() {
-                    let git = git_binary?;
                     let output = git
                         .build_command(&["update-index", "--add", "--remove", "--"])
                         .envs(env.iter())
@@ -2211,12 +2198,12 @@ impl GitRepository for RealGitRepository {
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
+                let git = git?;
                 if !paths.is_empty() {
-                    let git = git_binary?;
                     let output = git
                         .build_command(&["reset", "--quiet", "--"])
                         .envs(env.iter())
@@ -2240,10 +2227,10 @@ impl GitRepository for RealGitRepository {
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let output = git
                     .build_command(&["stash", "push", "--quiet", "--include-untracked", "--"])
                     .envs(env.iter())
@@ -2266,10 +2253,10 @@ impl GitRepository for RealGitRepository {
         index: Option<usize>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let mut args = vec!["stash".to_string(), "pop".to_string()];
                 if let Some(index) = index {
                     args.push(format!("stash@{{{}}}", index));
@@ -2291,10 +2278,10 @@ impl GitRepository for RealGitRepository {
         index: Option<usize>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let mut args = vec!["stash".to_string(), "apply".to_string()];
                 if let Some(index) = index {
                     args.push(format!("stash@{{{}}}", index));
@@ -2316,10 +2303,10 @@ impl GitRepository for RealGitRepository {
         index: Option<usize>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let mut args = vec!["stash".to_string(), "drop".to_string()];
                 if let Some(index) = index {
                     args.push(format!("stash@{{{}}}", index));
@@ -2344,12 +2331,12 @@ impl GitRepository for RealGitRepository {
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         let executor = self.executor.clone();
         // Note: Do not spawn this command on the background thread, it might pop open the credential helper
         // which we want to block on.
         async move {
-            let git = git_binary?;
+            let git = git?;
             let mut cmd = git.build_command(&["commit", "--quiet", "-m"]);
             cmd.envs(env.iter())
                 .arg(&message.to_string())
@@ -2410,7 +2397,7 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
-        let working_directory = self.working_directory();
+        let working_directory = self.command_directory();
         let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
@@ -2419,7 +2406,6 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't push")?;
-            let working_directory = working_directory?;
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
@@ -2454,7 +2440,7 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
-        let working_directory = self.working_directory();
+        let working_directory = self.command_directory();
         let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
@@ -2463,7 +2449,6 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't pull")?;
-            let working_directory = working_directory?;
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
@@ -2496,7 +2481,7 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
-        let working_directory = self.working_directory().unwrap_or(self.path());
+        let working_directory = self.command_directory();
         let git_directory = self.path();
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
@@ -2599,33 +2584,30 @@ impl GitRepository for RealGitRepository {
     }
 
     fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        let repo = self.repository.clone();
+        let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                repo.remote_delete(&name)?;
-
+                git_binary.run(&["remote", "remove", &name]).await?;
                 Ok(())
             })
             .boxed()
     }
 
     fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
-        let repo = self.repository.clone();
+        let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                repo.remote(&name, url.as_ref())?;
+                git_binary.run(&["remote", "add", &name, &url]).await?;
                 Ok(())
             })
             .boxed()
     }
 
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let git_cmd = async |args: &[&str]| -> Result<String> {
                     let output = git.build_command(args).output().await?;
                     anyhow::ensure!(
@@ -2676,10 +2658,10 @@ impl GitRepository for RealGitRepository {
     }
 
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let mut git = git_binary?.envs(checkpoint_author_envs());
+                let mut git = git?.envs(checkpoint_author_envs());
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
                     let mut excludes = exclude_files(git).await?;
@@ -2705,10 +2687,10 @@ impl GitRepository for RealGitRepository {
     }
 
     fn restore_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 git.run(&[
                     "restore",
                     "--source",
@@ -2735,11 +2717,10 @@ impl GitRepository for RealGitRepository {
     }
 
     fn create_archive_checkpoint(&self) -> BoxFuture<'_, Result<(String, String)>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let mut git = git_binary?.envs(checkpoint_author_envs());
-
+                let mut git = git?.envs(checkpoint_author_envs());
                 let head_sha = git
                     .run(&["rev-parse", "HEAD"])
                     .await
@@ -2793,11 +2774,10 @@ impl GitRepository for RealGitRepository {
         staged_sha: String,
         unstaged_sha: String,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
-
+                let git = git?;
                 // First, set the index AND working tree to match the unstaged
                 // tree. --reset -u computes a tree-level diff between the
                 // current index and unstaged_sha's tree and applies additions,
@@ -2823,10 +2803,10 @@ impl GitRepository for RealGitRepository {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<bool>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 let result = git
                     .run(&[
                         "diff-tree",
@@ -2857,10 +2837,10 @@ impl GitRepository for RealGitRepository {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>> {
-        let git_binary = self.git_binary_in_worktree();
+        let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git_binary?;
+                let git = git?;
                 git.run(&[
                     "diff",
                     "--find-renames",
@@ -2933,20 +2913,19 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary_in_worktree();
-        let repository = self.repository.clone();
+        let git_dir = self.git_dir.clone();
         let help_output = self.any_git_binary_help_output();
 
         // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
         async move {
             let git_binary = git_binary?;
-
             let working_directory = git_binary.working_directory.clone();
             if !help_output
                 .await
                 .lines()
                 .any(|line| line.trim().starts_with("hook "))
             {
-                let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
+                let hook_abs_path = git_dir.join("hooks").join(hook.as_str());
                 if hook_abs_path.is_file() && git_binary.is_trusted {
                     #[allow(clippy::disallowed_methods)]
                     let output = new_command(&hook_abs_path)
@@ -3640,8 +3619,6 @@ impl RepoPath {
     }
 
     pub fn as_std_path(&self) -> &Path {
-        // git2 does not like empty paths and our RelPath infra turns `.` into ``
-        // so undo that here
         if self.is_empty() {
             Path::new(".")
         } else {
@@ -3793,7 +3770,10 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{
+        ffi::{OsStr, OsString},
+        fs,
+    };
 
     use super::*;
     use gpui::TestAppContext;
@@ -3803,6 +3783,182 @@ mod tests {
             std::env::set_var("GIT_CONFIG_GLOBAL", "");
             std::env::set_var("GIT_CONFIG_SYSTEM", "");
         }
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    #[track_caller]
+    fn git_command<I, S>(working_directory: &Path, arguments: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let output = std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(working_directory)
+            .env("GIT_CONFIG_GLOBAL", "")
+            .env("GIT_CONFIG_SYSTEM", "")
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@zed.dev")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@zed.dev")
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_init_repo(path: &Path) {
+        fs::create_dir_all(path).expect("failed to create repo directory");
+        git_command(path, ["init", "-b", "main"]);
+    }
+
+    fn test_commit_envs() -> HashMap<String, String> {
+        let mut env = checkpoint_author_envs();
+        env.insert("GIT_ASKPASS".to_string(), "false".to_string());
+        env
+    }
+
+    #[track_caller]
+    fn assert_same_path(left: impl AsRef<Path>, right: impl AsRef<Path>) {
+        assert_eq!(
+            fs::canonicalize(left.as_ref()).unwrap(),
+            fs::canonicalize(right.as_ref()).unwrap()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_real_git_repository_new_resolves_normal_repository_paths(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert_same_path(&repository.git_dir, repo_dir.path().join(".git"));
+        assert_same_path(&repository.common_dir, repo_dir.path().join(".git"));
+        assert_same_path(
+            repository.working_directory.as_ref().unwrap(),
+            repo_dir.path(),
+        );
+        assert_same_path(
+            original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
+            repo_dir.path(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_real_git_repository_new_resolves_linked_worktree_paths(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let worktree_dir = temp_dir.path().join("worktree");
+        git_init_repo(&repo_dir);
+        fs::write(repo_dir.join("file.txt"), "initial").unwrap();
+        git_command(&repo_dir, ["add", "file.txt"]);
+        git_command(&repo_dir, ["commit", "-m", "initial"]);
+        git_command(
+            &repo_dir,
+            [
+                OsString::from("worktree"),
+                OsString::from("add"),
+                OsString::from("-b"),
+                OsString::from("feature"),
+                worktree_dir.as_os_str().into(),
+            ],
+        );
+
+        let repository = RealGitRepository::new(
+            &worktree_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert_same_path(
+            repository.working_directory.as_ref().unwrap(),
+            &worktree_dir,
+        );
+        assert_same_path(&repository.common_dir, repo_dir.join(".git"));
+        assert_same_path(
+            original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
+            repo_dir,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_real_git_repository_new_supports_bare_repositories(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo.git");
+        git_command(
+            temp_dir.path(),
+            [
+                OsString::from("init"),
+                OsString::from("--bare"),
+                repo_dir.as_os_str().into(),
+            ],
+        );
+
+        let repository =
+            RealGitRepository::new(&repo_dir, None, Some("git".into()), cx.executor()).unwrap();
+
+        assert_same_path(&repository.git_dir, &repo_dir);
+        assert_same_path(&repository.common_dir, &repo_dir);
+        assert_eq!(repository.working_directory, None);
+        assert_same_path(repository.main_repository_path(), &repo_dir);
+        assert_eq!(
+            repository
+                .git_binary()
+                .run(&["rev-parse", "--is-bare-repository"])
+                .await
+                .unwrap(),
+            "true"
+        );
+    }
+
+    #[gpui::test]
+    fn test_real_git_repository_new_rejects_malformed_git_file(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let worktree_dir = temp_dir.path().join("worktree");
+        fs::create_dir_all(&worktree_dir).unwrap();
+        fs::write(worktree_dir.join(".git"), "not a gitdir file\n").unwrap();
+
+        let error = match RealGitRepository::new(
+            &worktree_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        ) {
+            Ok(_) => panic!("malformed .git file should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("expected .git file to start with 'gitdir: '"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]
@@ -3905,7 +4061,7 @@ mod tests {
             "fsmonitor should be disabled for untrusted repos"
         );
 
-        git2::Repository::init(dir.path()).unwrap();
+        git_init_repo(dir.path());
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
@@ -3930,7 +4086,7 @@ mod tests {
     async fn test_build_command_trusted_only_disables_fsmonitor(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(dir.path()).unwrap();
+        git_init_repo(dir.path());
 
         let git = GitBinary::new(
             PathBuf::from("git"),
@@ -3973,7 +4129,7 @@ mod tests {
     async fn test_build_command_disables_log_show_signature(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(dir.path()).unwrap();
+        git_init_repo(dir.path());
 
         let git = GitBinary::new(
             PathBuf::from("git"),
@@ -4043,7 +4199,7 @@ mod tests {
 
         let repo_dir = tempfile::tempdir().unwrap();
 
-        git2::Repository::init(repo_dir.path()).unwrap();
+        git_init_repo(repo_dir.path());
         let file_path = repo_dir.path().join("file");
         smol::fs::write(&file_path, "initial").await.unwrap();
 
@@ -4063,7 +4219,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4090,7 +4246,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4132,7 +4288,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        git_init_repo(repo_dir.path());
         let repo = RealGitRepository::new(
             &repo_dir.path().join(".git"),
             None,
@@ -4180,7 +4336,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        git_init_repo(repo_dir.path());
         let repo = RealGitRepository::new(
             &repo_dir.path().join(".git"),
             None,
@@ -4200,7 +4356,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4236,7 +4392,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        git_init_repo(repo_dir.path());
         let repo = RealGitRepository::new(
             &repo_dir.path().join(".git"),
             None,
@@ -4280,7 +4436,7 @@ mod tests {
         let text_path = repo_dir.path().join("main.rs");
         let bin_path = repo_dir.path().join("binary.o");
 
-        git2::Repository::init(repo_dir.path()).unwrap();
+        git_init_repo(repo_dir.path());
 
         smol::fs::write(&text_path, "fn main() {}").await.unwrap();
 
@@ -4305,7 +4461,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4549,7 +4705,7 @@ mod tests {
         fs::create_dir_all(&repo_dir).unwrap();
         fs::create_dir_all(&worktrees_dir).unwrap();
 
-        git2::Repository::init(&repo_dir).unwrap();
+        git_init_repo(&repo_dir);
 
         let repo = RealGitRepository::new(
             &repo_dir.join(".git"),
@@ -4571,7 +4727,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4619,7 +4775,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let repo_dir = temp_dir.path().join("repo");
         let worktrees_dir = temp_dir.path().join("worktrees");
-        git2::Repository::init(&repo_dir).unwrap();
+        git_init_repo(&repo_dir);
 
         let repo = RealGitRepository::new(
             &repo_dir.join(".git"),
@@ -4641,7 +4797,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4717,7 +4873,7 @@ mod tests {
         let repo_dir = temp_dir.path().join("repo");
         let worktrees_dir = temp_dir.path().join("worktrees");
 
-        git2::Repository::init(&repo_dir).unwrap();
+        git_init_repo(&repo_dir);
 
         let repo = RealGitRepository::new(
             &repo_dir.join(".git"),
@@ -4739,7 +4895,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4787,7 +4943,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        git_init_repo(repo_dir.path());
 
         let repo = RealGitRepository::new(
             &repo_dir.path().join(".git"),
@@ -4873,14 +5029,13 @@ mod tests {
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
-            let working_directory = self.working_directory();
+            let working_directory = self.command_directory();
             let git_directory = self.path();
             let git_binary_path = self.any_git_binary_path.clone();
             let executor = self.executor.clone();
             self.executor
                 .spawn(async move {
                     let git_binary_path = git_binary_path.clone();
-                    let working_directory = working_directory?;
                     let git = GitBinary::new(
                         git_binary_path,
                         working_directory,

@@ -9652,6 +9652,18 @@ impl ThreadView {
         }
 
         let token_usage = self.thread.read(cx).token_usage()?;
+
+        // When auto-compaction is available (the handoff feature flag is enabled
+        // and the model's context window is large enough), the thread is
+        // compacted automatically before it reaches the limit, so there's no
+        // need to warn the user. Models with a context window that's too small
+        // can't be auto-compacted, so we fall back to the normal warning.
+        if cx.has_flag::<HandoffFeatureFlag>()
+            && token_usage.max_tokens >= agent::MIN_COMPACTION_CONTEXT_WINDOW
+        {
+            return None;
+        }
+
         let ratio = token_usage.ratio();
 
         let (severity, icon, title) = match ratio {
