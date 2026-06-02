@@ -721,10 +721,19 @@ pub fn init(cx: &mut App) {
                                         .read(cx)
                                         .working_directory()
                                         .or_else(|| agent_terminal.working_directory.clone());
+                                    // Detect the foreground CLI so the mention can be formatted
+                                    // the way that agent expects.
+                                    let program = agent_terminal
+                                        .view
+                                        .read(cx)
+                                        .terminal()
+                                        .read(cx)
+                                        .foreground_process_command_name();
                                     let text = format_selection_for_terminal(
                                         &selection,
                                         &panel.project,
                                         working_directory.as_deref(),
+                                        program.as_deref(),
                                         cx,
                                     );
                                     if !text.is_empty() {
@@ -750,11 +759,13 @@ fn format_selection_for_terminal(
     selection: &AgentContextSelection,
     project: &Entity<Project>,
     working_directory: Option<&std::path::Path>,
+    program: Option<&str>,
     cx: &App,
 ) -> String {
     match selection {
         AgentContextSelection::Editor(ranges) => {
             let path_style = project.read(cx).path_style(cx);
+            let agent = TerminalAgent::from_program(program);
             let mut parts: Vec<String> = Vec::new();
             for (buffer, range) in ranges {
                 let buffer = buffer.read(cx);
@@ -772,15 +783,57 @@ fn format_selection_for_terminal(
                     path_style,
                     cx,
                 );
-                if start == end {
-                    parts.push(format!("@{path}:{start} "));
-                } else {
-                    parts.push(format!("@{path}:{start}-{end} "));
-                }
+                parts.push(agent.format_mention(&path, start, end));
             }
-            parts.join(" ")
+            if parts.is_empty() {
+                String::new()
+            } else {
+                format!("{} ", parts.join(" "))
+            }
         }
         AgentContextSelection::Terminal(texts) => texts.join("\n"),
+    }
+}
+
+/// A coding CLI detected as the foreground process of a terminal thread, used to
+/// format selection mentions the way that agent expects them.
+enum TerminalAgent {
+    /// The codex CLI inserts bare, cwd-relative paths (double-quoted when they
+    /// contain whitespace) with no leading `@`.
+    Codex,
+    /// An agent we can't identify or don't tailor for; falls back to the generic
+    /// `@path:line` mention.
+    Other,
+}
+
+impl TerminalAgent {
+    fn from_program(program: Option<&str>) -> Self {
+        match program {
+            Some("codex") => Self::Codex,
+            _ => Self::Other,
+        }
+    }
+
+    /// Formats a single `path` selection (1-based, inclusive `start..=end` lines)
+    /// as a mention for this agent.
+    fn format_mention(&self, path: &str, start: u32, end: u32) -> String {
+        let line_suffix = if start == end {
+            format!(":{start}")
+        } else {
+            format!(":{start}-{end}")
+        };
+        match self {
+            // codex strips the `@` and quotes whitespace paths; it doesn't parse
+            // the line range, but the model still reads it as context.
+            Self::Codex => {
+                if path.contains(char::is_whitespace) && !path.contains('"') {
+                    format!("\"{path}\"{line_suffix}")
+                } else {
+                    format!("{path}{line_suffix}")
+                }
+            }
+            Self::Other => format!("@{path}{line_suffix}"),
+        }
     }
 }
 
