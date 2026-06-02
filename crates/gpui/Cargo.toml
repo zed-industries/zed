@@ -56,7 +56,6 @@ ctor.workspace = true
 derive_more.workspace = true
 etagere = "0.2"
 futures.workspace = true
-futures-lite.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
 gpui_shared_string.workspace = true

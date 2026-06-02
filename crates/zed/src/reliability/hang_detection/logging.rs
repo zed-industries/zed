@@ -22,6 +22,7 @@ pub struct Reporter {
     foreground_thread: ThreadId,
 }
 
+type ReportMade = bool;
 impl Reporter {
     pub fn new(
         monitor_interval: Duration,
@@ -40,7 +41,7 @@ impl Reporter {
         &mut self,
         task_stats: &[gpui::ThreadTaskStatistics],
         action_stats: &gpui::ActionStatistics,
-    ) -> bool {
+    ) -> ReportMade {
         let mut reported_task_hangs = false;
         reported_task_hangs |= self.report_hanging_foreground(&task_stats);
         reported_task_hangs |= self.report_hanging_background(&task_stats);
@@ -69,7 +70,6 @@ impl Reporter {
     }
 }
 
-type ReportMade = bool;
 impl Reporter {
     fn report_hanging_foreground(
         &mut self,

@@ -196,7 +196,7 @@ impl<T: Hang> Hangs<T> {
 }
 
 pub struct Reporter {
-    record_slower_then: Duration, // TODO histogram bounds should min be this
+    record_slower_then: Duration,
     foreground_thread: ThreadId,
     last_send: Instant,
 
@@ -230,7 +230,7 @@ impl Reporter {
     pub fn send_periodically(&mut self) {
         // this should be a long period otherwise things like
         // hang density get
-        if self.last_send.elapsed() > Duration::from_mins(1) {
+        if self.last_send.elapsed() > Duration::from_mins(30) {
             self.send()
         }
     }

@@ -230,7 +230,6 @@ impl Display for ActionBuildError {
 
 type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>;
 
-#[derive(Clone)]
 pub(crate) struct ActionRegistry {
     by_name: HashMap<&'static str, ActionData>,
     names_by_type_id: HashMap<TypeId, &'static str>,
@@ -257,7 +256,6 @@ impl Default for ActionRegistry {
     }
 }
 
-#[derive(Clone)]
 struct ActionData {
     pub build: ActionBuilder,
     pub json_schema: fn(&mut schemars::SchemaGenerator) -> Option<schemars::Schema>,
