@@ -31,10 +31,11 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     let mut reader = Reader::from_str(svg);
     reader.config_mut().check_end_names = false;
     let events = ReaderIter::new(reader);
-    // merman's resvg-safe pipeline removes foreignObject elements. Keep this
-    // Zed pass because it also drops fallback overlay groups when native SVG
-    // text is already present, avoiding duplicate rasterized labels.
-    let events = strip_foreignobject::process(events);
+    // merman's resvg-safe pipeline already removes foreignObject elements and
+    // replaces their labels with native <text> fallback groups. This pass keeps
+    // those fallback labels, but drops any that merely duplicate a native
+    // <text> (e.g. user journey renders some labels both ways).
+    let events = strip_foreignobject::process(events, svg);
     let events = element_fixup::process(events, theme);
 
     let events = accent_colors::process(events, theme);
