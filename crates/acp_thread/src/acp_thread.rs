@@ -79,6 +79,17 @@ pub const SUBAGENT_SESSION_INFO_META_KEY: &str = "subagent_session_info";
 
 pub const SANDBOX_AUTHORIZATION_META_KEY: &str = "sandbox_authorization";
 
+/// Stable `PermissionOption` ids for the sandbox-escalation approval prompt.
+///
+/// These are shared across the option construction (in the agent), the outcome
+/// dispatch, and the UI so the distinct grant lifetimes stay in sync. Note
+/// that `ALLOW_THREAD` and `ALLOW_ALWAYS` both use
+/// `PermissionOptionKind::AllowAlways`; the id is what distinguishes them.
+pub const SANDBOX_PERMISSION_ALLOW_ONCE: &str = "allow";
+pub const SANDBOX_PERMISSION_ALLOW_THREAD: &str = "allow_thread";
+pub const SANDBOX_PERMISSION_ALLOW_ALWAYS: &str = "allow_always";
+pub const SANDBOX_PERMISSION_DENY: &str = "deny";
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
     #[serde(default)]

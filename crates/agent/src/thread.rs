@@ -1386,6 +1386,12 @@ impl Thread {
                 }
             });
 
+        // Recorded tool calls use the model-facing name, so a terminal call is
+        // always keyed as `terminal` and resolves to the non-sandboxed
+        // `TerminalTool` here, even if it originally ran under
+        // `SandboxedTerminalTool`. That's safe because both variants share the
+        // same `replay` behavior; replay only reconstructs UI state and never
+        // re-runs the command or re-applies sandbox policy.
         let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
             self.context_server_registry
                 .read(cx)
@@ -4398,22 +4404,22 @@ impl ToolCallEventStream {
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_ALLOW_ONCE),
                 "Allow once",
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new("allow_thread"),
+                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_ALLOW_THREAD),
                 "Allow for this thread",
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new("allow_always"),
+                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_ALLOW_ALWAYS),
                 "Allow always",
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
-                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionId::new(acp_thread::SANDBOX_PERMISSION_DENY),
                 "Deny",
                 acp::PermissionOptionKind::RejectOnce,
             ),
@@ -4517,17 +4523,19 @@ impl ToolCallEventStream {
         );
 
         match outcome.option_id.0.as_ref() {
-            "allow" => Ok(()),
-            "allow_thread" => {
+            acp_thread::SANDBOX_PERMISSION_ALLOW_ONCE => Ok(()),
+            acp_thread::SANDBOX_PERMISSION_ALLOW_THREAD => {
                 sandbox_grants.borrow_mut().record(request);
                 Ok(())
             }
-            "allow_always" => {
+            acp_thread::SANDBOX_PERMISSION_ALLOW_ALWAYS => {
                 sandbox_grants.borrow_mut().record(request);
                 Self::persist_sandbox_always_permission(request, fs, cx);
                 Ok(())
             }
-            "deny" => Err(anyhow!("Permission to run tool denied by user")),
+            acp_thread::SANDBOX_PERMISSION_DENY => {
+                Err(anyhow!("Permission to run tool denied by user"))
+            }
             other => {
                 debug_assert!(false, "unexpected sandbox permission option_id: {other}");
                 Err(anyhow!("Permission to run tool denied by user"))
@@ -4541,6 +4549,9 @@ impl ToolCallEventStream {
         cx: &AsyncApp,
     ) {
         let Some(fs) = fs else {
+            log::error!(
+                "Cannot persist \"allow always\" sandbox permission: no filesystem available"
+            );
             return;
         };
 
