@@ -15,3 +15,4 @@ pub mod opencode;
 
 pub mod vercel_ai_gateway;
 pub mod x_ai;
+pub mod x_ai_oauth;

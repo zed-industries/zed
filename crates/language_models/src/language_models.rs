@@ -31,6 +31,7 @@ use crate::provider::openai_subscribed::OpenAiSubscribedProvider;
 use crate::provider::opencode::OpenCodeLanguageModelProvider;
 use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
+use crate::provider::x_ai_oauth::XAiOAuthLanguageModelProvider;
 pub use crate::settings::*;
 
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
@@ -316,6 +317,14 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         Arc::new(XAiLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(XAiOAuthLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
             cx,
