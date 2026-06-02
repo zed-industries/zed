@@ -378,6 +378,37 @@ pub struct InsertSnippet {
     pub snippet: Option<String>,
 }
 
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeBracketsTo {
+    pub delimiter: BracketDelimiter,
+}
+
+#[derive(PartialEq, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BracketDelimiter {
+    Parentheses,
+    Square,
+    Curly,
+    Angle,
+}
+
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeQuotesTo {
+    pub delimiter: QuoteDelimiter,
+}
+
+#[derive(PartialEq, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuoteDelimiter {
+    Single,
+    Double,
+    Backtick,
+}
+
 actions!(
     debugger,
     [
@@ -764,6 +795,10 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
+        /// Selects the contents of the surrounding bracket pair.
+        SelectBracketContent,
+        /// Selects the contents of the surrounding quote pair.
+        SelectQuoteContent,
         /// Selects to the start of the next larger syntax node.
         SelectToStartOfLargerSyntaxNode,
         /// Selects to the end of the next larger syntax node.
@@ -830,6 +865,14 @@ actions!(
         StopLanguageServer,
         /// Switches between source and header files.
         SwitchSourceHeader,
+        /// Cycles the surrounding bracket pair to the next bracket type.
+        SwapBrackets,
+        /// Removes the surrounding bracket pair.
+        RemoveBrackets,
+        /// Cycles the surrounding quote pair to the next quote type.
+        SwapQuotes,
+        /// Removes the surrounding quote pair.
+        RemoveQuotes,
         /// Inserts a tab character or indents.
         Tab,
         /// Removes a tab character or outdents.

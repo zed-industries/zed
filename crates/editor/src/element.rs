@@ -334,6 +334,8 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
         register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
+        register_action(editor, window, Editor::select_bracket_content);
+        register_action(editor, window, Editor::select_quote_content);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
         register_action(editor, window, Editor::undo_selection);
         register_action(editor, window, Editor::redo_selection);
@@ -571,6 +573,12 @@ impl EditorElement {
             register_action(editor, window, Editor::redo);
             register_action(editor, window, Editor::toggle_comments);
             register_action(editor, window, Editor::toggle_block_comments);
+            register_action(editor, window, Editor::swap_brackets);
+            register_action(editor, window, Editor::remove_brackets);
+            register_action(editor, window, Editor::change_brackets_to);
+            register_action(editor, window, Editor::swap_quotes);
+            register_action(editor, window, Editor::remove_quotes);
+            register_action(editor, window, Editor::change_quotes_to);
             register_action(editor, window, Editor::unwrap_syntax_node);
             register_action(editor, window, Editor::accept_next_word_edit_prediction);
             register_action(editor, window, Editor::accept_next_line_edit_prediction);

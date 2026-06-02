@@ -54,6 +54,8 @@ mod edit_prediction_tests;
 #[cfg(test)]
 mod editor_block_comment_tests;
 #[cfg(test)]
+mod editor_delimiter_tests;
+#[cfg(test)]
 mod editor_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
@@ -63,6 +65,7 @@ mod clipboard;
 mod code_actions;
 mod completions;
 mod config;
+mod delimiters;
 mod diagnostics;
 mod edit_prediction;
 mod input;
