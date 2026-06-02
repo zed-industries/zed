@@ -6822,7 +6822,7 @@ mod tests {
     use anyhow::{Result, anyhow};
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
-    use gpui::{App, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{App, Modifiers, TestAppContext, UpdateGlobal, VisualTestContext, px, size};
     use parking_lot::Mutex;
     use project::{Project, WorktreePaths};
     use settings::{SettingsStore, WorkingDirectory};
@@ -7022,6 +7022,95 @@ mod tests {
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
+    }
+
+    #[gpui::test]
+    async fn test_clicking_tool_call_output_keeps_agent_panel_focused_and_zoomed(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.simulate_resize(size(px(900.), px(700.)));
+
+        let connection = StubAgentConnection::new();
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<AgentPanel>(window, cx);
+            panel
+        });
+        open_thread_with_connection(&panel, connection.clone(), cx);
+
+        let session_id = active_session_id(&panel, cx);
+        let tool_call_id = acp::ToolCallId::new("tool-call-output-focus-regression");
+        cx.update(|_window, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::ToolCall(
+                    acp::ToolCall::new(tool_call_id.clone(), "Read file")
+                        .kind(acp::ToolKind::Fetch)
+                        .status(acp::ToolCallStatus::InProgress),
+                ),
+                cx,
+            );
+            connection.send_update(
+                session_id,
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    tool_call_id.clone(),
+                    acp::ToolCallUpdateFields::new()
+                        .status(acp::ToolCallStatus::Completed)
+                        .content(vec![acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(
+                                "tool output text".to_string(),
+                            )),
+                        ))]),
+                )),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        thread_view.update(cx, |thread_view, cx| {
+            thread_view.expanded_tool_calls.insert(tool_call_id);
+            cx.notify();
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+        cx.update(|window, _cx| window.refresh());
+
+        let output_bounds = cx
+            .debug_bounds("tool-call-output-0")
+            .expect("tool call output should be rendered");
+        cx.simulate_click(output_bounds.center(), Modifiers::default());
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(
+                panel.focus_handle(cx).contains_focused(window, cx),
+                "clicking tool call output should keep focus within the agent panel"
+            );
+            assert!(
+                panel.is_zoomed(window, cx),
+                "clicking tool call output should not close Zen Mode"
+            );
+        });
     }
 
     #[gpui::test]
