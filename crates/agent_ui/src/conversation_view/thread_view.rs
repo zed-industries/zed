@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
 use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
 use agent_settings::UserAgentsMd;
+use agent_skills::global_skills_dir;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
@@ -674,6 +675,70 @@ fn skill_issue_file_label(path: &std::path::Path) -> String {
         (_, Some(file_name)) => file_name.to_string(),
         _ => path.display().to_string(),
     }
+}
+
+#[derive(Clone)]
+struct SkillSettingsTarget {
+    label: String,
+    target: Option<zed_actions::OpenSettingsAtTarget>,
+}
+
+fn skill_warning_settings_targets(
+    warnings: &[SkillLoadingIssue],
+    project: &WeakEntity<Project>,
+    cx: &App,
+) -> Vec<SkillSettingsTarget> {
+    let global_skills_dir = global_skills_dir();
+    let worktrees = project
+        .upgrade()
+        .map(|project| project.read(cx).visible_worktrees(cx).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    let mut has_global_warnings = false;
+    let mut project_targets: Vec<(usize, String)> = Vec::new();
+
+    for warning in warnings {
+        if warning.path.starts_with(&global_skills_dir) {
+            has_global_warnings = true;
+            continue;
+        }
+
+        for worktree in &worktrees {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id().to_usize();
+            if warning.path.starts_with(worktree.abs_path().as_ref())
+                && !project_targets
+                    .iter()
+                    .any(|(target_worktree_id, _)| *target_worktree_id == worktree_id)
+            {
+                project_targets.push((worktree_id, worktree.root_name_str().to_string()));
+                break;
+            }
+        }
+    }
+
+    let mut targets = Vec::new();
+    if has_global_warnings {
+        targets.push(SkillSettingsTarget {
+            label: "Manage Global Skills".to_string(),
+            target: Some(zed_actions::OpenSettingsAtTarget::User),
+        });
+    }
+
+    let multiple_project_targets = project_targets.len() > 1;
+    for (worktree_id, worktree_root_name) in project_targets {
+        let label = if multiple_project_targets {
+            format!("Manage {worktree_root_name} Skills")
+        } else {
+            "Manage Project Skills".to_string()
+        };
+        targets.push(SkillSettingsTarget {
+            label,
+            target: Some(zed_actions::OpenSettingsAtTarget::Project { worktree_id }),
+        });
+    }
+
+    targets
 }
 
 impl ThreadView {
@@ -9499,92 +9564,132 @@ impl ThreadView {
             .collect::<Vec<_>>();
 
         if !description_warnings.is_empty() {
-            let rows = description_warnings
-                .iter()
-                .enumerate()
-                .map(|(index, issue)| {
-                    let abs_path = issue.path.clone();
-                    let workspace = self.workspace.clone();
-                    let full_path = issue.path.display().to_string();
-                    let file_label = skill_issue_file_label(&issue.path);
-                    let file_icon = FileIcons::get_icon(issue.path.as_path(), cx)
-                        .map(Icon::from_path)
-                        .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-                        .unwrap_or_else(|| {
-                            Icon::new(IconName::File)
-                                .color(Color::Muted)
-                                .size(IconSize::Small)
-                        });
-
-                    v_flex()
-                        .id(("skill-description-warning-file", index))
-                        .w_full()
-                        .min_w_0()
-                        .gap_0p5()
-                        .p_1()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .hover(|style| style.bg(cx.theme().colors().element_hover))
-                        .child(
-                            h_flex().min_w_0().gap_1().child(file_icon).child(
-                                Label::new(file_label)
-                                    .size(LabelSize::Small)
-                                    .buffer_font(cx),
-                            ),
-                        )
-                        .child(
-                            Label::new(issue.message.clone())
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .tooltip(move |_, cx| {
-                            Tooltip::with_meta("Open File", None, full_path.clone(), cx)
-                        })
-                        .on_click(cx.listener(move |_, _, window, cx| {
-                            let abs_path = abs_path.clone();
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace
-                                        .open_abs_path(
-                                            abs_path,
-                                            workspace::OpenOptions::default(),
-                                            window,
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
-                                })
-                                .ok();
-                        }))
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>();
             let warning_count = description_warnings.len();
             let title = if warning_count == 1 {
                 "1 skill loaded with warning".to_string()
             } else {
                 format!("{warning_count} skills loaded with warnings")
             };
+
+            let mut callout = Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .title(title);
+
+            if warning_count == 1 {
+                let rows = description_warnings
+                    .iter()
+                    .enumerate()
+                    .map(|(index, issue)| {
+                        let abs_path = issue.path.clone();
+                        let workspace = self.workspace.clone();
+                        let full_path = issue.path.display().to_string();
+                        let file_label = skill_issue_file_label(&issue.path);
+                        let file_icon = FileIcons::get_icon(issue.path.as_path(), cx)
+                            .map(Icon::from_path)
+                            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                            .unwrap_or_else(|| {
+                                Icon::new(IconName::File)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small)
+                            });
+
+                        v_flex()
+                            .id(("skill-description-warning-file", index))
+                            .w_full()
+                            .min_w_0()
+                            .gap_0p5()
+                            .p_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(cx.theme().colors().element_hover))
+                            .child(
+                                h_flex().min_w_0().gap_1().child(file_icon).child(
+                                    Label::new(file_label)
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx),
+                                ),
+                            )
+                            .child(
+                                Label::new(issue.message.clone())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .tooltip(move |_, cx| {
+                                Tooltip::with_meta("Open File", None, full_path.clone(), cx)
+                            })
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                let abs_path = abs_path.clone();
+                                workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace
+                                            .open_abs_path(
+                                                abs_path,
+                                                workspace::OpenOptions::default(),
+                                                window,
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                            }))
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>();
+                callout = callout.description_slot(v_flex().gap_1().children(rows));
+            } else {
+                let settings_targets =
+                    skill_warning_settings_targets(&description_warnings, &self.project, cx);
+                if settings_targets.is_empty() {
+                    callout = callout.description(
+                        "Some skill descriptions exceed the recommended limit and may consume more model-context tokens.",
+                    );
+                } else {
+                    let manage_buttons =
+                        h_flex()
+                            .gap_0p5()
+                            .children(settings_targets.into_iter().enumerate().map(
+                                |(index, settings_target)| {
+                                    let target = settings_target.target.clone();
+                                    Button::new(
+                                        ("open-skills-settings", index),
+                                        settings_target.label,
+                                    )
+                                    .label_size(LabelSize::Small)
+                                    .on_click(move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(zed_actions::OpenSettingsAt {
+                                                path: "agent.skills".to_string(),
+                                                target: target.clone(),
+                                            }),
+                                            cx,
+                                        );
+                                    })
+                                    .into_any_element()
+                                },
+                            ));
+                    callout = callout
+                        .description("Open Skills settings to review these warnings and manage skill descriptions in one place.")
+                        .actions_slot(manage_buttons);
+                }
+            }
+
             let targets = description_warnings;
             callouts.push(
-                Callout::new()
-                    .icon(IconName::Warning)
-                    .severity(Severity::Warning)
-                    .title(title)
-                    .description_slot(v_flex().gap_1().children(rows))
-                    .dismiss_action(
-                        IconButton::new("dismiss-skill-description-warnings", IconName::Close)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Dismiss"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.skill_loading_issues
-                                    .retain(|issue| !targets.contains(issue));
-                                for target in &targets {
-                                    this.dismissed_skill_loading_issues.insert(target.clone());
-                                }
-                                cx.notify();
-                            })),
-                    ),
+                callout.dismiss_action(
+                    IconButton::new("dismiss-skill-description-warnings", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.skill_loading_issues
+                                .retain(|issue| !targets.contains(issue));
+                            for target in &targets {
+                                this.dismissed_skill_loading_issues.insert(target.clone());
+                            }
+                            cx.notify();
+                        })),
+                ),
             );
         }
 

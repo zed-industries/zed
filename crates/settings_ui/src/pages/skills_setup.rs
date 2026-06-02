@@ -1,4 +1,4 @@
-use agent_skills::{Skill, SkillIndex, encode_skill_share_link};
+use agent_skills::{MAX_SKILL_DESCRIPTION_LEN, Skill, SkillIndex, encode_skill_share_link};
 use fs::RemoveOptions;
 use gpui::{Action as _, ClipboardItem, ScrollHandle, SharedString, prelude::*};
 
@@ -115,6 +115,7 @@ fn render_skill_row(
 
     let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
         == Some(skill.directory_path.as_path());
+    let warning_message = skill.load_warnings.first().map(|warning| warning.message());
     let (share_icon, share_icon_color) = if share_copied {
         (IconName::Check, Color::Success)
     } else {
@@ -131,9 +132,26 @@ fn render_skill_row(
                 .gap_0p5()
                 .min_w_0()
                 .flex_1()
-                .child(Label::new(skill.name.clone()))
                 .child(
-                    Label::new(skill.description.clone())
+                    h_flex()
+                        .gap_1()
+                        .min_w_0()
+                        .child(Label::new(skill.name.clone()))
+                        .when_some(warning_message, |this, warning_message| {
+                            this.child(
+                                div()
+                                    .id(SharedString::from(format!("warning-{}", skill.name)))
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .tooltip(Tooltip::text(warning_message)),
+                            )
+                        }),
+                )
+                .child(
+                    Label::new(truncated_skill_description(&skill.description))
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 ),
@@ -270,4 +288,32 @@ fn render_skill_row(
                 ),
         )
         .into_any_element()
+}
+
+fn truncated_skill_description(description: &str) -> &str {
+    if description.len() <= MAX_SKILL_DESCRIPTION_LEN {
+        return description;
+    }
+
+    let mut end = MAX_SKILL_DESCRIPTION_LEN;
+    while !description.is_char_boundary(end) {
+        end -= 1;
+    }
+    &description[..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncated_skill_description_preserves_char_boundaries() {
+        let mut description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN - 1);
+        description.push('é');
+
+        let truncated = truncated_skill_description(&description);
+
+        assert_eq!(truncated.len(), MAX_SKILL_DESCRIPTION_LEN - 1);
+        assert!(truncated.ends_with('a'));
+    }
 }

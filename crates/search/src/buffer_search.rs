@@ -197,6 +197,7 @@ impl Render for BufferSearchBar {
                                             window.dispatch_action(
                                                 OpenSettingsAt {
                                                     path: "minimum_split_diff_width".to_string(),
+                                                    target: None,
                                                 }
                                                 .boxed_clone(),
                                                 cx,

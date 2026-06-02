@@ -47,7 +47,7 @@ use workspace::{
     AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
     client_side_decorations,
 };
-use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
+use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt, OpenSettingsAtTarget};
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
@@ -401,9 +401,14 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
-            .register_action(|_, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+            .register_action(|_, action: &OpenSettingsAt, window, cx| {
                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
-                open_settings_editor(Some(&path), None, window_handle, cx);
+                open_settings_editor_at_target(
+                    Some(&action.path),
+                    action.target.as_ref().map(SettingsFileTarget::from),
+                    window_handle,
+                    cx,
+                );
             })
             .register_action(|_, _: &OpenSettings, window, cx| {
                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
@@ -571,13 +576,62 @@ fn init_renderers(cx: &mut App) {
         ;
 }
 
+#[derive(Clone, Copy)]
+enum SettingsFileTarget {
+    User,
+    Project(WorktreeId),
+}
+
+impl From<&OpenSettingsAtTarget> for SettingsFileTarget {
+    fn from(target: &OpenSettingsAtTarget) -> Self {
+        match target {
+            OpenSettingsAtTarget::User => Self::User,
+            OpenSettingsAtTarget::Project { worktree_id } => {
+                Self::Project(WorktreeId::from_usize(*worktree_id))
+            }
+        }
+    }
+}
+
 pub fn open_settings_editor(
     path: Option<&str>,
     target_worktree_id: Option<WorktreeId>,
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
+    open_settings_editor_at_target(
+        path,
+        target_worktree_id.map(SettingsFileTarget::Project),
+        workspace_handle,
+        cx,
+    );
+}
+
+fn open_settings_editor_at_target(
+    path: Option<&str>,
+    target_file: Option<SettingsFileTarget>,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
+    cx: &mut App,
+) {
     telemetry::event!("Settings Viewed");
+
+    fn select_target_file(
+        target_file: SettingsFileTarget,
+        settings_window: &mut SettingsWindow,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let file_index = settings_window
+            .files
+            .iter()
+            .position(|(file, _)| match target_file {
+                SettingsFileTarget::User => matches!(file, SettingsUiFile::User),
+                SettingsFileTarget::Project(worktree_id) => file.worktree_id() == Some(worktree_id),
+            });
+        if let Some(file_index) = file_index {
+            settings_window.change_file(file_index, window, cx);
+        }
+    }
 
     /// Assumes a settings GUI window is already open
     fn open_path(
@@ -634,15 +688,12 @@ pub fn open_settings_editor(
                 settings_window.original_window = workspace_handle;
 
                 window.activate_window();
+                if let Some(target_file) = target_file {
+                    select_target_file(target_file, settings_window, window, cx);
+                }
                 if let Some(path) = path {
                     open_path(path, settings_window, window, cx);
-                } else if let Some(target_id) = target_worktree_id
-                    && let Some(file_index) = settings_window
-                        .files
-                        .iter()
-                        .position(|(file, _)| file.worktree_id() == Some(target_id))
-                {
-                    settings_window.change_file(file_index, window, cx);
+                } else if target_file.is_some() {
                     cx.notify();
                 }
             })
@@ -700,15 +751,11 @@ pub fn open_settings_editor(
                 let settings_window =
                     cx.new(|cx| SettingsWindow::new(workspace_handle, window, cx));
                 settings_window.update(cx, |settings_window, cx| {
+                    if let Some(target_file) = target_file {
+                        select_target_file(target_file, settings_window, window, cx);
+                    }
                     if let Some(path) = path {
                         open_path(&path, settings_window, window, cx);
-                    } else if let Some(target_id) = target_worktree_id
-                        && let Some(file_index) = settings_window
-                            .files
-                            .iter()
-                            .position(|(file, _)| file.worktree_id() == Some(target_id))
-                    {
-                        settings_window.change_file(file_index, window, cx);
                     }
                 });
 
