@@ -1083,7 +1083,7 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-enum AutoCompactionResult {
+enum CompactionResult {
     Skipped,
     Completed,
     Cancelled,
@@ -2237,9 +2237,20 @@ impl Thread {
         let mut intent = CompletionIntent::UserPrompt;
         loop {
             if attempt == 0 && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
-                match Self::run_compaction(this, event_stream, cancellation_rx.clone(), cx).await? {
-                    AutoCompactionResult::Skipped | AutoCompactionResult::Completed => {}
-                    AutoCompactionResult::Cancelled => return Ok(()),
+                match Self::perform_compaction_if_needed(
+                    this,
+                    event_stream,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await
+                {
+                    Ok(CompactionResult::Skipped | CompactionResult::Completed) => {}
+                    Ok(CompactionResult::Cancelled) => return Ok(()),
+                    Err(error) => {
+                        log::error!("Compaction failed: {}", error);
+                        return Err(error);
+                    }
                 }
             }
 
@@ -2444,12 +2455,12 @@ impl Thread {
         }
     }
 
-    async fn run_compaction(
+    async fn perform_compaction_if_needed(
         this: &WeakEntity<Self>,
         event_stream: &ThreadEventStream,
         mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
-    ) -> Result<AutoCompactionResult> {
+    ) -> Result<CompactionResult> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
             let Some(insertion_ix) = this.compaction_message_target_ix() else {
                 return None;
@@ -2459,7 +2470,7 @@ impl Thread {
             Some((model, request, insertion_ix))
         })?
         else {
-            return Ok(AutoCompactionResult::Skipped);
+            return Ok(CompactionResult::Skipped);
         };
 
         log::debug!("Running compaction");
@@ -2468,19 +2479,12 @@ impl Thread {
             _ = cancellation_rx.changed().fuse() => {
                 if *cancellation_rx.borrow() {
                     log::debug!("Compaction cancelled before request started");
-                    return Ok(AutoCompactionResult::Cancelled);
+                    return Ok(CompactionResult::Cancelled);
                 }
-                return Ok(AutoCompactionResult::Skipped);
+                return Ok(CompactionResult::Skipped);
             }
         };
-
-        let mut stream = match stream {
-            Ok(stream) => stream.fuse(),
-            Err(error) => {
-                log::warn!("Compaction failed to start: {error:?}");
-                return Ok(AutoCompactionResult::Skipped);
-            }
-        };
+        let mut stream = stream?;
 
         let mut summary = String::new();
         loop {
@@ -2489,7 +2493,7 @@ impl Thread {
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
                         log::debug!("Compaction cancelled while summarizing");
-                        return Ok(AutoCompactionResult::Cancelled);
+                        return Ok(CompactionResult::Cancelled);
                     }
                     continue;
                 }
@@ -2499,36 +2503,30 @@ impl Thread {
                 break;
             };
 
-            match event {
-                Ok(LanguageModelCompletionEvent::Text(text)) => summary.push_str(&text),
-                Ok(
-                    LanguageModelCompletionEvent::Stop(_)
-                    | LanguageModelCompletionEvent::Started
-                    | LanguageModelCompletionEvent::Queued { .. }
-                    | LanguageModelCompletionEvent::UsageUpdate(_)
-                    | LanguageModelCompletionEvent::Thinking { .. }
-                    | LanguageModelCompletionEvent::RedactedThinking { .. }
-                    | LanguageModelCompletionEvent::ReasoningDetails(_)
-                    | LanguageModelCompletionEvent::ToolUse(_)
-                    | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                    | LanguageModelCompletionEvent::StartMessage { .. },
-                ) => {}
-                Err(error) => {
-                    log::warn!("Compaction failed while summarizing: {error:?}");
-                    return Ok(AutoCompactionResult::Skipped);
-                }
+            match event? {
+                LanguageModelCompletionEvent::Text(text) => summary.push_str(&text),
+                LanguageModelCompletionEvent::Stop(_)
+                | LanguageModelCompletionEvent::Started
+                | LanguageModelCompletionEvent::Queued { .. }
+                | LanguageModelCompletionEvent::UsageUpdate(_)
+                | LanguageModelCompletionEvent::Thinking { .. }
+                | LanguageModelCompletionEvent::RedactedThinking { .. }
+                | LanguageModelCompletionEvent::ReasoningDetails(_)
+                | LanguageModelCompletionEvent::ToolUse(_)
+                | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+                | LanguageModelCompletionEvent::StartMessage { .. } => {}
             }
         }
 
         if *cancellation_rx.borrow() {
             log::debug!("Compaction cancelled after summarizing");
-            return Ok(AutoCompactionResult::Cancelled);
+            return Ok(CompactionResult::Cancelled);
         }
 
         let summary = summary.trim().to_string();
         if summary.is_empty() {
             log::warn!("Compaction produced an empty summary");
-            return Ok(AutoCompactionResult::Skipped);
+            return Err(anyhow::anyhow!("Compaction produced an empty summary"));
         }
 
         log::debug!("Compaction succeeded:\n{summary}");
@@ -2544,7 +2542,7 @@ impl Thread {
             cx.notify();
         })?;
 
-        Ok(AutoCompactionResult::Completed)
+        Ok(CompactionResult::Completed)
     }
 
     fn process_tool_result(
