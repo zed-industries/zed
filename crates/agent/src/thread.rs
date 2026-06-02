@@ -11,14 +11,16 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
-    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
-    UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
+    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag, LspToolFeatureFlag,
+    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
 };
+use zed_env_vars::{EnvVar, env_var};
 
 use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, COMPACTION_PROMPT, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -70,6 +72,11 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+
+const AGENT_COMPACTION_REMAINING_TOKEN_BUDGET: u64 = 40_000;
+
+static AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR: std::sync::LazyLock<EnvVar> =
+    env_var!("AGENT_COMPACTION_REMAINING_TOKEN_BUDGET");
 
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
@@ -1074,6 +1081,12 @@ enum CompletionError {
     Refusal,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+enum AutoCompactionResult {
+    Skipped,
+    Completed,
+    Cancelled,
 }
 
 pub struct Thread {
@@ -2223,6 +2236,13 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
+            if attempt == 0 && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
+                match Self::run_compaction(this, event_stream, cancellation_rx.clone(), cx).await? {
+                    AutoCompactionResult::Skipped | AutoCompactionResult::Completed => {}
+                    AutoCompactionResult::Cancelled => return Ok(()),
+                }
+            }
+
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
@@ -2422,6 +2442,109 @@ impl Thread {
                 attempt = 0;
             }
         }
+    }
+
+    async fn run_compaction(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        mut cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<AutoCompactionResult> {
+        let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
+            let Some(insertion_ix) = this.compaction_message_target_ix() else {
+                return None;
+            };
+            let model = this.model.clone()?;
+            let request = this.build_compaction_request(insertion_ix, &model, cx);
+            Some((model, request, insertion_ix))
+        })?
+        else {
+            return Ok(AutoCompactionResult::Skipped);
+        };
+
+        log::debug!("Running compaction");
+        let stream = futures::select! {
+            result = model.stream_completion(request, cx).fuse() => result,
+            _ = cancellation_rx.changed().fuse() => {
+                if *cancellation_rx.borrow() {
+                    log::debug!("Compaction cancelled before request started");
+                    return Ok(AutoCompactionResult::Cancelled);
+                }
+                return Ok(AutoCompactionResult::Skipped);
+            }
+        };
+
+        let mut stream = match stream {
+            Ok(stream) => stream.fuse(),
+            Err(error) => {
+                log::warn!("Compaction failed to start: {error:?}");
+                return Ok(AutoCompactionResult::Skipped);
+            }
+        };
+
+        let mut summary = String::new();
+        loop {
+            let event = futures::select! {
+                event = stream.next().fuse() => event,
+                _ = cancellation_rx.changed().fuse() => {
+                    if *cancellation_rx.borrow() {
+                        log::debug!("Compaction cancelled while summarizing");
+                        return Ok(AutoCompactionResult::Cancelled);
+                    }
+                    continue;
+                }
+            };
+
+            let Some(event) = event else {
+                break;
+            };
+
+            match event {
+                Ok(LanguageModelCompletionEvent::Text(text)) => summary.push_str(&text),
+                Ok(
+                    LanguageModelCompletionEvent::Stop(_)
+                    | LanguageModelCompletionEvent::Started
+                    | LanguageModelCompletionEvent::Queued { .. }
+                    | LanguageModelCompletionEvent::UsageUpdate(_)
+                    | LanguageModelCompletionEvent::Thinking { .. }
+                    | LanguageModelCompletionEvent::RedactedThinking { .. }
+                    | LanguageModelCompletionEvent::ReasoningDetails(_)
+                    | LanguageModelCompletionEvent::ToolUse(_)
+                    | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+                    | LanguageModelCompletionEvent::StartMessage { .. },
+                ) => {}
+                Err(error) => {
+                    log::warn!("Compaction failed while summarizing: {error:?}");
+                    return Ok(AutoCompactionResult::Skipped);
+                }
+            }
+        }
+
+        if *cancellation_rx.borrow() {
+            log::debug!("Compaction cancelled after summarizing");
+            return Ok(AutoCompactionResult::Cancelled);
+        }
+
+        let summary = summary.trim().to_string();
+        if summary.is_empty() {
+            log::warn!("Compaction produced an empty summary");
+            return Ok(AutoCompactionResult::Skipped);
+        }
+
+        log::debug!("Compaction succeeded:\n{summary}");
+
+        this.update(cx, |this, cx| {
+            let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
+            if insertion_ix <= this.messages.len() {
+                this.messages.insert(insertion_ix, compaction);
+            } else {
+                this.messages.push(compaction);
+            }
+            event_stream.send_context_compaction();
+            cx.notify();
+        })?;
+
+        Ok(AutoCompactionResult::Completed)
     }
 
     fn process_tool_result(
@@ -3353,10 +3476,24 @@ impl Thread {
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> Vec<LanguageModelRequestMessage> {
-        log::trace!(
-            "Building request messages from {} thread messages",
-            self.messages.len()
-        );
+        let mut messages =
+            self.build_request_messages_until(available_tools, self.messages.len(), cx);
+
+        if let Some(message) = self.pending_message.as_ref() {
+            messages.extend(message.to_request());
+        }
+
+        messages
+    }
+
+    fn build_request_messages_until(
+        &self,
+        available_tools: Vec<SharedString>,
+        end_ix: usize,
+        cx: &App,
+    ) -> Vec<LanguageModelRequestMessage> {
+        let end_ix = end_ix.min(self.messages.len());
+        log::trace!("Building request messages from {} thread messages", end_ix);
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let system_prompt = SystemPromptTemplate {
@@ -3376,22 +3513,22 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        self.extend_request_history(&mut messages);
+        self.extend_request_history_until(&mut messages, end_ix);
 
         if let Some(last_message) = messages.last_mut() {
             last_message.cache = true;
         }
 
-        if let Some(message) = self.pending_message.as_ref() {
-            messages.extend(message.to_request());
-        }
-
         messages
     }
 
-    fn extend_request_history(&self, messages: &mut Vec<LanguageModelRequestMessage>) {
-        let Some(compaction_ix) = self.latest_compaction_message_ix() else {
-            for message in &self.messages {
+    fn extend_request_history_until(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        end_ix: usize,
+    ) {
+        let Some(compaction_ix) = self.latest_compaction_message_ix_before(end_ix) else {
+            for message in &self.messages[..end_ix] {
                 messages.extend(message.to_request());
             }
             return;
@@ -3404,15 +3541,92 @@ impl Thread {
             messages.extend(self.retained_user_request_messages_before(compaction_ix));
         }
 
-        for message in &self.messages[compaction_ix..] {
+        for message in &self.messages[compaction_ix..end_ix] {
             messages.extend(message.to_request());
         }
     }
 
-    fn latest_compaction_message_ix(&self) -> Option<usize> {
-        self.messages
+    fn latest_compaction_message_ix_before(&self, end_ix: usize) -> Option<usize> {
+        self.messages[..end_ix]
             .iter()
             .rposition(|message| matches!(&**message, Message::Compaction(_)))
+    }
+
+    fn compaction_message_target_ix(&self) -> Option<usize> {
+        let model = self.model.as_ref()?;
+        let (usage_ix, usage) = {
+            let this = &self;
+            this.messages
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, message)| {
+                    let Message::User(user_message) = &**message else {
+                        return None;
+                    };
+                    this.request_token_usage
+                        .get(&user_message.id)
+                        .copied()
+                        .map(|usage| (ix, usage))
+                })
+        }?;
+        if self
+            .latest_compaction_message_ix_before(self.messages.len())
+            .is_some_and(|compaction_ix| compaction_ix > usage_ix)
+        {
+            return None;
+        }
+
+        let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
+
+        let remaining_budget = AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR
+            .value
+            .as_ref()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(AGENT_COMPACTION_REMAINING_TOKEN_BUDGET);
+
+        let compaction_threshold = model.max_token_count().saturating_sub(remaining_budget);
+        if active_tokens < compaction_threshold {
+            return None;
+        }
+
+        let insertion_ix = match self.messages.last() {
+            Some(message)
+                if matches!(
+                    &**message,
+                    Message::User(UserMessage { id, .. }) if !self.request_token_usage.contains_key(id)
+                ) =>
+            {
+                self.messages.len().saturating_sub(1)
+            }
+            _ => self.messages.len(),
+        };
+        Some(insertion_ix)
+    }
+
+    fn build_compaction_request(
+        &self,
+        insertion_ix: usize,
+        model: &Arc<dyn LanguageModel>,
+        cx: &App,
+    ) -> LanguageModelRequest {
+        let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.prompt_id.to_string()),
+            intent: Some(CompletionIntent::ThreadContextSummarization),
+            temperature: AgentSettings::temperature_for_model(model, cx),
+            messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
+            ..Default::default()
+        };
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![COMPACTION_PROMPT.into()],
+            cache: false,
+            reasoning_details: None,
+        });
+
+        request
     }
 
     fn retained_user_request_messages_before(
@@ -5127,6 +5341,173 @@ mod tests {
             .skip(1)
             .map(LanguageModelRequestMessage::string_contents)
             .collect()
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_uses_latest_reported_usage(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "near limit"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 960_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_inserts_before_new_user_and_requests_compacted_window(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_user_message_id = UserMessageId::new();
+        let new_user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["handoff".to_string()]);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                thread.request_token_usage.insert(
+                    old_user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 960_000,
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(new_user_message_id, vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let compaction_request = model.pending_completions().pop().unwrap();
+        assert_eq!(
+            compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        let compaction_texts = request_texts_after_system(&compaction_request.messages);
+        assert_eq!(compaction_texts.len(), 3);
+        assert_eq!(compaction_texts[0], "old user");
+        assert_eq!(compaction_texts[1], "old assistant");
+        assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
+
+        model.send_completion_stream_text_chunk(&compaction_request, "compacted old context");
+        model.end_completion_stream(&compaction_request);
+        cx.run_until_parked();
+
+        let final_request = model.pending_completions().pop().unwrap();
+        assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(
+            request_texts_after_system(&final_request.messages),
+            vec![
+                "old user".to_string(),
+                summary_request_text("compacted old context"),
+                "new prompt".to_string(),
+            ]
+        );
+
+        model.send_completion_stream_text_chunk(&final_request, "answer");
+        model.end_completion_stream(&final_request);
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _cx| {
+                assert!(matches!(&*thread.messages[0], Message::User(_)));
+                assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+                assert!(matches!(
+                    &*thread.messages[2],
+                    Message::Compaction(CompactionInfo::Summary(summary)) if summary.as_ref() == "compacted old context"
+                ));
+                assert!(matches!(&*thread.messages[3], Message::User(_)));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_failure_continues_without_marker(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["handoff".to_string()]);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "near limit"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 960_000,
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(UserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let compaction_request = model.pending_completions().pop().unwrap();
+        model.send_completion_stream_error(
+            &compaction_request,
+            LanguageModelCompletionError::Other(anyhow!("summary failed")),
+        );
+        model.end_completion_stream(&compaction_request);
+        cx.run_until_parked();
+
+        let final_request = model.pending_completions().pop().unwrap();
+        assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(
+            request_texts_after_system(&final_request.messages),
+            vec!["near limit".to_string(), "new prompt".to_string()]
+        );
+
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _cx| {
+                assert!(
+                    !thread
+                        .messages
+                        .iter()
+                        .any(|message| matches!(&**message, Message::Compaction(_)))
+                );
+            });
+        });
+
+        model.send_completion_stream_text_chunk(&final_request, "answer");
+        model.end_completion_stream(&final_request);
+        cx.run_until_parked();
     }
 
     #[gpui::test]
