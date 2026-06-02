@@ -8334,7 +8334,7 @@ impl Editor {
             return;
         };
 
-        let command_id: Arc<str> = action.command.clone().into();
+        let command_id: Arc<str> = action.command_id.clone().into();
         let context = editor.read_with(cx, |editor, cx| editor.editor_command_context(cx));
         let task = extension_store.update(cx, |extension_store, cx| {
             extension_store.run_editor_command(command_id.clone(), context, cx)

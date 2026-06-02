@@ -262,7 +262,7 @@ impl extension::Extension for WasmExtension {
                     .call_run_editor_command(store, command_id.to_string(), context.into())
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
-                anyhow::Ok(result.map(Into::into))
+                anyhow::Ok(result.map(TryInto::try_into).transpose()?)
             }
             .boxed()
         })

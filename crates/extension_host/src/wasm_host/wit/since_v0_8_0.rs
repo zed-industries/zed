@@ -88,13 +88,15 @@ impl From<extension::EditorSelection> for EditorSelection {
     }
 }
 
-impl From<EditorSelection> for extension::EditorSelection {
-    fn from(selection: EditorSelection) -> Self {
-        Self {
-            start: selection.start as usize,
-            end: selection.end as usize,
+impl TryFrom<EditorSelection> for extension::EditorSelection {
+    type Error = anyhow::Error;
+
+    fn try_from(selection: EditorSelection) -> Result<Self> {
+        Ok(Self {
+            start: usize::try_from(selection.start).context("selection start exceeded usize")?,
+            end: usize::try_from(selection.end).context("selection end exceeded usize")?,
             reversed: selection.reversed,
-        }
+        })
     }
 }
 
@@ -109,23 +111,39 @@ impl From<extension::EditorCommandContext> for EditorCommandContext {
     }
 }
 
-impl From<EditorEdit> for extension::EditorEdit {
-    fn from(edit: EditorEdit) -> Self {
-        Self {
-            range: edit.range.into(),
+impl TryFrom<EditorEdit> for extension::EditorEdit {
+    type Error = anyhow::Error;
+
+    fn try_from(edit: EditorEdit) -> Result<Self> {
+        let start = usize::try_from(edit.range.start).context("edit range start exceeded usize")?;
+        let end = usize::try_from(edit.range.end).context("edit range end exceeded usize")?;
+        Ok(Self {
+            range: start..end,
             new_text: edit.new_text,
-        }
+        })
     }
 }
 
-impl From<EditorCommandResult> for extension::EditorCommandResult {
-    fn from(result: EditorCommandResult) -> Self {
-        Self {
-            edits: result.edits.into_iter().map(Into::into).collect(),
+impl TryFrom<EditorCommandResult> for extension::EditorCommandResult {
+    type Error = anyhow::Error;
+
+    fn try_from(result: EditorCommandResult) -> Result<Self> {
+        Ok(Self {
+            edits: result
+                .edits
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>>>()?,
             selections: result
                 .selections
-                .map(|selections| selections.into_iter().map(Into::into).collect()),
-        }
+                .map(|selections| {
+                    selections
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?,
+        })
     }
 }
 

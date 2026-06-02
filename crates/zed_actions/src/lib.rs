@@ -33,7 +33,7 @@ pub struct OpenZedUrl {
 #[action(namespace = extension)]
 #[serde(deny_unknown_fields)]
 pub struct RunEditorCommand {
-    pub command: String,
+    pub command_id: String,
 }
 
 /// Opens the keymap to either add a keybinding or change an existing one

@@ -580,6 +580,36 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_manifest_with_editor_commands() {
+        use indoc::indoc;
+
+        let content = indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 0
+
+            [editor_commands."test.command"]
+            description = "Run a test editor command."
+        "#};
+
+        let manifest: ExtensionManifest = toml::from_str(content).expect("manifest should parse");
+        assert_eq!(
+            manifest
+                .editor_commands
+                .get("test.command")
+                .expect("editor command should be present")
+                .description,
+            "Run a test editor command."
+        );
+        assert!(
+            manifest
+                .provides()
+                .contains(&ExtensionProvides::EditorCommands)
+        );
+    }
+
+    #[test]
     #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
         use indoc::indoc;
