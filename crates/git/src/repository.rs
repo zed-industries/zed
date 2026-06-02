@@ -322,37 +322,37 @@ impl Worktree {
         })
     }
 
-    /// Returns a display name for the worktree, suitable for use in the UI.
+    /// Returns a name for the worktree based on its checked-out ref.
     ///
     /// If the worktree is attached to a branch, returns the branch name.
     /// Otherwise, returns the short SHA of the worktree's HEAD commit.
-    pub fn display_name(&self) -> &str {
+    fn branch_or_sha(&self) -> &str {
+        debug_assert!(!self.is_bare, "branch_or_sha called on a bare worktree");
         self.branch_name()
-            .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
+            .unwrap_or(&self.sha[..SHORT_SHA_LENGTH])
     }
 
-    pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
+    pub fn directory_name(&self) -> Option<&str> {
+        self.path.file_name().and_then(|name| name.to_str())
+    }
+
+    /// Returns a display name for the worktree, suitable for use in the UI.
+    ///
+    /// The main worktree is labeled "main worktree". Other worktrees use their
+    /// leaf directory name, falling back to the branch name (or commit SHA) when
+    /// it matches the main worktree's.
+    pub fn display_name(&self, main_worktree_path: Option<&Path>) -> String {
+        debug_assert!(!self.is_bare, "display_name called on a bare worktree");
         if self.is_main {
             return "main worktree".to_string();
         }
 
-        let dir_name = self
-            .path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(self.display_name());
+        let dir_name = self.directory_name().unwrap_or_else(|| self.branch_or_sha());
 
         if let Some(main_path) = main_worktree_path {
             let main_dir = main_path.file_name().and_then(|n| n.to_str());
             if main_dir == Some(dir_name) {
-                if let Some(parent_name) = self
-                    .path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
-                {
-                    return parent_name.to_string();
-                }
+                return self.branch_or_sha().to_string();
             }
         }
 
@@ -538,8 +538,8 @@ impl CommitFile {
 }
 
 impl CommitDetails {
-    pub fn short_sha(&self) -> SharedString {
-        self.sha[..SHORT_SHA_LENGTH].to_string().into()
+    pub fn short_sha(&self) -> &str {
+        &self.sha[..SHORT_SHA_LENGTH]
     }
 }
 
@@ -4477,7 +4477,7 @@ mod tests {
 
         let new_worktree = worktrees
             .iter()
-            .find(|w| w.display_name() == "test-branch")
+            .find(|w| w.branch_or_sha() == "test-branch")
             .expect("should find worktree with test-branch");
         assert_eq!(
             new_worktree.path.canonicalize().unwrap(),
@@ -4541,7 +4541,7 @@ mod tests {
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 1);
         assert!(
-            worktrees.iter().all(|w| w.display_name() != "to-remove"),
+            worktrees.iter().all(|w| w.branch_or_sha() != "to-remove"),
             "removed worktree should not appear in list"
         );
         assert!(!worktree_path.exists());
@@ -4647,7 +4647,7 @@ mod tests {
         assert_eq!(worktrees.len(), 2);
         let moved_worktree = worktrees
             .iter()
-            .find(|w| w.display_name() == "old-name")
+            .find(|w| w.branch_or_sha() == "old-name")
             .expect("should find worktree by branch name");
         assert_eq!(
             moved_worktree.path.canonicalize().unwrap(),

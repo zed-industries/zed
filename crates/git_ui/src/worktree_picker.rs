@@ -317,6 +317,14 @@ struct WorktreePickerDelegate {
     deleting_worktree_paths: HashSet<PathBuf>,
 }
 
+/// Returns the path of the main worktree in `worktrees`, if one is present.
+fn main_worktree_path(worktrees: &[GitWorktree]) -> Option<&Path> {
+    worktrees
+        .iter()
+        .find(|worktree| worktree.is_main)
+        .map(|worktree| worktree.path.as_path())
+}
+
 fn remove_worktree_command(path: &Path, force: bool) -> String {
     if force {
         format!("worktree remove --force {}", path.display())
@@ -489,12 +497,7 @@ impl WorktreePickerDelegate {
             return;
         };
         let path = worktree.path.clone();
-        let display_name = worktree.directory_name(
-            self.all_worktrees
-                .iter()
-                .find(|worktree| worktree.is_main)
-                .map(|worktree| worktree.path.as_path()),
-        );
+        let display_name = worktree.display_name(main_worktree_path(&self.all_worktrees));
         let workspace = self.workspace.clone();
 
         self.deleting_worktree_paths.insert(path.clone());
@@ -701,13 +704,8 @@ impl PickerDelegate for WorktreePickerDelegate {
         let repo_worktrees = self.all_repo_worktrees().to_vec();
 
         let normalized_query = query.replace(' ', "-");
-        let main_worktree_path = self
-            .all_worktrees
-            .iter()
-            .find(|wt| wt.is_main)
-            .map(|wt| wt.path.clone());
         let has_named_worktree = self.all_worktrees.iter().any(|worktree| {
-            worktree.directory_name(main_worktree_path.as_deref()) == normalized_query
+            worktree.directory_name() == Some(normalized_query.as_str())
         });
         let create_named_disabled_reason: Option<String> = if self.has_multiple_repositories {
             Some("Cannot create a named worktree in a project with multiple repositories".into())
@@ -725,10 +723,7 @@ impl PickerDelegate for WorktreePickerDelegate {
             let mut matches = self.build_fixed_entries();
 
             if !repo_worktrees.is_empty() {
-                let main_worktree_path = repo_worktrees
-                    .iter()
-                    .find(|wt| wt.is_main)
-                    .map(|wt| wt.path.clone());
+                let main_worktree_path = main_worktree_path(&repo_worktrees).map(Path::to_path_buf);
 
                 let mut sorted = repo_worktrees;
                 let project_paths = &self.project_worktree_paths;
@@ -737,8 +732,8 @@ impl PickerDelegate for WorktreePickerDelegate {
                     let a_is_current = project_paths.contains(&a.path);
                     let b_is_current = project_paths.contains(&b.path);
                     b_is_current.cmp(&a_is_current).then_with(|| {
-                        a.directory_name(main_worktree_path.as_deref())
-                            .cmp(&b.directory_name(main_worktree_path.as_deref()))
+                        a.display_name(main_worktree_path.as_deref())
+                            .cmp(&b.display_name(main_worktree_path.as_deref()))
                     })
                 });
 
@@ -756,18 +751,12 @@ impl PickerDelegate for WorktreePickerDelegate {
             return Task::ready(());
         }
 
-        let main_worktree_path = repo_worktrees
-            .iter()
-            .find(|wt| wt.is_main)
-            .map(|wt| wt.path.clone());
+        let main_worktree_path = main_worktree_path(&repo_worktrees);
         let candidates: Vec<_> = repo_worktrees
             .iter()
             .enumerate()
             .map(|(ix, worktree)| {
-                StringMatchCandidate::new(
-                    ix,
-                    &worktree.directory_name(main_worktree_path.as_deref()),
-                )
+                StringMatchCandidate::new(ix, &worktree.display_name(main_worktree_path))
             })
             .collect();
 
@@ -893,18 +882,14 @@ impl PickerDelegate for WorktreePickerDelegate {
                             cx,
                         );
                     } else {
-                        let main_worktree_path = self
-                            .all_worktrees
-                            .iter()
-                            .find(|wt| wt.is_main)
-                            .map(|wt| wt.path.as_path());
+                        let main_worktree_path = main_worktree_path(&self.all_worktrees);
                         if let Some(workspace) = self.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
                                 crate::worktree_service::handle_switch_worktree(
                                     workspace,
                                     &SwitchWorktree {
                                         path: worktree.path.clone(),
-                                        display_name: worktree.directory_name(main_worktree_path),
+                                        display_name: worktree.display_name(main_worktree_path),
                                     },
                                     window,
                                     self.focused_dock,
@@ -1008,12 +993,8 @@ impl PickerDelegate for WorktreePickerDelegate {
                 worktree,
                 positions,
             } => {
-                let main_worktree_path = self
-                    .all_worktrees
-                    .iter()
-                    .find(|wt| wt.is_main)
-                    .map(|wt| wt.path.as_path());
-                let display_name = worktree.directory_name(main_worktree_path);
+                let display_name =
+                    worktree.display_name(main_worktree_path(&self.all_worktrees));
                 let first_line = display_name.lines().next().unwrap_or(&display_name);
                 let positions: Vec<_> = positions
                     .iter()
