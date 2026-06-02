@@ -57,6 +57,7 @@ file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
+git_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
@@ -125,7 +126,6 @@ clock = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
-git_ui.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
