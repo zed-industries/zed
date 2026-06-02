@@ -1,14 +1,32 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ItemFn, spanned::Spanned};
+use syn::{ItemFn, parse::Parser, spanned::Spanned};
+
+/// Default target frame rate when a benchmark doesn't specify `fps = N`.
+const DEFAULT_FPS: u64 = 120;
 
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
+    let mut fps: Option<u64> = None;
     if !args.is_empty() {
-        return error_to_stream(syn::Error::new(
-            proc_macro2::TokenStream::from(args).span(),
-            "#[gpui::bench] does not accept arguments yet",
-        ));
+        let parser = syn::meta::parser(|meta| {
+            if meta.path.is_ident("fps") {
+                let value: syn::LitInt = meta.value()?.parse()?;
+                let value = value.base10_parse::<u64>()?;
+                if value == 0 {
+                    return Err(meta.error("#[gpui::bench] `fps` must be greater than zero"));
+                }
+                fps = Some(value);
+                Ok(())
+            } else {
+                Err(meta.error("#[gpui::bench] only accepts `fps = N`"))
+            }
+        });
+        if let Err(error) = parser.parse(args) {
+            return error_to_stream(error);
+        }
     }
+
+    let frame_budget_nanos: u128 = 1_000_000_000 / fps.unwrap_or(DEFAULT_FPS) as u128;
 
     let mut inner_fn = match syn::parse::<ItemFn>(function) {
         Ok(function) => function,
@@ -30,7 +48,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         #inner_fn
 
         fn #outer_fn_name(criterion: &mut criterion::Criterion) {
-            let report = gpui::BenchReport::default();
+            let report = gpui::BenchReport::with_frame_budget_nanos(#frame_budget_nanos);
             criterion.bench_function(stringify!(#outer_fn_name), {
                 let report = report.clone();
                 move |bencher| {

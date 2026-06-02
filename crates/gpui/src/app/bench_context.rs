@@ -10,18 +10,34 @@ use crate::{
     app::GpuiBorrow,
 };
 
-// todo! make this something we pass in via the macro
-const FRAME_BUDGET_NANOS: u128 = 16_666_667;
+/// Frame budget used when a benchmark doesn't specify one, in nanoseconds (120fps).
+const DEFAULT_FRAME_BUDGET_NANOS: u128 = 1_000_000_000 / 120;
 
 /// A small report produced by GPUI benchmarks.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct BenchReport {
     measurements: Rc<RefCell<Vec<BenchMeasurementReport>>>,
+    frame_budget_nanos: u128,
+}
+
+impl Default for BenchReport {
+    fn default() -> Self {
+        Self::with_frame_budget_nanos(DEFAULT_FRAME_BUDGET_NANOS)
+    }
 }
 
 impl BenchReport {
+    /// Creates a report that treats `frame_budget_nanos` as the per-frame budget
+    /// when counting missed frames.
+    pub fn with_frame_budget_nanos(frame_budget_nanos: u128) -> Self {
+        Self {
+            measurements: Rc::default(),
+            frame_budget_nanos,
+        }
+    }
+
     fn record_sample(&self, name: &'static str, foreground_time: Duration) {
-        let missed_frames = missed_frames(foreground_time);
+        let missed_frames = self.missed_frames(foreground_time);
         self.record_summary(
             name,
             1,
@@ -63,9 +79,29 @@ impl BenchReport {
             samples,
             total_nanos,
             max,
-            total_missed_frames(histogram),
-            missed_frames(max),
+            self.total_missed_frames(histogram),
+            self.missed_frames(max),
         );
+    }
+
+    fn total_missed_frames(&self, histogram: &hdrhistogram::Histogram<u64>) -> u64 {
+        histogram
+            .iter_recorded()
+            .map(|value| {
+                self.missed_frames(Duration::from_nanos(value.value_iterated_to()))
+                    * value.count_at_value()
+            })
+            .sum()
+    }
+
+    fn missed_frames(&self, foreground_time: Duration) -> u64 {
+        let foreground_nanos = foreground_time.as_nanos();
+        if foreground_nanos <= self.frame_budget_nanos {
+            return 0;
+        }
+
+        let over_budget_nanos = foreground_nanos - self.frame_budget_nanos;
+        ((over_budget_nanos + self.frame_budget_nanos - 1) / self.frame_budget_nanos) as u64
     }
 
     fn record_summary(
@@ -165,25 +201,6 @@ impl BenchMeasurementReport {
     fn mean_foreground_time(&self) -> Duration {
         Duration::from_nanos((self.total_foreground_nanos / self.samples as u128) as u64)
     }
-}
-
-fn total_missed_frames(histogram: &hdrhistogram::Histogram<u64>) -> u64 {
-    histogram
-        .iter_recorded()
-        .map(|value| {
-            missed_frames(Duration::from_nanos(value.value_iterated_to())) * value.count_at_value()
-        })
-        .sum()
-}
-
-fn missed_frames(foreground_time: Duration) -> u64 {
-    let foreground_nanos = foreground_time.as_nanos();
-    if foreground_nanos <= FRAME_BUDGET_NANOS {
-        return 0;
-    }
-
-    let over_budget_nanos = foreground_nanos - FRAME_BUDGET_NANOS;
-    ((over_budget_nanos + FRAME_BUDGET_NANOS - 1) / FRAME_BUDGET_NANOS) as u64
 }
 
 fn format_duration(duration: Duration) -> String {
