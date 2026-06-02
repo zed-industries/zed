@@ -1110,7 +1110,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: false,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1137,7 +1137,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1164,7 +1164,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1192,7 +1192,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: false,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1220,7 +1220,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: true,
                 is_title_generating: false,
-                is_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1790,14 +1790,17 @@ async fn test_closing_last_agent_panel_terminal_restores_empty_header(cx: &mut T
         assert!(!panel.has_terminal(terminal_id));
         assert!(
             panel.active_view_is_new_draft(cx),
-            "closing the active terminal should leave the panel on a hidden empty draft"
+            "closing the active terminal should leave the panel on its empty draft"
         );
     });
+    // Closing the terminal drops the user back onto the panel's empty
+    // draft. The sidebar mirrors that with a "New {agent} Thread"
+    // placeholder row, so the header reports having threads.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [my-project]"]
+        vec!["v [my-project]", "  New Zed Agent Thread"]
     );
-    assert_project_header_has_threads(&sidebar, "my-project", false, cx);
+    assert_project_header_has_threads(&sidebar, "my-project", true, cx);
 
     let project_group_key = multi_workspace.read_with(cx, |multi_workspace, cx| {
         multi_workspace.workspace().read(cx).project_group_key(cx)
@@ -1807,11 +1810,13 @@ async fn test_closing_last_agent_panel_terminal_restores_empty_header(cx: &mut T
     });
     cx.run_until_parked();
 
+    // Collapsed: header hides children but still reports the placeholder
+    // as a thread present in the group.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
         vec!["> [my-project]"]
     );
-    assert_project_header_has_threads(&sidebar, "my-project", false, cx);
+    assert_project_header_has_threads(&sidebar, "my-project", true, cx);
 }
 
 #[gpui::test]
@@ -5435,7 +5440,7 @@ async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
                 .iter()
                 .find_map(|entry| match entry {
                     ListEntry::Thread(thread)
-                        if thread.is_draft && thread.metadata.thread_id == draft_id =>
+                        if thread.draft.is_some() && thread.metadata.thread_id == draft_id =>
                     {
                         Some(thread.metadata.display_title())
                     }
@@ -5564,18 +5569,30 @@ async fn test_plus_button_reuses_empty_draft(cx: &mut TestAppContext) {
         first_id, second_id,
         "an empty draft should be reused, not replaced"
     );
-    let draft_rows = sidebar.read_with(cx, |sidebar, _| {
+    // The active empty draft is surfaced in the sidebar as a single
+    // "New {agent} Thread" placeholder so the sidebar mirrors the panel.
+    let draft_rows: Vec<_> = sidebar.read_with(cx, |sidebar, _| {
         sidebar
             .contents
             .entries
             .iter()
-            .filter(|entry| matches!(entry, ListEntry::Thread(t) if t.is_draft))
-            .count()
+            .filter_map(|entry| match entry {
+                ListEntry::Thread(t) if t.draft.is_some() => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
     });
     assert_eq!(
-        draft_rows, 0,
-        "active ephemeral draft should not appear as a sidebar row"
+        draft_rows.len(),
+        1,
+        "active empty draft should appear as exactly one placeholder row"
     );
+    assert_eq!(
+        draft_rows[0].draft,
+        Some(DraftKind::Empty),
+        "the row should be the empty-draft placeholder"
+    );
+    assert_eq!(draft_rows[0].metadata.thread_id, first_id);
 }
 
 #[gpui::test]
@@ -5614,25 +5631,87 @@ async fn test_plus_button_parks_nonempty_draft(cx: &mut TestAppContext) {
         "non-empty draft should be parked and a fresh draft activated"
     );
 
-    // The parked (now non-active) first draft shows as a sidebar row with
-    // its editor-derived title.
-    let parked_titles: Vec<SharedString> = sidebar.read_with(cx, |sidebar, _| {
+    // Both drafts now appear as sidebar rows: the parked one with its
+    // editor-derived title (real user state), and the newly-created empty
+    // draft as a "New {agent} Thread" placeholder. The placeholder mirrors
+    // the panel's current view; the parked row preserves typed content.
+    let draft_rows: Vec<_> = sidebar.read_with(cx, |sidebar, _| {
         sidebar
             .contents
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                ListEntry::Thread(t) if t.is_draft => Some(t.metadata.display_title()),
+                ListEntry::Thread(t) if t.draft.is_some() => Some(t.clone()),
                 _ => None,
             })
             .collect()
     });
     assert_eq!(
-        parked_titles.len(),
-        1,
-        "expected the parked draft to be visible as a sidebar row, got {parked_titles:?}"
+        draft_rows.len(),
+        2,
+        "expected two draft rows (parked + new empty placeholder), got {:?}",
+        draft_rows
+            .iter()
+            .map(|t| t.metadata.display_title())
+            .collect::<Vec<_>>()
     );
-    assert_eq!(parked_titles[0].as_ref(), "something the user typed");
+    let parked = draft_rows
+        .iter()
+        .find(|t| t.metadata.thread_id == first_id)
+        .expect("parked draft should be present");
+    assert_eq!(
+        parked.draft,
+        Some(DraftKind::WithContent),
+        "the parked draft has user content and is not an empty placeholder"
+    );
+    let new_empty = draft_rows
+        .iter()
+        .find(|t| t.metadata.thread_id == second_id)
+        .expect("new empty draft should be present");
+    assert_eq!(
+        new_empty.draft,
+        Some(DraftKind::Empty),
+        "the freshly-created draft should be an empty placeholder"
+    );
+    assert_eq!(
+        parked.metadata.display_title().as_ref(),
+        "something the user typed"
+    );
+
+    // Reproduce the real-world inversion deterministically: parking
+    // re-saves the filled draft, which can leave its display time newer
+    // than the brand-new empty draft's. Force that here by pushing the
+    // parked draft's `updated_at` into the future.
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let mut parked_meta = store
+            .read(cx)
+            .entry(first_id)
+            .expect("parked draft metadata should exist")
+            .clone();
+        parked_meta.interacted_at = None;
+        parked_meta.updated_at = Utc::now() + chrono::Duration::hours(1);
+        store.update(cx, |store, cx| store.save(parked_meta, cx));
+    });
+    cx.run_until_parked();
+
+    // The empty-draft placeholder must still sort ABOVE the parked draft
+    // despite the parked draft's newer timestamp — it's pinned to the top.
+    let (empty_ix, parked_ix) = sidebar.read_with(cx, |sidebar, _| {
+        let position = |id: ThreadId| {
+            sidebar.contents.entries.iter().position(
+                |entry| matches!(entry, ListEntry::Thread(t) if t.metadata.thread_id == id),
+            )
+        };
+        (
+            position(second_id).expect("empty draft row should be present"),
+            position(first_id).expect("parked draft row should be present"),
+        )
+    });
+    assert!(
+        empty_ix < parked_ix,
+        "the new empty draft (ix {empty_ix}) should sort above the parked filled draft (ix {parked_ix})"
+    );
 }
 
 #[gpui::test]
@@ -5757,8 +5836,9 @@ async fn test_sending_message_from_draft_promotes_in_place(cx: &mut TestAppConte
 #[gpui::test]
 async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
     // When the user presses Cmd-N (NewThread action) while viewing a
-    // non-empty thread, the panel should switch to the draft thread.
-    // Drafts are not shown as sidebar rows.
+    // non-empty thread, the panel should switch to the draft thread and
+    // the sidebar should surface a "New {agent} Thread" placeholder row
+    // that mirrors the active empty draft.
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -5795,11 +5875,12 @@ async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    // Drafts are not shown as sidebar rows, so entries stay the same.
+    // After Cmd-N the sidebar surfaces the active empty draft as a
+    // placeholder row above the real thread.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [my-project]", "  Hello *"],
-        "After Cmd-N the sidebar should not show a Draft entry"
+        vec!["v [my-project]", "  New stub Thread", "  Hello *"],
+        "After Cmd-N the sidebar should show a placeholder row for the active empty draft"
     );
 
     // The panel should be on the draft and active_entry should track it.
@@ -5821,8 +5902,8 @@ async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestAppContext) {
     // When the active workspace is an absorbed git worktree, cmd-n
-    // should activate the draft thread in the panel. Drafts are not
-    // shown as sidebar rows.
+    // should activate the draft thread in the panel and the sidebar
+    // should surface a placeholder row for the active empty draft.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
@@ -5916,15 +5997,18 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
     });
     cx.run_until_parked();
 
-    // Drafts are not shown as sidebar rows, so entries stay the same.
+    // After Cmd-N the sidebar surfaces the active empty draft as a
+    // placeholder row. Its worktree chip identifies which workspace it
+    // belongs to (the linked worktree).
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
         vec![
             //
             "v [project]",
-            "  Hello {wt-feature-a} *"
+            "  New stub Thread {wt-feature-a}",
+            "  Hello {wt-feature-a} *",
         ],
-        "After Cmd-N the sidebar should not show a Draft entry"
+        "After Cmd-N the sidebar should show a placeholder row for the active empty draft"
     );
 
     // The panel should be on the draft and active_entry should track it.
@@ -5944,14 +6028,16 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
 }
 
 #[gpui::test]
-async fn test_all_ephemeral_drafts_in_group_are_hidden_from_sidebar(cx: &mut TestAppContext) {
-    // An ephemeral new-draft is surfaced through its panel's `+` button,
-    // never as a sidebar row. This rule must hold:
-    //   1. For every workspace in a project group (not just the active one).
-    //   2. Whether or not the draft is the active view of its panel —
-    //      i.e. even when the user has navigated away to a real thread
-    //      within that same panel, the draft stays in the new-draft slot
-    //      and stays out of the sidebar.
+async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut TestAppContext) {
+    // The sidebar surfaces an empty-draft placeholder row only for the
+    // draft that the *active workspace's panel* is currently viewing.
+    // Specifically:
+    //   1. Empty ephemeral drafts in non-active workspaces (e.g. a
+    //      sibling linked-worktree panel) are hidden.
+    //   2. An empty ephemeral that is parked in its slot while the user
+    //      is viewing a real thread is hidden (it's not the active view).
+    //   3. When the active workspace switches, the placeholder follows
+    //      the new active panel's current view.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
@@ -5995,6 +6081,10 @@ async fn test_all_ephemeral_drafts_in_group_are_hidden_from_sidebar(cx: &mut Tes
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let (sidebar, main_panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    // `mw.workspace()` returns the *currently active* workspace, so we
+    // capture the main one here before adding the worktree workspace
+    // (which would make it the active one).
+    let main_workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
     let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
@@ -6016,8 +6106,6 @@ async fn test_all_ephemeral_drafts_in_group_are_hidden_from_sidebar(cx: &mut Tes
     // Now open a fresh ephemeral draft in the main panel.
     agent_ui::test_support::open_draft_with_connection(&main_panel, StubAgentConnection::new(), cx);
     cx.run_until_parked();
-    let main_draft_id = main_panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
-    assert_ne!(main_draft_id, main_real_thread_id);
 
     // And an ephemeral draft in the worktree panel as well.
     agent_ui::test_support::open_draft_with_connection(
@@ -6026,33 +6114,61 @@ async fn test_all_ephemeral_drafts_in_group_are_hidden_from_sidebar(cx: &mut Tes
         cx,
     );
     cx.run_until_parked();
-    let worktree_draft_id =
-        worktree_panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
-    assert_ne!(main_draft_id, worktree_draft_id);
 
-    let is_draft_row_visible =
-        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext, id: ThreadId| -> bool {
+    // `open_draft_with_connection` focuses the panel it's called on,
+    // which makes that workspace active. Explicitly re-activate the main
+    // workspace so the baseline assertions below describe the
+    // "main-workspace-is-active" case independently of call order above.
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(main_workspace.clone(), None, window, cx);
+    });
+    cx.run_until_parked();
+
+    // The invariant under test is: at most one empty-draft placeholder is
+    // visible at a time, and it corresponds to the active workspace's
+    // panel's currently-active draft. Counting `is_empty_draft` rows is
+    // more robust than tracking specific thread_ids because draft
+    // creation flows can leave behind orphan ephemeral metadata that's
+    // also hidden by the filter.
+    let empty_draft_rows =
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<ThreadId> {
             sidebar.read_with(cx, |sidebar, _| {
-                sidebar.contents.entries.iter().any(
-                    |entry| matches!(entry, ListEntry::Thread(t) if t.metadata.thread_id == id),
-                )
+                sidebar
+                    .contents
+                    .entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        ListEntry::Thread(t) if t.draft == Some(DraftKind::Empty) => {
+                            Some(t.metadata.thread_id)
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+        };
+    let active_panel_draft_id =
+        |panel: &Entity<AgentPanel>, cx: &mut gpui::VisualTestContext| -> Option<ThreadId> {
+            panel.read_with(cx, |panel, cx| {
+                panel
+                    .active_thread_id(cx)
+                    .filter(|_| panel.active_thread_is_draft(cx))
             })
         };
 
-    // Baseline: both ephemeral drafts are hidden while each is the
-    // active view of its own panel.
-    assert!(
-        !is_draft_row_visible(&sidebar, cx, main_draft_id),
-        "main panel's ephemeral draft should be hidden while it is active"
-    );
-    assert!(
-        !is_draft_row_visible(&sidebar, cx, worktree_draft_id),
-        "worktree panel's ephemeral draft should be hidden while it is active"
+    // Baseline: main workspace active, main panel viewing its draft.
+    // Exactly one placeholder visible, matching the main panel's draft.
+    let main_active_draft =
+        active_panel_draft_id(&main_panel, cx).expect("main panel should be viewing a draft");
+    let visible = empty_draft_rows(&sidebar, cx);
+    assert_eq!(
+        visible,
+        vec![main_active_draft],
+        "exactly the main panel's active empty draft should be visible"
     );
 
     // Navigate the main panel AWAY from its draft to the real thread.
-    // The draft is no longer the active view of its panel, but it is
-    // still in the ephemeral slot — it must stay out of the sidebar.
+    // The draft is no longer the active view of its panel, so its
+    // placeholder must disappear from the sidebar.
     main_panel.update_in(cx, |panel, window, cx| {
         panel.load_agent_thread(
             agent_ui::Agent::NativeAgent,
@@ -6073,36 +6189,26 @@ async fn test_all_ephemeral_drafts_in_group_are_hidden_from_sidebar(cx: &mut Tes
             Some(main_real_thread_id),
             "main panel should now be viewing the real thread"
         );
-        assert_eq!(
-            panel.ephemeral_draft_thread_id(cx),
-            Some(main_draft_id),
-            "the ephemeral draft slot should still hold the parked draft"
-        );
     });
-
     assert!(
-        !is_draft_row_visible(&sidebar, cx, main_draft_id),
-        "parked ephemeral draft should stay hidden when the panel's active view is a real thread"
-    );
-    assert!(
-        !is_draft_row_visible(&sidebar, cx, worktree_draft_id),
-        "worktree panel's ephemeral draft should also stay hidden"
+        empty_draft_rows(&sidebar, cx).is_empty(),
+        "no placeholder should be visible: main panel is on a real thread and worktree workspace is inactive"
     );
 
-    // Switch the active workspace to the worktree: all of the above
-    // assertions still hold, from the other side.
+    // Switch the active workspace to the worktree. Now the worktree
+    // panel's draft is the active view, so its placeholder appears.
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.activate(worktree_workspace.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
-    assert!(
-        !is_draft_row_visible(&sidebar, cx, main_draft_id),
-        "main panel's parked ephemeral draft should stay hidden when worktree is active"
-    );
-    assert!(
-        !is_draft_row_visible(&sidebar, cx, worktree_draft_id),
-        "worktree panel's ephemeral draft should stay hidden when worktree is active"
+    let worktree_active_draft = active_panel_draft_id(&worktree_panel, cx)
+        .expect("worktree panel should be viewing a draft");
+    let visible = empty_draft_rows(&sidebar, cx);
+    assert_eq!(
+        visible,
+        vec![worktree_active_draft],
+        "exactly the worktree panel's active empty draft should be visible after switching workspaces"
     );
 }
 
@@ -14623,4 +14729,60 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
         "cmd-click must not fall back to the main-paths workspace when a \
          linked-worktree workspace was the last-active one for the group"
     );
+}
+
+#[test]
+fn test_split_leading_icon_char() {
+    // A leading symbol set off by whitespace is pulled out and trimmed from the
+    // title.
+    let (icon, title, positions) =
+        split_leading_icon_char(&"✳ Implement separate config".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "✳");
+    assert_eq!(title.as_ref(), "Implement separate config");
+    assert_eq!(positions, Vec::<usize>::new());
+
+    // No prefix when the title starts with a letter.
+    assert!(split_leading_icon_char(&"Implement separate config".into(), &[]).is_none());
+
+    // Leading whitespace is not treated as a prefix.
+    assert!(split_leading_icon_char(&" leading space".into(), &[]).is_none());
+
+    // An alphanumeric prefix such as a version marker is not treated as an icon.
+    assert!(split_leading_icon_char(&"v1 Running".into(), &[]).is_none());
+    assert!(split_leading_icon_char(&"1 first".into(), &[]).is_none());
+
+    // A title consisting only of a symbol (no whitespace separator) is left
+    // untouched.
+    assert!(split_leading_icon_char(&"✳".into(), &[]).is_none());
+    assert!(split_leading_icon_char(&"✳Thinking".into(), &[]).is_none());
+
+    // A run of the same symbol collapses to a single glyph.
+    let (icon, title, _) = split_leading_icon_char(&">>> Thinking".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), ">");
+    assert_eq!(title.as_ref(), "Thinking");
+
+    // Surrounding ASCII brackets are stripped so the inner glyph is used.
+    let (icon, title, _) = split_leading_icon_char(&"[!] codex waiting".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "!");
+    assert_eq!(title.as_ref(), "codex waiting");
+
+    // A run of dots is condensed into an ellipsis.
+    let (icon, title, _) = split_leading_icon_char(&"... working".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "\u{2026}");
+    assert_eq!(title.as_ref(), "working");
+
+    // Multi-codepoint emoji are kept intact rather than sliced mid-cluster.
+    let (icon, title, _) = split_leading_icon_char(&"🇺🇸 flag".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "🇺🇸");
+    assert_eq!(title.as_ref(), "flag");
+
+    // Highlight positions are shifted to account for the stripped prefix, and
+    // positions that fall inside the stripped prefix are dropped.
+    let title: SharedString = "# abc".into();
+    let abc_offset = title.find('a').unwrap();
+    let (icon, trimmed, positions) =
+        split_leading_icon_char(&title, &[0, abc_offset, abc_offset + 1]).unwrap();
+    assert_eq!(icon.as_ref(), "#");
+    assert_eq!(trimmed.as_ref(), "abc");
+    assert_eq!(positions, vec![0, 1]);
 }

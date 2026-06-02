@@ -518,7 +518,7 @@ impl Render for TelemetryLogView {
             } else {
                 div()
                     .size_full()
-                    .flex_grow()
+                    .flex_grow_1()
                     .child(
                         list(self.list_state.clone(), cx.processor(Self::render_entry))
                             .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
