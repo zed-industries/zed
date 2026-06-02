@@ -117,9 +117,17 @@ struct WindowInvalidatorInner {
     pub dirty_views: FxHashSet<EntityId>,
     pub update_count: usize,
     #[cfg(feature = "bench")]
-    pub frame_dirty_at: Option<Instant>,
-    #[cfg(feature = "bench")]
-    pub frame_invalidations: u64,
+    pub frame_dirty: FrameDirtyAccumulator,
+}
+
+/// Per-frame invalidation bookkeeping, drained at draw time and handed to the
+/// frame latency tracker. Tracks when the current frame first became dirty and
+/// how many invalidations were coalesced into it.
+#[cfg(feature = "bench")]
+#[derive(Default)]
+struct FrameDirtyAccumulator {
+    dirty_at: Option<Instant>,
+    invalidations: u64,
 }
 
 #[derive(Clone)]
@@ -136,9 +144,7 @@ impl WindowInvalidator {
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
                 #[cfg(feature = "bench")]
-                frame_dirty_at: None,
-                #[cfg(feature = "bench")]
-                frame_invalidations: 0,
+                frame_dirty: FrameDirtyAccumulator::default(),
             })),
         }
     }
@@ -182,17 +188,14 @@ impl WindowInvalidator {
 
     #[cfg(feature = "bench")]
     fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
-        inner.frame_dirty_at.get_or_insert_with(Instant::now);
-        inner.frame_invalidations += 1;
+        inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
+        inner.frame_dirty.invalidations += 1;
     }
 
     #[cfg(feature = "bench")]
     fn take_frame_latency_start(&self) -> (Option<Instant>, u64) {
-        let mut inner = self.inner.borrow_mut();
-        (
-            inner.frame_dirty_at.take(),
-            mem::take(&mut inner.frame_invalidations),
-        )
+        let frame_dirty = mem::take(&mut self.inner.borrow_mut().frame_dirty);
+        (frame_dirty.dirty_at, frame_dirty.invalidations)
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
