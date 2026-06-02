@@ -712,8 +712,7 @@ pub fn init(cx: &mut App) {
                                 } else if let Some(terminal_id) = panel.active_terminal_id()
                                     && let Some(agent_terminal) = panel.terminals.get(&terminal_id)
                                 {
-                                    // Mentions resolve against the terminal's cwd: prefer the
-                                    // live cwd, else the spawn directory.
+                                    // Resolve mentions against the cwd: live cwd, else spawn dir.
                                     let working_directory = agent_terminal
                                         .view
                                         .read(cx)
@@ -721,8 +720,7 @@ pub fn init(cx: &mut App) {
                                         .read(cx)
                                         .working_directory()
                                         .or_else(|| agent_terminal.working_directory.clone());
-                                    // Detect the foreground CLI so the mention can be formatted
-                                    // the way that agent expects.
+                                    // Foreground CLI, to format the mention how it expects.
                                     let program = agent_terminal
                                         .view
                                         .read(cx)
@@ -788,6 +786,7 @@ fn format_selection_for_terminal(
             if parts.is_empty() {
                 String::new()
             } else {
+                // Trailing space so the mention doesn't fuse with the next input.
                 format!("{} ", parts.join(" "))
             }
         }
@@ -795,14 +794,9 @@ fn format_selection_for_terminal(
     }
 }
 
-/// A coding CLI detected as the foreground process of a terminal thread, used to
-/// format selection mentions the way that agent expects them.
+/// Foreground CLI of a terminal thread, used to format mentions how it expects.
 enum TerminalAgent {
-    /// The codex CLI inserts bare, cwd-relative paths (double-quoted when they
-    /// contain whitespace) with no leading `@`.
     Codex,
-    /// An agent we can't identify or don't tailor for; falls back to the generic
-    /// `@path:line` mention.
     Other,
 }
 
@@ -814,8 +808,7 @@ impl TerminalAgent {
         }
     }
 
-    /// Formats a single `path` selection (1-based, inclusive `start..=end` lines)
-    /// as a mention for this agent.
+    /// Formats one `path` selection (1-based, inclusive lines) as a mention.
     fn format_mention(&self, path: &str, start: u32, end: u32) -> String {
         let line_suffix = if start == end {
             format!(":{start}")
@@ -823,8 +816,7 @@ impl TerminalAgent {
             format!(":{start}-{end}")
         };
         match self {
-            // codex strips the `@` and quotes whitespace paths; it doesn't parse
-            // the line range, but the model still reads it as context.
+            // codex wants bare paths, quoted when they contain whitespace.
             Self::Codex => {
                 if path.contains(char::is_whitespace) && !path.contains('"') {
                     format!("\"{path}\"{line_suffix}")
@@ -837,8 +829,7 @@ impl TerminalAgent {
     }
 }
 
-/// Formats the path for a terminal `@path` mention, relative to the terminal's
-/// working directory when the selection lives under it, and absolute otherwise.
+/// Path for a terminal mention: relative to the terminal cwd, else absolute.
 fn mention_path_for_terminal(
     project: &Entity<Project>,
     project_path: &ProjectPath,
