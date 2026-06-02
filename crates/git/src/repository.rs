@@ -3784,6 +3784,12 @@ mod tests {
         git_command(path, ["init", "-b", "main"]);
     }
 
+    fn test_commit_envs() -> HashMap<String, String> {
+        let mut env = checkpoint_author_envs();
+        env.insert("GIT_ASKPASS".to_string(), "false".to_string());
+        env
+    }
+
     #[gpui::test]
     async fn test_real_git_repository_new_resolves_linked_worktree_paths(cx: &mut TestAppContext) {
         disable_git_global_config();
@@ -4140,7 +4146,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4167,7 +4173,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4277,7 +4283,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4382,7 +4388,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4648,7 +4654,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4718,7 +4724,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
@@ -4816,7 +4822,7 @@ mod tests {
             None,
             CommitOptions::default(),
             AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
+            Arc::new(test_commit_envs()),
         )
         .await
         .unwrap();
