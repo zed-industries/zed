@@ -3821,6 +3821,14 @@ mod tests {
         env
     }
 
+    #[track_caller]
+    fn assert_same_path(left: impl AsRef<Path>, right: impl AsRef<Path>) {
+        assert_eq!(
+            fs::canonicalize(left.as_ref()).unwrap(),
+            fs::canonicalize(right.as_ref()).unwrap()
+        );
+    }
+
     #[gpui::test]
     async fn test_real_git_repository_new_resolves_normal_repository_paths(
         cx: &mut TestAppContext,
@@ -3839,15 +3847,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(repository.git_dir, repo_dir.path().join(".git"));
-        assert_eq!(repository.common_dir, repo_dir.path().join(".git"));
-        assert_eq!(
-            repository.working_directory,
-            Some(repo_dir.path().to_path_buf())
+        assert_same_path(&repository.git_dir, repo_dir.path().join(".git"));
+        assert_same_path(&repository.common_dir, repo_dir.path().join(".git"));
+        assert_same_path(
+            repository.working_directory.as_ref().unwrap(),
+            repo_dir.path(),
         );
-        assert_eq!(
-            original_repo_path_from_common_dir(&repository.common_dir),
-            Some(repo_dir.path().to_path_buf())
+        assert_same_path(
+            original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
+            repo_dir.path(),
         );
     }
 
@@ -3882,11 +3890,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(repository.working_directory, Some(worktree_dir));
-        assert_eq!(repository.common_dir, repo_dir.join(".git"));
-        assert_eq!(
-            original_repo_path_from_common_dir(&repository.common_dir),
-            Some(repo_dir)
+        assert_same_path(
+            repository.working_directory.as_ref().unwrap(),
+            &worktree_dir,
+        );
+        assert_same_path(&repository.common_dir, repo_dir.join(".git"));
+        assert_same_path(
+            original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
+            repo_dir,
         );
     }
 
@@ -3909,10 +3920,10 @@ mod tests {
         let repository =
             RealGitRepository::new(&repo_dir, None, Some("git".into()), cx.executor()).unwrap();
 
-        assert_eq!(repository.git_dir, repo_dir);
-        assert_eq!(repository.common_dir, repo_dir);
+        assert_same_path(&repository.git_dir, &repo_dir);
+        assert_same_path(&repository.common_dir, &repo_dir);
         assert_eq!(repository.working_directory, None);
-        assert_eq!(repository.main_repository_path(), repo_dir);
+        assert_same_path(repository.main_repository_path(), &repo_dir);
         assert_eq!(
             repository
                 .git_binary()
