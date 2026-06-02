@@ -83,7 +83,7 @@ enum GhosttyBackendCommand {
     },
     Content {
         last_content: Content,
-        reply: mpsc::Sender<Result<(Content, bool)>>,
+        reply: mpsc::Sender<Result<(Content, bool, Option<Range>)>>,
     },
     FormattedContent {
         reply: mpsc::Sender<Result<String>>,
@@ -296,7 +296,7 @@ impl GhosttyBackendWorker {
         self.request(|reply| GhosttyBackendCommand::ViewportLines { reply })
     }
 
-    pub(super) fn content(&self, last_content: &Content) -> Result<(Content, bool)> {
+    pub(super) fn content(&self, last_content: &Content) -> Result<(Content, bool, Option<Range>)> {
         self.request(|reply| GhosttyBackendCommand::Content {
             last_content: last_content.clone(),
             reply,
@@ -477,9 +477,13 @@ impl GhosttyBackendWorker {
                 last_content,
                 reply,
             } => {
-                let response = backend
-                    .content(&last_content)
-                    .map(|content| (content, backend.cursor_blinking()));
+                let response = backend.content(&last_content).and_then(|content| {
+                    Ok((
+                        content,
+                        backend.cursor_blinking(),
+                        backend.full_content_range()?,
+                    ))
+                });
                 respond(reply, response);
             }
             GhosttyBackendCommand::FormattedContent { reply } => {

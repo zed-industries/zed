@@ -1843,6 +1843,15 @@ fn clamp_point_to_range(point: Point, range: Range) -> Point {
     }
 }
 
+fn selection_intersects_range(selection: &Selection, range: Range) -> bool {
+    let (mut start, mut end) = (selection.start.point, selection.end.point);
+    if start > end {
+        std::mem::swap(&mut start, &mut end);
+    }
+
+    end.line >= range.start().line && start.line <= range.end().line
+}
+
 struct TerminalRowText {
     line: i32,
     text: String,
@@ -2199,6 +2208,7 @@ impl TerminalBuilder {
                 terminal_bounds,
                 ..Default::default()
             },
+            last_full_content_range: None,
             last_mouse: None,
             matches: Vec::new(),
 
@@ -2445,6 +2455,7 @@ impl TerminalBuilder {
                 title_override: terminal_title_override,
                 events: VecDeque::with_capacity(10), //Should never get this high.
                 last_content: Default::default(),
+                last_full_content_range: None,
                 last_mouse: None,
                 matches: Vec::new(),
 
@@ -2644,6 +2655,7 @@ pub struct Terminal {
     last_mouse: Option<(Point, SelectionSide)>,
     pub matches: Vec<Range>,
     pub last_content: Content,
+    last_full_content_range: Option<Range>,
     pub selection_head: Option<Point>,
 
     pub breadcrumb_text: String,
@@ -3407,38 +3419,50 @@ impl Terminal {
 
     fn refresh_content(&mut self, selection_changed: bool, cx: &mut Context<Self>) {
         let output_since_refresh = std::mem::take(&mut self.output_since_refresh);
+        let previous_selection_text = self.last_content.selection_text.clone();
 
         match self.backend.content(&self.last_content) {
-            Ok((mut content, backend_cursor_blinking)) => {
+            Ok((mut content, backend_cursor_blinking, full_content_range)) => {
                 let cursor_blinking = !self.vi_mode_enabled && backend_cursor_blinking;
                 if cursor_blinking != self.cursor_blinking {
                     self.cursor_blinking = cursor_blinking;
                     cx.emit(Event::BlinkChanged(cursor_blinking));
                 }
-                if output_since_refresh
+                let selection_remapped_after_output = output_since_refresh
                     && !selection_changed
-                    && self.remap_selection_after_output(&content)
-                {
+                    && self.remap_selection_after_output(&content, full_content_range);
+                if selection_remapped_after_output {
                     cx.emit(Event::SelectionsChanged);
                 }
                 self.apply_vi_mode(&mut content);
-                self.apply_selection(&mut content);
+                self.apply_selection(
+                    &mut content,
+                    selection_remapped_after_output
+                        .then_some(previous_selection_text)
+                        .flatten(),
+                );
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 if selection_changed && let Some(selection_text) = content.selection_text.clone() {
                     cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
                 self.last_content = content;
+                self.last_full_content_range = full_content_range;
             }
             Err(error) => log::error!("failed to build terminal backend content: {error}"),
         }
     }
 
-    fn remap_selection_after_output(&mut self, content: &Content) -> bool {
+    fn remap_selection_after_output(
+        &mut self,
+        content: &Content,
+        full_content_range: Option<Range>,
+    ) -> bool {
         if self.selection.is_none() {
             return false;
         }
 
-        let Some(delta) = self.selection_line_delta_after_output(content) else {
+        let Some(delta) = self.selection_line_delta_after_output(content, full_content_range)
+        else {
             self.selection = None;
             self.selection_head = None;
             return true;
@@ -3450,6 +3474,13 @@ impl Terminal {
 
         if let Some(selection) = self.selection.as_mut() {
             selection.translate_lines(delta);
+            if let Some(full_content_range) = full_content_range
+                && !selection_intersects_range(selection, full_content_range)
+            {
+                self.selection = None;
+                self.selection_head = None;
+                return true;
+            }
         }
         if let Some(selection_head) = self.selection_head.as_mut() {
             selection_head.line = selection_head.line.saturating_add(delta);
@@ -3457,21 +3488,29 @@ impl Terminal {
         true
     }
 
-    fn selection_line_delta_after_output(&self, content: &Content) -> Option<i32> {
+    fn selection_line_delta_after_output(
+        &self,
+        content: &Content,
+        full_content_range: Option<Range>,
+    ) -> Option<i32> {
         let previous_rows = terminal_content_row_texts(&self.last_content);
         if previous_rows.is_empty() {
             return Some(0);
         }
 
-        let full_content = match self.backend.full_content(content) {
-            Ok(full_content) => full_content,
-            Err(error) => {
-                log::error!("failed to build terminal backend full content: {error}");
-                return None;
-            }
-        };
-        let current_rows = terminal_content_row_texts(&full_content);
-        best_terminal_row_delta(&previous_rows, &current_rows)
+        if let Some(delta) =
+            best_terminal_row_delta(&previous_rows, &terminal_content_row_texts(content))
+        {
+            return Some(delta);
+        }
+
+        let full_content_range = full_content_range?;
+        let previous_full_content_range = self.last_full_content_range?;
+        let range_delta = full_content_range
+            .start()
+            .line
+            .saturating_sub(previous_full_content_range.start().line);
+        (range_delta != 0).then_some(range_delta)
     }
 
     fn update_vi_cursor_after_scroll(&mut self, scroll: Scroll) -> bool {
@@ -3549,7 +3588,7 @@ impl Terminal {
         }
     }
 
-    fn apply_selection(&self, content: &mut Content) {
+    fn apply_selection(&self, content: &mut Content, cached_selection_text: Option<String>) {
         let Some(selection) = &self.selection else {
             content.selection = None;
             content.selection_text = None;
@@ -3558,7 +3597,8 @@ impl Terminal {
 
         let visible_range = selection.to_range(content);
         content.selection = visible_range;
-        content.selection_text = self.selection_text_for_content(content, selection);
+        content.selection_text =
+            cached_selection_text.or_else(|| self.selection_text_for_content(content, selection));
     }
 
     fn selection_text_for_content(
@@ -5066,13 +5106,14 @@ mod tests {
         for event in terminal.backend.drain_events() {
             terminal.process_event(event, cx);
         }
-        let (mut content, _) = terminal
+        let (mut content, _, full_content_range) = terminal
             .backend
             .content(&terminal.last_content)
             .expect("failed to build test terminal content");
         terminal.apply_vi_mode(&mut content);
-        terminal.apply_selection(&mut content);
+        terminal.apply_selection(&mut content, None);
         terminal.last_content = content;
+        terminal.last_full_content_range = full_content_range;
     }
 
     fn ctrl_mouse_down_at(
