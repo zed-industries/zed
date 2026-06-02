@@ -5082,8 +5082,7 @@ mod tests {
         })];
         fs.set_graph_commits(Path::new(util::path!("/project/.git")), commits);
 
-        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx)
-            .await;
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
         cx.run_until_parked();
 
         let repository = project.read_with(cx, |project, cx| {
