@@ -98,10 +98,13 @@ impl ThreadSandboxGrants {
             return true;
         }
         request.write_paths.iter().all(|requested| {
-            self.write_paths
-                .iter()
-                .chain(persistent.write_paths.iter())
-                .any(|granted| requested.starts_with(granted))
+            util::paths::path_within_subtree(
+                requested,
+                self.write_paths
+                    .iter()
+                    .chain(persistent.write_paths.iter())
+                    .map(PathBuf::as_path),
+            )
         })
     }
 
@@ -112,7 +115,7 @@ impl ThreadSandboxGrants {
         self.allow_fs_write_all |= request.allow_fs_write_all;
         self.unsandboxed |= request.unsandboxed;
         for path in &request.write_paths {
-            add_write_path(&mut self.write_paths, path);
+            util::paths::insert_subtree(&mut self.write_paths, path.clone());
         }
     }
 
@@ -131,11 +134,8 @@ impl ThreadSandboxGrants {
         persistent: &SandboxPermissions,
     ) -> SandboxRequest {
         let mut write_paths = persistent.write_paths.clone();
-        for path in &self.write_paths {
-            add_write_path(&mut write_paths, path);
-        }
-        for path in &request.write_paths {
-            add_write_path(&mut write_paths, path);
+        for path in self.write_paths.iter().chain(request.write_paths.iter()) {
+            util::paths::insert_subtree(&mut write_paths, path.clone());
         }
         SandboxRequest {
             network: persistent.allow_network || self.network || request.network,
@@ -146,17 +146,6 @@ impl ThreadSandboxGrants {
             write_paths,
         }
     }
-}
-
-/// Insert `path` into a set of write-grant subtrees, keeping it minimal:
-/// a no-op if already covered by a broader grant, otherwise added with any
-/// now-subsumed child grants pruned.
-fn add_write_path(write_paths: &mut Vec<PathBuf>, path: &std::path::Path) {
-    if write_paths.iter().any(|granted| path.starts_with(granted)) {
-        return;
-    }
-    write_paths.retain(|granted| !granted.starts_with(path));
-    write_paths.push(path.to_path_buf());
 }
 
 #[cfg(test)]
