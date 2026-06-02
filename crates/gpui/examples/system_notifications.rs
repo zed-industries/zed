@@ -1,5 +1,26 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+// Requirements:
+//
+// - Windows:
+//   The application must register a Start Menu shortcut with an AppUserModelID
+//   so that it can send toast notifications.
+//   See https://learn.microsoft.com/en-us/windows/win32/shell/enable-desktop-toast-with-appusermodelid
+//
+// - macOS:
+//   The application must be a valid macOS app bundle with a stable bundle
+//   identifier, an Info.plist file with a valid CFBundleIdentifier entry, and
+//   it must request the user's permission to send notifications.
+//   See https://developer.apple.com/documentation/usernotifications/unerror/notificationsnotallowed
+//
+// - Linux (GNOME):
+//   The application must have a valid desktop application ID and a matching
+//   installed .desktop file named <app-id>.desktop with
+//   X-GNOME-UsesNotifications=true. When launched from the terminal, the
+//   application should explicitly register with the portal using the desktop
+//   application ID.
+//   Related: https://blogs.gnome.org/shell-dev/2024/04/23/notifications-46-and-beyond/
+
 use gpui::{
     App, Bounds, Context, SharedString, SystemNotification, SystemNotificationId,
     SystemNotificationPermission, SystemNotificationPriority, Task, Window, WindowBounds,
@@ -201,6 +222,11 @@ fn initial_status() -> SharedString {
     "Ready".into()
 }
 
+// This code is required to set up Windows toast notifications. The application
+// must register a shortcut with an AppUserModelID in the Start Menu so that
+// it can send toast notifications.
+//
+// See https://learn.microsoft.com/en-us/windows/win32/shell/enable-desktop-toast-with-appusermodelid
 #[cfg(target_os = "windows")]
 mod windows_notification_example {
     use std::path::PathBuf;
