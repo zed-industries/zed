@@ -4,11 +4,10 @@ mod user_agents_md;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
-use agent_client_protocol::schema as acp;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
-use gpui::{App, Pixels, px};
+use gpui::{App, Pixels, SharedString, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
@@ -26,6 +25,7 @@ pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_us
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
     include_str!("prompts/summarize_thread_detailed_prompt.txt");
+pub const COMPACTION_PROMPT: &str = include_str!("prompts/compaction_prompt.txt");
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PanelLayout {
@@ -208,10 +208,10 @@ impl AgentSettings {
         self.message_editor_min_lines * 2
     }
 
-    pub fn favorite_model_ids(&self) -> HashSet<acp::ModelId> {
+    pub fn favorite_model_ids(&self) -> HashSet<SharedString> {
         self.favorite_models
             .iter()
-            .map(|sel| acp::ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
+            .map(|sel| SharedString::from(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
     }
 }

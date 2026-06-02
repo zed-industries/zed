@@ -763,6 +763,13 @@ fn branch_matches_ref(branch: &Branch, branch_ref: &SharedString) -> bool {
     branch.ref_name.as_ref() == branch_ref.as_ref() || branch.name() == branch_ref.as_ref()
 }
 
+// Git branch names can't contain whitespace, so we replace spaces with dashes,
+// but we need to first trim because a branch name can't start or end with a
+// dash.
+fn normalize_branch_name(query: &str) -> String {
+    query.trim().replace(' ', "-")
+}
+
 fn branch_remote_name(branch: &Branch) -> Option<&str> {
     branch.remote_name().or_else(|| {
         branch
@@ -881,7 +888,7 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let new_branch_name = new_branch_name.to_string().replace(' ', "-");
+        let new_branch_name = normalize_branch_name(&new_branch_name);
         let base_branch = from_branch.map(|b| b.to_string());
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
@@ -1234,7 +1241,7 @@ impl PickerDelegate for BranchListDelegate {
             picker
                 .update(cx, |picker, _| {
                     if let PickerState::CreateRemote(url) = &picker.delegate.state {
-                        let query = query.replace(' ', "-");
+                        let query = normalize_branch_name(&query);
                         if !query.is_empty() {
                             picker.delegate.matches = vec![Entry::NewRemoteName {
                                 name: query.clone(),
@@ -1253,7 +1260,7 @@ impl PickerDelegate for BranchListDelegate {
                         && !query.is_empty()
                         && !matches.first().is_some_and(|entry| entry.name() == query)
                     {
-                        let query = query.replace(' ', "-");
+                        let query = normalize_branch_name(&query);
                         let is_url = query.trim_start_matches("git@").parse::<Url>().is_ok();
                         let entry = if is_url {
                             Entry::NewUrl { url: query }
@@ -2700,29 +2707,30 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_branch_creation_with_query(test_cx: &mut TestAppContext) {
+    async fn test_new_branch_creation_with_query(cx: &mut TestAppContext) {
         const MAIN_BRANCH: &str = "main";
         const FEATURE_BRANCH: &str = "feature";
         const NEW_BRANCH: &str = "new-feature-branch";
 
-        init_test(test_cx);
-        let (_project, repository) = init_fake_repository(test_cx).await;
+        init_test(cx);
+        let (_project, repository) = init_fake_repository(cx).await;
 
         let branches = vec![
             create_test_branch(MAIN_BRANCH, true, None, Some(1000)),
             create_test_branch(FEATURE_BRANCH, false, None, Some(900)),
         ];
 
-        let (branch_list, mut ctx) =
-            init_branch_list_test(repository.into(), branches, test_cx).await;
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
         let cx = &mut ctx;
 
         branch_list
             .update_in(cx, |branch_list, window, cx| {
                 branch_list.picker.update(cx, |picker, cx| {
+                    // Surrounding the branch with whitespace allows us to then
+                    // assert that this whitespace is trimmed away.
                     picker
                         .delegate
-                        .update_matches(NEW_BRANCH.to_string(), window, cx)
+                        .update_matches(format!(" {NEW_BRANCH} "), window, cx)
                 })
             })
             .await;
@@ -2766,6 +2774,13 @@ mod tests {
             &format!("refs/heads/{NEW_BRANCH}"),
             "branch ref_name should not have duplicate refs/heads/ prefix"
         );
+    }
+
+    #[test]
+    fn test_normalize_branch_name() {
+        assert_eq!(normalize_branch_name(" branch-name "), "branch-name");
+        assert_eq!(normalize_branch_name("branch name"), "branch-name");
+        assert_eq!(normalize_branch_name("  branch  name  "), "branch--name");
     }
 
     #[gpui::test]
