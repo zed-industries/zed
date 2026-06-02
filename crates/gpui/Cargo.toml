@@ -167,6 +167,15 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 wasm-bindgen = { workspace = true }
 gpui_web.workspace = true
 
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }
 

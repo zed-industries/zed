@@ -13,11 +13,8 @@ struct SystemNotificationsExample {
 }
 
 impl SystemNotificationsExample {
-    fn new() -> Self {
-        Self {
-            status: "Ready".into(),
-            counter: 0,
-        }
+    fn new(status: SharedString) -> Self {
+        Self { status, counter: 0 }
     }
 
     fn notification_id() -> SystemNotificationId {
@@ -173,17 +170,113 @@ impl Render for SystemNotificationsExample {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        let status = initial_status();
         let bounds = Bounds::centered(None, size(px(520.), px(240.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| SystemNotificationsExample::new()),
+            |_, cx| cx.new(|_| SystemNotificationsExample::new(status)),
         )
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(target_os = "windows")]
+fn initial_status() -> SharedString {
+    match windows_notification_example::setup() {
+        Ok(shortcut_path) => format!(
+            "Ready (registered Windows toast shortcut at {})",
+            shortcut_path.display()
+        )
+        .into(),
+        Err(error) => format!("Windows toast setup failed: {error:#}").into(),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn initial_status() -> SharedString {
+    "Ready".into()
+}
+
+#[cfg(target_os = "windows")]
+mod windows_notification_example {
+    use std::path::PathBuf;
+
+    use anyhow::{Context as _, Result};
+    use windows::{
+        Win32::{
+            Foundation::PROPERTYKEY,
+            System::Com::{
+                CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, IPersistFile,
+                StructuredStorage::PROPVARIANT,
+            },
+            UI::Shell::{
+                FOLDERID_Programs, IShellLinkW, KNOWN_FOLDER_FLAG,
+                PropertiesSystem::IPropertyStore, SHGetKnownFolderPath,
+                SetCurrentProcessExplicitAppUserModelID, ShellLink,
+            },
+        },
+        core::{GUID, HSTRING, Interface},
+    };
+
+    const APP_USER_MODEL_ID: &str = "dev.gpui.SystemNotificationsExample";
+    const SHORTCUT_NAME: &str = "GPUI System Notifications Example.lnk";
+    const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
+        fmtid: GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
+        pid: 5,
+    };
+
+    pub(super) fn setup() -> Result<PathBuf> {
+        let app_user_model_id = HSTRING::from(APP_USER_MODEL_ID);
+        unsafe {
+            SetCurrentProcessExplicitAppUserModelID(&app_user_model_id)
+                .context("setting process AppUserModelID")?;
+        }
+
+        let shortcut_path = shortcut_path().context("resolving Start Menu shortcut path")?;
+        create_shortcut(&shortcut_path).context("creating Start Menu shortcut")?;
+        Ok(shortcut_path)
+    }
+
+    fn shortcut_path() -> Result<PathBuf> {
+        let programs_path =
+            unsafe { SHGetKnownFolderPath(&FOLDERID_Programs, KNOWN_FOLDER_FLAG(0), None)? };
+        let programs_path_string = unsafe { programs_path.to_string() };
+        unsafe {
+            CoTaskMemFree(Some(programs_path.0 as _));
+        }
+
+        let mut path = PathBuf::from(programs_path_string?);
+        path.push(SHORTCUT_NAME);
+        Ok(path)
+    }
+
+    fn create_shortcut(shortcut_path: &PathBuf) -> Result<()> {
+        if let Some(parent) = shortcut_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating shortcut directory {}", parent.display()))?;
+        }
+
+        unsafe {
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+            let exe_path = HSTRING::from(std::env::current_exe()?.as_os_str());
+            link.SetPath(&exe_path)?;
+            link.SetDescription(&HSTRING::from("GPUI system notifications example"))?;
+
+            let store: IPropertyStore = link.cast()?;
+            let app_user_model_id = PROPVARIANT::from(APP_USER_MODEL_ID);
+            store.SetValue(&PKEY_APP_USER_MODEL_ID, &app_user_model_id)?;
+            store.Commit()?;
+
+            let persist_file: IPersistFile = link.cast()?;
+            persist_file.Save(&HSTRING::from(shortcut_path.as_os_str()), true)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
