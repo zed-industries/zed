@@ -30,6 +30,7 @@ use gpui::{
     point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
+use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::StatusToast;
 use project::{
@@ -405,6 +406,8 @@ actions!(
         Undo,
         /// Redoes the last undone file operation.
         Redo,
+        /// Opens a markdown preview for the selected file.
+        OpenMarkdownPreview,
     ]
 );
 
@@ -1047,6 +1050,7 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
+            let is_markdown = !is_dir && MarkdownPreviewView::is_markdown_path(&*entry.path);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1076,7 +1080,10 @@ impl ProjectPanel {
             let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
-                        menu.when(is_dir, |menu| {
+                        menu.when(is_markdown, |menu| {
+                            menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                        })
+                        .when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
                     } else {
@@ -1093,6 +1100,9 @@ impl ProjectPanel {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
+                            .when(is_markdown, |menu| {
+                                menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                            })
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -1636,6 +1646,25 @@ impl ProjectPanel {
             window,
             cx,
         );
+    }
+
+    fn open_markdown_preview(
+        &mut self,
+        _: &OpenMarkdownPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+        if !entry.is_file() || !MarkdownPreviewView::is_markdown_path(&*entry.path) {
+            return;
+        }
+        let project_path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+        MarkdownPreviewView::open_for_project_path(project_path, self.workspace.clone(), window, cx);
     }
 
     fn open_internal(
@@ -6667,6 +6696,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
+                .on_action(cx.listener(Self::open_markdown_preview))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
