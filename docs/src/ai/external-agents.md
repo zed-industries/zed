@@ -181,25 +181,7 @@ Codex supports the same workflows as Zed's first-party agent. Add context by @-m
 
 ## Add More Agents {#add-more-agents}
 
-### Via Agent Server Extensions
-
-<div class="warning">
-
-Starting from `v0.221.x`, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
-Learn more about it in [the release blog post](https://zed.dev/blog/acp-registry).
-At some point in the near future, Agent Server extensions will be deprecated.
-
-</div>
-
-Add more external agents to Zed by installing [Agent Server extensions](../extensions/agent-servers.md).
-
-See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with {#action zed::Extensions}, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
-
 ### Via The ACP Registry
-
-#### Overview
-
-As mentioned above, the Agent Server extensions will be deprecated in the near future to give room to the ACP Registry.
 
 [The ACP Registry](https://github.com/agentclientprotocol/registry) lets developers distribute ACP-compatible agents to any client that implements the protocol. Agents installed from the registry update automatically.
 
@@ -235,9 +217,27 @@ This can be useful if you're in the middle of developing a new agent that speaks
 
 It's also possible to customize environment variables for registry-installed agents like Claude Agent, Codex, and Gemini CLI by using their registry names (`claude-acp`, `codex-acp`, `gemini`) with `"type": "registry"` in your settings.
 
+## Importing Threads {#importing-threads}
+
+Zed can import existing threads from your external agent so they show up in your [Thread History](./agent-panel.md#multiple-threads) alongside the rest of your threads. This is useful when you've been working with Claude Agent, Codex, or another agent elsewhere and want to continue those conversations in Zed.
+
+### Starting an Import
+
+Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} and open Thread History by clicking the clock icon at the bottom of the sidebar (or run {#action agents_sidebar::ToggleThreadHistory} from the Command Palette). Then click the **Import Threads** button (the download icon) in the Thread History toolbar.
+
+This opens the **Import External Agent Threads** dialog, which lists every external agent you have configured. Choose the agents you want to import from, then click **Import Threads**. Zed connects to each selected agent, retrieves its sessions over [ACP](https://agentclientprotocol.com), and adds any that aren't already in your history. When the import finishes, a notification reports how many threads were added.
+
+### What to Expect
+
+- **The agent must be configured in Zed.** Only agents you've already set up (see the sections above and [Add More Agents](#add-more-agents)) appear in the dialog.
+- **Imported threads are archived.** They're added to Thread History as archived entries; open one to restore it and continue where you left off. See [Managing Multiple Threads](./agent-panel.md#multiple-threads).
+- **Only threads tied to a project folder are imported.** Sessions that an agent reports without an associated working directory are skipped.
+- **Re-importing is safe.** Threads you've already imported are skipped, so you can run the import again later to pick up new sessions without creating duplicates.
+- **Local and remote projects are supported.** Threads are gathered from the agents available in your current local and [remote](../remote-development.md) projects.
+
 ## Debugging Agents
 
-When using external agents in Zed, you can access the debug view via with {#action dev::OpenAcpLogs} from the Command Palette.
+When using external agents in Zed, you can access the debug view via {#action dev::OpenAcpLogs} from the Command Palette.
 This lets you see the messages being sent and received between Zed and the agent.
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)

@@ -114,7 +114,6 @@ context_server = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
-git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }

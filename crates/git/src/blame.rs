@@ -12,8 +12,6 @@ use time::UtcOffset;
 use time::macros::format_description;
 use util::command::Stdio;
 
-pub use git2 as libgit;
-
 #[derive(Debug, Clone, Default)]
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
@@ -92,7 +90,7 @@ async fn run_git_blame(
     Ok(String::from_utf8(output.stdout)?)
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct BlameEntry {
     pub sha: Oid,
 
@@ -151,7 +149,17 @@ impl BlameEntry {
             sha,
             range,
             original_line_number,
-            ..Default::default()
+            author: None,
+            author_mail: None,
+            author_time: None,
+            author_tz: None,
+            committer_name: None,
+            committer_email: None,
+            committer_time: None,
+            committer_tz: None,
+            summary: None,
+            previous: None,
+            filename: String::new(),
         })
     }
 
