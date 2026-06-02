@@ -37,7 +37,7 @@ impl NodeTracker {
         });
     }
 
-    pub fn finish_node(&mut self) {
+    pub fn maybe_finish_node(&mut self) {
         if let Some(rect) = self.building.take() {
             self.rects.push(rect);
         }
