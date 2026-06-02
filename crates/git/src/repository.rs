@@ -3729,7 +3729,10 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{
+        ffi::{OsStr, OsString},
+        fs,
+    };
 
     use super::*;
     use gpui::TestAppContext;
@@ -3742,15 +3745,131 @@ mod tests {
     }
 
     #[allow(clippy::disallowed_methods)]
-    fn git_init_repo(path: &Path) {
-        fs::create_dir_all(path).expect("failed to create repo directory");
-        std::process::Command::new("git")
-            .args(["init", "-b", "main"])
-            .current_dir(path)
+    #[track_caller]
+    fn git_command<I, S>(working_directory: &Path, arguments: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let output = std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(working_directory)
             .env("GIT_CONFIG_GLOBAL", "")
             .env("GIT_CONFIG_SYSTEM", "")
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@zed.dev")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@zed.dev")
             .output()
-            .expect("failed to init git repo");
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_init_repo(path: &Path) {
+        fs::create_dir_all(path).expect("failed to create repo directory");
+        git_command(path, ["init", "-b", "main"]);
+    }
+
+    #[gpui::test]
+    async fn test_real_git_repository_new_resolves_linked_worktree_paths(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let worktree_dir = temp_dir.path().join("worktree");
+        git_init_repo(&repo_dir);
+        fs::write(repo_dir.join("file.txt"), "initial").unwrap();
+        git_command(&repo_dir, ["add", "file.txt"]);
+        git_command(&repo_dir, ["commit", "-m", "initial"]);
+        git_command(
+            &repo_dir,
+            [
+                OsString::from("worktree"),
+                OsString::from("add"),
+                OsString::from("-b"),
+                OsString::from("feature"),
+                worktree_dir.as_os_str().into(),
+            ],
+        );
+
+        let repository = RealGitRepository::new(
+            &worktree_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert_eq!(repository.working_directory, worktree_dir);
+        assert_eq!(repository.common_dir, repo_dir.join(".git"));
+        assert_eq!(
+            original_repo_path_from_common_dir(&repository.common_dir),
+            Some(repo_dir)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_real_git_repository_new_supports_bare_repositories(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo.git");
+        git_command(
+            temp_dir.path(),
+            [
+                OsString::from("init"),
+                OsString::from("--bare"),
+                repo_dir.as_os_str().into(),
+            ],
+        );
+
+        let repository =
+            RealGitRepository::new(&repo_dir, None, Some("git".into()), cx.executor()).unwrap();
+
+        assert_eq!(repository.git_dir, repo_dir);
+        assert_eq!(repository.common_dir, repo_dir);
+        assert_eq!(repository.main_repository_path(), repo_dir);
+        assert_eq!(
+            repository
+                .git_binary()
+                .run(&["rev-parse", "--is-bare-repository"])
+                .await
+                .unwrap(),
+            "true"
+        );
+    }
+
+    #[gpui::test]
+    fn test_real_git_repository_new_rejects_malformed_git_file(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let worktree_dir = temp_dir.path().join("worktree");
+        fs::create_dir_all(&worktree_dir).unwrap();
+        fs::write(worktree_dir.join(".git"), "not a gitdir file\n").unwrap();
+
+        let error = match RealGitRepository::new(
+            &worktree_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        ) {
+            Ok(_) => panic!("malformed .git file should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("expected .git file to start with 'gitdir: '"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]
