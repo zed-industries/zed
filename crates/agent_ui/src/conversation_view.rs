@@ -389,7 +389,7 @@ impl Conversation {
     ) -> Option<()> {
         let (authorize_session_id, tool_call_id, options) =
             self.pending_tool_call(session_id, cx)?;
-        let option = options.first_option_of_kind(kind)?;
+        let option = permission_option_for_action(options, kind)?;
         self.authorize_tool_call(
             authorize_session_id,
             tool_call_id,
@@ -452,6 +452,22 @@ impl Conversation {
 pub(crate) struct RootThreadUpdated;
 
 impl EventEmitter<RootThreadUpdated> for ConversationView {}
+
+fn permission_option_for_action(
+    options: &PermissionOptions,
+    kind: acp::PermissionOptionKind,
+) -> Option<&acp::PermissionOption> {
+    if kind == acp::PermissionOptionKind::AllowAlways
+        && let PermissionOptions::Flat(options) = options
+        && let Some(option) = options
+            .iter()
+            .find(|option| option.option_id.0.as_ref() == "allow_always")
+    {
+        return Some(option);
+    }
+
+    options.first_option_of_kind(kind)
+}
 
 fn resolve_outcome_from_selection(
     options: &PermissionOptions,
@@ -7530,6 +7546,42 @@ pub(crate) mod tests {
                 acp::PermissionOptionKind::RejectOnce,
             ),
         ])
+    }
+
+    fn sandbox_permission_options() -> PermissionOptions {
+        PermissionOptions::Flat(vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_thread"),
+                "Allow for this thread",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_always"),
+                "Allow always",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ])
+    }
+
+    #[test]
+    fn permission_option_for_action_prefers_explicit_sandbox_allow_always() {
+        let options = sandbox_permission_options();
+
+        let option =
+            super::permission_option_for_action(&options, acp::PermissionOptionKind::AllowAlways)
+                .unwrap();
+
+        assert_eq!(option.option_id.0.as_ref(), "allow_always");
     }
 
     #[test]

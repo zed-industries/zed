@@ -7,7 +7,7 @@ use crate::{
 use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
-use acp_thread::{ContentBlock, PlanEntry};
+use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
 use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
 use agent_settings::UserAgentsMd;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
@@ -571,6 +571,7 @@ pub struct ThreadView {
     /// Used for showing/hiding tool call results, terminal output, etc.
     pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
+    collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
@@ -885,6 +886,7 @@ impl ThreadView {
             thread_feedback: Default::default(),
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
+            collapsed_sandbox_authorization_details: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
@@ -995,6 +997,9 @@ impl ThreadView {
         ) {
             if let Some(connection) = self.as_native_connection(cx) {
                 connection.ensure_skills_scan_started(cx);
+                if let Some(project) = self.project.upgrade() {
+                    connection.refresh_skills_for_project(project, cx);
+                }
             }
         }
 
@@ -4183,9 +4188,6 @@ impl ThreadView {
     }
 
     fn fast_mode_available(&self, cx: &Context<Self>) -> bool {
-        if !cx.is_staff() {
-            return false;
-        }
         self.as_native_thread(cx)
             .and_then(|thread| thread.read(cx).model())
             .map(|model| model.supports_fast_mode())
@@ -5393,6 +5395,19 @@ impl ThreadView {
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
+            AgentThreadEntry::ContextCompaction => h_flex()
+                .id(("context_compaction", entry_ix))
+                .px_5()
+                .py_1()
+                .gap_2()
+                .child(Divider::horizontal())
+                .child(
+                    Label::new("Context Compacted")
+                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                        .color(Color::Muted),
+                )
+                .child(Divider::horizontal())
+                .into_any(),
         };
 
         let is_subagent_output = self.is_subagent()
@@ -6502,7 +6517,8 @@ impl ThreadView {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction => {}
             }
         }
 
@@ -7013,6 +7029,17 @@ impl ThreadView {
                                     .into_any_element()
                             }),
                     )
+                    .when_some(
+                        tool_call.sandbox_authorization_details.as_ref(),
+                        |this, details| {
+                            this.child(self.render_sandbox_authorization_details(
+                                entry_ix,
+                                &tool_call.id,
+                                details,
+                                cx,
+                            ))
+                        },
+                    )
                     .when(should_show_raw_input, |this| {
                         let is_raw_input_expanded =
                             self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
@@ -7376,6 +7403,93 @@ impl ThreadView {
                 }
             })
             .children(tool_output_display)
+    }
+
+    fn render_sandbox_authorization_details(
+        &self,
+        entry_ix: usize,
+        tool_call_id: &acp::ToolCallId,
+        details: &SandboxAuthorizationDetails,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        if details.write_paths.is_empty() {
+            return Empty.into_any_element();
+        }
+
+        let is_open = !self
+            .collapsed_sandbox_authorization_details
+            .contains(tool_call_id);
+        let paths = details
+            .write_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+
+        v_flex()
+            .p_2()
+            .gap_1()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                h_flex()
+                    .id(("sandbox-authorization-details-header", entry_ix))
+                    .gap_1()
+                    .pl_0p5()
+                    .rounded_xs()
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown),
+                    )
+                    .child(
+                        Label::new("Paths")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    .on_click(cx.listener({
+                        let tool_call_id = tool_call_id.clone();
+                        move |this, _event, _window, cx| {
+                            if this
+                                .collapsed_sandbox_authorization_details
+                                .remove(&tool_call_id)
+                            {
+                                cx.notify();
+                                return;
+                            }
+
+                            this.collapsed_sandbox_authorization_details
+                                .insert(tool_call_id.clone());
+                            cx.notify();
+                        }
+                    })),
+            )
+            .when(is_open, |this| {
+                this.child(
+                    v_flex()
+                        .gap_0p5()
+                        .pl_5()
+                        .children(paths.into_iter().enumerate().map(|(path_ix, path)| {
+                            h_flex()
+                                .gap_1()
+                                .child(Label::new("•").size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    div()
+                                        .id(format!(
+                                            "sandbox-authorization-path-{entry_ix}-{path_ix}"
+                                        ))
+                                        .w_full()
+                                        .max_w_full()
+                                        .overflow_x_scroll()
+                                        .child(
+                                            Label::new(path).buffer_font(cx).size(LabelSize::Small),
+                                        ),
+                                )
+                        })),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_permission_buttons(
@@ -7846,7 +7960,11 @@ impl ThreadView {
                                 Icon::new(IconName::CheckDouble)
                                     .size(IconSize::XSmall)
                                     .color(Color::Success),
-                                Some(&AllowAlways as &dyn Action),
+                                if option.option_id.0.as_ref() == "allow_thread" {
+                                    None
+                                } else {
+                                    Some(&AllowAlways as &dyn Action)
+                                },
                             ),
                             acp::PermissionOptionKind::RejectOnce => (
                                 Icon::new(IconName::Close)
@@ -9649,7 +9767,7 @@ impl ThreadView {
         });
     }
 
-    fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
+    fn cycle_native_agent_thinking_effort(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
@@ -9700,18 +9818,6 @@ impl ThreadView {
                     }
                 }
             });
-        });
-    }
-
-    fn toggle_thinking_effort_menu(
-        &mut self,
-        _action: &ToggleThinkingEffortMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let menu_handle = self.thinking_effort_menu_handle.clone();
-        window.defer(cx, move |window, cx| {
-            menu_handle.toggle(window, cx);
         });
     }
 }
@@ -9790,14 +9896,41 @@ impl Render for ThreadView {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
                 }
-                this.cycle_thinking_effort(cx);
+                if let Some(config_options_view) = this.config_options_view.clone() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.cycle_category_option(
+                            acp::SessionConfigOptionCategory::ThoughtLevel,
+                            false,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+                this.cycle_native_agent_thinking_effort(cx);
             }))
             .on_action(
-                cx.listener(|this, action: &ToggleThinkingEffortMenu, window, cx| {
+                cx.listener(|this, _: &ToggleThinkingEffortMenu, window, cx| {
                     if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                    this.toggle_thinking_effort_menu(action, window, cx);
+                    if let Some(config_options_view) = this.config_options_view.clone() {
+                        let handled = config_options_view.update(cx, |view, cx| {
+                            view.toggle_category_picker(
+                                acp::SessionConfigOptionCategory::ThoughtLevel,
+                                window,
+                                cx,
+                            )
+                        });
+                        if handled {
+                            return;
+                        }
+                    }
+                    let menu_handle = this.thinking_effort_menu_handle.clone();
+                    window.defer(cx, move |window, cx| {
+                        menu_handle.toggle(window, cx);
+                    });
                 }),
             )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {

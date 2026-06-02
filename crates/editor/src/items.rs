@@ -1786,7 +1786,7 @@ impl SearchableItem for Editor {
         let text: Cow<_> = if text.len() == 1 {
             text.first().cloned().unwrap().into()
         } else {
-            let joined_chunks = text.join("");
+            let joined_chunks = text.concat();
             joined_chunks.into()
         };
 
@@ -1818,7 +1818,7 @@ impl SearchableItem for Editor {
                     let text: Cow<_> = if text.len() == 1 {
                         text.first().cloned().unwrap().into()
                     } else {
-                        let joined_chunks = text.join("");
+                        let joined_chunks = text.concat();
                         joined_chunks.into()
                     };
 

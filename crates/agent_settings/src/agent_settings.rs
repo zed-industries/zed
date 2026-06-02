@@ -1,7 +1,7 @@
 mod agent_profile;
 mod user_agents_md;
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use agent_client_protocol::schema as acp;
@@ -171,6 +171,7 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
+    pub sandbox_permissions: SandboxPermissions,
 }
 
 impl AgentSettings {
@@ -334,6 +335,42 @@ impl std::fmt::Display for AgentProfileId {
 impl Default for AgentProfileId {
     fn default() -> Self {
         Self("write".into())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SandboxPermissions {
+    pub allow_network: bool,
+    pub allow_fs_write_all: bool,
+    pub allow_unsandboxed: bool,
+    pub write_paths: Vec<PathBuf>,
+}
+
+impl SandboxPermissions {
+    pub fn covers(
+        &self,
+        network: bool,
+        allow_fs_write_all: bool,
+        unsandboxed: bool,
+        write_paths: &[PathBuf],
+    ) -> bool {
+        if unsandboxed {
+            return self.allow_unsandboxed;
+        }
+        if network && !self.allow_network {
+            return false;
+        }
+        if allow_fs_write_all && !self.allow_fs_write_all {
+            return false;
+        }
+        if self.allow_fs_write_all {
+            return true;
+        }
+        write_paths.iter().all(|requested| {
+            self.write_paths
+                .iter()
+                .any(|granted| requested.starts_with(granted))
+        })
     }
 }
 
@@ -676,8 +713,37 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
         }
     }
+}
+
+fn compile_sandbox_permissions(
+    content: Option<settings::SandboxPermissionsContent>,
+) -> SandboxPermissions {
+    let Some(content) = content else {
+        return SandboxPermissions::default();
+    };
+
+    let mut write_paths = Vec::new();
+    for path in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
+        add_sandbox_write_path(&mut write_paths, &path);
+    }
+
+    SandboxPermissions {
+        allow_network: content.allow_network.unwrap_or(false),
+        allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
+        allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        write_paths,
+    }
+}
+
+fn add_sandbox_write_path(write_paths: &mut Vec<PathBuf>, path: &Path) {
+    if write_paths.iter().any(|granted| path.starts_with(granted)) {
+        return;
+    }
+    write_paths.retain(|granted| !granted.starts_with(path));
+    write_paths.push(path.to_path_buf());
 }
 
 fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
@@ -852,6 +918,54 @@ mod tests {
         let permissions = compile_tool_permissions(None);
         assert!(permissions.tools.is_empty());
         assert_eq!(permissions.default, ToolPermissionMode::Confirm);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_empty() {
+        let permissions = compile_sandbox_permissions(None);
+        assert_eq!(permissions, SandboxPermissions::default());
+        assert!(!permissions.covers(true, false, false, &[]));
+        assert!(!permissions.covers(false, true, false, &[]));
+        assert!(!permissions.covers(false, false, true, &[]));
+        assert!(!permissions.covers(false, false, false, &[PathBuf::from("/tmp/build")]));
+    }
+
+    #[test]
+    fn test_sandbox_permissions_parsing_and_pruning() {
+        let json = json!({
+            "allow_network": true,
+            "allow_unsandboxed": true,
+            "write_paths": [
+                "/tmp/build/cache",
+                "/tmp/build",
+                "/var/log"
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert!(permissions.allow_network);
+        assert!(!permissions.allow_fs_write_all);
+        assert!(permissions.allow_unsandboxed);
+        assert_eq!(
+            permissions.write_paths,
+            vec![PathBuf::from("/tmp/build"), PathBuf::from("/var/log")]
+        );
+        assert!(permissions.covers(true, false, true, &[PathBuf::from("/tmp/build/cache")]))
+    }
+
+    #[test]
+    fn test_sandbox_permissions_all_write_covers_paths() {
+        let json = json!({
+            "allow_fs_write_all": true,
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert!(permissions.covers(false, true, false, &[]));
+        assert!(permissions.covers(false, false, false, &[PathBuf::from("/anywhere")]))
     }
 
     #[test]
