@@ -4056,7 +4056,7 @@ impl Pane {
             .workspace
             .update(cx, |workspace, cx| {
                 if workspace.project().read(cx).is_via_collab() {
-                    workspace.show_error("Cannot drop files on a remote project".to_string(), cx);
+                    workspace.show_error("Cannot drop files on a remote project", cx);
                     true
                 } else {
                     false

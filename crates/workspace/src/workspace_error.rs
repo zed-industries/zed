@@ -132,6 +132,20 @@ pub trait WorkspaceError {
     fn severity(&self) -> ErrorSeverity;
 }
 
+impl WorkspaceError for &'static str {
+    fn primary_message(&self) -> SharedString {
+        self.to_string().into()
+    }
+
+    fn primary_action(&self) -> ErrorAction {
+        ErrorAction::dismiss()
+    }
+
+    fn severity(&self) -> ErrorSeverity {
+        ErrorSeverity::Error
+    }
+}
+
 impl WorkspaceError for String {
     fn primary_message(&self) -> SharedString {
         self.clone().into()

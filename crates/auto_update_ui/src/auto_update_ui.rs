@@ -65,37 +65,28 @@ fn notify_release_notes_failed_to_show(
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    struct ViewReleaseNotesError;
-    workspace.show_notification(
-        NotificationId::unique::<ViewReleaseNotesError>(),
-        cx,
-        |cx| {
-            cx.new(move |cx| {
-                let url = release_notes_url(cx);
+    let url = release_notes_url(cx);
 
-                struct ReleaseNotesError {
-                    url: Option<String>,
-                }
-                impl WorkspaceError for ReleaseNotesError {
-                    fn primary_message(&self) -> SharedString {
-                        "Couldn't load release notes".into()
-                    }
-                    fn severity(&self) -> ErrorSeverity {
-                        ErrorSeverity::Error
-                    }
-                    fn primary_action(&self) -> ErrorAction {
-                        self.url
-                            .clone()
-                            .map(|url| ErrorAction::link("View in Browser", url))
-                            .unwrap_or_else(ErrorAction::dismiss)
-                    }
-                }
+    struct ReleaseNotesError {
+        url: Option<String>,
+    }
 
-                let error = ReleaseNotesError { url };
-                MessageNotification::from_workspace_error(error, cx)
-            })
-        },
-    );
+    impl WorkspaceError for ReleaseNotesError {
+        fn primary_message(&self) -> SharedString {
+            "Couldn't load release notes".into()
+        }
+        fn severity(&self) -> ErrorSeverity {
+            ErrorSeverity::Error
+        }
+        fn primary_action(&self) -> ErrorAction {
+            self.url
+                .clone()
+                .map(|url| ErrorAction::link("View in Browser", url))
+                .unwrap_or_else(ErrorAction::dismiss)
+        }
+    }
+
+    workspace.show_error(ReleaseNotesError { url }, cx);
 }
 
 fn view_release_notes_locally(
