@@ -1310,10 +1310,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join("registry")
                 .join("npx")
                 .join(sanitize_path_component(&registry_id));
-
-            if !fs.is_dir(&prefix_dir).await {
-                fs.create_dir(&prefix_dir).await?;
-            }
+            fs.create_dir(&prefix_dir).await?;
 
             let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
             exec_args.extend(args);
