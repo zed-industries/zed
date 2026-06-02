@@ -712,18 +712,18 @@ pub fn init(cx: &mut App) {
                                 } else if let Some(terminal_id) = panel.active_terminal_id()
                                     && let Some(agent_terminal) = panel.terminals.get(&terminal_id)
                                 {
-                                    let terminal = agent_terminal.view.read(cx).terminal().read(cx);
                                     // Resolve mentions against the cwd: live cwd, else spawn dir.
-                                    let working_directory = terminal
+                                    let working_directory = agent_terminal
+                                        .view
+                                        .read(cx)
+                                        .terminal()
+                                        .read(cx)
                                         .working_directory()
                                         .or_else(|| agent_terminal.working_directory.clone());
-                                    // Foreground CLI, to format the mention how it expects.
-                                    let program = terminal.foreground_process_command_name();
                                     let text = format_selection_for_terminal(
                                         &selection,
                                         &panel.project,
                                         working_directory.as_deref(),
-                                        program.as_deref(),
                                         cx,
                                     );
                                     if !text.is_empty() {
@@ -749,13 +749,11 @@ fn format_selection_for_terminal(
     selection: &AgentContextSelection,
     project: &Entity<Project>,
     working_directory: Option<&std::path::Path>,
-    program: Option<&str>,
     cx: &App,
 ) -> String {
     match selection {
         AgentContextSelection::Editor(ranges) => {
             let path_style = project.read(cx).path_style(cx);
-            let agent = TerminalAgent::from_program(program);
             let mut parts: Vec<String> = Vec::new();
             for (buffer, range) in ranges {
                 let buffer = buffer.read(cx);
@@ -772,7 +770,7 @@ fn format_selection_for_terminal(
                     path_style,
                     cx,
                 );
-                parts.push(agent.format_mention(&path, &line_range));
+                parts.push(format!("{path}{}", line_range_suffix(&line_range)));
             }
             if parts.is_empty() {
                 String::new()
@@ -782,37 +780,6 @@ fn format_selection_for_terminal(
             }
         }
         AgentContextSelection::Terminal(texts) => texts.join("\n"),
-    }
-}
-
-/// Foreground CLI of a terminal thread, used to format mentions how it expects.
-enum TerminalAgent {
-    Codex,
-    Other,
-}
-
-impl TerminalAgent {
-    fn from_program(program: Option<&str>) -> Self {
-        match program {
-            Some("codex") => Self::Codex,
-            _ => Self::Other,
-        }
-    }
-
-    /// Formats one `path` selection (0-based, inclusive lines) as a mention.
-    fn format_mention(&self, path: &str, line_range: &std::ops::RangeInclusive<u32>) -> String {
-        let line_suffix = line_range_suffix(line_range);
-        match self {
-            // codex wants bare paths, quoted when they contain whitespace.
-            Self::Codex => {
-                if path.contains(char::is_whitespace) && !path.contains('"') {
-                    format!("\"{path}\"{line_suffix}")
-                } else {
-                    format!("{path}{line_suffix}")
-                }
-            }
-            Self::Other => format!("@{path}{line_suffix}"),
-        }
     }
 }
 
@@ -8870,9 +8837,9 @@ mod tests {
             .map(|bytes| String::from_utf8(bytes).expect("pasted bytes should be valid UTF-8"))
             .collect();
 
-        // Lines are 1-based and inclusive, and no agent is running so the generic
-        // `@<rel-path>:<start>-<end>` mention form is used, with a trailing space.
-        assert_eq!(pasted, "@file.rs:2-3 ");
+        // Lines are 1-based and inclusive; the path is presented as
+        // `<rel-path>:<start>-<end>`, with a trailing space.
+        assert_eq!(pasted, "file.rs:2-3 ");
     }
 
     async fn setup_panel(cx: &mut TestAppContext) -> (Entity<AgentPanel>, VisualTestContext) {
