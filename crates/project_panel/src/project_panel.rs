@@ -2380,17 +2380,15 @@ impl ProjectPanel {
                 .repository_and_path_for_project_path(&project_path, cx)?;
 
             let workspace = self.workspace.clone();
-            let receiver = repository
-                .update(cx, |repo, _| {
-                    repo.add_path_to_git_info_exclude(&repo_path, is_dir)
-                });
+            let receiver = repository.update(cx, |repo, _| {
+                repo.add_path_to_git_info_exclude(&repo_path, is_dir)
+            });
 
             cx.spawn(async move |_, cx| {
                 if let Err(e) = receiver.await? {
                     if let Some(workspace) = workspace.upgrade() {
                         cx.update(|cx| {
-                            let message =
-                                format!("Failed to add to .git/info/exclude: {}", e);
+                            let message = format!("Failed to add to .git/info/exclude: {}", e);
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(Icon::new(IconName::XCircle).color(Color::Error))
                                     .dismiss_button(true)

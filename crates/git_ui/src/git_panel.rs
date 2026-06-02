@@ -1498,10 +1498,9 @@ impl GitPanel {
             let workspace = self.workspace.clone();
             let repo_path = entry.repo_path;
 
-            let receiver = active_repository
-                .update(cx, |repo, _| {
-                    repo.add_path_to_git_info_exclude(&repo_path, false)
-                });
+            let receiver = active_repository.update(cx, |repo, _| {
+                repo.add_path_to_git_info_exclude(&repo_path, false)
+            });
 
             cx.spawn(async move |_, cx| {
                 if let Err(e) = receiver.await? {

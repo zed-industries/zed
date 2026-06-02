@@ -6421,8 +6421,12 @@ impl Repository {
             move |git_repo, _cx| async move {
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState { fs, .. }) => {
-                        append_pattern_to_ignore_file(fs, work_dir.join(".gitignore"), file_path_str)
-                            .await
+                        append_pattern_to_ignore_file(
+                            fs,
+                            work_dir.join(".gitignore"),
+                            file_path_str,
+                        )
+                        .await
                     }
                     RepositoryState::Remote(_) => Err(anyhow::anyhow!(
                         "Cannot modify .gitignore on remote repository"
@@ -9123,9 +9127,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_append_pattern_to_ignore_file_creates_and_deduplicates(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_append_pattern_to_ignore_file_creates_and_deduplicates(cx: &mut TestAppContext) {
         let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
         let path = PathBuf::from("/root/.gitignore");
 
@@ -9149,9 +9151,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_append_pattern_adds_newline_before_pattern_when_missing(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_append_pattern_adds_newline_before_pattern_when_missing(cx: &mut TestAppContext) {
         let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
         let path = PathBuf::from("/root/.gitignore");
 
