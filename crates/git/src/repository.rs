@@ -3822,6 +3822,36 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_real_git_repository_new_resolves_normal_repository_paths(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert_eq!(repository.git_dir, repo_dir.path().join(".git"));
+        assert_eq!(repository.common_dir, repo_dir.path().join(".git"));
+        assert_eq!(
+            repository.working_directory,
+            Some(repo_dir.path().to_path_buf())
+        );
+        assert_eq!(
+            original_repo_path_from_common_dir(&repository.common_dir),
+            Some(repo_dir.path().to_path_buf())
+        );
+    }
+
+    #[gpui::test]
     async fn test_real_git_repository_new_resolves_linked_worktree_paths(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
