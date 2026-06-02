@@ -380,15 +380,7 @@
       "shift-backspace": "agent::ArchiveSelectedThread",
     },
   },
-  {
-    "context": "RulesLibrary",
-    "bindings": {
-      "new": "rules_library::NewRule",
-      "ctrl-n": "rules_library::NewRule",
-      "ctrl-shift-s": "rules_library::ToggleDefaultRule",
-      "ctrl-w": "workspace::CloseWindow",
-    },
-  },
+
   {
     "context": "BufferSearchBar",
     "bindings": {
@@ -1163,6 +1155,12 @@
       "ctrl-p": "file_finder::Toggle",
       "ctrl-shift-a": "file_finder::ToggleSplitMenu",
       "ctrl-shift-i": "file_finder::ToggleFilterMenu",
+    },
+  },
+  {
+    "context": "FileFinder > Picker > Editor && end_of_input",
+    "bindings": {
+      "right": "file_finder::OpenWithoutDismiss",
     },
   },
   {

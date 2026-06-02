@@ -10,8 +10,7 @@ use gpui::{
     ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
-use project::{AgentId, Project};
-use prompt_store::PromptStore;
+use project::{AgentId, Project, project_settings::DiagnosticSeverity};
 use rope::Point;
 use settings::Settings as _;
 use terminal_view::TerminalView;
@@ -25,7 +24,6 @@ pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     session_capabilities: SharedSessionCapabilities,
     agent_id: AgentId,
@@ -36,7 +34,6 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
     ) -> Self {
@@ -44,7 +41,6 @@ impl EntryViewState {
             workspace,
             project,
             thread_store,
-            prompt_store,
             entries: Vec::new(),
             session_capabilities,
             agent_id,
@@ -86,7 +82,6 @@ impl EntryViewState {
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),
-                            self.prompt_store.clone(),
                             self.session_capabilities.clone(),
                             self.agent_id.clone(),
                             "Edit message － @ to include context",
@@ -237,6 +232,11 @@ impl EntryViewState {
                     self.set_entry(index, Entry::CompletedPlan);
                 }
             }
+            AgentThreadEntry::ContextCompaction => {
+                if !matches!(self.entries.get(index), Some(Entry::ContextCompaction)) {
+                    self.set_entry(index, Entry::ContextCompaction);
+                }
+            }
         };
     }
 
@@ -257,7 +257,8 @@ impl EntryViewState {
             match entry {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
-                | Entry::CompletedPlan => {}
+                | Entry::CompletedPlan
+                | Entry::ContextCompaction => {}
                 Entry::ToolCall(ToolCallEntry { content, .. }) => {
                     for view in content.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
@@ -326,6 +327,7 @@ pub enum Entry {
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
     CompletedPlan,
+    ContextCompaction,
 }
 
 impl Entry {
@@ -334,14 +336,17 @@ impl Entry {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
-            Self::CompletedPlan => None,
+            Self::CompletedPlan | Self::ContextCompaction => None,
         }
     }
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Self::AssistantMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
+            Self::AssistantMessage(_)
+            | Self::ToolCall(_)
+            | Self::CompletedPlan
+            | Self::ContextCompaction => None,
         }
     }
 
@@ -368,7 +373,10 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
+            Self::UserMessage(_)
+            | Self::ToolCall(_)
+            | Self::CompletedPlan
+            | Self::ContextCompaction => None,
         }
     }
 
@@ -383,7 +391,10 @@ impl Entry {
     pub fn has_content(&self) -> bool {
         match self {
             Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
-            Self::UserMessage(_) | Self::AssistantMessage(_) | Self::CompletedPlan => false,
+            Self::UserMessage(_)
+            | Self::AssistantMessage(_)
+            | Self::CompletedPlan
+            | Self::ContextCompaction => false,
         }
     }
 }
@@ -400,7 +411,7 @@ impl Focusable for Entry {
             Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
-            Self::CompletedPlan => cx.focus_handle(),
+            Self::CompletedPlan | Self::ContextCompaction => cx.focus_handle(),
         }
     }
 }
@@ -444,7 +455,8 @@ fn create_editor_diff(
             cx,
         );
         editor.set_show_gutter(false, cx);
-        editor.disable_inline_diagnostics();
+        editor.disable_diagnostics(cx);
+        editor.set_max_diagnostics_severity(DiagnosticSeverity::Off, cx);
         editor.disable_expand_excerpt_buttons(cx);
         editor.set_show_vertical_scrollbar(false, cx);
         editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
@@ -545,7 +557,6 @@ mod tests {
                 workspace.downgrade(),
                 project.downgrade(),
                 thread_store,
-                None,
                 Arc::new(RwLock::new(SessionCapabilities::default())),
                 "Test Agent".into(),
             )

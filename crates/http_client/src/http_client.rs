@@ -7,8 +7,8 @@ pub mod github_download;
 pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner, Json};
 use derive_more::Deref;
-use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
+use http::{HeaderName, HeaderValue};
 
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
@@ -54,6 +54,58 @@ pub trait HttpRequestExt {
 impl HttpRequestExt for http::request::Builder {
     fn follow_redirects(self, follow: RedirectPolicy) -> Self {
         self.extension(follow)
+    }
+}
+
+/// A set of pre-validated user-supplied HTTP headers.
+///
+/// Construction (and the per-name validation that goes with it) happens once
+/// at settings load time. Cloning is `Arc`-cheap, so providers can hand a copy
+/// to each outgoing request without re-parsing or re-allocating.
+#[derive(Default, Clone, Debug)]
+pub struct CustomHeaders(Arc<[(HeaderName, HeaderValue)]>);
+
+impl CustomHeaders {
+    pub fn new(headers: Vec<(HeaderName, HeaderValue)>) -> Self {
+        Self(headers.into())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&HeaderName, &HeaderValue)> {
+        self.0.iter().map(|(n, v)| (n, v))
+    }
+}
+
+impl PartialEq for CustomHeaders {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len()
+            && self
+                .0
+                .iter()
+                .zip(other.0.iter())
+                .all(|(a, b)| a.0 == b.0 && a.1 == b.1)
+    }
+}
+
+pub trait RequestBuilderExt {
+    /// Append every header in `headers` to the request being built.
+    fn extra_headers(self, headers: &CustomHeaders) -> Self;
+}
+
+impl RequestBuilderExt for http::request::Builder {
+    fn extra_headers(mut self, headers: &CustomHeaders) -> Self {
+        if headers.is_empty() {
+            return self;
+        }
+        if let Some(map) = self.headers_mut() {
+            for (name, value) in headers.iter() {
+                map.append(name.clone(), value.clone());
+            }
+        }
+        self
     }
 }
 

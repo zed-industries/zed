@@ -112,19 +112,6 @@ impl Clone for TestDispatcher {
 }
 
 impl PlatformDispatcher for TestDispatcher {
-    fn get_all_timings(&self) -> Vec<crate::ThreadTaskTimings> {
-        Vec::new()
-    }
-
-    fn get_current_thread_timings(&self) -> crate::ThreadTaskTimings {
-        crate::ThreadTaskTimings {
-            thread_name: None,
-            thread_id: std::thread::current().id(),
-            timings: Vec::new(),
-            total_pushed: 0,
-        }
-    }
-
     fn is_main_thread(&self) -> bool {
         self.scheduler.is_main_thread()
     }
@@ -139,8 +126,7 @@ impl PlatformDispatcher for TestDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        self.scheduler
-            .schedule_foreground(self.session_id, runnable);
+        self.scheduler.schedule_local(self.session_id, runnable);
     }
 
     fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
