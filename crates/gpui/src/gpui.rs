@@ -57,6 +57,8 @@ mod window;
 pub use proptest;
 
 #[cfg(doc)]
+pub mod _accessibility;
+#[cfg(doc)]
 pub mod _ownership_and_data_flow;
 
 /// Do not touch, here be dragons for use by gpui_macros and such.
@@ -75,6 +77,9 @@ mod seal {
     pub trait Sealed {}
 }
 
+pub use accesskit;
+pub use accesskit::Action as AccessibleAction;
+pub use accesskit::{Orientation, Role, Toggled};
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;
@@ -89,8 +94,32 @@ pub use executor::*;
 pub use geometry::*;
 pub use global::*;
 pub use gpui_macros::{
-    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
+    AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
 };
+
+/// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
+///
+/// This mirrors `criterion::criterion_group!` so GPUI benchmark files can keep the
+/// same shape as ordinary Criterion benchmarks.
+///
+/// [`gpui::bench`]: crate::bench
+#[macro_export]
+macro_rules! bench_group {
+    ($($tokens:tt)*) => {
+        criterion::criterion_group!($($tokens)*);
+    };
+}
+
+/// Defines the entry point for GPUI Criterion benchmark groups.
+///
+/// This mirrors `criterion::criterion_main!` so GPUI benchmark files can keep the
+/// same shape as ordinary Criterion benchmarks.
+#[macro_export]
+macro_rules! bench_main {
+    ($($tokens:tt)*) => {
+        criterion::criterion_main!($($tokens)*);
+    };
+}
 pub use gpui_shared_string::*;
 pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;

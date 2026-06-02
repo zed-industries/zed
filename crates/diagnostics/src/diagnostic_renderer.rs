@@ -40,29 +40,7 @@ impl DiagnosticRenderer {
             let mut markdown = Self::markdown(&entry.diagnostic);
             if entry.diagnostic.is_primary {
                 let diagnostic = &primary.diagnostic;
-                if diagnostic.source.is_some() || diagnostic.code.is_some() {
-                    markdown.push_str(" (");
-                }
-                if let Some(source) = diagnostic.source.as_ref() {
-                    markdown.push_str(&Markdown::escape(source));
-                }
-                if diagnostic.source.is_some() && diagnostic.code.is_some() {
-                    markdown.push(' ');
-                }
-                if let Some(code) = diagnostic.code.as_ref() {
-                    if let Some(description) = diagnostic.code_description.as_ref() {
-                        markdown.push('[');
-                        markdown.push_str(&Markdown::escape(&code.to_string()));
-                        markdown.push_str("](");
-                        markdown.push_str(&Markdown::escape(description.as_ref()));
-                        markdown.push(')');
-                    } else {
-                        markdown.push_str(&Markdown::escape(&code.to_string()));
-                    }
-                }
-                if diagnostic.source.is_some() || diagnostic.code.is_some() {
-                    markdown.push(')');
-                }
+                append_source_and_code(&mut markdown, diagnostic);
 
                 for (ix, entry) in diagnostic_group.iter().enumerate() {
                     if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
@@ -84,6 +62,8 @@ impl DiagnosticRenderer {
                     }),
                 });
             } else {
+                append_source_and_code(&mut markdown, entry.diagnostic);
+
                 if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
                     markdown.push_str(&format!(
                         " ([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_ix}))"
@@ -114,6 +94,31 @@ impl DiagnosticRenderer {
         };
         markdown
     }
+}
+
+fn append_source_and_code(markdown: &mut String, diagnostic: &Diagnostic) {
+    if diagnostic.source.is_none() && diagnostic.code.is_none() {
+        return;
+    }
+    markdown.push_str(" (");
+    if let Some(source) = diagnostic.source.as_ref() {
+        markdown.push_str(&Markdown::escape(source));
+    }
+    if diagnostic.source.is_some() && diagnostic.code.is_some() {
+        markdown.push(' ');
+    }
+    if let Some(code) = diagnostic.code.as_ref() {
+        if let Some(description) = diagnostic.code_description.as_ref() {
+            markdown.push('[');
+            markdown.push_str(&Markdown::escape(&code.to_string()));
+            markdown.push_str("](");
+            markdown.push_str(&Markdown::escape(description.as_ref()));
+            markdown.push(')');
+        } else {
+            markdown.push_str(&Markdown::escape(&code.to_string()));
+        }
+    }
+    markdown.push(')');
 }
 
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
@@ -240,6 +245,7 @@ impl DiagnosticBlock {
                     )
                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                         border: false,
                     })
                     .on_url_click({

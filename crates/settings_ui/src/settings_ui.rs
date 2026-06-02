@@ -2,6 +2,7 @@ mod components;
 mod page_data;
 pub mod pages;
 
+use agent_skills::SkillIndex;
 use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
@@ -29,6 +30,7 @@ use std::{
     collections::{HashMap, HashSet},
     num::{NonZero, NonZeroU32},
     ops::Range,
+    path::PathBuf,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
@@ -42,7 +44,8 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
+    client_side_decorations,
 };
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
@@ -555,6 +558,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ScanSymlinksSetting>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -662,7 +666,10 @@ pub fn open_settings_editor(
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
             Ok(val) if val == "server" => gpui::WindowDecorations::Server,
             Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-            _ => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
         };
 
         cx.open_window(
@@ -763,8 +770,12 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
+    pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
+    /// Directory path of the skill whose share link was most recently copied,
+    /// used to show a transient "copied" checkmark on its share button.
+    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
 }
 
 struct SearchDocument {
@@ -1538,6 +1549,28 @@ impl SettingsWindow {
         })
         .detach();
 
+        cx.observe_global_in::<SkillIndex>(window, |this, _window, cx| {
+            if let Some(skill_index) = cx.try_global::<SkillIndex>() {
+                this.hidden_deleted_skill_directory_paths
+                    .retain(|directory_path| {
+                        skill_index
+                            .global_skills
+                            .iter()
+                            .chain(
+                                skill_index
+                                    .project_skills
+                                    .iter()
+                                    .flat_map(|group| group.skills.iter()),
+                            )
+                            .any(|skill| skill.directory_path.as_path() == directory_path.as_path())
+                    });
+            } else {
+                this.hidden_deleted_skill_directory_paths.clear();
+            }
+            cx.notify();
+        })
+        .detach();
+
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
@@ -1685,9 +1718,11 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             list_state,
             last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -2293,6 +2328,10 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        // Navigating to another page dismisses the transient "copied share
+        // link" checkmark shown on a Skills page row.
+        self.last_copied_skill_directory_path = None;
+
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
@@ -3002,19 +3041,26 @@ impl SettingsWindow {
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
+        let scope_name: SharedString = self
+            .display_name(&self.current_file)
+            .unwrap_or_else(|| self.current_file.setting_type().to_string())
+            .into();
+
         h_flex().min_w_0().gap_1().overflow_x_hidden().children(
             itertools::intersperse(
-                std::iter::once(self.current_page().title.into()).chain(
-                    self.sub_page_stack
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, page)| {
-                            (index == 0)
-                                .then(|| page.section_header.clone())
-                                .into_iter()
-                                .chain(std::iter::once(page.link.title.clone()))
-                        }),
-                ),
+                std::iter::once(scope_name)
+                    .chain(std::iter::once(self.current_page().title.into()))
+                    .chain(
+                        self.sub_page_stack
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(index, page)| {
+                                (index == 0)
+                                    .then(|| page.section_header.clone())
+                                    .into_iter()
+                                    .chain(std::iter::once(page.link.title.clone()))
+                            }),
+                    ),
                 "/".into(),
             )
             .map(|item| Label::new(item).color(Color::Muted)),
@@ -4537,8 +4583,10 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
+                hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
                 last_copied_link_path: None,
+                last_copied_skill_directory_path: None,
             }
         }
     }
@@ -4663,8 +4711,10 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         settings_window.build_filter_table();

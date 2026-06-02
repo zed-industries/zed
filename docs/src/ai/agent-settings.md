@@ -62,6 +62,20 @@ You can assign distinct and specific models for the following AI-powered feature
 
 > If a custom model isn't set for one of these features, they automatically fall back to using the default model.
 
+### Commit Message Instructions {#commit-message-instructions}
+
+You can provide custom instructions that are included in the prompt whenever a Git commit message is generated. Unlike rules files (such as `.rules` or `AGENTS.md`), these instructions apply only to commit message generation:
+
+```json [settings]
+{
+  "agent": {
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+These instructions are sent in addition to any project rules files that are present.
+
 ### Alternative Models for Inline Assists {#alternative-assists}
 
 With the Inline Assistant in particular, you can send the same prompt to multiple models at once.

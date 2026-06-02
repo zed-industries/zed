@@ -13,6 +13,7 @@ pub mod pane_group;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+pub mod path_link;
 mod persistence;
 pub mod searchable;
 pub mod security_modal;
@@ -3671,8 +3672,23 @@ impl Workspace {
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
-                    let (_worktree, project_path) = project_path?;
-                    if fs.is_dir(&abs_path).await {
+                    let (worktree, project_path) = project_path?;
+                    let (entry_is_directory, worktree_is_local) =
+                        worktree.read_with(cx, |worktree, _| {
+                            let entry = if project_path.path.as_unix_str().is_empty() {
+                                worktree.root_entry()
+                            } else {
+                                worktree.entry_for_path(&project_path.path)
+                            };
+                            (entry.map(|entry| entry.is_dir()), worktree.is_local())
+                        });
+                    let is_directory = match entry_is_directory {
+                        Some(is_directory) => is_directory,
+                        None if worktree_is_local => fs.is_dir(&abs_path).await,
+                        None => false,
+                    };
+
+                    if is_directory {
                         // Opening a directory should not race to update the active entry.
                         // We'll select/reveal a deterministic final entry after all paths finish opening.
                         None
@@ -5957,7 +5973,7 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(
+    pub(crate) fn active_item_path_changed(
         &mut self,
         focus_changed: bool,
         window: &mut Window,
@@ -7816,6 +7832,12 @@ impl Workspace {
                         .and_then(|state| state.size)
                         .unwrap_or_else(|| panel.default_size(window, cx));
                     container = container.w(size);
+                    // Allow the fixed-width dock to shrink when there isn't
+                    // enough space (e.g. when the sidebar is open). The
+                    // stored size is preserved so the dock expands back
+                    // when space becomes available.
+                    let style = container.style();
+                    style.flex_shrink = Some(1.0);
                 }
                 if let Some(min) = min_size {
                     container = container.min_w(min);
@@ -10636,6 +10658,7 @@ pub fn client_side_decorations(
                                 },
                                 blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
                                 spread_radius: px(0.),
+                                inset: false,
                                 offset: point(px(0.0), px(0.0)),
                             }])
                         }),

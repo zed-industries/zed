@@ -223,6 +223,7 @@ impl MarkdownPreviewView {
                         parse_html: true,
                         render_mermaid_diagrams: true,
                         parse_heading_slugs: true,
+                        render_metadata_blocks: true,
                         ..Default::default()
                     },
                     cx,
@@ -623,6 +624,7 @@ impl MarkdownPreviewView {
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             })
             .scroll_handle(self.scroll_handle.clone())

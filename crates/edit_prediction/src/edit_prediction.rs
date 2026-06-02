@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use buffer_diff::BufferDiff;
 use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{
@@ -27,19 +28,20 @@ use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     select_biased,
 };
+use git::repository::FileHistoryChangedFileSets;
 use gpui::BackgroundExecutor;
 use gpui::TaskExt;
 use gpui::http_client::Url;
 use gpui::{
-    App, AsyncApp, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
+    App, AsyncApp, Context, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
 use heapless::Vec as ArrayVec;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, EditPredictionsMode, EditPreview,
-    File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset, ToPoint,
-    language_settings::all_language_settings,
+    Anchor, Buffer, BufferEditSource, BufferSnapshot, EditPredictionPromptFormat,
+    EditPredictionsMode, EditPreview, File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset,
+    ToPoint, language_settings::all_language_settings,
 };
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
@@ -50,6 +52,7 @@ use settings::{
 };
 use std::collections::{VecDeque, hash_map};
 use std::env;
+use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
 use zeta_prompt::{ZetaFormat, ZetaPromptInput};
@@ -57,7 +60,6 @@ use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 use std::mem;
 use std::ops::Range;
 use std::path::Path;
-use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -66,8 +68,10 @@ use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 
 pub mod cursor_excerpt;
+pub mod data_collection;
 pub mod example_spec;
 pub mod fim;
+mod jump_example;
 mod license_detection;
 pub mod mercury;
 pub mod metrics;
@@ -87,7 +91,13 @@ pub mod zeta;
 mod edit_prediction_tests;
 
 use crate::cursor_excerpt::expand_context_syntactically_then_linewise;
+use crate::data_collection::uncommitted_diffs_for_events;
 use crate::example_spec::ExampleSpec;
+use crate::example_spec::RecentFile;
+use crate::jump_example::{
+    JUMP_EXAMPLE_NAVIGATION_COUNT, JumpExampleTrigger, PendingJumpExampleCapture,
+    PendingJumpExampleCaptureKey,
+};
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
@@ -95,7 +105,6 @@ use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
-pub use capture_example::capture_example;
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
@@ -112,9 +121,11 @@ actions!(
 
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 10;
+const RECENT_PATH_COUNT_MAX: usize = 20;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of typical prompt budget
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
+const GIT_CHANGED_FILE_SETS_COMMIT_LIMIT: usize = 100;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
@@ -186,6 +197,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
+    stored_events: Vec<StoredEvent>,
     related_files: Vec<RelatedFile>,
     mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
@@ -238,6 +250,13 @@ pub struct StoredEvent {
     pub old_snapshot: TextBufferSnapshot,
     pub new_snapshot_version: clock::Global,
     pub total_edit_range: Range<Anchor>,
+    pub(crate) file_context: Option<Entity<StoredFileContext>>,
+}
+
+pub(crate) struct StoredFileContext {
+    pub(crate) uncommitted_diff: Option<Entity<BufferDiff>>,
+    pub(crate) git_changed_file_sets: Option<Arc<FileHistoryChangedFileSets>>,
+    pub(crate) git_changed_file_sets_task: Option<Task<()>>,
 }
 
 impl StoredEvent {
@@ -316,14 +335,30 @@ fn lines_between_ranges(left: &Range<Point>, right: &Range<Point>) -> u32 {
     0
 }
 
+fn push_recent_file(files: &mut VecDeque<RecentFile>, mut file: RecentFile) {
+    if let Some(ix) = files.iter().position(|probe| probe.path == file.path)
+        && let Some(previous) = files.remove(ix)
+        && file.cursor_position.is_none()
+    {
+        file.cursor_position = previous.cursor_position;
+    }
+    files.push_front(file);
+    files.truncate(RECENT_PATH_COUNT_MAX);
+}
+
 struct ProjectState {
     events: VecDeque<StoredEvent>,
     last_event: Option<LastEvent>,
-    recent_paths: VecDeque<ProjectPath>,
+    recently_viewed_files: VecDeque<RecentFile>,
+    recently_opened_files: VecDeque<RecentFile>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
+    file_contexts: HashMap<ProjectPath, WeakEntity<StoredFileContext>>,
     current_prediction: Option<CurrentEditPrediction>,
+    last_edit_source: Option<BufferEditSource>,
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
+    pending_jump_example_captures: Vec<PendingJumpExampleCapture>,
+    starting_jump_example_captures: Vec<PendingJumpExampleCaptureKey>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_edit_prediction_refresh: Option<(EntityId, Instant)>,
     last_jump_prediction_refresh: Option<(EntityId, Instant)>,
@@ -389,6 +424,59 @@ impl ProjectState {
         let active_buffer = project.buffer_store().read(cx).get_by_path(&active_path)?;
         let registered_buffer = self.registered_buffers.get(&active_buffer.entity_id())?;
         Some((active_buffer, registered_buffer.last_position))
+    }
+
+    fn file_context_for_path(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut Context<EditPredictionStore>,
+    ) -> Entity<StoredFileContext> {
+        if let Some(context) = self
+            .file_contexts
+            .get_mut(&path)
+            .and_then(|entry| entry.upgrade())
+        {
+            context
+        } else {
+            let context = cx.new(|_| StoredFileContext {
+                uncommitted_diff: None,
+                git_changed_file_sets: None,
+                git_changed_file_sets_task: None,
+            });
+            self.file_contexts.insert(path, context.downgrade());
+            context
+        }
+    }
+
+    fn update_recent_file_cursor(&mut self, path: &Path, cursor_position: usize) {
+        for file in &mut self.recently_opened_files {
+            if file.path.as_ref() == path && file.cursor_position.is_none() {
+                file.cursor_position = Some(cursor_position);
+            }
+        }
+        for file in &mut self.recently_viewed_files {
+            if file.path.as_ref() == path {
+                file.cursor_position = Some(cursor_position);
+            }
+        }
+    }
+
+    fn finalize_last_event(&mut self, cx: &mut Context<EditPredictionStore>) {
+        let Some(event) = self.last_event.take() else {
+            return;
+        };
+        let Some(event) = event.finalize(&self.license_detection_watchers, cx) else {
+            return;
+        };
+
+        for capture in &mut self.pending_jump_example_captures {
+            capture.future_events.push(event.event.clone());
+        }
+        jump_example::drain_completed_jump_example_captures(self, cx);
+        if self.events.len() + 1 >= EVENT_COUNT_MAX {
+            self.events.pop_front();
+        }
+        self.events.push_back(event);
     }
 }
 
@@ -529,6 +617,7 @@ struct LastEvent {
     predicted: bool,
     snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
+    file_context: Option<Entity<StoredFileContext>>,
 }
 
 impl LastEvent {
@@ -572,6 +661,7 @@ impl LastEvent {
                 new_snapshot_version: self.new_snapshot.version.clone(),
                 total_edit_range: self.new_snapshot.anchor_before(edit_range.start)
                     ..self.new_snapshot.anchor_before(edit_range.end),
+                file_context: self.file_context.clone(),
             })
         }
     }
@@ -606,6 +696,7 @@ impl LastEvent {
             predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
+            file_context: self.file_context.clone(),
         };
 
         let after = LastEvent {
@@ -619,6 +710,7 @@ impl LastEvent {
             predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
+            file_context: self.file_context.clone(),
         };
 
         (before, Some(after))
@@ -1099,8 +1191,75 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
+        let opened_path = buffer
+            .read(cx)
+            .file()
+            .map(|file| ProjectPath::from_file(file.as_ref(), cx));
         let project_state = self.get_or_init_project(project, cx);
+        if let Some(path) = opened_path {
+            push_recent_file(
+                &mut project_state.recently_opened_files,
+                RecentFile {
+                    path: path.path.as_std_path().into(),
+                    cursor_position: None,
+                },
+            );
+        }
         Self::register_buffer_impl(project_state, buffer, project, cx);
+    }
+
+    fn ensure_git_changed_file_sets_loading(
+        file_context: &Entity<StoredFileContext>,
+        project: &Entity<Project>,
+        project_path: &ProjectPath,
+        cx: &mut Context<Self>,
+    ) {
+        let should_start = file_context.update(cx, |file_context, _| {
+            file_context.git_changed_file_sets.is_none()
+                && file_context.git_changed_file_sets_task.is_none()
+        });
+        if !should_start {
+            return;
+        }
+
+        let Some((repository, repo_path)) = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(project_path, cx)
+        else {
+            file_context.update(cx, |file_context, _| {
+                file_context.git_changed_file_sets = Some(Arc::default());
+            });
+            return;
+        };
+
+        let receiver = repository.update(cx, |repository, _| {
+            repository
+                .file_history_changed_files(vec![repo_path], GIT_CHANGED_FILE_SETS_COMMIT_LIMIT)
+        });
+        let task = cx.spawn({
+            let file_context = file_context.downgrade();
+            async move |_, cx| {
+                let result = receiver.await;
+                let Some(file_context) = file_context.upgrade() else {
+                    return;
+                };
+                file_context.update(cx, |file_context, _| {
+                    file_context.git_changed_file_sets = result
+                        .context("failed to receive git changed file sets")
+                        .flatten()
+                        .map(|mut file_sets| file_sets.pop().unwrap_or_default())
+                        .context("failed to load git changed file sets")
+                        .map(Arc::new)
+                        .log_err();
+                    file_context.git_changed_file_sets_task = None;
+                });
+            }
+        });
+        file_context.update(cx, |file_context, _| {
+            file_context.git_changed_file_sets_task = Some(task);
+        });
     }
 
     fn get_or_init_project(
@@ -1122,12 +1281,17 @@ impl EditPredictionStore {
                 },
                 events: VecDeque::new(),
                 last_event: None,
-                recent_paths: VecDeque::new(),
+                recently_viewed_files: VecDeque::new(),
+                recently_opened_files: VecDeque::new(),
                 debug_tx: None,
                 registered_buffers: HashMap::default(),
+                file_contexts: HashMap::default(),
                 current_prediction: None,
+                last_edit_source: None,
                 cancelled_predictions: HashSet::default(),
                 pending_predictions: ArrayVec::new(),
+                pending_jump_example_captures: Vec::new(),
+                starting_jump_example_captures: Vec::new(),
                 next_pending_prediction_id: 0,
                 last_edit_prediction_refresh: None,
                 last_jump_prediction_refresh: None,
@@ -1229,23 +1393,52 @@ impl EditPredictionStore {
         }
         // TODO [zeta2] init with recent paths
         match event {
+            project::Event::BufferEdited { source } => {
+                self.get_or_init_project(&project, cx).last_edit_source = Some(*source);
+            }
             project::Event::ActiveEntryChanged(Some(active_entry_id)) => {
                 let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
                     return;
                 };
                 let path = project.read(cx).path_for_entry(*active_entry_id, cx);
                 if let Some(path) = path {
-                    if let Some(ix) = project_state
-                        .recent_paths
-                        .iter()
-                        .position(|probe| probe == &path)
-                    {
-                        project_state.recent_paths.remove(ix);
+                    let cursor_position = project
+                        .read(cx)
+                        .buffer_store()
+                        .read(cx)
+                        .get_by_path(&path)
+                        .and_then(|buffer| {
+                            let position = project_state
+                                .registered_buffers
+                                .get(&buffer.entity_id())?
+                                .last_position?;
+                            Some(position.to_offset(&buffer.read(cx).snapshot()))
+                        });
+
+                    let recent_file = RecentFile {
+                        path: path.path.as_std_path().into(),
+                        cursor_position,
+                    };
+                    for capture in &mut project_state.pending_jump_example_captures {
+                        capture.navigation_history.push(recent_file.clone());
+                        if capture.navigation_history.len() > JUMP_EXAMPLE_NAVIGATION_COUNT {
+                            capture.navigation_history.remove(0);
+                        }
                     }
-                    project_state.recent_paths.push_front(path);
+                    push_recent_file(&mut project_state.recently_viewed_files, recent_file);
+                    jump_example::drain_completed_jump_example_captures(project_state, cx);
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
+                if self
+                    .projects
+                    .get(&project.entity_id())
+                    .and_then(|project_state| project_state.last_edit_source)
+                    == Some(BufferEditSource::Agent)
+                {
+                    return;
+                }
+
                 if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
                     self.refresh_prediction_from_diagnostics(
                         project,
@@ -1305,11 +1498,17 @@ impl EditPredictionStore {
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
                             move |this, buffer, event, cx| {
-                                if let language::BufferEvent::Edited { is_local } = event
+                                if let language::BufferEvent::Edited { source } = event
                                     && let Some(project) = project.upgrade()
                                 {
+                                    let project_state = this.get_or_init_project(&project, cx);
+                                    project_state.last_edit_source = Some(*source);
                                     this.report_changes_for_buffer(
-                                        &buffer, &project, false, *is_local, cx,
+                                        &buffer,
+                                        &project,
+                                        false,
+                                        source.is_local(),
+                                        cx,
                                     );
                                 }
                             }
@@ -1386,17 +1585,8 @@ impl EditPredictionStore {
             compute_diff_between_snapshots_in_range(&old_snapshot, &new_snapshot, &edit_range)
                 .is_some();
 
-        let events = &mut project_state.events;
-
         if !is_recordable_history_edit {
-            if let Some(event) = project_state.last_event.take() {
-                if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
-                    if events.len() + 1 >= EVENT_COUNT_MAX {
-                        events.pop_front();
-                    }
-                    events.push_back(event);
-                }
-            }
+            project_state.finalize_last_event(cx);
             return;
         }
 
@@ -1435,16 +1625,21 @@ impl EditPredictionStore {
             }
         }
 
-        if let Some(event) = project_state.last_event.take() {
-            if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
-                if events.len() + 1 >= EVENT_COUNT_MAX {
-                    events.pop_front();
-                }
-                events.push_back(event);
-            }
-        }
+        project_state.finalize_last_event(cx);
 
-        merge_trailing_events_if_needed(events, &old_snapshot, &new_snapshot, &edit_range);
+        merge_trailing_events_if_needed(
+            &mut project_state.events,
+            &old_snapshot,
+            &new_snapshot,
+            &edit_range,
+        );
+
+        let file_context = new_file.as_ref().map(|file| {
+            let project_path = ProjectPath::from_file(file.as_ref(), cx);
+            let file_context = project_state.file_context_for_path(project_path.clone(), cx);
+            Self::ensure_git_changed_file_sets_loading(&file_context, project, &project_path, cx);
+            file_context
+        });
 
         project_state.last_event = Some(LastEvent {
             old_file,
@@ -1457,6 +1652,7 @@ impl EditPredictionStore {
             predicted: is_predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
+            file_context,
         });
     }
 
@@ -1468,12 +1664,18 @@ impl EditPredictionStore {
         cx: &App,
     ) -> Option<BufferEditPrediction<'_>> {
         let project_state = self.projects.get_mut(&project.entity_id())?;
-        if let Some(position) = position
-            && let Some(buffer) = project_state
+        if let Some(position) = position {
+            let snapshot = buffer.read(cx).snapshot();
+            let cursor_position = position.to_offset(&snapshot);
+            if let Some(file) = snapshot.file() {
+                project_state.update_recent_file_cursor(file.path().as_std_path(), cursor_position);
+            }
+            if let Some(buffer) = project_state
                 .registered_buffers
                 .get_mut(&buffer.entity_id())
-        {
-            buffer.last_position = Some(position);
+            {
+                buffer.last_position = Some(position);
+            }
         }
 
         let CurrentEditPrediction {
@@ -2444,6 +2646,15 @@ impl EditPredictionStore {
         allow_jump: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let is_cloud_zeta = matches!(self.edit_prediction_model, EditPredictionModel::Zeta)
+            && !matches!(
+                all_language_settings(None, cx).edit_predictions.provider,
+                EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
+            );
+        if is_cloud_zeta && !self.client.cloud_client().has_credentials() {
+            return Task::ready(Ok(None));
+        }
+
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);
@@ -2465,22 +2676,37 @@ impl EditPredictionStore {
             EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
         };
 
-        let is_open_source = snapshot
-            .file()
-            .map_or(false, |file| self.is_file_open_source(&project, file, cx))
-            && events.iter().all(|event| event.in_open_source_repo())
-            && related_files.iter().all(|file| file.in_open_source_repo);
+        let buffer_id = active_buffer.read(cx).remote_id();
+        let repo_url = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+
+        let is_staff_zed_repo = cx.is_staff()
+            && repo_url
+                .as_ref()
+                .is_some_and(|url| is_zed_industries_repo(url));
+        let is_open_source = is_staff_zed_repo
+            || (snapshot
+                .file()
+                .map_or(false, |file| self.is_file_open_source(&project, file, cx))
+                && events.iter().all(|event| event.in_open_source_repo())
+                && related_files.iter().all(|file| file.in_open_source_repo));
 
         let can_collect_data = !cfg!(test)
             && is_open_source
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
+        let capture_worktree_id = snapshot.file().map(|file| file.worktree_id(cx));
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
             snapshot,
             position,
             events,
+            stored_events: stored_events.clone(),
             related_files,
             mode,
             trigger,
@@ -2490,11 +2716,42 @@ impl EditPredictionStore {
             is_open_source,
         };
 
-        let capture_data = (can_collect_data && rand::random_ratio(1, 1000)).then(|| stored_events);
-
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta => {
-                zeta::request_prediction_with_zeta(self, inputs, capture_data, cx)
+                let capture_data = if let Some(worktree_id) = capture_worktree_id
+                    && can_collect_data
+                {
+                    let uncommitted_diff_snapshot = uncommitted_diffs_for_events(
+                        project.clone(),
+                        worktree_id,
+                        stored_events.clone(),
+                        cx,
+                    )
+                    .shared();
+                    jump_example::try_start_jump_example_capture(
+                        project_state,
+                        uncommitted_diff_snapshot.clone(),
+                        inputs.project.clone(),
+                        inputs.snapshot.clone(),
+                        inputs.position,
+                        match trigger {
+                            PredictEditsRequestTrigger::Diagnostics => {
+                                JumpExampleTrigger::Diagnostic
+                            }
+                            _ => JumpExampleTrigger::Prediction,
+                        },
+                        stored_events,
+                        inputs.diagnostic_search_range.clone(),
+                        can_collect_data,
+                        is_open_source,
+                        cx,
+                    );
+                    rand::random_ratio(1, 10).then(|| uncommitted_diff_snapshot)
+                } else {
+                    None
+                };
+
+                zeta::request_prediction_with_zeta(self, inputs, capture_data, repo_url, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Mercury => {
@@ -2812,7 +3069,39 @@ impl EditPredictionStore {
         cx: &mut Context<Self>,
     ) {
         let project_state = self.get_or_init_project(project, cx);
-        project_state.recent_paths = paths.into_iter().collect();
+        project_state.recently_viewed_files = paths
+            .into_iter()
+            .map(|path| RecentFile {
+                path: path.path.as_std_path().into(),
+                cursor_position: None,
+            })
+            .collect();
+    }
+
+    pub fn recently_opened_files_for_project(&self, project: &Entity<Project>) -> Vec<RecentFile> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project_state| {
+                project_state
+                    .recently_opened_files
+                    .iter()
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn recently_viewed_files_for_project(&self, project: &Entity<Project>) -> Vec<RecentFile> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project_state| {
+                project_state
+                    .recently_viewed_files
+                    .iter()
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn is_file_open_source(
@@ -2993,8 +3282,8 @@ fn merge_trailing_events_if_needed(
         return;
     }
 
-    let mut events_to_merge = events.range(events.len() - mergeable_count..).peekable();
-    let oldest_event = events_to_merge.peek().unwrap();
+    let merge_start = events.len() - mergeable_count;
+    let oldest_event = &events[merge_start];
     let oldest_snapshot = oldest_event.old_snapshot.clone();
     let newest_snapshot = end_snapshot;
     let mut merged_edit_range = oldest_event.total_edit_range.clone();
@@ -3021,9 +3310,9 @@ fn merge_trailing_events_if_needed(
                     path: path.clone(),
                     diff,
                     in_open_source_repo: *in_open_source_repo,
-                    predicted: events_to_merge.all(|e| {
+                    predicted: events.range(merge_start..).all(|event| {
                         matches!(
-                            e.event.as_ref(),
+                            event.event.as_ref(),
                             zeta_prompt::Event::BufferChange {
                                 predicted: true,
                                 ..
@@ -3035,6 +3324,7 @@ fn merge_trailing_events_if_needed(
                 new_snapshot_version: newest_snapshot.version.clone(),
                 total_edit_range: newest_snapshot.anchor_before(edit_range.start)
                     ..newest_snapshot.anchor_before(edit_range.end),
+                file_context: oldest_event.file_context.clone(),
             },
         };
         events.truncate(events.len() - mergeable_count);
@@ -3148,4 +3438,12 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn is_zed_industries_repo(url: &str) -> bool {
+    url.strip_prefix("https://github.com/zed-industries/")
+        .or_else(|| url.strip_prefix("http://github.com/zed-industries/"))
+        .or_else(|| url.strip_prefix("git@github.com:zed-industries/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/zed-industries/"))
+        .is_some_and(|repo| !repo.is_empty())
 }

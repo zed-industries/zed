@@ -1,6 +1,8 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{convert::TryFrom, time::Duration};
@@ -356,6 +358,7 @@ pub async fn complete(
     api_url: &str,
     api_key: Option<&str>,
     request: ChatCompletionRequest,
+    extra_headers: &CustomHeaders,
 ) -> Result<ChatResponse> {
     let uri = format!("{api_url}/chat/completions");
     let mut request_builder = HttpRequest::builder()
@@ -368,7 +371,9 @@ pub async fn complete(
     }
 
     let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+    let request = request_builder
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serialized_request))?;
 
     let mut response = client.send(request).await?;
     if response.status().is_success() {
@@ -393,6 +398,7 @@ pub async fn stream_chat_completion(
     api_url: &str,
     api_key: Option<&str>,
     request: ChatCompletionRequest,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
     let mut request_builder = http::Request::builder()
@@ -404,7 +410,9 @@ pub async fn stream_chat_completion(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
     }
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -446,6 +454,7 @@ pub async fn get_models(
     api_url: &str,
     api_key: Option<&str>,
     _: Option<Duration>,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<ModelEntry>> {
     let uri = format!("{api_url}/models");
     let mut request_builder = HttpRequest::builder()
@@ -457,7 +466,9 @@ pub async fn get_models(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
     }
 
-    let request = request_builder.body(AsyncBody::default())?;
+    let request = request_builder
+        .extra_headers(extra_headers)
+        .body(AsyncBody::default())?;
 
     let mut response = client.send(request).await?;
 

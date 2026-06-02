@@ -34,7 +34,7 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
     PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
     RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -591,6 +591,16 @@ impl Tiling {
     }
 }
 
+/// Callbacks for the accessibility adapter.
+pub struct A11yCallbacks {
+    /// Called when the adapter is activated (a screen reader connects).
+    pub activation: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    /// Called when an action is requested by the screen reader.
+    pub action: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
+    /// Called when the adapter is deactivated (screen reader disconnects).
+    pub deactivation: Box<dyn Fn() + Send + 'static>,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 #[expect(missing_docs)]
 pub struct RequestFrameOptions {
@@ -660,6 +670,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_edited(&mut self, _edited: bool) {}
     fn set_document_path(&self, _path: Option<&std::path::Path>) {}
+    #[cfg(target_os = "macos")]
+    fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -700,6 +712,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn play_system_bell(&self) {}
 
+    /// Initialize the accessibility adapter with callbacks.
+    fn a11y_init(&self, _callbacks: A11yCallbacks) {}
+
+    /// Provide a TreeUpdate to the accessibility adapter.
+    fn a11y_tree_update(&self, _tree_update: accesskit::TreeUpdate) {}
+
+    /// Inform the adapter of updated window bounds.
+    fn a11y_update_window_bounds(&self) {}
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
@@ -736,12 +757,16 @@ pub type RunnableVariant = Runnable<RunnableMeta>;
 #[doc(hidden)]
 pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
+#[doc(hidden)]
+pub enum TasksIncluded {
+    OnlyCompleted,
+    CompletedAndRunning,
+}
+
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings;
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);

@@ -43,10 +43,12 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
+use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
-    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
+    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, TaskExt, Window,
+    actions,
 };
 use language::{
     LanguageRegistry,
@@ -56,7 +58,8 @@ use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
-use prompt_store::{PromptBuilder, rules_to_skills_migration};
+use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
+use rope::Point;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
@@ -112,6 +115,42 @@ pub(crate) fn resolve_agent_image(
     None
 }
 
+pub(crate) fn open_abs_path_at_point(
+    workspace: &mut Workspace,
+    abs_path: PathBuf,
+    point: Point,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> bool {
+    let project = workspace.project();
+    let Some(path) = project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
+    else {
+        return false;
+    };
+
+    let item = workspace.open_path(path, None, true, window, cx);
+    window
+        .spawn(cx, async move |cx| {
+            let Some(editor) = item.await?.downcast::<Editor>() else {
+                return Ok(());
+            };
+            let range = point..point;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges([range]),
+                    );
+                })
+                .ok();
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    true
+}
+
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
 
@@ -160,6 +199,8 @@ actions!(
         ArchiveSelectedThread,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
+        /// Renames the currently selected thread.
+        RenameSelectedThread,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.
@@ -182,6 +223,8 @@ actions!(
         CopyThreadToClipboard,
         /// Loads a thread from the clipboard JSON for debugging.
         LoadThreadFromClipboard,
+        /// Reruns the rules-to-skills migration.
+        RerunRulesToSkillsMigration,
         /// Keeps the current suggestion or change.
         Keep,
         /// Rejects the current suggestion or change.
@@ -204,6 +247,8 @@ actions!(
         ResetTrialUpsell,
         /// Resets the trial end upsell notification.
         ResetTrialEndUpsell,
+        /// Re-enables the fast mode warning for every provider and model.
+        ResetFastModeWarnings,
         /// Opens the "Add Context" menu in the message editor.
         OpenAddContextMenu,
         /// Interrupts the current generation and sends the message immediately.
@@ -244,6 +289,8 @@ actions!(
         ScrollOutputToNextMessage,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
+        /// Starts a new terminal thread.
+        NewTerminalThread,
     ]
 );
 
@@ -505,7 +552,7 @@ pub fn init(
     cx: &mut App,
 ) {
     agent::ThreadStore::init_global(cx);
-    rules_library::init(cx);
+    prompt_store::init(cx);
     skill_creator::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
@@ -568,6 +615,22 @@ pub fn init(
     })
     .detach();
 
+    {
+        let fs = fs.clone();
+        cx.observe_new(move |workspace: &mut Workspace, _window, _cx| {
+            let fs = fs.clone();
+            workspace.register_action(
+                move |workspace: &mut Workspace,
+                      _: &RerunRulesToSkillsMigration,
+                      window: &mut Window,
+                      cx: &mut Context<Workspace>| {
+                    rerun_rules_to_skills_migration(workspace, fs.clone(), window, cx);
+                },
+            );
+        })
+        .detach();
+    }
+
     // Update command palette filter based on AI settings
     update_command_palette_filter(cx);
 
@@ -584,15 +647,10 @@ pub fn init(
     .detach();
 
     // Kick off the one-time migration of non-Default Rules to global
-    // Skills, deferred until server feature flags arrive.
-    //
-    // The migration itself is idempotent and no longer gated on a flag,
-    // but the deferral via `on_flags_ready` still matters: the migration
-    // writes to the on-disk `GlobalKeyValueStore`, which dispatches work
-    // on the `sqlezWorker` background thread. In `gpui::test` contexts,
-    // server flags are never received, so this callback never fires —
-    // which keeps that sqlite worker activity from racing with the
-    // `TestScheduler` and tripping its non-determinism panic.
+    // Skills. Test builds keep the old feature-flag deferral because
+    // server flags are never received in `gpui::test` contexts, avoiding
+    // sqlite worker activity that can race with the deterministic scheduler.
+    #[cfg(any(test, feature = "test-support"))]
     {
         let fs = fs.clone();
         cx.on_flags_ready(move |_, cx| {
@@ -600,8 +658,61 @@ pub fn init(
         })
         .detach();
     }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+    }
 
     maybe_backfill_editor_layout(fs, is_new_install, cx);
+}
+
+fn rerun_rules_to_skills_migration(
+    _workspace: &mut Workspace,
+    fs: Arc<dyn Fs>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace = cx.weak_entity();
+    window
+        .spawn(cx, async move |cx| {
+            let migration_task = cx.update(|_window, cx| {
+                rules_to_skills_migration::rerun_rules_to_skills_migration(fs, cx)
+            })?;
+            let result = migration_task.await?;
+            log::info!("Forced rules-to-skills migration result: {result:?}");
+
+            cx.update(|_window, cx| {
+                show_rules_to_skills_migration_toast(
+                    &workspace,
+                    "Rules-to-skills migration rerun. Please double-check AGENTS.md and Skills for missing or duplicated prompts.",
+                    cx,
+                );
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+}
+
+fn show_rules_to_skills_migration_toast(
+    workspace: &gpui::WeakEntity<Workspace>,
+    message: &'static str,
+    cx: &mut App,
+) {
+    if let Some(workspace) = workspace.upgrade() {
+        workspace.update(cx, |workspace, cx| {
+            struct RulesToSkillsMigrationRerunToast;
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<
+                        RulesToSkillsMigrationRerunToast,
+                    >(),
+                    message,
+                )
+                .autohide(),
+                cx,
+            );
+        });
+    }
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
@@ -643,7 +754,6 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<AcceptNextWordEditPrediction>(),
             TypeId::of::<AcceptNextLineEditPrediction>(),
-            TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<ShowEditPrediction>(),
             TypeId::of::<NextEditPrediction>(),
             TypeId::of::<PreviousEditPrediction>(),
@@ -651,7 +761,10 @@ fn update_command_palette_filter(cx: &mut App) {
         ];
 
         let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
-        let open_skill_creator_action = [TypeId::of::<zed_actions::assistant::OpenSkillCreator>()];
+        let skill_creator_actions = [
+            TypeId::of::<zed_actions::assistant::OpenSkillCreator>(),
+            TypeId::of::<zed_actions::assistant::CreateSkillFromUrl>(),
+        ];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -709,10 +822,10 @@ fn update_command_palette_filter(cx: &mut App) {
         // rest of that namespace's actions.
         if !disable_ai {
             filter.hide_action_types(&open_rules_library_action);
-            filter.show_action_types(open_skill_creator_action.iter());
+            filter.show_action_types(skill_creator_actions.iter());
         } else {
             filter.show_action_types(open_rules_library_action.iter());
-            filter.hide_action_types(&open_skill_creator_action);
+            filter.hide_action_types(&skill_creator_actions);
         }
     });
 }
@@ -813,6 +926,7 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
@@ -829,6 +943,7 @@ mod tests {
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
             tool_permissions: Default::default(),
+            sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),
@@ -850,6 +965,26 @@ mod tests {
                 !filter.is_hidden(&NewThread),
                 "NewThread should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&NewTerminalThread),
+                "NewTerminalThread should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenSkillCreator),
+                "OpenSkillCreator should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::CreateSkillFromUrl),
+                "CreateSkillFromUrl should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),
+                "OpenGlobalAgentsMdRules should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
+                "OpenProjectAgentsMdRules should be visible by default"
+            );
         });
 
         // Disable agent
@@ -868,6 +1003,18 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&NewTerminalThread),
+                "NewTerminalThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),
+                "OpenGlobalAgentsMdRules should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
+                "OpenProjectAgentsMdRules should be hidden when agent is disabled"
             );
         });
 

@@ -45,6 +45,7 @@ path = "src/gpui.rs"
 doctest = false
 
 [dependencies]
+accesskit.workspace = true
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { workspace = true, optional = true }
@@ -106,6 +107,7 @@ pollster.workspace = true
 url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
+heapless.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
@@ -171,6 +173,8 @@ embed-resource = { version = "3.0", optional = true }
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
+
+
 
 
 
@@ -250,3 +254,7 @@ path = "examples/list_example.rs"
 [[example]]
 name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"
+
+[[example]]
+name = "a11y"
+path = "examples/a11y.rs"
