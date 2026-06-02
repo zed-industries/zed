@@ -1,8 +1,5 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use gpui::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant, TaskTiming,
-    ThreadTaskTimings, add_task_timing,
-};
+use gpui::{PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -21,11 +18,7 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
-use std::{
-    ffi::c_void,
-    ptr::NonNull,
-    time::{Duration, Instant},
-};
+use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
 pub(crate) struct MacDispatcher;
 
@@ -36,15 +29,6 @@ impl MacDispatcher {
 }
 
 impl PlatformDispatcher for MacDispatcher {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
-        let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-        ThreadTaskTimings::convert(&global_timings)
-    }
-
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings {
-        gpui::profiler::get_current_thread_task_timings()
-    }
-
     fn is_main_thread(&self) -> bool {
         let is_main_thread: BOOL = unsafe { msg_send![class!(NSThread), isMainThread] };
         is_main_thread == YES
@@ -184,18 +168,8 @@ extern "C" fn trampoline(context: *mut c_void) {
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
     let location = runnable.metadata().location;
-
-    let start = Instant::now();
-    let mut timing = TaskTiming {
-        location,
-        start,
-        end: None,
-    };
-
-    add_task_timing(timing);
-
+    let spawned = runnable.metadata().spawned;
+    gpui::profiler::update_running_task(spawned, location);
     runnable.run();
-
-    timing.end = Some(Instant::now());
-    add_task_timing(timing);
+    gpui::profiler::save_task_timing();
 }

@@ -80,7 +80,7 @@ You can pass any number of arguments to clangd. To see a full set of available o
 
 ## Formatting
 
-By default Zed will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+By default Zed will use the `clangd` language server for formatting C++ code. Its formatter is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
 # yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json

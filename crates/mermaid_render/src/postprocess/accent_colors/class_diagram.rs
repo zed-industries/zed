@@ -58,7 +58,7 @@ impl ClassDiagramAccents {
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if let Some(entry) = self.accent_g_stack.pop() {
                     if entry.is_some() {
-                        self.nodes.finish_node();
+                        self.nodes.maybe_finish_node();
                     }
                 }
                 Ok(event)

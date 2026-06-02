@@ -8,13 +8,12 @@ pub mod status;
 
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
-use anyhow::{Context as _, Result};
-pub use git2 as libgit;
+use anyhow::Result;
 use gpui::{Action, actions};
 pub use repository::RemoteCommandOutput;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::str::FromStr;
 
 pub const DOT_GIT: &str = ".git";
@@ -137,40 +136,115 @@ pub struct RestoreFile {
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;
 
+const SHA1_BYTE_LENGTH: usize = 20;
+const SHA256_BYTE_LENGTH: usize = 32;
+const SHA1_HEX_LENGTH: usize = SHA1_BYTE_LENGTH * 2;
+const SHA256_HEX_LENGTH: usize = SHA256_BYTE_LENGTH * 2;
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct Oid(libgit::Oid);
+pub struct Oid {
+    bytes: [u8; SHA256_BYTE_LENGTH],
+    format: OidFormat,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+enum OidFormat {
+    Sha1,
+    Sha256,
+}
+
+impl OidFormat {
+    fn byte_len(self) -> usize {
+        match self {
+            Self::Sha1 => SHA1_BYTE_LENGTH,
+            Self::Sha256 => SHA256_BYTE_LENGTH,
+        }
+    }
+
+    fn hex_len(self) -> usize {
+        match self {
+            Self::Sha1 => SHA1_HEX_LENGTH,
+            Self::Sha256 => SHA256_HEX_LENGTH,
+        }
+    }
+}
 
 impl Oid {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let oid = libgit::Oid::from_bytes(bytes).context("failed to parse bytes into git oid")?;
-        Ok(Self(oid))
+        let format = match bytes.len() {
+            SHA1_BYTE_LENGTH => OidFormat::Sha1,
+            SHA256_BYTE_LENGTH => OidFormat::Sha256,
+            len => {
+                anyhow::bail!(
+                    "invalid git oid byte length: expected {SHA1_BYTE_LENGTH} for SHA-1 or {SHA256_BYTE_LENGTH} for SHA-256, got {len}"
+                );
+            }
+        };
+
+        let mut oid_bytes = [0u8; SHA256_BYTE_LENGTH];
+        oid_bytes[..bytes.len()].copy_from_slice(bytes);
+        Ok(Self {
+            bytes: oid_bytes,
+            format,
+        })
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn random(rng: &mut impl rand::Rng) -> Self {
-        let mut bytes = [0; 20];
-        rng.fill(&mut bytes);
-        Self::from_bytes(&bytes).unwrap()
+        let mut bytes = [0u8; SHA256_BYTE_LENGTH];
+        rng.fill(&mut bytes[..SHA1_BYTE_LENGTH]);
+        Self {
+            bytes,
+            format: OidFormat::Sha1,
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
+        &self.bytes[..self.format.byte_len()]
     }
 
     pub(crate) fn is_zero(&self) -> bool {
-        self.0.is_zero()
+        self.as_bytes().iter().all(|byte| *byte == 0)
     }
 
     /// Returns this [`Oid`] as a short SHA.
     pub fn display_short(&self) -> String {
-        self.to_string().chars().take(SHORT_SHA_LENGTH).collect()
+        self.hex_string(SHORT_SHA_LENGTH)
+    }
+
+    fn hex_string(&self, len: usize) -> String {
+        let mut string = String::with_capacity(len);
+        for index in 0..len {
+            string.push(self.hex_digit(index));
+        }
+        string
+    }
+
+    fn write_hex(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for index in 0..self.format.hex_len() {
+            f.write_char(self.hex_digit(index))?;
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn hex_digit(&self, index: usize) -> char {
+        debug_assert!(index < self.format.hex_len());
+        let byte = self.as_bytes()[index / 2];
+        let nibble = if index & 1 == 0 {
+            byte >> 4
+        } else {
+            byte & 0x0f
+        };
+        char::from(HEX_DIGITS[nibble as usize])
     }
 }
 
 impl TryFrom<&str> for Oid {
     type Error = anyhow::Error;
 
-    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
         Oid::from_str(value)
     }
 }
@@ -178,13 +252,38 @@ impl TryFrom<&str> for Oid {
 impl FromStr for Oid {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        let oid = if s.len() == 64 {
-            libgit::Oid::from_str_ext(s, libgit::ObjectFormat::Sha256)
-        } else {
-            libgit::Oid::from_str_ext(s, libgit::ObjectFormat::Sha1)
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let format = match s.len() {
+            1..=SHA1_HEX_LENGTH => OidFormat::Sha1,
+            SHA256_HEX_LENGTH => OidFormat::Sha256,
+            len => {
+                anyhow::bail!(
+                    "invalid git oid hex length: expected 1..={SHA1_HEX_LENGTH} for SHA-1 or {SHA256_HEX_LENGTH} for SHA-256, got {len}"
+                );
+            }
         };
-        oid.context("parsing git oid").map(Self)
+
+        let mut bytes = [0u8; SHA256_BYTE_LENGTH];
+        for (index, byte) in s.bytes().enumerate() {
+            let digit = decode_hex_digit(byte)
+                .ok_or_else(|| anyhow::anyhow!("invalid hex digit at byte {index} for git oid"))?;
+            if index % 2 == 0 {
+                bytes[index / 2] = digit << 4;
+            } else {
+                bytes[index / 2] |= digit;
+            }
+        }
+
+        Ok(Self { bytes, format })
+    }
+}
+
+fn decode_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -196,21 +295,21 @@ impl fmt::Debug for Oid {
 
 impl fmt::Display for Oid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.write_hex(f)
     }
 }
 
 impl Serialize for Oid {
-    fn serialize<S>(&self, serializer: S) -> std::prelude::v1::Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.0.to_string())
+        serializer.serialize_str(&self.hex_string(self.format.hex_len()))
     }
 }
 
 impl<'de> Deserialize<'de> for Oid {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
@@ -219,33 +318,49 @@ impl<'de> Deserialize<'de> for Oid {
     }
 }
 
-impl Default for Oid {
-    fn default() -> Self {
-        Self(libgit::Oid::ZERO_SHA1)
-    }
-}
-
 impl From<Oid> for u32 {
     fn from(oid: Oid) -> Self {
-        let bytes = oid.0.as_bytes();
-        debug_assert!(bytes.len() > 4);
-
-        let mut u32_bytes: [u8; 4] = [0; 4];
-        u32_bytes.copy_from_slice(&bytes[..4]);
-
+        let mut u32_bytes = [0u8; 4];
+        u32_bytes.copy_from_slice(&oid.as_bytes()[..4]);
         u32::from_ne_bytes(u32_bytes)
     }
 }
 
 impl From<Oid> for usize {
     fn from(oid: Oid) -> Self {
-        let bytes = oid.0.as_bytes();
-        debug_assert!(bytes.len() > 8);
-
-        let mut u64_bytes: [u8; 8] = [0; 8];
-        u64_bytes.copy_from_slice(&bytes[..8]);
-
+        let mut u64_bytes = [0u8; 8];
+        u64_bytes.copy_from_slice(&oid.as_bytes()[..8]);
         u64::from_ne_bytes(u64_bytes) as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_short_sha1_oid_by_padding_trailing_nibbles() {
+        let oid = "abc1234".parse::<Oid>().expect("failed to parse oid");
+
+        assert_eq!(oid.as_bytes().len(), SHA1_BYTE_LENGTH);
+        assert_eq!(oid.display_short(), "abc1234");
+        assert_eq!(oid.to_string(), "abc1234000000000000000000000000000000000");
+    }
+
+    #[test]
+    fn parses_full_sha256_oid() {
+        let sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let oid = sha.parse::<Oid>().expect("failed to parse oid");
+
+        assert_eq!(oid.as_bytes().len(), SHA256_BYTE_LENGTH);
+        assert_eq!(oid.to_string(), sha);
+    }
+
+    #[test]
+    fn rejects_invalid_oid_lengths() {
+        assert!("".parse::<Oid>().is_err());
+        assert!("a".repeat(SHA1_HEX_LENGTH + 1).parse::<Oid>().is_err());
+        assert!("a".repeat(SHA256_HEX_LENGTH - 1).parse::<Oid>().is_err());
     }
 }
 
