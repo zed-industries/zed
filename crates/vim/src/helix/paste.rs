@@ -120,27 +120,24 @@ impl Vim {
                         sel.end
                     };
                     let point = display_point.to_point(&display_map);
-                    let anchor = if action.before {
-                        display_map.buffer_snapshot().anchor_after(point)
-                    } else {
-                        display_map.buffer_snapshot().anchor_before(point)
-                    };
+                    let buffer_snapshot = display_map.buffer_snapshot();
+                    let start_anchor = buffer_snapshot.anchor_before(point);
+                    let end_anchor = buffer_snapshot.anchor_after(point);
                     edits.push((point..point, to_insert.repeat(count)));
-                    new_selections.push((anchor, to_insert.len() * count));
+                    new_selections.push((start_anchor, end_anchor));
                 }
 
                 editor.edit(edits, cx);
 
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
-                        let offset = anchor.to_offset(&snapshot);
-                        if action.before {
-                            offset.saturating_sub_usize(len)..offset
-                        } else {
-                            offset..(offset + len)
-                        }
-                    }));
+                    s.select_ranges(new_selections.into_iter().map(
+                        |(start_anchor, end_anchor)| {
+                            let start = start_anchor.to_offset(&snapshot);
+                            let end = end_anchor.to_offset(&snapshot);
+                            start..end
+                        },
+                    ));
                 })
             });
         });
@@ -525,5 +522,59 @@ mod test {
             ˇ»the lazy dog."},
             Mode::HelixNormal,
         );
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/56982:
+    // clipboard text containing CRLF is normalized to LF on insert, so the
+    // byte length of the pre-edit string overshoots the inserted region. The
+    // helix paste handler must compute the post-paste selection from anchors
+    // rather than from the pre-normalization byte count.
+    #[gpui::test]
+    async fn test_paste_crlf_text(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Paste after the cursor (action.before = false). Without the fix this
+        // panics in the buffer offset assertion.
+        cx.set_state("ˇX", Mode::HelixNormal);
+        cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+            X«a
+            bˇ»"},
+            Mode::HelixNormal,
+        );
+
+        // Paste before the cursor (action.before = true). Without the fix the
+        // resulting selection is wrong because the stale byte length leaks into
+        // saturating_sub.
+        cx.set_state("Yˇ", Mode::HelixNormal);
+        cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
+        cx.simulate_keystrokes("shift-p");
+        cx.assert_state(
+            indoc! {"
+            Y«a
+            bˇ»"},
+            Mode::HelixNormal,
+        );
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/56982:
+    // U+2028 / U+2029 from external sources (e.g. Okular on Windows) are
+    // converted to CRLF by the OS clipboard layer, which previously crashed.
+    // The fix is independent of whatever normalization happens at insert time,
+    // so this also stays robust if those characters ever start getting
+    // normalized inside Zed.
+    #[gpui::test]
+    async fn test_paste_text_with_line_separator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇX", Mode::HelixNormal);
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            "a\u{2028}b\u{2029}c".to_string(),
+        ));
+        cx.simulate_keystrokes("p");
+        cx.assert_state("X«a\u{2028}b\u{2029}cˇ»", Mode::HelixNormal);
     }
 }
