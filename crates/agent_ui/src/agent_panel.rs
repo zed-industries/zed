@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
+use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
@@ -712,21 +712,13 @@ pub fn init(cx: &mut App) {
                                 } else if let Some(terminal_id) = panel.active_terminal_id()
                                     && let Some(agent_terminal) = panel.terminals.get(&terminal_id)
                                 {
+                                    let terminal = agent_terminal.view.read(cx).terminal().read(cx);
                                     // Resolve mentions against the cwd: live cwd, else spawn dir.
-                                    let working_directory = agent_terminal
-                                        .view
-                                        .read(cx)
-                                        .terminal()
-                                        .read(cx)
+                                    let working_directory = terminal
                                         .working_directory()
                                         .or_else(|| agent_terminal.working_directory.clone());
                                     // Foreground CLI, to format the mention how it expects.
-                                    let program = agent_terminal
-                                        .view
-                                        .read(cx)
-                                        .terminal()
-                                        .read(cx)
-                                        .foreground_process_command_name();
+                                    let program = terminal.foreground_process_command_name();
                                     let text = format_selection_for_terminal(
                                         &selection,
                                         &panel.project,
@@ -772,8 +764,7 @@ fn format_selection_for_terminal(
                 };
                 let snapshot = buffer.snapshot();
                 let point_range = range.to_point(&snapshot);
-                let start = point_range.start.row + 1;
-                let end = point_range.end.row + 1;
+                let line_range = point_range.start.row..=point_range.end.row;
                 let path = mention_path_for_terminal(
                     project,
                     &project_path,
@@ -781,7 +772,7 @@ fn format_selection_for_terminal(
                     path_style,
                     cx,
                 );
-                parts.push(agent.format_mention(&path, start, end));
+                parts.push(agent.format_mention(&path, &line_range));
             }
             if parts.is_empty() {
                 String::new()
@@ -808,13 +799,9 @@ impl TerminalAgent {
         }
     }
 
-    /// Formats one `path` selection (1-based, inclusive lines) as a mention.
-    fn format_mention(&self, path: &str, start: u32, end: u32) -> String {
-        let line_suffix = if start == end {
-            format!(":{start}")
-        } else {
-            format!(":{start}-{end}")
-        };
+    /// Formats one `path` selection (0-based, inclusive lines) as a mention.
+    fn format_mention(&self, path: &str, line_range: &std::ops::RangeInclusive<u32>) -> String {
+        let line_suffix = line_range_suffix(line_range);
         match self {
             // codex wants bare paths, quoted when they contain whitespace.
             Self::Codex => {
@@ -829,7 +816,7 @@ impl TerminalAgent {
     }
 }
 
-/// Path for a terminal mention: relative to the terminal cwd, else absolute.
+/// Path for a terminal mention: relative to the terminal cwd if possible, else absolute.
 fn mention_path_for_terminal(
     project: &Entity<Project>,
     project_path: &ProjectPath,
