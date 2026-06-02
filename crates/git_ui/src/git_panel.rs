@@ -21,6 +21,7 @@ use file_icons::FileIcons;
 use futures::StreamExt as _;
 use futures::channel::oneshot::Canceled;
 use git::Oid;
+use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
     GitCommitTemplate, GitCommitter, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
@@ -32,6 +33,7 @@ use git::{Amend, Commit, Signoff, ToggleStaged, repository::RepoPath, status::Fi
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
     StashAll, StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
+    parse_git_remote_url,
 };
 use gpui::{
     AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
@@ -68,6 +70,7 @@ use std::path::Path;
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
+use time::OffsetDateTime;
 use ui::{
     ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, KeyBinding,
     PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab,
@@ -5262,8 +5265,15 @@ impl GitPanel {
     }
 
     fn git_remote(&self, cx: &mut App) -> Option<GitRemote> {
-        let repo = self.active_repository.as_ref()?.clone();
-        repo.update(cx, |repo, cx| crate::git_remote_for_repository(repo, cx))
+        let repo = self.active_repository.as_ref()?;
+        let remote_url = repo.read(cx).default_remote_url()?;
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
+        let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
+        Some(GitRemote {
+            host: provider,
+            owner: parsed.owner.into(),
+            repo: parsed.repo.into(),
+        })
     }
 
     fn render_commit_history(
@@ -6883,6 +6893,7 @@ impl GitPanelMessageTooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let remote_url = repository.read(cx).default_remote_url();
         cx.new(|cx| {
             cx.spawn_in(window, async move |this, cx| {
                 let (details, workspace) = git_panel.update(cx, |git_panel, cx| {
@@ -6892,19 +6903,26 @@ impl GitPanelMessageTooltip {
                     )
                 });
                 let details = details.await?;
+                let provider_registry = cx
+                    .update(|_, app| GitHostingProviderRegistry::default_global(app))
+                    .ok();
+
+                let commit_details = crate::commit_tooltip::CommitDetails {
+                    sha: details.sha.clone(),
+                    author_name: details.author_name.clone(),
+                    author_email: details.author_email.clone(),
+                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
+                    message: Some(ParsedCommitMessage::parse(
+                        details.sha.to_string(),
+                        details.message.to_string(),
+                        remote_url.as_deref(),
+                        provider_registry,
+                    )),
+                };
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
                     this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::from_commit_data(
-                            details.sha.clone(),
-                            details.author_name.clone(),
-                            details.author_email.clone(),
-                            details.commit_timestamp,
-                            details.message.clone(),
-                            repository,
-                            workspace,
-                            cx,
-                        )
+                        CommitTooltip::new(commit_details, repository, workspace, cx)
                     }));
                     cx.notify();
                 })

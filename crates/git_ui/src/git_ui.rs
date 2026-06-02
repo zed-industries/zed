@@ -331,22 +331,6 @@ pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
     GitStatusIcon::new(status)
 }
 
-/// Resolves a repository's default remote URL through the registered git
-/// hosting providers, returning a `GitRemote` if one could be parsed.
-pub fn git_remote_for_repository(
-    repository: &project::git_store::Repository,
-    cx: &mut App,
-) -> Option<git::GitRemote> {
-    let remote_url = repository.default_remote_url()?;
-    let provider_registry = git::GitHostingProviderRegistry::default_global(cx);
-    let (host, parsed) = git::parse_git_remote_url(provider_registry, &remote_url)?;
-    Some(git::GitRemote {
-        host,
-        owner: parsed.owner.into(),
-        repo: parsed.repo.into(),
-    })
-}
-
 struct RenameBranchModal {
     current_branch: SharedString,
     editor: Entity<Editor>,

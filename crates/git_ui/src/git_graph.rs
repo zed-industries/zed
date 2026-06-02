@@ -1,12 +1,14 @@
 use crate::{
-    commit_tooltip::{CommitAvatar, CommitTooltip},
+    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
     git_status_icon,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use git::{
-    BuildCommitPermalinkParams, Oid, ParsedGitRemote,
+    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
+    commit::ParsedCommitMessage,
+    parse_git_remote_url,
     repository::{
         CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
         SearchCommitArgs,
@@ -1627,13 +1629,27 @@ impl GitGraph {
                                 let workspace = self.workspace.clone();
                                 let repository = repository.clone();
                                 this.hoverable_tooltip(move |_window, cx| {
-                                    cx.new(|cx| {
-                                        CommitTooltip::from_commit_data(
-                                            sha.clone().into(),
-                                            author_name.clone(),
-                                            author_email.clone(),
+                                    let remote_url = repository.read(cx).default_remote_url();
+                                    let provider_registry =
+                                        GitHostingProviderRegistry::default_global(cx);
+                                    let commit_details = CommitDetails {
+                                        sha: sha.clone().into(),
+                                        author_name: author_name.clone(),
+                                        author_email: author_email.clone(),
+                                        commit_time: OffsetDateTime::from_unix_timestamp(
                                             commit_timestamp,
-                                            message.clone(),
+                                        )
+                                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                                        message: Some(ParsedCommitMessage::parse(
+                                            sha.clone(),
+                                            message.to_string(),
+                                            remote_url.as_deref(),
+                                            Some(provider_registry),
+                                        )),
+                                    };
+                                    cx.new(|cx| {
+                                        CommitTooltip::new(
+                                            commit_details,
                                             repository.clone(),
                                             workspace.clone(),
                                             cx,
@@ -2512,7 +2528,16 @@ impl GitGraph {
             })
             .unwrap_or_default();
 
-        let remote = repository.update(cx, |repo, cx| crate::git_remote_for_repository(repo, cx));
+        let remote = repository.update(cx, |repo, cx| {
+            let remote_url = repo.default_remote_url()?;
+            let provider_registry = GitHostingProviderRegistry::default_global(cx);
+            let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
+            Some(GitRemote {
+                host: provider,
+                owner: parsed.owner.into(),
+                repo: parsed.repo.into(),
+            })
+        });
 
         let avatar = {
             let author_email_for_avatar = if author_email.is_empty() {
@@ -4061,6 +4086,7 @@ impl GitGraph {
             .collect()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn log_source_for_test(&self) -> &LogSource {
         &self.log_source
     }
@@ -5077,15 +5103,18 @@ mod tests {
             })
             .expect("tracked2 should resolve to project path");
 
-        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        let workspace_window = cx.add_window(|window, cx| {
             workspace::MultiWorkspace::test_new(project.clone(), window, cx)
         });
-        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace = workspace_window
+            .read_with(cx, |multi, _| multi.workspace().clone())
+            .expect("workspace should exist");
 
-        let (weak_workspace, async_window_cx) = multi_workspace
-            .update_in(cx, |multi, window, cx| {
+        let (weak_workspace, async_window_cx) = workspace_window
+            .update(cx, |multi, window, cx| {
                 (multi.workspace().downgrade(), window.to_async(cx))
-            });
+            })
+            .expect("window should be available");
         cx.background_executor.allow_parking();
         let git_panel = cx
             .foreground_executor()
@@ -5097,40 +5126,36 @@ mod tests {
             .expect("git panel should load");
         cx.background_executor.forbid_parking();
 
-        multi_workspace.update_in(cx, |multi, window, cx| {
-            let workspace = multi.workspace();
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(git_panel.clone(), window, cx);
-            });
-        });
+        workspace_window
+            .update(cx, |multi, window, cx| {
+                let workspace = multi.workspace();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_panel(git_panel.clone(), window, cx);
+                });
+            })
+            .expect("workspace window should be available");
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
 
-        multi_workspace.update_in(cx, |multi, window, cx| {
-            git_panel.update(cx, |panel, cx| {
-                panel.select_entry_by_path(tracked1.clone(), window, cx);
-            });
-            git_panel.update(cx, |panel, cx| {
-                panel.focus_handle(cx).focus(window, cx);
-            });
-            let target = multi.workspace().read_with(cx, |workspace, cx| {
-                resolve_file_history_target(workspace, window, cx)
-            });
-            assert_eq!(
-                target,
-                Some((
-                    repository.read(cx).id,
-                    LogSource::Path(tracked1_repo_path.clone())
-                ))
-            );
-        });
+        workspace_window
+            .update(cx, |_, window, cx| {
+                git_panel.update(cx, |panel, cx| {
+                    panel.select_entry_by_path(tracked1.clone(), window, cx);
+                });
+                git_panel.update(cx, |panel, cx| {
+                    panel.focus_handle(cx).focus(window, cx);
+                });
+            })
+            .expect("workspace window should be available");
         cx.run_until_parked();
-        cx.update(|window, cx| {
-            window.dispatch_action(Box::new(git::FileHistory), cx);
-        });
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(git::FileHistory), cx);
+            })
+            .expect("workspace window should be available");
         cx.run_until_parked();
 
-        workspace.read_with(&*cx, |workspace, cx| {
+        workspace.read_with(cx, |workspace, cx| {
             let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
             assert_eq!(graphs.len(), 1);
             assert_eq!(
@@ -5139,18 +5164,25 @@ mod tests {
             );
         });
 
-        multi_workspace.update_in(cx, |_multi, window, cx| {
-            git_panel.update(cx, |panel, cx| {
-                panel.focus_handle(cx).focus(window, cx);
-            });
-        });
+        workspace_window
+            .update(cx, |_, window, cx| {
+                git_panel.update(cx, |panel, cx| {
+                    panel.select_entry_by_path(tracked1.clone(), window, cx);
+                });
+                git_panel.update(cx, |panel, cx| {
+                    panel.focus_handle(cx).focus(window, cx);
+                });
+            })
+            .expect("workspace window should be available");
         cx.run_until_parked();
-        cx.update(|window, cx| {
-            window.dispatch_action(Box::new(git::FileHistory), cx);
-        });
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(git::FileHistory), cx);
+            })
+            .expect("workspace window should be available");
         cx.run_until_parked();
 
-        workspace.read_with(&*cx, |workspace, cx| {
+        workspace.read_with(cx, |workspace, cx| {
             let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
             assert_eq!(graphs.len(), 1);
             assert_eq!(
@@ -5167,54 +5199,66 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer(tracked2.clone(), cx))
             .await
             .expect("tracked2 buffer should open");
-        multi_workspace.update_in(cx, |multi, window, cx| {
-            let workspace = multi.workspace();
-            let multibuffer = cx.new(|cx| {
-                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
-                multibuffer.set_excerpts_for_buffer(
-                    tracked1_buffer.clone(),
-                    [Default::default()..tracked1_buffer.read(cx).max_point()],
-                    0,
-                    cx,
-                );
-                multibuffer.set_excerpts_for_buffer(
-                    tracked2_buffer.clone(),
-                    [Default::default()..tracked2_buffer.read(cx).max_point()],
-                    0,
-                    cx,
-                );
-                multibuffer
-            });
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            });
-            editor.update(cx, |editor, cx| {
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let second_excerpt_point = snapshot
-                    .range_for_buffer(tracked2_buffer.read(cx).remote_id())
-                    .expect("tracked2 excerpt should exist")
-                    .start;
-                let anchor = snapshot.anchor_before(second_excerpt_point);
-                editor.change_selections(
-                    editor::SelectionEffects::no_scroll(),
-                    window,
-                    cx,
-                    |selections| {
-                        selections.select_anchor_ranges([anchor..anchor]);
-                    },
-                );
-                window.focus(&editor.focus_handle(cx), cx);
-            });
-        });
-        cx.run_until_parked();
-        cx.update(|window, cx| {
-            window.dispatch_action(Box::new(git::FileHistory), cx);
-        });
+        workspace_window
+            .update(cx, |multi, window, cx| {
+                let workspace = multi.workspace();
+                let multibuffer = cx.new(|cx| {
+                    let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+                    multibuffer.set_excerpts_for_buffer(
+                        tracked1_buffer.clone(),
+                        [Default::default()..tracked1_buffer.read(cx).max_point()],
+                        0,
+                        cx,
+                    );
+                    multibuffer.set_excerpts_for_buffer(
+                        tracked2_buffer.clone(),
+                        [Default::default()..tracked2_buffer.read(cx).max_point()],
+                        0,
+                        cx,
+                    );
+                    multibuffer
+                });
+                let editor = cx.new(|cx| {
+                    Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+                });
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(
+                        Box::new(editor.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                });
+                editor.update(cx, |editor, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let second_excerpt_point = snapshot
+                        .range_for_buffer(tracked2_buffer.read(cx).remote_id())
+                        .expect("tracked2 excerpt should exist")
+                        .start;
+                    let anchor = snapshot.anchor_before(second_excerpt_point);
+                    editor.change_selections(
+                        editor::SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_anchor_ranges([anchor..anchor]);
+                        },
+                    );
+                    window.focus(&editor.focus_handle(cx), cx);
+                });
+            })
+            .expect("workspace window should be available");
         cx.run_until_parked();
 
-        workspace.read_with(&*cx, |workspace, cx| {
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(git::FileHistory), cx);
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
             let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
             assert_eq!(graphs.len(), 2);
             let latest = graphs
