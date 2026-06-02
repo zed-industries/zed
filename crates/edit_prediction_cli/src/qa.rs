@@ -221,7 +221,7 @@ pub async fn run_qa(
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
         BatchProvider::Openai => {
             let client = if args.no_batch {
@@ -255,13 +255,13 @@ pub async fn run_qa(
                                     _ => None,
                                 })
                                 .collect::<Vec<_>>()
-                                .join(""),
+                                .concat(),
                         })
                     }
                     _ => None,
                 })
                 .collect::<Vec<_>>()
-                .join("")
+                .concat()
         }
     };
 

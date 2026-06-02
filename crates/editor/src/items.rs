@@ -816,6 +816,10 @@ impl Item for Editor {
         }
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.active_buffer(cx)?.read(cx).project_path(cx)
+    }
+
     fn can_save_as(&self, cx: &App) -> bool {
         self.buffer.read(cx).is_singleton()
     }
@@ -1025,7 +1029,7 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.show_breadcrumbs && self.buffer().read(cx).is_singleton() {
+        if self.breadcrumbs_visible() && self.buffer().read(cx).is_singleton() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -1782,7 +1786,7 @@ impl SearchableItem for Editor {
         let text: Cow<_> = if text.len() == 1 {
             text.first().cloned().unwrap().into()
         } else {
-            let joined_chunks = text.join("");
+            let joined_chunks = text.concat();
             joined_chunks.into()
         };
 
@@ -1814,7 +1818,7 @@ impl SearchableItem for Editor {
                     let text: Cow<_> = if text.len() == 1 {
                         text.first().cloned().unwrap().into()
                     } else {
-                        let joined_chunks = text.join("");
+                        let joined_chunks = text.concat();
                         joined_chunks.into()
                     };
 
