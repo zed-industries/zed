@@ -19,6 +19,7 @@ use crate::message_editor::SharedSessionCapabilities;
 
 use db::kvp::KeyValueStore;
 use gpui::List;
+use gpui::Stateful;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{
@@ -7436,14 +7437,6 @@ impl ThreadView {
                         h_flex()
                             .gap_1()
                             .child(
-                                Disclosure::new(
-                                    ("sandbox-authorization-details", entry_ix),
-                                    is_open,
-                                )
-                                .opened_icon(IconName::ChevronDown)
-                                .closed_icon(IconName::ChevronRight),
-                            )
-                            .child(
                                 Label::new("Write access")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
@@ -7462,6 +7455,11 @@ impl ThreadView {
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                             ),
+                    )
+                    .child(
+                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown),
                     )
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
@@ -7507,7 +7505,7 @@ impl ThreadView {
         path: &Path,
         show_border: bool,
         cx: &Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let display_path = path.display().to_string();
         let file_name = path
             .file_name()
@@ -7527,7 +7525,9 @@ impl ThreadView {
             });
 
         h_flex()
-            .id(("sandbox-authorization-path", entry_ix, path_ix))
+            .id(SharedString::from(format!(
+                "sandbox-authorization-path-{entry_ix}-{path_ix}"
+            )))
             .min_w_0()
             .p_1p5()
             .gap_2()
@@ -7537,7 +7537,9 @@ impl ThreadView {
             })
             .child(
                 h_flex()
-                    .id(("sandbox-authorization-path-name", entry_ix, path_ix))
+                    .id(SharedString::from(format!(
+                        "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
+                    )))
                     .min_w_0()
                     .gap_0p5()
                     .child(path_icon)
