@@ -232,9 +232,7 @@ impl AgentServerStore {
                 registry_id.to_string(),
                 settings.unwrap_or_else(|| settings::CustomAgentServerSettings::Registry {
                     default_mode: None,
-                    default_model: None,
                     env: Default::default(),
-                    favorite_models: Vec::new(),
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
                 }),
@@ -1453,16 +1451,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// Default: []
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -1487,16 +1475,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// Default: []
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -1524,24 +1502,6 @@ impl CustomAgentServerSettings {
         match self {
             CustomAgentServerSettings::Custom { default_mode, .. }
             | CustomAgentServerSettings::Registry { default_mode, .. } => default_mode.as_deref(),
-        }
-    }
-
-    pub fn default_model(&self) -> Option<&str> {
-        match self {
-            CustomAgentServerSettings::Custom { default_model, .. }
-            | CustomAgentServerSettings::Registry { default_model, .. } => default_model.as_deref(),
-        }
-    }
-
-    pub fn favorite_models(&self) -> &[String] {
-        match self {
-            CustomAgentServerSettings::Custom {
-                favorite_models, ..
-            }
-            | CustomAgentServerSettings::Registry {
-                favorite_models, ..
-            } => favorite_models,
         }
     }
 
@@ -1582,8 +1542,6 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 args,
                 env,
                 default_mode,
-                default_model,
-                favorite_models,
                 default_config_options,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Custom {
@@ -1593,24 +1551,18 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                     env: Some(env),
                 },
                 default_mode,
-                default_model,
-                favorite_models,
                 default_config_options,
                 favorite_config_option_values,
             },
             settings::CustomAgentServerSettings::Registry {
                 env,
                 default_mode,
-                default_model,
                 default_config_options,
-                favorite_models,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Registry {
                 env,
                 default_mode,
-                default_model,
                 default_config_options,
-                favorite_models,
                 favorite_config_option_values,
             },
         }
@@ -1693,8 +1645,6 @@ mod tests {
                                 settings::CustomAgentServerSettings::Registry {
                                     env: HashMap::default(),
                                     default_mode: None,
-                                    default_model: None,
-                                    favorite_models: Vec::new(),
                                     default_config_options: HashMap::default(),
                                     favorite_config_option_values: HashMap::default(),
                                 }

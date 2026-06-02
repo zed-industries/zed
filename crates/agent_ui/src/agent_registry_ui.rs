@@ -521,9 +521,7 @@ impl AgentRegistryPage {
                             agent_servers.entry(agent_id).or_insert_with(|| {
                                 settings::CustomAgentServerSettings::Registry {
                                     default_mode: None,
-                                    default_model: None,
                                     env: Default::default(),
-                                    favorite_models: Vec::new(),
                                     default_config_options: HashMap::default(),
                                     favorite_config_option_values: HashMap::default(),
                                 }
