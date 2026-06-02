@@ -303,25 +303,22 @@ pub struct AvailableSkill {
 }
 
 fn skill_completion_icon_path(
-    skill: &AvailableSkill,
+    _skill: &AvailableSkill,
     uri: &MentionUri,
     cx: &mut App,
 ) -> SharedString {
-    if skill.warning.is_some() {
-        IconName::Warning.path().into()
-    } else {
-        uri.icon_path(cx)
-    }
+    uri.icon_path(cx)
 }
 
 fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
-    let text = if let Some(warning) = &skill.warning {
-        format!("{}\n\n{}", warning.as_ref(), skill.description.as_ref()).into()
+    if let Some(warning) = &skill.warning {
+        CompletionDocumentation::WarningAndMultiLinePlainText {
+            warning: "Warning".into(),
+            plain_text: Some(warning.clone()),
+        }
     } else {
-        skill.description.to_string().into()
-    };
-
-    CompletionDocumentation::MultiLinePlainText(text)
+        CompletionDocumentation::MultiLinePlainText(skill.description.to_string().into())
+    }
 }
 
 #[derive(Debug, Clone)]

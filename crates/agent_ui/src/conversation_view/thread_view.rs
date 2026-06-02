@@ -662,6 +662,20 @@ fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Opti
     (!full_path.is_empty()).then_some(full_path)
 }
 
+fn skill_issue_file_label(path: &std::path::Path) -> String {
+    let file_name = path.file_name().and_then(|name| name.to_str());
+    let parent_name = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str());
+
+    match (parent_name, file_name) {
+        (Some(parent_name), Some(file_name)) => format!("{parent_name}/{file_name}"),
+        (_, Some(file_name)) => file_name.to_string(),
+        _ => path.display().to_string(),
+    }
+}
+
 impl ThreadView {
     pub(crate) fn new(
         root_thread_id: ThreadId,
@@ -9491,59 +9505,59 @@ impl ThreadView {
                 .map(|(index, issue)| {
                     let abs_path = issue.path.clone();
                     let workspace = self.workspace.clone();
-                    let path_label = issue.path.display().to_string();
-                    h_flex()
-                        .id(("skill-description-warning", index))
+                    let full_path = issue.path.display().to_string();
+                    let file_label = skill_issue_file_label(&issue.path);
+                    let file_icon = FileIcons::get_icon(issue.path.as_path(), cx)
+                        .map(Icon::from_path)
+                        .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                        .unwrap_or_else(|| {
+                            Icon::new(IconName::File)
+                                .color(Color::Muted)
+                                .size(IconSize::Small)
+                        });
+
+                    v_flex()
+                        .id(("skill-description-warning-file", index))
                         .w_full()
                         .min_w_0()
-                        .gap_2()
-                        .justify_between()
+                        .gap_0p5()
+                        .p_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
                         .child(
-                            h_flex()
-                                .min_w_0()
-                                .flex_1()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                                .child(
-                                    v_flex()
-                                        .min_w_0()
-                                        .child(
-                                            Label::new(path_label)
-                                                .size(LabelSize::Small)
-                                                .buffer_font(cx)
-                                                .truncate(),
-                                        )
-                                        .child(
-                                            Label::new(issue.message.clone())
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted)
-                                                .truncate(),
-                                        ),
-                                ),
+                            h_flex().min_w_0().gap_1().child(file_icon).child(
+                                Label::new(file_label)
+                                    .size(LabelSize::Small)
+                                    .buffer_font(cx),
+                            ),
                         )
                         .child(
-                            Button::new(("open-skill-warning-file", index), "Open File")
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(move |_, _, window, cx| {
-                                    let abs_path = abs_path.clone();
+                            Label::new(issue.message.clone())
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .tooltip({
+                            let full_path = full_path.clone();
+                            move |_, cx| {
+                                Tooltip::with_meta("Open File", None, full_path.clone(), cx)
+                            }
+                        })
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            let abs_path = abs_path.clone();
+                            workspace
+                                .update(cx, |workspace, cx| {
                                     workspace
-                                        .update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    abs_path,
-                                                    workspace::OpenOptions::default(),
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                        })
-                                        .ok();
-                                })),
-                        )
+                                        .open_abs_path(
+                                            abs_path,
+                                            workspace::OpenOptions::default(),
+                                            window,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                })
+                                .ok();
+                        }))
                         .into_any_element()
                 })
                 .collect::<Vec<_>>();
@@ -10169,7 +10183,6 @@ impl Render for ThreadView {
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
-            .children(self.render_skill_loading_issues(cx))
             .children(self.render_activity_bar(window, cx))
             .when(self.show_external_source_prompt_warning, |this| {
                 this.child(self.render_external_source_prompt_warning(cx))
@@ -10177,6 +10190,7 @@ impl Render for ThreadView {
             .when(self.show_codex_windows_warning, |this| {
                 this.child(self.render_codex_windows_warning(cx))
             })
+            .children(self.render_skill_loading_issues(cx))
             .children(self.render_thread_retry_status_callout())
             .children(self.render_thread_error(window, cx))
             .when_some(

@@ -896,9 +896,29 @@ impl CompletionsMenu {
                     let documentation = &completion.documentation;
 
                     let mut len = completion.label.text.chars().count();
-                    if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
-                        if show_completion_documentation {
-                            len += text.chars().count();
+                    let show_completion_detail = show_completion_documentation
+                        || matches!(
+                            documentation,
+                            Some(CompletionDocumentation::WarningAndMultiLinePlainText { .. })
+                        );
+                    if show_completion_detail {
+                        match documentation {
+                            Some(CompletionDocumentation::SingleLine(text)) => {
+                                len += text.chars().count();
+                            }
+                            Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line,
+                                ..
+                            }) => {
+                                len += single_line.chars().count();
+                            }
+                            Some(CompletionDocumentation::WarningAndMultiLinePlainText {
+                                warning,
+                                ..
+                            }) => {
+                                len += warning.chars().count();
+                            }
+                            _ => {}
                         }
                     }
 
@@ -945,7 +965,12 @@ impl CompletionsMenu {
                         };
 
                         let completion = &completions_guard[mat.candidate_id];
-                        let documentation = if show_completion_documentation {
+                        let show_completion_detail = show_completion_documentation
+                            || matches!(
+                                completion.documentation.as_ref(),
+                                Some(CompletionDocumentation::WarningAndMultiLinePlainText { .. })
+                            );
+                        let documentation = if show_completion_detail {
                             &completion.documentation
                         } else {
                             &None
@@ -1060,7 +1085,33 @@ impl CompletionsMenu {
                                         Label::new(text.trim().to_string())
                                             .ml_4()
                                             .size(LabelSize::Small)
-                                            .color(Color::Muted),
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                    )
+                                }
+                            }
+                            Some(CompletionDocumentation::WarningAndMultiLinePlainText {
+                                warning,
+                                ..
+                            }) => {
+                                if warning.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        h_flex()
+                                            .ml_4()
+                                            .gap_0p5()
+                                            .child(
+                                                Icon::new(IconName::Warning)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Warning),
+                                            )
+                                            .child(
+                                                Label::new(warning.trim().to_string())
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Warning),
+                                            )
+                                            .into_any_element(),
                                     )
                                 }
                             }
@@ -1145,7 +1196,7 @@ impl CompletionsMenu {
                                                 this.child(div().truncate().child(suffix))
                                             }),
                                     )
-                                    .end_slot::<Label>(documentation_label),
+                                    .end_slot::<AnyElement>(documentation_label),
                             )
                             .into_any_element()
                     })
@@ -1197,6 +1248,10 @@ impl CompletionsMenu {
             Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                 plain_text: Some(text),
                 ..
+            })
+            | Some(CompletionDocumentation::WarningAndMultiLinePlainText {
+                plain_text: Some(text),
+                ..
             }) => div().child(text.clone()),
             Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => {
                 let Some((false, markdown)) = self.get_or_create_markdown(
@@ -1228,6 +1283,10 @@ impl CompletionsMenu {
             Some(CompletionDocumentation::SingleLine(_)) => return None,
             Some(CompletionDocumentation::Undocumented) => return None,
             Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: None,
+                ..
+            })
+            | Some(CompletionDocumentation::WarningAndMultiLinePlainText {
                 plain_text: None,
                 ..
             }) => {
