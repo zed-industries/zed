@@ -774,8 +774,6 @@ pub fn delete_branch_flag(is_remote_tracking_ref: bool, force: bool) -> &'static
 }
 
 pub trait GitRepository: Send + Sync {
-    fn reload_index(&self);
-
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
@@ -1262,12 +1260,6 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
 }
 
 impl GitRepository for RealGitRepository {
-    fn reload_index(&self) {
-        if let Ok(mut index) = self.repository.lock().index() {
-            _ = index.read(false);
-        }
-    }
-
     fn path(&self) -> PathBuf {
         let repo = self.repository.lock();
         repo.path().into()
@@ -1564,7 +1556,8 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let repo = repo.lock();
-                let content = repo.find_blob(oid.0)?.content().to_owned();
+                let oid = git2::Oid::from_bytes(oid.as_bytes())?;
+                let content = repo.find_blob(oid)?.content().to_owned();
                 Ok(String::from_utf8(content)?)
             })
             .boxed()
