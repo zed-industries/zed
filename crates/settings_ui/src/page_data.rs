@@ -10001,7 +10001,7 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 5] {
             title: "Data Collection",
             description: "Controls whether Zed may collect training data when using Zed's Edit Predictions. Data is only collected for files in projects detected as open source. The default value uses the preference previously set via the status-bar toggle, or false if no preference has been stored.",
             field: Box::new(SettingField {
-                org_override: Some(|org_settings, _current_value| {
+                org_override: Some(|org_settings| {
                     const DATA_COLLECTION_DISABLED: EditPredictionDataCollectionChoice = EditPredictionDataCollectionChoice::No;
 
                     if !org_settings.edit_prediction.is_feedback_enabled {

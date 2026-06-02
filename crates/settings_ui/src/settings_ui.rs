@@ -109,7 +109,7 @@ struct SettingField<T: 'static> {
     /// organization's settings. Takes the organization configuration and the
     /// resolved settings value, and returns `Some(...)` if the organization
     /// overrides the setting, otherwise `None`.
-    org_override: Option<for<'a> fn(&OrganizationConfiguration, &'a T) -> Option<&'a T>>,
+    org_override: Option<fn(&OrganizationConfiguration) -> Option<&T>>,
 
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
@@ -179,6 +179,8 @@ trait AnySettingField {
     ) -> Option<Box<dyn Fn(&mut Window, &mut App)>>;
 
     fn json_path(&self) -> Option<&'static str>;
+
+    fn is_overriden_by_organization(&self, cx: &App) -> bool;
 }
 
 impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingField<T> {
@@ -253,6 +255,19 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
 
     fn json_path(&self) -> Option<&'static str> {
         self.json_path
+    }
+
+    fn is_overriden_by_organization(&self, cx: &App) -> bool {
+        let Some(org_override) = self.org_override else {
+            return false;
+        };
+
+        let user_store = AppState::global(cx).user_store.read(cx);
+        let Some(org_config) = user_store.current_organization_configuration() else {
+            return false;
+        };
+
+        (org_override)(&org_config).is_some()
     }
 }
 
@@ -1241,9 +1256,50 @@ fn render_settings_item(
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .render_code_spans(),
-                ),
+                ), // .when(
+                   //     setting_item.field.is_overriden_by_organization(cx),
+                   //     |this| {
+                   //         this.child(h_flex()
+                   //             .gap_2()
+                   //             .child(
+                   //                 Icon::new(IconName::Warning)
+                   //                     .size(IconSize::Small)
+                   //                     .color(Color::Warning),
+                   //             )
+                   //             .child(
+                   //             Label::new(SharedString::new_static("This setting is managed by the selected organization and can’t be changed here."))
+                   //                 .size(LabelSize::Small)
+                   //                 .color(Color::Muted)
+                   //                 .render_code_spans(),
+                   //         ))
+                   //     },
+                   // ),
         )
-        .child(control)
+        .child(
+
+if setting_item.field.is_overriden_by_organization(cx) {
+
+        h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .id("organization-configuration-warning")
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .tooltip(Tooltip::text(
+                        "This setting is managed by the selected organization and can’t be changed here.",
+                    )),
+            )
+            .child(control)
+            .into_any_element()
+} else {
+
+control.into_any_element()
+}
+       )
         .when(settings_window.sub_page_stack.is_empty(), |this| {
             this.child(render_settings_item_link(
                 setting_item.description,
@@ -4240,7 +4296,7 @@ fn get_current_value<'a, T>(
 
     let org_value = org_config
         .zip(field.org_override)
-        .and_then(|(org_config, org_override)| (org_override)(org_config, value));
+        .and_then(|(org_config, org_override)| (org_override)(org_config));
 
     Some(CurrentSettingsValue {
         disabled: org_value.is_some(),
@@ -4374,7 +4430,7 @@ where
         .map(|current_value| (*current_value.value, current_value.disabled))
         .unwrap_or((variants()[0], false));
 
-    let dropdown = EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
+    EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
         move |value, window, cx| {
             if value == current_value {
                 return;
@@ -4393,28 +4449,8 @@ where
     })
     .disabled(disabled)
     .tab_index(0)
-    .title_case(should_do_titlecase);
-
-    if disabled {
-        h_flex()
-            .gap_2()
-            .child(
-                div()
-                    .id("organization-configuration-warning")
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .tooltip(Tooltip::text(
-                        "This setting is managed by the selected organization and can’t be changed here.",
-                    )),
-            )
-            .child(dropdown)
-            .into_any_element()
-    } else {
-        dropdown.into_any_element()
-    }
+    .title_case(should_do_titlecase)
+    .into_any_element()
 }
 
 fn render_picker_trigger_button(id: SharedString, label: SharedString) -> Button {
