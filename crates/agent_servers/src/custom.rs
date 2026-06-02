@@ -346,6 +346,9 @@ impl AgentServer for CustomAgentServer {
                     if let Some(new_version_available_tx) = delegate.new_version_available {
                         agent.set_new_version_available_tx(new_version_available_tx);
                     }
+                    if let Some(loading_status_tx) = delegate.loading_status {
+                        agent.set_loading_status_tx(loading_status_tx);
+                    }
                     anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
                 })??
                 .await?;
