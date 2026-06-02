@@ -273,9 +273,9 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 // `GET <codex_base_url>/models?client_version=...` (see
 // codex-rs/codex-api/src/endpoint/models.rs in openai/codex) and falls back to
 // a bundled models.json. Beyond going stale, the static approach also can't
-// model per-account access (e.g. free accounts cannot use gpt-5.4 or
-// gpt-5.3-codex even though paid accounts can), so the backend still rejects
-// some requests. The bundled list at
+// model per-account access (e.g. free accounts cannot use gpt-5.4 even though
+// paid accounts can), so the backend still rejects some requests. The bundled
+// list at
 // codex-rs/models-manager/models.json (openai/codex) is the closest
 // approximation; the entries below mirror that file's picker-visible models.
 #[derive(Clone, Debug, PartialEq)]
@@ -283,19 +283,11 @@ enum ChatGptModel {
     Gpt55,
     Gpt54,
     Gpt54Mini,
-    Gpt53Codex,
-    Gpt52,
 }
 
 impl ChatGptModel {
     fn all() -> Vec<Self> {
-        vec![
-            Self::Gpt55,
-            Self::Gpt54,
-            Self::Gpt54Mini,
-            Self::Gpt53Codex,
-            Self::Gpt52,
-        ]
+        vec![Self::Gpt55, Self::Gpt54, Self::Gpt54Mini]
     }
 
     fn id(&self) -> &str {
@@ -303,8 +295,6 @@ impl ChatGptModel {
             Self::Gpt55 => "gpt-5.5",
             Self::Gpt54 => "gpt-5.4",
             Self::Gpt54Mini => "gpt-5.4-mini",
-            Self::Gpt53Codex => "gpt-5.3-codex",
-            Self::Gpt52 => "gpt-5.2",
         }
     }
 
@@ -313,8 +303,6 @@ impl ChatGptModel {
             Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
             Self::Gpt54Mini => "GPT-5.4 Mini",
-            Self::Gpt53Codex => "GPT-5.3 Codex",
-            Self::Gpt52 => "GPT-5.2",
         }
     }
 
@@ -360,7 +348,7 @@ impl ChatGptModel {
     fn supports_priority(&self) -> bool {
         match self {
             Self::Gpt55 | Self::Gpt54 => true,
-            Self::Gpt54Mini | Self::Gpt53Codex | Self::Gpt52 => false,
+            Self::Gpt54Mini => false,
         }
     }
 }
