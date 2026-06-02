@@ -176,7 +176,7 @@ impl Cell {
                 source,
                 ..
             } => {
-                let source = source.join("");
+                let source = source.concat();
 
                 let entity = cx.new(|cx| {
                     MarkdownCell::new(
@@ -198,7 +198,7 @@ impl Cell {
                 source,
                 outputs,
             } => {
-                let text = source.join("");
+                let text = source.concat();
                 let outputs = convert_outputs(outputs, window, cx);
 
                 Cell::Code(cx.new(|cx| {
@@ -223,7 +223,7 @@ impl Cell {
             } => Cell::Raw(cx.new(|_| RawCell {
                 id: id.clone(),
                 metadata: metadata.clone(),
-                source: source.join(""),
+                source: source.concat(),
                 selected: false,
                 cell_position: None,
             })),

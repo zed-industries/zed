@@ -17,6 +17,7 @@ use mermaid::{
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
+use util::maybe;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -3237,6 +3238,7 @@ impl MarkdownElementBuilder {
             }],
             source_end: source_range.end,
             language: None,
+            text_align: TextAlign::Left,
         });
         div()
             .absolute()
@@ -3248,6 +3250,7 @@ impl MarkdownElementBuilder {
     }
 
     fn flush_text(&mut self) {
+        let text_align = self.text_style().text_align;
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
@@ -3259,6 +3262,7 @@ impl MarkdownElementBuilder {
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
+            text_align,
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
@@ -3282,6 +3286,7 @@ struct RenderedLine {
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
     language: Option<Arc<Language>>,
+    text_align: TextAlign,
 }
 
 impl RenderedLine {
@@ -3349,10 +3354,69 @@ impl RenderedLine {
         self.source_mappings[ix].source_index
     }
 
+    fn alignment_offset_for_segment(
+        &self,
+        available_width: Pixels,
+        segment_start_x: Pixels,
+        segment_end_x: Pixels,
+    ) -> Pixels {
+        let segment_width = segment_end_x - segment_start_x;
+        match self.text_align {
+            TextAlign::Left => px(0.),
+            TextAlign::Center => ((available_width - segment_width) / 2.).max(px(0.)),
+            TextAlign::Right => (available_width - segment_width).max(px(0.)),
+        }
+    }
+
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let adjusted_position = maybe!({
+            if self.text_align == TextAlign::Left {
+                return None;
+            }
+
+            let Some(wrapped_line) = self.layout.line_layout_for_index(0) else {
+                return None;
+            };
+
+            let bounds = self.layout.bounds();
+            let line_height = self.layout.line_height();
+            let relative_y = (position.y - bounds.top()).max(px(0.));
+            let wrapped_row_ix = (relative_y / line_height) as usize;
+            let boundaries = wrapped_line.wrap_boundaries();
+
+            let segment_start_x = if wrapped_row_ix == 0 {
+                px(0.)
+            } else {
+                boundaries
+                    .get(wrapped_row_ix - 1)
+                    .map(|b| {
+                        wrapped_line.unwrapped_layout.runs[b.run_ix].glyphs[b.glyph_ix]
+                            .position
+                            .x
+                    })
+                    .unwrap_or(px(0.))
+            };
+            let segment_end_x = boundaries
+                .get(wrapped_row_ix)
+                .map(|b| {
+                    wrapped_line.unwrapped_layout.runs[b.run_ix].glyphs[b.glyph_ix]
+                        .position
+                        .x
+                })
+                .unwrap_or(wrapped_line.unwrapped_layout.width);
+
+            let alignment_offset = self.alignment_offset_for_segment(
+                bounds.size.width,
+                segment_start_x,
+                segment_end_x,
+            );
+            Some(point(position.x - alignment_offset, position.y))
+        })
+        .unwrap_or(position);
+
         let line_rendered_index;
         let out_of_bounds;
-        match self.layout.index_for_position(position) {
+        match self.layout.index_for_position(adjusted_position) {
             Ok(ix) => {
                 line_rendered_index = ix;
                 out_of_bounds = false;
@@ -3475,8 +3539,14 @@ impl RenderedText {
                     let selection_end = rendered_end.min(row_end);
 
                     if selection_start < selection_end {
+                        let alignment_offset = line.alignment_offset_for_segment(
+                            line_bounds.size.width,
+                            row_start_x,
+                            row_end_x,
+                        );
                         let x_for_index = |index| {
                             line_bounds.left()
+                                + alignment_offset
                                 + unwrapped_layout.x_for_index(index - wrapped_line_start)
                                 - row_start_x
                         };
