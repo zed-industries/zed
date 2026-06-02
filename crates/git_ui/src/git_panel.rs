@@ -29,17 +29,21 @@ use git::repository::{
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
-use git::{Amend, Commit, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
+use git::{
+    Amend, Commit, CopyCoAuthoredByLinesForCurrentCall, Signoff, ToggleStaged,
+    repository::RepoPath, status::FileStatus,
+};
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
     StashAll, StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
     parse_git_remote_url,
 };
 use gpui::{
-    AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
-    Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent,
-    Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt, TextStyle,
-    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point, size, uniform_list,
+    AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent,
+    ClipboardItem, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
+    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt,
+    TextStyle, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point, size,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -246,8 +250,13 @@ fn git_panel_context_menu(
 const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
 const TREE_INDENT: f32 = 16.0;
+
+fn format_co_author_trailer(name: &str, email: &str) -> String {
+    format!("{CO_AUTHOR_PREFIX}{name} <{email}>")
+}
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -268,6 +277,23 @@ pub fn register(workspace: &mut Workspace) {
             });
         }
     });
+    workspace.register_action(
+        |workspace, _: &CopyCoAuthoredByLinesForCurrentCall, _window, cx| {
+            if let Some(panel) = workspace.panel::<GitPanel>(cx) {
+                panel.update(cx, |panel, cx| panel.copy_co_authors_to_clipboard(cx));
+            } else {
+                struct CopyCoAuthoredByLinesForCurrentCallToast;
+                workspace.show_toast(
+                    workspace::Toast::new(
+                        NotificationId::unique::<CopyCoAuthoredByLinesForCurrentCallToast>(),
+                        "Co-authored-by lines are only available while you're in a call",
+                    )
+                    .autohide(),
+                    cx,
+                );
+            }
+        },
+    );
     workspace.register_action(|workspace, _: &git::Init, window, cx| {
         if let Some(panel) = workspace.panel::<GitPanel>(cx) {
             panel.update(cx, |panel, cx| panel.git_init(window, cx));
@@ -3401,6 +3427,19 @@ impl GitPanel {
         new_co_authors
     }
 
+    pub(crate) fn has_active_call(&self, cx: &App) -> bool {
+        call::ActiveCall::try_global(cx)
+            .and_then(|call| call.read(cx).room().cloned())
+            .is_some()
+    }
+
+    fn co_author_trailers(&self, cx: &App) -> Vec<String> {
+        self.potential_co_authors(cx)
+            .into_iter()
+            .map(|(name, email)| format_co_author_trailer(&name, &email))
+            .collect()
+    }
+
     fn local_committer(&self, room: &call::Room, cx: &App) -> Option<(String, String)> {
         let user = room.local_participant_user(cx)?;
         let committer = self.local_committer.as_ref()?;
@@ -3421,6 +3460,64 @@ impl GitPanel {
     ) {
         self.add_coauthors = !self.add_coauthors;
         cx.notify();
+    }
+
+    pub(crate) fn copy_co_authors_to_clipboard(&mut self, cx: &mut Context<Self>) {
+        let should_load_local_committer = {
+            let project = self.project.read(cx);
+            self.has_active_call(cx)
+                && !project.is_local()
+                && !project.is_read_only(cx)
+                && self.local_committer.is_none()
+        };
+
+        if should_load_local_committer {
+            self.local_committer_task = Some(cx.spawn(async move |this, cx| {
+                let committer = get_git_committer(cx).await;
+                this.update(cx, |this, cx| {
+                    this.local_committer = Some(committer);
+                    this.copy_loaded_co_authors_to_clipboard(cx);
+                    cx.notify();
+                })
+                .ok();
+            }));
+        } else {
+            self.copy_loaded_co_authors_to_clipboard(cx);
+        }
+    }
+
+    fn copy_loaded_co_authors_to_clipboard(&self, cx: &mut Context<Self>) {
+        let has_active_call = self.has_active_call(cx);
+        let co_author_trailers = self.co_author_trailers(cx);
+        let message = if !has_active_call {
+            "Co-authored-by lines are only available while you're in a call".into()
+        } else if co_author_trailers.is_empty() {
+            "No Co-authored-by lines available for the current call".into()
+        } else {
+            cx.write_to_clipboard(ClipboardItem::new_string(co_author_trailers.join("\n")));
+            let count = co_author_trailers.len();
+            format!(
+                "Copied {count} Co-authored-by {} for the current call to clipboard",
+                if count == 1 { "line" } else { "lines" }
+            )
+        };
+
+        let workspace = self.workspace.clone();
+        cx.defer(move |cx| {
+            if let Some(workspace) = workspace.upgrade() {
+                struct CopyCoAuthoredByLinesForCurrentCallToast;
+                workspace.update(cx, |workspace, cx| {
+                    workspace.show_toast(
+                        workspace::Toast::new(
+                            NotificationId::unique::<CopyCoAuthoredByLinesForCurrentCallToast>(),
+                            message,
+                        )
+                        .autohide(),
+                        cx,
+                    );
+                });
+            }
+        });
     }
 
     fn toggle_sort_by_path(
@@ -3514,8 +3611,6 @@ impl GitPanel {
     }
 
     fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
-        const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
-
         let existing_text = message.to_ascii_lowercase();
         let lowercase_co_author_prefix = CO_AUTHOR_PREFIX.to_lowercase();
         let mut ends_with_co_authors = false;
@@ -3552,11 +3647,7 @@ impl GitPanel {
         }
         for (name, email) in new_co_authors {
             message.push('\n');
-            message.push_str(CO_AUTHOR_PREFIX);
-            message.push_str(&name);
-            message.push_str(" <");
-            message.push_str(&email);
-            message.push('>');
+            message.push_str(&format_co_author_trailer(&name, &email));
         }
         message.push('\n');
     }
@@ -4387,6 +4478,7 @@ impl GitPanel {
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
+                let has_active_call = self.has_active_call(cx);
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -4419,6 +4511,20 @@ impl GitPanel {
                                 Some(Box::new(Signoff)),
                                 move |window, cx| window.dispatch_action(Box::new(Signoff), cx),
                             )
+                            .when(has_active_call, |this| {
+                                this.separator().toggleable_entry(
+                                    "Copy Co-authored-by Lines for Current Call",
+                                    false,
+                                    IconPosition::Start,
+                                    Some(CopyCoAuthoredByLinesForCurrentCall.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            CopyCoAuthoredByLinesForCurrentCall.boxed_clone(),
+                                            cx,
+                                        );
+                                    },
+                                )
+                            })
                     }))
                 }
             })
@@ -7449,6 +7555,14 @@ mod tests {
     use workspace::MultiWorkspace;
 
     use super::*;
+
+    #[test]
+    fn format_co_author_trailer_formats_git_trailer() {
+        assert_eq!(
+            format_co_author_trailer("Tom Houlé", "tom@example.com"),
+            "Co-authored-by: Tom Houlé <tom@example.com>"
+        );
+    }
 
     fn init_test(cx: &mut gpui::TestAppContext) {
         zlog::init_test();

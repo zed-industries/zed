@@ -4,7 +4,7 @@ use crate::git_panel::{
 };
 use crate::git_panel_settings::GitPanelSettings;
 use git::repository::CommitOptions;
-use git::{Amend, Commit, GenerateCommitMessage, Signoff};
+use git::{Amend, Commit, CopyCoAuthoredByLinesForCurrentCall, GenerateCommitMessage, Signoff};
 use project::DisableAiSettings;
 use settings::Settings;
 use ui::{
@@ -286,6 +286,7 @@ impl CommitModal {
                     let amend_enabled = git_panel.amend_pending();
                     let signoff_enabled = git_panel.signoff_enabled();
                     let has_previous_commit = git_panel.head_commit(cx).is_some();
+                    let has_active_call = git_panel.has_active_call(cx);
 
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                         context_menu
@@ -324,6 +325,20 @@ impl CommitModal {
                                     }
                                 },
                             )
+                            .when(has_active_call, |this| {
+                                this.separator().toggleable_entry(
+                                    "Copy Co-authored-by Lines for Current Call",
+                                    false,
+                                    IconPosition::Start,
+                                    Some(CopyCoAuthoredByLinesForCurrentCall.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            CopyCoAuthoredByLinesForCurrentCall.boxed_clone(),
+                                            cx,
+                                        );
+                                    },
+                                )
+                            })
                     }))
                 }
             })

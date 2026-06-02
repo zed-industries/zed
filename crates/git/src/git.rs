@@ -89,6 +89,8 @@ actions!(
         Amend,
         /// Enable the --signoff option.
         Signoff,
+        /// Copies Co-authored-by lines for the current call to the clipboard.
+        CopyCoAuthoredByLinesForCurrentCall,
         /// Cancels the current git operation.
         Cancel,
         /// Expands the commit message editor.
