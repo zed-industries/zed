@@ -628,6 +628,7 @@ pub mod simple_message_notification {
     pub struct MessageNotification {
         focus_handle: FocusHandle,
         build_content: Box<dyn Fn(&mut Window, &mut Context<Self>) -> AnyElement>,
+        button_style: Option<ButtonStyle>,
         content_icon: Option<IconName>,
         content_icon_color: Option<Color>,
         secondary_content: Option<SharedString>,
@@ -679,6 +680,7 @@ pub mod simple_message_notification {
         {
             Self {
                 build_content: Box::new(content),
+                button_style: None,
                 content_icon: None,
                 content_icon_color: None,
                 secondary_content: None,
@@ -700,6 +702,11 @@ pub mod simple_message_notification {
                 scroll_handle: ScrollHandle::new(),
                 auto_hide: None,
             }
+        }
+
+        pub fn button_style(mut self, style: ButtonStyle) -> Self {
+            self.button_style = Some(style);
+            self
         }
 
         pub fn primary_message<S>(mut self, message: S) -> Self
@@ -855,6 +862,7 @@ pub mod simple_message_notification {
 
             Self::new(primary_message.clone(), cx)
                 .content_icon(IconName::Warning, Color::Error)
+                .button_style(ButtonStyle::Outlined)
                 .copy_text(primary_message)
                 .show_suppress_button(false)
                 .when_some(error.secondary_message(), |this, text| {
@@ -1003,10 +1011,12 @@ pub mod simple_message_notification {
             let has_suffix = self.primary_message.is_some()
                 || self.secondary_message.is_some()
                 || self.more_info_message.is_some();
+
             let suffix = h_flex()
                 .gap_1()
                 .children(self.primary_message.iter().map(|message| {
-                    Button::new(message.clone(), message.clone())
+                    Button::new("notification-primary-button", message.clone())
+                        .when_some(self.button_style, |button, style| button.style(style))
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(on_click) = this.primary_on_click.as_ref() {
@@ -1025,7 +1035,8 @@ pub mod simple_message_notification {
                         })
                 }))
                 .children(self.secondary_message.iter().map(|message| {
-                    Button::new(message.clone(), message.clone())
+                    Button::new("notification-secondary-button", message.clone())
+                        .when_some(self.button_style, |button, style| button.style(style))
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(on_click) = this.secondary_on_click.as_ref() {
