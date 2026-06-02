@@ -101,7 +101,7 @@ impl BenchReport {
         }
 
         let over_budget_nanos = foreground_nanos - self.frame_budget_nanos;
-        ((over_budget_nanos + self.frame_budget_nanos - 1) / self.frame_budget_nanos) as u64
+        over_budget_nanos.div_ceil(self.frame_budget_nanos) as u64
     }
 
     fn record_summary(
