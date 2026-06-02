@@ -7960,7 +7960,9 @@ impl ThreadView {
                                 Icon::new(IconName::CheckDouble)
                                     .size(IconSize::XSmall)
                                     .color(Color::Success),
-                                if option.option_id.0.as_ref() == "allow_thread" {
+                                if option.option_id.0.as_ref()
+                                    == acp_thread::SandboxPermission::AllowThread.as_id()
+                                {
                                     None
                                 } else {
                                     Some(&AllowAlways as &dyn Action)
