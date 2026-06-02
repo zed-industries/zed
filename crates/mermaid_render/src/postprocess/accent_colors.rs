@@ -38,8 +38,6 @@ impl NodeTracker {
     }
 
     pub fn finish_node(&mut self) {
-        debug_assert!(self.building.is_some());
-
         if let Some(rect) = self.building.take() {
             self.rects.push(rect);
         }
