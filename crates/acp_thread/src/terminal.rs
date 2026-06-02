@@ -35,9 +35,15 @@ pub struct SandboxWrap {
     /// here — *not* the command's working directory, which is model-
     /// controlled and would let the model widen its own writable scope.
     pub writable_paths: Vec<PathBuf>,
+    /// Additional write subtrees the user explicitly approved for this
+    /// command (per-path write grants). Kept separate from `writable_paths`
+    /// to make the trust boundary explicit: these originate from
+    /// model-requested paths that passed a user-approval prompt. They are
+    /// merged with `writable_paths` when generating the sandbox policy.
+    pub extra_write_paths: Vec<PathBuf>,
     /// Allow outbound network access for this command.
     pub allow_network: bool,
-    /// Allow unrestricted filesystem writes (ignores `writable_paths`).
+    /// Allow unrestricted filesystem writes (ignores all writable paths).
     pub allow_fs_write: bool,
 }
 
@@ -70,6 +76,7 @@ pub(crate) fn apply_sandbox_wrap(
         let writable: Vec<&std::path::Path> = sandbox_wrap
             .writable_paths
             .iter()
+            .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
         let permissions = sandbox::macos_seatbelt::SandboxPermissions {

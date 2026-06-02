@@ -5,7 +5,6 @@ use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use settings::Settings;
 use std::{
     path::{Path, PathBuf},
@@ -44,7 +43,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
@@ -58,35 +57,135 @@ pub struct TerminalToolInput {
     /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
     #[serde(default)]
     pub tail_lines: Option<usize>,
-    /// Request network access for this command.
+}
+
+/// Executes a shell one-liner and returns the combined output.
+///
+/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
+///
+/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
+///
+/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+///
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
+///
+/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+///
+/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
+///
+/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
+///
+/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+///
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
+///
+/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
+/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SandboxedTerminalToolInput {
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. By default sandboxed commands
-    /// cannot make outbound network connections; set this to `true` only
-    /// when the command needs network access. The user will be prompted
-    /// to approve before the command runs.
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
+    pub command: String,
+    /// Working directory for the command. This must be one of the root directories of the project.
+    pub cd: String,
+    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    pub timeout_ms: Option<u64>,
+    /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub head_lines: Option<usize>,
+    /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
+    /// Set to `true` only if the command needs outbound network access.
+    ///
+    /// Sandboxed commands cannot reach the network by default, so set this
+    /// when running commands that fetch or upload (installing dependencies,
+    /// cloning, pushing, downloading, etc.). Requesting it triggers a user
+    /// approval prompt, so only set it when you expect the command to need
+    /// network.
     #[serde(default)]
     pub allow_network: Option<bool>,
-    /// Request unrestricted filesystem-write access for this command.
+    /// Paths the command needs to write to outside the default-writable
+    /// locations.
     ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. By default sandboxed commands can
-    /// only write to the project worktree directories and a per-command
-    /// temporary directory; set this to `true` only when the command
-    /// needs to write elsewhere. The user will be prompted to approve
-    /// before the command runs.
+    /// Sandboxed commands can already write to the project worktree
+    /// directories and a per-command temporary directory, so only list paths
+    /// outside those. Provide absolute or worktree-relative paths; each
+    /// directory grants write access to its whole subtree. Prefer this over
+    /// `allow_fs_write_all` whenever you can enumerate the paths. Requesting
+    /// paths triggers a user approval prompt.
     #[serde(default)]
-    pub allow_fs_write: Option<bool>,
-    /// Request to run this command outside the sandbox entirely.
+    pub fs_write_paths: Vec<String>,
+    /// Set to `true` only when the command needs to write outside the
+    /// default-writable locations but the specific paths cannot be
+    /// enumerated up front.
     ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. Prefer `allow_network: true` or
-    /// `allow_fs_write: true` when one of those is enough. Set this to
-    /// `true` ONLY when the command needs behavior that the sandbox can't
-    /// grant on a per-permission basis. The user will be prompted to
-    /// approve before the command runs without sandbox restrictions.
+    /// This is a broad escape hatch — prefer `fs_write_paths` whenever the
+    /// set of paths is known. Requesting it triggers a user approval prompt.
+    #[serde(default, alias = "allow_fs_write")]
+    pub allow_fs_write_all: Option<bool>,
+    /// Set to `true` only as a last resort, to run the command fully outside
+    /// the sandbox.
+    ///
+    /// First try the narrower options (`allow_network`, `fs_write_paths`,
+    /// `allow_fs_write_all`); use this only when the command needs behavior
+    /// the sandbox can't grant on a per-permission basis. Requesting it
+    /// triggers a user approval prompt.
     #[serde(default)]
     pub unsandboxed: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TerminalSandboxInput {
+    allow_network: Option<bool>,
+    fs_write_paths: Vec<String>,
+    allow_fs_write_all: Option<bool>,
+    unsandboxed: Option<bool>,
+}
+
+struct TerminalToolRequest {
+    command: String,
+    cd: String,
+    timeout_ms: Option<u64>,
+    selection: TerminalOutputSelection,
+    sandbox: Option<TerminalSandboxInput>,
+}
+
+impl From<TerminalToolInput> for TerminalToolRequest {
+    fn from(input: TerminalToolInput) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            selection: TerminalOutputSelection {
+                head_lines: input.head_lines,
+                tail_lines: input.tail_lines,
+            },
+            sandbox: None,
+        }
+    }
+}
+
+impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
+    fn from(input: SandboxedTerminalToolInput) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            selection: TerminalOutputSelection {
+                head_lines: input.head_lines,
+                tail_lines: input.tail_lines,
+            },
+            sandbox: Some(TerminalSandboxInput {
+                allow_network: input.allow_network,
+                fs_write_paths: input.fs_write_paths,
+                allow_fs_write_all: input.allow_fs_write_all,
+                unsandboxed: input.unsandboxed,
+            }),
+        }
+    }
 }
 
 pub struct TerminalTool {
@@ -95,6 +194,20 @@ pub struct TerminalTool {
 }
 
 impl TerminalTool {
+    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+        Self {
+            project,
+            environment,
+        }
+    }
+}
+
+pub struct SandboxedTerminalTool {
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+}
+
+impl SandboxedTerminalTool {
     pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
         Self {
             project,
@@ -132,7 +245,45 @@ impl AgentTool for TerminalTool {
             run_terminal_tool(
                 self.project.clone(),
                 self.environment.clone(),
-                input,
+                input.into(),
+                event_stream,
+                cx,
+            )
+            .await
+        })
+    }
+}
+
+impl AgentTool for SandboxedTerminalTool {
+    type Input = SandboxedTerminalToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "sandboxed_terminal";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        terminal_initial_title(input.map(|input| input.command))
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |cx| {
+            let input = input.recv().await.map_err(|e| e.to_string())?;
+            run_terminal_tool(
+                self.project.clone(),
+                self.environment.clone(),
+                input.into(),
                 event_stream,
                 cx,
             )
@@ -152,55 +303,73 @@ fn terminal_initial_title(input: Result<String, serde_json::Value>) -> SharedStr
 async fn run_terminal_tool(
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
-    input: TerminalToolInput,
+    input: TerminalToolRequest,
     event_stream: ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    let selection = TerminalOutputSelection {
-        head_lines: input.head_lines,
-        tail_lines: input.tail_lines,
-    };
+    let selection = input.selection;
+    let sandbox_input = input.sandbox.clone().unwrap_or_default();
 
     let (working_dir, authorize, sandboxing) = cx.update(|cx| {
-        let working_dir = working_dir(&input, &project, cx).map_err(|err| err.to_string())?;
+        let working_dir = working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
         let context =
             crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
         let authorize =
             event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-        let sandboxing = sandboxing_enabled(cx);
+        let sandboxing = input.sandbox.is_some() && sandboxing_enabled(cx);
         Result::<_, String>::Ok((working_dir, authorize, sandboxing))
     })?;
 
     authorize.await.map_err(|e| e.to_string())?;
 
-    let want_network = sandboxing && input.allow_network == Some(true);
-    let want_fs_write = sandboxing && input.allow_fs_write == Some(true);
-    let want_unsandboxed = sandboxing && input.unsandboxed == Some(true);
-    let escalate = !want_unsandboxed && (want_network || want_fs_write);
+    let want_network = sandboxing && sandbox_input.allow_network == Some(true);
+    let want_fs_write_all = sandboxing && sandbox_input.allow_fs_write_all == Some(true);
+    let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
 
-    if want_unsandboxed || escalate {
-        let title = sandbox_approval_title(want_network, want_fs_write, want_unsandboxed);
-        let approve = cx.update(|cx| {
-            let context =
-                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
-            event_stream.authorize_always_prompt(title, context, cx)
-        });
+    let write_paths: Vec<PathBuf> = if sandboxing && !want_unsandboxed {
+        cx.update(|cx| {
+            resolve_write_paths(
+                &sandbox_input.fs_write_paths,
+                working_dir.as_deref(),
+                &project,
+                cx,
+            )
+        })
+    } else {
+        Vec::new()
+    };
+
+    let request = crate::sandboxing::SandboxRequest {
+        network: !want_unsandboxed && want_network,
+        allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
+        unsandboxed: want_unsandboxed,
+        write_paths,
+    };
+
+    if request.needs_escalation() {
+        let title = sandbox_approval_title(&request);
+        let approve = cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
         if let Err(error) = approve.await {
-            return Ok(if want_unsandboxed {
-                format!(
+            if want_unsandboxed {
+                return Ok(format!(
                     "Command cancelled: user denied permission to run outside the sandbox ({error})."
-                )
-            } else {
-                format!(
-                    "Command cancelled: user denied the requested sandbox permissions ({error})."
-                )
-            });
+                ));
+            }
+            return Ok(format!(
+                "Command cancelled: user denied the requested sandbox permissions ({error})."
+            ));
         }
     }
 
     let extra_env = Vec::new();
 
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
+        let sandbox_permissions = cx.update(|cx| {
+            agent_settings::AgentSettings::get_global(cx)
+                .sandbox_permissions
+                .clone()
+        });
+        let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
         let writable_paths: Vec<PathBuf> = cx.update(|cx| {
             project
                 .read(cx)
@@ -210,8 +379,9 @@ async fn run_terminal_tool(
         });
         Some(acp_thread::SandboxWrap {
             writable_paths,
-            allow_network: want_network,
-            allow_fs_write: want_fs_write,
+            extra_write_paths: effective.write_paths,
+            allow_network: effective.network,
+            allow_fs_write: effective.allow_fs_write_all,
         })
     } else {
         None
@@ -291,26 +461,81 @@ async fn run_terminal_tool(
     ))
 }
 
-/// User-facing title for the sandbox-escalation approval prompt.
+/// Resolve model-requested write paths into absolute paths.
 ///
-/// `want_unsandboxed` wins over the per-permission flags because
-/// `unsandboxed: true` bypasses the per-permission machinery entirely.
-fn sandbox_approval_title(
-    want_network: bool,
-    want_fs_write: bool,
-    want_unsandboxed: bool,
-) -> &'static str {
-    if want_unsandboxed {
-        "Allow this command to run outside the sandbox?"
-    } else {
-        match (want_network, want_fs_write) {
-            (true, true) => "Allow network access and arbitrary filesystem writes?",
-            (true, false) => "Allow network access?",
-            (false, true) => "Allow arbitrary filesystem writes?",
-            // Caller only invokes this when at least one flag is set, so
-            // this fallback is unreachable in practice.
-            (false, false) => "Allow this command to run?",
-        }
+/// Relative paths are resolved against the command's working directory when
+/// known, otherwise against the project's first worktree root. Paths that
+/// can't be made absolute (relative paths with no base) are dropped. The
+/// resulting paths are shown to the user for approval, so resolving against
+/// model-controlled inputs is safe — nothing is granted without that prompt.
+fn resolve_write_paths(
+    raw_paths: &[String],
+    working_dir: Option<&Path>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> Vec<PathBuf> {
+    if raw_paths.is_empty() {
+        return Vec::new();
+    }
+    let base = working_dir.map(Path::to_path_buf).or_else(|| {
+        project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+    });
+    join_write_paths(raw_paths, base.as_deref())
+}
+
+/// Pure path-joining step of [`resolve_write_paths`], split out so it can be
+/// unit-tested without a `Project`/`App`.
+fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
+    raw_paths
+        .iter()
+        .filter_map(|raw| {
+            let path = Path::new(raw);
+            if path.is_absolute() {
+                Some(path.to_path_buf())
+            } else {
+                base.map(|base| base.join(path))
+            }
+        })
+        .collect()
+}
+
+/// User-facing title for the sandbox-escalation approval prompt. Only called
+/// when the request actually asks for something (see
+/// [`crate::sandboxing::SandboxRequest::needs_escalation`]).
+fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String {
+    if request.unsandboxed {
+        return "Allow this command to run outside the sandbox?".to_string();
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if request.network {
+        parts.push("network access".to_string());
+    }
+    if request.allow_fs_write_all {
+        parts.push("unrestricted filesystem writes".to_string());
+    } else if !request.write_paths.is_empty() {
+        parts.push(format!(
+            "write access to {}",
+            write_path_summary(&request.write_paths)
+        ));
+    }
+    match parts.as_slice() {
+        [] => "Allow this command extra permissions?".to_string(),
+        [only] => format!("Allow {only}?"),
+        [first, second] => format!("Allow {first} and {second}?"),
+        _ => format!("Allow {}?", parts.join(", ")),
+    }
+}
+
+fn write_path_summary(paths: &[PathBuf]) -> String {
+    match paths {
+        [] => "0 paths".to_string(),
+        [path] => path.display().to_string(),
+        paths => format!("{} paths", paths.len()),
     }
 }
 
@@ -432,16 +657,10 @@ fn process_content(
     content
 }
 
-fn working_dir(
-    input: &TerminalToolInput,
-    project: &Entity<Project>,
-    cx: &mut App,
-) -> Result<Option<PathBuf>> {
+fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
-    let cd = &input.cd;
 
     if cd == "." || cd.is_empty() {
-        // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
         match worktrees.next() {
@@ -458,7 +677,6 @@ fn working_dir(
         let input_path = Path::new(cd);
 
         if input_path.is_absolute() {
-            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
             if project
                 .worktrees(cx)
                 .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
@@ -484,8 +702,8 @@ mod tests {
                 .to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
-                    ..Default::default()
-        };
+                ..Default::default()
+            };
 
         let title = format_initial_title(Ok(input));
 
@@ -1359,7 +1577,6 @@ mod tests {
                     timeout_ms: None,
                     head_lines: Some(1),
                     tail_lines: Some(1),
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -2027,51 +2244,135 @@ mod tests {
         );
     }
 
+    fn sandbox_request(
+        network: bool,
+        all: bool,
+        paths: &[&str],
+    ) -> crate::sandboxing::SandboxRequest {
+        crate::sandboxing::SandboxRequest {
+            network,
+            allow_fs_write_all: all,
+            unsandboxed: false,
+            write_paths: paths.iter().map(PathBuf::from).collect(),
+        }
+    }
+
     #[test]
-    fn test_sandbox_approval_title_unsandboxed_wins() {
-        // `unsandboxed: true` skips the sandbox entirely, so the title should
-        // reflect that even when other flags are also set — they're moot.
-        assert_eq!(
-            sandbox_approval_title(true, true, true),
-            "Allow this command to run outside the sandbox?"
+    fn test_join_write_paths_resolves_relative_and_absolute() {
+        let base = PathBuf::from(if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        });
+        let abs = if cfg!(windows) {
+            "C:\\abs\\path"
+        } else {
+            "/abs/path"
+        };
+        let joined = join_write_paths(
+            &[
+                abs.to_string(),
+                "relative/dir".to_string(),
+                "file.txt".to_string(),
+            ],
+            Some(base.as_path()),
         );
         assert_eq!(
-            sandbox_approval_title(false, false, true),
+            joined,
+            vec![
+                PathBuf::from(abs),
+                base.join("relative/dir"),
+                base.join("file.txt"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_join_write_paths_drops_relative_without_base() {
+        // Absolute paths still pass through; relative ones are dropped when
+        // there's no base to resolve them against.
+        let abs = if cfg!(windows) {
+            "C:\\abs\\keep"
+        } else {
+            "/abs/keep"
+        };
+        let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
+        assert_eq!(joined, vec![PathBuf::from(abs)]);
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_unsandboxed() {
+        let mut request = sandbox_request(true, true, &["/tmp/build"]);
+        request.unsandboxed = true;
+        assert_eq!(
+            sandbox_approval_title(&request),
             "Allow this command to run outside the sandbox?"
         );
     }
 
     #[test]
-    fn test_sandbox_approval_title_per_permission_flags() {
+    fn test_sandbox_approval_title_all_access_and_network() {
         assert_eq!(
-            sandbox_approval_title(true, true, false),
-            "Allow network access and arbitrary filesystem writes?"
+            sandbox_approval_title(&sandbox_request(true, true, &[])),
+            "Allow network access and unrestricted filesystem writes?"
         );
         assert_eq!(
-            sandbox_approval_title(true, false, false),
+            sandbox_approval_title(&sandbox_request(true, false, &[])),
             "Allow network access?"
         );
         assert_eq!(
-            sandbox_approval_title(false, true, false),
-            "Allow arbitrary filesystem writes?"
+            sandbox_approval_title(&sandbox_request(false, true, &[])),
+            "Allow unrestricted filesystem writes?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_per_path_writes() {
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(false, false, &["/tmp/build"])),
+            "Allow write access to /tmp/build?"
+        );
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(true, false, &["/tmp/build"])),
+            "Allow network access and write access to /tmp/build?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_summarizes_multiple_paths_by_count() {
+        let title =
+            sandbox_approval_title(&sandbox_request(false, false, &["/a", "/b", "/c", "/d"]));
+        assert_eq!(title, "Allow write access to 4 paths?");
+    }
+
+    #[test]
+    fn test_all_access_takes_precedence_over_paths_in_title() {
+        // When all-access is requested, the specific paths are redundant and
+        // should not be listed.
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(false, true, &["/tmp/build"])),
+            "Allow unrestricted filesystem writes?"
         );
     }
 
     #[test]
     fn test_input_schema_includes_sandbox_flags() {
-        // The model only sees these fields when the sandboxing prompt
-        // section is rendered, but they're always present in the schema so
-        // input validation doesn't reject them when sent. Guard against
+        // The sandboxed terminal tool advertises these fields so the model can
+        // request escalations when the sandbox is in effect. Guard against
         // accidentally renaming or removing them.
-        let schema = serde_json::to_string(&schemars::schema_for!(TerminalToolInput))
+        let schema = serde_json::to_string(&schemars::schema_for!(SandboxedTerminalToolInput))
             .expect("input schema should serialize");
         assert!(
             schema.contains("allow_network"),
             "schema should advertise allow_network: {schema}"
         );
         assert!(
-            schema.contains("allow_fs_write"),
-            "schema should advertise allow_fs_write: {schema}"
+            schema.contains("fs_write_paths"),
+            "schema should advertise fs_write_paths: {schema}"
+        );
+        assert!(
+            schema.contains("allow_fs_write_all"),
+            "schema should advertise allow_fs_write_all: {schema}"
         );
         assert!(
             schema.contains("unsandboxed"),
@@ -2085,13 +2386,214 @@ mod tests {
         // calls. Make sure deserialization doesn't reject the minimal
         // payload and that the fields default to `None` (which the tool
         // interprets as "no escalation requested").
-        let input: TerminalToolInput = serde_json::from_value(serde_json::json!({
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
             "command": "echo hi",
             "cd": ".",
         }))
         .expect("minimal input should deserialize");
         assert_eq!(input.allow_network, None);
-        assert_eq!(input.allow_fs_write, None);
+        assert!(input.fs_write_paths.is_empty());
+        assert_eq!(input.allow_fs_write_all, None);
         assert_eq!(input.unsandboxed, None);
+    }
+
+    #[test]
+    fn test_legacy_allow_fs_write_aliases_to_allow_fs_write_all() {
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": ".",
+            "allow_fs_write": true,
+        }))
+        .expect("legacy allow_fs_write should deserialize");
+
+        assert_eq!(input.allow_fs_write_all, Some(true));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_legacy_allow_fs_write_uses_sandbox_permission_options(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let (event_stream, mut receiver) = crate::ToolCallEventStream::test();
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": "root",
+            "allow_fs_write": true,
+        }))
+        .expect("legacy allow_fs_write should deserialize");
+
+        let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
+
+        let authorization = receiver.expect_authorization().await;
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+                .expect("legacy allow_fs_write should request sandbox authorization details");
+        assert!(!details.network);
+        assert!(details.allow_fs_write_all);
+        assert!(!details.unsandboxed);
+        assert!(details.write_paths.is_empty());
+
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat sandbox permission options");
+        };
+        let options = options
+            .iter()
+            .map(|option| {
+                (
+                    option.option_id.0.as_ref(),
+                    option.name.as_ref(),
+                    option.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            vec![
+                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow_thread",
+                    "Allow for this thread",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                (
+                    "allow_always",
+                    "Allow always",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+            ]
+        );
+
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task
+            .await
+            .expect("denied sandbox request returns model-readable output");
+        assert!(result.contains("user denied the requested sandbox permissions"));
+        assert_eq!(environment.terminal_creation_count(), 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_unsandboxed_uses_sandbox_permission_options(cx: &mut gpui::TestAppContext) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let (event_stream, mut receiver) = crate::ToolCallEventStream::test();
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": "root",
+            "allow_network": true,
+            "allow_fs_write_all": true,
+            "unsandboxed": true,
+        }))
+        .expect("unsandboxed input should deserialize");
+
+        let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
+
+        let authorization = receiver.expect_authorization().await;
+        assert_eq!(
+            authorization.tool_call.fields.title.as_deref(),
+            Some("Allow this command to run outside the sandbox?")
+        );
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+                .expect("unsandboxed should request sandbox authorization details");
+        assert!(!details.network);
+        assert!(!details.allow_fs_write_all);
+        assert!(details.unsandboxed);
+        assert!(details.write_paths.is_empty());
+
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat sandbox permission options");
+        };
+        let options = options
+            .iter()
+            .map(|option| {
+                (
+                    option.option_id.0.as_ref(),
+                    option.name.as_ref(),
+                    option.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            vec![
+                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow_thread",
+                    "Allow for this thread",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                (
+                    "allow_always",
+                    "Allow always",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+            ]
+        );
+
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task
+            .await
+            .expect("denied sandbox request returns model-readable output");
+        assert!(result.contains("user denied permission to run outside the sandbox"));
+        assert_eq!(environment.terminal_creation_count(), 0);
     }
 }
