@@ -77,6 +77,70 @@ pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
 /// Key used in ACP ToolCall meta to store the session id and message indexes
 pub const SUBAGENT_SESSION_INFO_META_KEY: &str = "subagent_session_info";
 
+pub const SANDBOX_AUTHORIZATION_META_KEY: &str = "sandbox_authorization";
+
+/// Stable `PermissionOption` ids for the sandbox-escalation approval prompt.
+///
+/// These are shared across the option construction (in the agent), the outcome
+/// dispatch, and the UI so the distinct grant lifetimes stay in sync. Note
+/// that `AllowThread` and `AllowAlways` both use
+/// `PermissionOptionKind::AllowAlways`; the id is what distinguishes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SandboxPermission {
+    AllowOnce,
+    AllowThread,
+    AllowAlways,
+    Deny,
+}
+
+impl SandboxPermission {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "allow",
+            Self::AllowThread => "allow_thread",
+            Self::AllowAlways => "allow_always",
+            Self::Deny => "deny",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "allow" => Some(Self::AllowOnce),
+            "allow_thread" => Some(Self::AllowThread),
+            "allow_always" => Some(Self::AllowAlways),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SandboxAuthorizationDetails {
+    #[serde(default)]
+    pub network: bool,
+    #[serde(default)]
+    pub allow_fs_write_all: bool,
+    #[serde(default)]
+    pub unsandboxed: bool,
+    #[serde(default)]
+    pub write_paths: Vec<PathBuf>,
+}
+
+pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_AUTHORIZATION_META_KEY.into(),
+        serde_json::to_value(details).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_authorization_details_from_meta(
+    meta: &Option<acp::Meta>,
+) -> Option<SandboxAuthorizationDetails> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SubagentSessionInfo {
     /// The session id of the subagent sessiont that was spawned
@@ -268,6 +332,7 @@ pub struct ToolCall {
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
+    pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
 }
 
 impl ToolCall {
@@ -309,6 +374,8 @@ impl ToolCall {
         let tool_name = tool_name_from_meta(&tool_call.meta);
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
+        let sandbox_authorization_details =
+            sandbox_authorization_details_from_meta(&tool_call.meta);
 
         let label = if tool_call.kind == acp::ToolKind::Execute {
             cx.new(|cx| Markdown::new_text(title.into(), cx))
@@ -329,6 +396,7 @@ impl ToolCall {
             raw_output: tool_call.raw_output,
             tool_name,
             subagent_session_info,
+            sandbox_authorization_details,
         };
         Ok(result)
     }
@@ -363,6 +431,10 @@ impl ToolCall {
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
             self.subagent_session_info = Some(subagent_session_info);
+        }
+        if let Some(sandbox_authorization_details) = sandbox_authorization_details_from_meta(&meta)
+        {
+            self.sandbox_authorization_details = Some(sandbox_authorization_details);
         }
 
         if let Some(title) = title {
@@ -1956,6 +2028,7 @@ impl AcpThread {
                     raw_output: None,
                     tool_name: None,
                     subagent_session_info: None,
+                    sandbox_authorization_details: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());

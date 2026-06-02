@@ -134,21 +134,6 @@ actions!(
     ]
 );
 
-actions!(
-    git_graph,
-    [
-        /// Opens the Git Graph Tab.
-        Open,
-    ]
-);
-
-/// Opens the Git Graph Tab at a specific commit.
-#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
-#[action(namespace = git_graph)]
-pub struct OpenAtCommit {
-    pub sha: String,
-}
-
 fn prompt<T>(
     msg: &str,
     detail: Option<&str>,
@@ -669,6 +654,7 @@ pub struct GitPanel {
     new_count: usize,
     entry_count: usize,
     changes_count: usize,
+    diff_stat_total: DiffStat,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
     amend_pending: bool,
@@ -864,6 +850,7 @@ impl GitPanel {
                 new_count: 0,
                 new_staged_count: 0,
                 changes_count: 0,
+                diff_stat_total: DiffStat::default(),
                 pending_commit: None,
                 amend_pending: false,
                 original_commit_message: None,
@@ -3655,6 +3642,7 @@ impl GitPanel {
         self.conflicted_count = 0;
         self.conflicted_staged_count = 0;
         self.changes_count = 0;
+        self.diff_stat_total = DiffStat::default();
         self.new_count = 0;
         self.tracked_count = 0;
         self.new_staged_count = 0;
@@ -3927,9 +3915,19 @@ impl GitPanel {
         self.new_staged_count = 0;
         self.tracked_staged_count = 0;
         self.entry_count = 0;
+        self.diff_stat_total = DiffStat::default();
 
         for status_entry in self.entries.iter().filter_map(|entry| entry.status_entry()) {
             self.entry_count += 1;
+            if let Some(diff_stat) = status_entry.diff_stat {
+                self.diff_stat_total.added =
+                    self.diff_stat_total.added.saturating_add(diff_stat.added);
+                self.diff_stat_total.deleted = self
+                    .diff_stat_total
+                    .deleted
+                    .saturating_add(diff_stat.deleted);
+            }
+
             let is_staging_or_staged = GitPanel::stage_status_for_entry(status_entry, repo)
                 .as_bool()
                 .unwrap_or(true);
@@ -4516,6 +4514,8 @@ impl GitPanel {
                 ("Stage All", StageAll.boxed_clone(), true, "git add --all")
             };
 
+        let diff_stat_total = self.diff_stat_total;
+
         Some(
             h_flex()
                 .h(Tab::container_height(cx))
@@ -4524,24 +4524,42 @@ impl GitPanel {
                 .flex_none()
                 .justify_between()
                 .child(
-                    Button::new("changes", "View Diff")
-                        .label_size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .start_icon(
-                            Icon::new(IconName::Diff)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
+                    h_flex()
+                        .gap_1p5()
+                        .child(
+                            Button::new("changes", "View Diff")
+                                .label_size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .start_icon(
+                                    Icon::new(IconName::Diff)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "View Diff",
+                                    &Diff,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(|_, _, cx| {
+                                    cx.defer(|cx| {
+                                        cx.dispatch_action(&Diff);
+                                    })
+                                }),
                         )
-                        .tooltip(Tooltip::for_action_title_in(
-                            "View Diff",
-                            &Diff,
-                            &self.focus_handle,
-                        ))
-                        .on_click(|_, _, cx| {
-                            cx.defer(|cx| {
-                                cx.dispatch_action(&Diff);
-                            })
-                        }),
+                        .when(
+                            GitPanelSettings::get_global(cx).diff_stats
+                                && diff_stat_total != DiffStat::default(),
+                            |this| {
+                                this.child(
+                                    ui::DiffStat::new(
+                                        "changes-diff-stat-total",
+                                        diff_stat_total.added as usize,
+                                        diff_stat_total.deleted as usize,
+                                    )
+                                    .tooltip("Total tracked changes"),
+                                )
+                            },
+                        ),
                 )
                 .child(
                     h_flex()
@@ -4994,10 +5012,14 @@ impl GitPanel {
                             IconButton::new("git-graph-button", IconName::GitGraph)
                                 .icon_size(IconSize::Small)
                                 .tooltip(|_window, cx| {
-                                    Tooltip::for_action("Open Git Graph", &Open, cx)
+                                    Tooltip::for_action(
+                                        "Open Git Graph",
+                                        &crate::git_graph::Open,
+                                        cx,
+                                    )
                                 })
                                 .on_click(|_, window, cx| {
-                                    window.dispatch_action(Open.boxed_clone(), cx)
+                                    window.dispatch_action(crate::git_graph::Open.boxed_clone(), cx)
                                 }),
                         ),
                 ),

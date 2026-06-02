@@ -6,7 +6,7 @@ use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
-    TerminalThreadMetadata, TerminalThreadMetadataStore,
+    TerminalThreadMetadata, TerminalThreadMetadataStore, terminal_title_prefix,
 };
 use agent_ui::thread_metadata_store::{
     ThreadMetadata, ThreadMetadataStore, WorktreePaths, worktree_info_from_thread_paths,
@@ -58,6 +58,7 @@ use ui::{
     Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
     prelude::*, render_modifiers, right_click_menu,
 };
+use unicode_segmentation::UnicodeSegmentation as _;
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
@@ -229,24 +230,23 @@ impl ThreadEntryWorkspace {
     }
 }
 
-/// If the title begins with a non-letter, non-whitespace character (such as a
-/// leading emoji or symbol the user prefixed their title with), splits that
-/// character out so it can be displayed in place of the entry's icon
+/// If the title begins with a decorative prefix (such as a leading emoji,
+/// spinner glyph, or symbol the agent prefixed the title with), splits that
+/// prefix off so a single representative glyph can be displayed in place of the
+/// entry's icon.
 fn split_leading_icon_char(
     title: &SharedString,
     highlight_positions: &[usize],
 ) -> Option<(SharedString, SharedString, Vec<usize>)> {
-    let first_char = title.chars().next()?;
-    if first_char.is_alphabetic() || first_char.is_whitespace() {
-        return None;
-    }
+    let prefix = terminal_title_prefix(title)?;
+    let icon_char = pick_icon_glyph(prefix)?;
 
-    let trimmed_title = title[first_char.len_utf8()..].trim_start();
+    let stripped_len = prefix.len();
+    let trimmed_title = &title[stripped_len..];
     if trimmed_title.is_empty() {
         return None;
     }
 
-    let stripped_len = title.len() - trimmed_title.len();
     let adjusted_positions = highlight_positions
         .iter()
         .filter(|&&position| position >= stripped_len)
@@ -254,10 +254,51 @@ fn split_leading_icon_char(
         .collect();
 
     Some((
-        first_char.to_string().into(),
+        icon_char,
         trimmed_title.to_string().into(),
         adjusted_positions,
     ))
+}
+
+/// Picks a single glyph to render as the icon from a detected title prefix.
+///
+/// We only ever show one glyph, so this makes a best effort to choose a
+/// meaningful one by glancing at the leading characters of the prefix:
+/// runs of `.` are condensed into a single ellipsis, surrounding ASCII brackets
+/// are stripped (so `[!]` yields `!`), and a leading run of the same character
+/// is collapsed (so `>>>` yields `>`). The result is the first grapheme cluster
+/// of whatever remains, keeping multi-codepoint emoji intact.
+fn pick_icon_glyph(prefix: &str) -> Option<SharedString> {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return None;
+    }
+
+    // Condense a leading run of dots (`...`) into a single ellipsis.
+    if prefix.starts_with("..") {
+        return Some("\u{2026}".into());
+    }
+
+    // Strip a single pair of surrounding ASCII brackets, e.g. `[!]` -> `!`.
+    let unwrapped = match prefix.chars().next() {
+        Some('[') => prefix.strip_prefix('[').and_then(|s| s.strip_suffix(']')),
+        Some('(') => prefix.strip_prefix('(').and_then(|s| s.strip_suffix(')')),
+        Some('{') => prefix.strip_prefix('{').and_then(|s| s.strip_suffix('}')),
+        Some('<') => prefix.strip_prefix('<').and_then(|s| s.strip_suffix('>')),
+        _ => None,
+    };
+    let prefix = unwrapped
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(prefix);
+
+    // Take the first grapheme cluster so multi-codepoint emoji stay intact.
+    let first_grapheme = prefix.graphemes(true).next()?;
+    if first_grapheme.trim().is_empty() {
+        return None;
+    }
+
+    Some(first_grapheme.to_string().into())
 }
 
 fn draft_display_label_for_thread_metadata(
@@ -598,21 +639,17 @@ struct WorkspaceMenuWorktreeLabel {
 }
 
 impl WorkspaceMenuWorktreeLabel {
-    fn render(&self, color: Color) -> impl IntoElement {
+    fn render(&self) -> impl IntoElement {
         h_flex()
             .min_w_0()
             .gap_0p5()
             .when_some(self.icon, |this, icon| {
-                this.child(Icon::new(icon).size(IconSize::XSmall).color(color))
+                this.child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
             })
-            .child(
-                Label::new(self.primary_name.clone())
-                    .color(color)
-                    .truncate(),
-            )
+            .child(Label::new(self.primary_name.clone()).truncate())
             .when_some(self.secondary_name.clone(), |this, secondary_name| {
-                this.child(Label::new(":").color(color).alpha(0.5))
-                    .child(Label::new(secondary_name).color(color).truncate())
+                this.child(Label::new(":").alpha(0.5))
+                    .child(Label::new(secondary_name).truncate())
             })
     }
 }
@@ -754,6 +791,10 @@ pub struct Sidebar {
     /// transitions can be detected even when the group is collapsed (and
     /// thread entries are not present in the list).
     live_thread_statuses: HashMap<acp::SessionId, (AgentThreadStatus, ThreadId)>,
+    /// Remembers whether each draft last rendered as empty or with content so
+    /// that when a draft that was empty gains content again, we refresh
+    /// its interaction time.
+    draft_kinds: HashMap<ThreadId, DraftKind>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -877,6 +918,7 @@ impl Sidebar {
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
             live_thread_statuses: HashMap::new(),
+            draft_kinds: HashMap::new(),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -1950,6 +1992,7 @@ impl Sidebar {
             self.entry_shapes(multi_workspace.read(cx)).collect();
 
         self.rebuild_contents(cx);
+        self.refresh_refilled_draft_times(cx);
         self.refresh_draft_editor_observations(cx);
 
         // Preserve measurements for unchanged entries so sticky headers do not flicker.
@@ -2012,6 +2055,44 @@ impl Sidebar {
             ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
             ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
         })
+    }
+
+    /// Detects drafts that just went from empty back to having content and
+    /// refreshes their interaction time to now, so a re-filled draft sorts to
+    /// the top of the list instead of falling back to its original creation time.
+    fn refresh_refilled_draft_times(&mut self, cx: &mut Context<Self>) {
+        let mut new_kinds: HashMap<ThreadId, DraftKind> = HashMap::new();
+        let mut refilled: Vec<ThreadId> = Vec::new();
+
+        for entry in &self.contents.entries {
+            let ListEntry::Thread(thread) = entry else {
+                continue;
+            };
+            let Some(kind) = thread.draft else {
+                continue;
+            };
+            let thread_id = thread.metadata.thread_id;
+
+            if kind == DraftKind::WithContent
+                && self.draft_kinds.get(&thread_id) == Some(&DraftKind::Empty)
+            {
+                refilled.push(thread_id);
+            }
+            new_kinds.insert(thread_id, kind);
+        }
+        self.draft_kinds = new_kinds;
+
+        if refilled.is_empty() {
+            return;
+        }
+
+        let now = Utc::now();
+
+        ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            for thread_id in refilled {
+                store.update_interacted_at(&thread_id, now, store_cx);
+            }
+        });
     }
 
     /// Re-establishes subscriptions to each visible draft's message editor
@@ -2314,44 +2395,14 @@ impl Sidebar {
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .child({
-                        let key = key.clone();
-                        let focus_handle = self.focus_handle.clone();
-
-                        IconButton::new(
-                            SharedString::from(format!(
-                                "{id_prefix}project-header-new-thread-{ix}",
-                            )),
-                            IconName::Plus,
-                        )
-                        .icon_size(IconSize::Small)
-                        .when(has_active_draft, |this| this.icon_color(Color::Accent))
-                        .when(!has_active_draft, |this| this.visible_on_hover(&group_name))
-                        .tooltip(move |_, cx| {
-                            Tooltip::for_action_in(
-                                "Start New Agent Thread",
-                                &NewThread,
-                                &focus_handle,
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.set_group_expanded(&key, true, cx);
-                                this.selection = None;
-                                if let Some(workspace) = this.workspace_for_group(&key, cx) {
-                                    this.create_new_entry(&workspace, window, cx);
-                                } else {
-                                    this.open_workspace_and_create_entry(
-                                        &key,
-                                        NewEntryTarget::LastCreatedKind,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            },
-                        ))
-                    })
+                    .child(self.render_new_thread_button(
+                        ix,
+                        id_prefix,
+                        key,
+                        has_active_draft,
+                        &group_name,
+                        cx,
+                    ))
                     .child(self.render_project_header_ellipsis_menu(
                         ix,
                         id_prefix,
@@ -2406,6 +2457,143 @@ impl Sidebar {
         } else {
             header.into_any_element()
         }
+    }
+
+    fn render_new_thread_button(
+        &self,
+        ix: usize,
+        id_prefix: &str,
+        key: &ProjectGroupKey,
+        has_active_draft: bool,
+        group_name: &SharedString,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let focus_handle = self.focus_handle.clone();
+
+        let button = IconButton::new(
+            SharedString::from(format!("{id_prefix}project-header-new-thread-{ix}")),
+            IconName::Plus,
+        )
+        .icon_size(IconSize::Small)
+        .when(has_active_draft, |this| this.icon_color(Color::Accent))
+        .when(!has_active_draft, |this| this.visible_on_hover(group_name));
+
+        let open_workspaces = self
+            .multi_workspace
+            .upgrade()
+            .and_then(|mw| mw.read(cx).workspaces_for_project_group(key, cx))
+            .unwrap_or_default();
+
+        if open_workspaces.len() <= 1 {
+            let key = key.clone();
+            return button
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Start New Agent Thread", &NewThread, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.set_group_expanded(&key, true, cx);
+                    this.selection = None;
+                    if let Some(workspace) = this.workspace_for_group(&key, cx) {
+                        this.create_new_entry(&workspace, window, cx);
+                    } else {
+                        this.open_workspace_and_create_entry(
+                            &key,
+                            NewEntryTarget::LastCreatedKind,
+                            window,
+                            cx,
+                        );
+                    }
+                }))
+                .into_any_element();
+        }
+
+        let this = cx.weak_entity();
+
+        let key = key.clone();
+        PopoverMenu::new(SharedString::from(format!(
+            "{id_prefix}project-header-new-thread-menu-{ix}"
+        )))
+        .trigger_with_tooltip(button, move |_, cx| {
+            Tooltip::for_action_in("Start New Agent Thread", &NewThread, &focus_handle, cx)
+        })
+        .anchor(gpui::Anchor::TopLeft)
+        .menu(move |window, cx| {
+            let this = this.clone();
+            let key = key.clone();
+            let open_workspaces = open_workspaces.clone();
+            let active_workspace = this
+                .read_with(cx, |sidebar, cx| {
+                    sidebar
+                        .multi_workspace
+                        .upgrade()
+                        .map(|mw| mw.read(cx).workspace().clone())
+                })
+                .ok()
+                .flatten();
+            let workspace_labels: Vec<_> = open_workspaces
+                .iter()
+                .map(|workspace| workspace_menu_worktree_labels(workspace, cx))
+                .collect();
+
+            Some(ContextMenu::build(
+                window,
+                cx,
+                move |mut menu, _window, _cx| {
+                    menu = menu.header("New Thread In…");
+
+                    for (workspace, labels) in open_workspaces
+                        .iter()
+                        .cloned()
+                        .zip(workspace_labels.iter().cloned())
+                    {
+                        let is_active_workspace = active_workspace.as_ref() == Some(&workspace);
+                        menu = menu.custom_entry(
+                            move |_window, _cx| {
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(h_flex().min_w_0().gap_1().children(
+                                        labels.iter().enumerate().map(|(label_ix, label)| {
+                                            h_flex()
+                                                .gap_1()
+                                                .when(label_ix > 0, |this| {
+                                                    this.child(Label::new("•").alpha(0.25))
+                                                })
+                                                .child(label.render())
+                                                .into_any_element()
+                                        }),
+                                    ))
+                                    .when(is_active_workspace, |this| {
+                                        this.child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::Small)
+                                                .color(Color::Accent),
+                                        )
+                                    })
+                                    .into_any_element()
+                            },
+                            {
+                                let this = this.clone();
+                                let key = key.clone();
+                                let workspace = workspace.clone();
+                                move |window, cx| {
+                                    this.update(cx, |sidebar, cx| {
+                                        sidebar.set_group_expanded(&key, true, cx);
+                                        sidebar.selection = None;
+                                        sidebar.create_new_entry(&workspace, window, cx);
+                                    })
+                                    .ok();
+                                }
+                            },
+                        );
+                    }
+
+                    menu
+                },
+            ))
+        })
+        .into_any_element()
     }
 
     fn render_project_header_ellipsis_menu(
@@ -2612,11 +2800,6 @@ impl Sidebar {
                                         let close_multi_workspace = close_multi_workspace.clone();
                                         let close_weak_menu = close_weak_menu.clone();
                                         let close_workspace = close_workspace.clone();
-                                        let label_color = if is_active_workspace {
-                                            Color::Accent
-                                        } else {
-                                            Color::Default
-                                        };
                                         let row_group_name = SharedString::from(format!(
                                             "workspace-menu-row-{workspace_index}"
                                         ));
@@ -2636,11 +2819,18 @@ impl Sidebar {
                                                                     Label::new("•").alpha(0.25),
                                                                 )
                                                             })
-                                                            .child(label.render(label_color))
+                                                            .child(label.render())
                                                             .into_any_element()
                                                     },
                                                 ),
                                             ))
+                                            .when(is_active_workspace, |this| {
+                                                this.pr_1().child(
+                                                    Icon::new(IconName::Check)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Accent),
+                                                )
+                                            })
                                             .when(!is_active_workspace, |this| {
                                                 let close_multi_workspace =
                                                     close_multi_workspace.clone();
@@ -6702,6 +6892,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Fallback to a neighbor thread when the discarded
+        // draft was the active entry.
+        let activate_panel_draft = activate_panel_draft && !(was_active && neighbor.is_some());
+
         let removed_from_panel = if let ThreadEntryWorkspace::Open(workspace) = workspace {
             workspace.update(cx, |workspace, cx| {
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {

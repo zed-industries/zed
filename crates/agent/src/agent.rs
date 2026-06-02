@@ -25,8 +25,8 @@ pub use tool_permissions::*;
 pub use tools::*;
 
 use acp_thread::{
-    AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
-    AgentSessionListResponse, TokenUsageRatio, UserMessageId,
+    AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
+    AgentSessionListRequest, AgentSessionListResponse, TokenUsageRatio, UserMessageId,
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
@@ -47,7 +47,10 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
     TaskExt, WeakEntity,
 };
-use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{
+    IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry,
+};
 use project::{
     AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
     trusted_worktrees::TrustedWorktrees,
@@ -139,7 +142,7 @@ struct PendingSession {
 
 pub struct LanguageModels {
     /// Access language model by ID
-    models: HashMap<acp::ModelId, Arc<dyn LanguageModel>>,
+    models: HashMap<AgentModelId, Arc<dyn LanguageModel>>,
     /// Cached list for returning language model information
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
@@ -213,7 +216,7 @@ impl LanguageModels {
         self.refresh_models_rx.clone()
     }
 
-    pub fn model_from_id(&self, model_id: &acp::ModelId) -> Option<Arc<dyn LanguageModel>> {
+    pub fn model_from_id(&self, model_id: &AgentModelId) -> Option<Arc<dyn LanguageModel>> {
         self.models.get(model_id).cloned()
     }
 
@@ -234,8 +237,8 @@ impl LanguageModels {
         }
     }
 
-    fn model_id(model: &Arc<dyn LanguageModel>) -> acp::ModelId {
-        acp::ModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
+    fn model_id(model: &Arc<dyn LanguageModel>) -> AgentModelId {
+        AgentModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
     }
 
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
@@ -295,6 +298,25 @@ impl LanguageModels {
     }
 }
 
+/// Implemented by the UI layer to provide the ability for agent tools to create
+/// sibling threads that appear in the agent panel.
+///
+/// `agent_ui::AgentPanel` installs an implementation of this trait on the
+/// `NativeAgent` when it sets up a connection. Tools in a native-agent thread
+/// then discover and use the host via `NativeThreadEnvironment`. The UI side
+/// is responsible for keeping the installed host current; a host whose
+/// backing UI has been torn down will fail its first request with a clear
+/// error rather than being detected up front.
+pub trait SiblingThreadHost {
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>>;
+
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents>;
+}
+
 pub struct NativeAgent {
     /// Session ID -> Session mapping
     sessions: HashMap<acp::SessionId, Session>,
@@ -306,6 +328,8 @@ pub struct NativeAgent {
     templates: Arc<Templates>,
     /// Cached model information
     models: LanguageModels,
+    /// Handler installed by the UI for `create_thread` / `list_agents_and_models` tools.
+    sibling_thread_host: Option<Rc<dyn SiblingThreadHost>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the lifecycle of global skills directory observation. We
@@ -469,6 +493,7 @@ impl NativeAgent {
                 projects: HashMap::default(),
                 templates,
                 models: LanguageModels::new(cx),
+                sibling_thread_host: None,
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
@@ -593,6 +618,14 @@ impl NativeAgent {
                 return;
             }
         }
+    }
+
+    pub fn set_sibling_thread_host(&mut self, host: Rc<dyn SiblingThreadHost>) {
+        self.sibling_thread_host = Some(host);
+    }
+
+    pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
+        self.sibling_thread_host.clone()
     }
 
     fn new_session(
@@ -2134,7 +2167,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         })
     }
 
-    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>> {
+    fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>> {
         log::debug!(
             "Setting model for session {}: {}",
             self.session_id,
@@ -2227,6 +2260,27 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         )))
     }
 
+    fn favorite_model_ids(&self, cx: &mut App) -> HashSet<AgentModelId> {
+        agent_settings::AgentSettings::get_global(cx)
+            .favorite_model_ids()
+            .into_iter()
+            .map(AgentModelId::from)
+            .collect()
+    }
+
+    fn toggle_favorite_model(&self, model_id: AgentModelId, should_be_favorite: bool, cx: &App) {
+        let selection = model_id_to_selection(&model_id, cx);
+        let fs = self.connection.0.read(cx).fs.clone();
+        update_settings_file(fs, cx, move |settings, _| {
+            let agent = settings.agent.get_or_insert_default();
+            if should_be_favorite {
+                agent.add_favorite_model(selection.clone());
+            } else {
+                agent.remove_favorite_model(&selection);
+            }
+        });
+    }
+
     fn watch(&self, cx: &mut App) -> Option<watch::Receiver<()>> {
         Some(self.connection.0.read(cx).models.watch())
     }
@@ -2234,6 +2288,44 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn should_render_footer(&self) -> bool {
         true
     }
+}
+
+fn model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSelection {
+    let id = model_id.as_ref();
+    let (provider, model) = id.split_once('/').unwrap_or(("", id));
+
+    let provider_id = LanguageModelProviderId(provider.to_string().into());
+    let model_id = LanguageModelId(model.to_string().into());
+    let resolved = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&provider_id)
+        .and_then(|provider| {
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .find(|model| model.id() == model_id)
+        });
+
+    let Some(resolved) = resolved else {
+        return LanguageModelSelection {
+            provider: provider.to_owned().into(),
+            model: model.to_owned(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        };
+    };
+
+    let current_user_selection = agent_settings::AgentSettings::get_global(cx)
+        .default_model
+        .as_ref()
+        .filter(|selection| {
+            selection.provider.0 == resolved.provider_id().0.as_ref()
+                && selection.model == resolved.id().0.as_ref()
+        })
+        .cloned();
+
+    agent_settings::language_model_to_selection(&resolved, current_user_selection.as_ref())
 }
 
 pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
@@ -2862,6 +2954,40 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         self.resume_subagent_thread(session_id, cx)
+    }
+
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>> {
+        let host = match self
+            .agent
+            .read_with(cx, |agent, _| agent.sibling_thread_host())
+        {
+            Ok(Some(host)) => host,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No sibling-thread host is registered. This usually means the \
+                     agent panel hasn't been initialized in this workspace."
+                )));
+            }
+            Err(err) => return Task::ready(Err(err)),
+        };
+        host.create_sibling_thread(request, cx)
+    }
+
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
+        let host = self
+            .agent
+            .read_with(cx, |agent, _| agent.sibling_thread_host())?
+            .ok_or_else(|| {
+                anyhow!(
+                    "No sibling-thread host is registered. This usually means the \
+                     agent panel hasn't been initialized in this workspace."
+                )
+            })?;
+        host.list_available_agents(cx)
     }
 }
 
@@ -4803,7 +4929,7 @@ mod internal_tests {
             IndexMap::from_iter([(
                 AgentModelGroupName("Fake".into()),
                 vec![AgentModelInfo {
-                    id: acp::ModelId::new("fake/fake"),
+                    id: AgentModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
                     icon: Some(acp_thread::AgentModelIcon::Named(
@@ -4862,7 +4988,7 @@ mod internal_tests {
 
         // Select a model
         let selector = connection.model_selector(&session_id).unwrap();
-        let model_id = acp::ModelId::new("fake/fake");
+        let model_id = AgentModelId::new("fake/fake");
         cx.update(|cx| selector.select_model(model_id.clone(), cx))
             .await
             .unwrap();
@@ -4913,7 +5039,7 @@ mod internal_tests {
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
             .await
             .unwrap();
         cx.run_until_parked();
@@ -4987,7 +5113,7 @@ mod internal_tests {
 
         // Select the thinking model via select_model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
             .await
             .unwrap();
 
@@ -5004,7 +5130,7 @@ mod internal_tests {
 
         // Switch back to the non-thinking model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake/fake"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake/fake"), cx))
             .await
             .unwrap();
 
@@ -5121,7 +5247,7 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
             .await
             .unwrap();
 
@@ -5224,7 +5350,7 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/custom-model-id"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
             .await
             .unwrap();
 

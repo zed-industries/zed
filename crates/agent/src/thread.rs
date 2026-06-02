@@ -1,22 +1,26 @@
 use crate::{
     ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
-    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
-    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
-    ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
+    FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
+    RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ToolPermissionDecision, UpdatePlanTool, UpdateTitleTool, WebSearchTool,
+    WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
-    UpdateTitleToolFeatureFlag,
+    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag, LspToolFeatureFlag,
+    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
 };
+use zed_env_vars::{EnvVar, env_var};
 
+use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, COMPACTION_PROMPT, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -52,6 +56,7 @@ use settings::{
     LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
 };
 use std::fmt::Write;
+use std::{cell::RefCell, ops::ControlFlow};
 use std::{
     collections::BTreeMap,
     marker::PhantomData,
@@ -67,6 +72,17 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+
+const AGENT_COMPACTION_REMAINING_TOKEN_BUDGET: u64 = 40_000;
+
+/// Auto-compaction is only available for models whose context window is at least
+/// this large. For smaller models there isn't enough headroom for a compaction
+/// pass to be worthwhile, so we leave the thread uncompacted and let the UI warn
+/// the user instead.
+pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
+
+static AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR: std::sync::LazyLock<EnvVar> =
+    env_var!("AGENT_COMPACTION_REMAINING_TOKEN_BUDGET");
 
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
@@ -708,6 +724,97 @@ pub trait ThreadEnvironment {
             "Resuming subagent sessions is not supported"
         ))
     }
+
+    /// Creates an independent sibling thread visible in the agent sidebar.
+    /// Unlike subagents, sibling threads are first-class threads that persist
+    /// and run in parallel without reporting results back to the parent.
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>> {
+        let _ = request;
+        let _ = cx;
+        Task::ready(Err(anyhow::anyhow!(
+            "Creating sibling threads is not supported in this environment"
+        )))
+    }
+
+    /// Lists the agents and models available for use with `create_sibling_thread`.
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
+        let _ = cx;
+        Err(anyhow::anyhow!(
+            "Listing available agents is not supported in this environment"
+        ))
+    }
+}
+
+/// A request to create a new sibling thread.
+#[derive(Debug, Clone)]
+pub struct SiblingThreadRequest {
+    /// A short title for the new thread, shown in the sidebar.
+    pub title: SharedString,
+    /// The initial prompt to send to the new thread.
+    pub prompt: String,
+    /// Optional agent ID to use. Defaults to the native Zed agent.
+    pub agent_id: Option<String>,
+    /// Optional model override, as `provider/model-id`.
+    /// Defaults to the user's configured default model for the agent.
+    pub model: Option<String>,
+    /// Whether to create the thread in a new git worktree workspace.
+    pub use_new_worktree: bool,
+    /// Optional worktree directory name. When `None`, the UI generates a
+    /// random non-colliding name (matching the manual "Create worktree"
+    /// flow). Only relevant when `use_new_worktree` is true.
+    pub worktree_name: Option<String>,
+    /// Git ref (branch, tag, or commit) to base the new worktree on.
+    /// Only relevant when `use_new_worktree` is true.
+    pub base_ref: Option<String>,
+}
+
+/// Information returned when a sibling thread is successfully created.
+#[derive(Debug, Clone)]
+pub struct SiblingThreadInfo {
+    /// The title assigned to the thread.
+    pub title: SharedString,
+    /// The agent ID used for the thread.
+    pub agent_id: String,
+    /// The model ID used for the thread, if known.
+    pub model: Option<String>,
+    /// An optional, non-fatal heads-up about the created thread that the
+    /// caller should relay or take into account (e.g., the project had an
+    /// unusual worktree layout that affected how the new worktree was set
+    /// up). Empty when nothing noteworthy happened.
+    pub warning: Option<String>,
+}
+
+/// A list of agents and, for each, the models available for use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableAgents {
+    pub agents: Vec<AvailableAgent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableAgent {
+    /// Identifier used when creating a thread.
+    pub id: String,
+    /// Human-readable name shown in the UI.
+    pub name: SharedString,
+    /// Whether this is Zed's built-in native agent.
+    pub is_native: bool,
+    /// Models available for this agent. May be empty if models are not
+    /// enumerated up front (e.g., external agents that choose their own).
+    pub models: Vec<AvailableModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableModel {
+    /// Identifier to pass as the `model` field when creating a thread.
+    pub id: String,
+    /// Human-readable name.
+    pub name: SharedString,
+    /// Whether this is the default model for the agent.
+    pub is_default: bool,
 }
 
 #[derive(Debug)]
@@ -1031,6 +1138,11 @@ pub struct Thread {
     running_subagents: Vec<WeakEntity<Thread>>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Sandbox permissions the user approved "for the rest of the thread".
+    /// Shared with each tool call's event stream so repeated requests for
+    /// already-granted permissions skip the approval prompt.
+    /// Never persisted — lives and dies with this thread.
+    sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
 }
 
 impl Thread {
@@ -1158,6 +1270,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         }
     }
 
@@ -1286,6 +1399,12 @@ impl Thread {
                 }
             });
 
+        // Recorded tool calls use the model-facing name, so a terminal call is
+        // always keyed as `terminal` and resolves to the non-sandboxed
+        // `TerminalTool` here, even if it originally ran under
+        // `SandboxedTerminalTool`. That's safe because both variants share the
+        // same `replay` behavior; replay only reconstructs UI state and never
+        // re-runs the command or re-applies sandbox policy.
         let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
             self.context_server_registry
                 .read(cx)
@@ -1352,6 +1471,7 @@ impl Thread {
                 stream.clone(),
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,
+                self.sandbox_grants.clone(),
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
                 .log_err();
@@ -1502,6 +1622,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
+            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         }
     }
 
@@ -1751,7 +1872,13 @@ impl Thread {
             self.action_log.clone(),
             update_agent_location,
         ));
+        // Register terminal tool variants; `enabled_tools` exposes the one
+        // matching the current sandbox state to the model as `terminal`.
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(SandboxedTerminalTool::new(
+            self.project.clone(),
+            environment.clone(),
+        ));
         self.add_tool(WebSearchTool);
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
@@ -1770,8 +1897,16 @@ impl Thread {
         self.add_tool(RenameTool::new(self.project.clone()));
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SpawnAgentTool::new(environment));
+            self.add_tool(SpawnAgentTool::new(environment.clone()));
         }
+
+        // Sibling-thread tools are exposed at every depth: a subagent should
+        // still be able to kick off independent sibling work on behalf of the
+        // user, even when it can no longer nest further subagents. Visibility
+        // to the model is gated by `CreateThreadToolFeatureFlag` in
+        // `Thread::enabled_tools`.
+        self.add_tool(CreateThreadTool::new(environment.clone()));
+        self.add_tool(ListAgentsAndModelsTool::new(environment));
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -2107,6 +2242,41 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
+            if cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
+                match Self::perform_compaction_if_needed(
+                    this,
+                    event_stream,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await
+                {
+                    Ok(ControlFlow::Continue(())) => {}
+                    Ok(ControlFlow::Break(())) => return Ok(()),
+                    Err(error) => {
+                        log::error!("Compaction failed: {}", error);
+                        match error.downcast::<LanguageModelCompletionError>() {
+                            Ok(error) => {
+                                match Self::retry_completion_error(
+                                    this,
+                                    event_stream,
+                                    &mut cancellation_rx,
+                                    error,
+                                    attempt,
+                                    cx,
+                                )
+                                .await?
+                                {
+                                    ControlFlow::Break(()) => return Ok(()),
+                                    ControlFlow::Continue(()) => continue,
+                                }
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                }
+            }
+
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
@@ -2271,20 +2441,18 @@ impl Thread {
 
             if let Some(error) = error {
                 attempt += 1;
-                let retry = this.update(cx, |this, cx| {
-                    let user_store = this.user_store.read(cx);
-                    this.handle_completion_error(error, attempt, user_store.plan())
-                })??;
-                let timer = cx.background_executor().timer(retry.duration);
-                event_stream.send_retry(retry);
-                futures::select! {
-                    _ = timer.fuse() => {}
-                    _ = cancellation_rx.changed().fuse() => {
-                        if *cancellation_rx.borrow() {
-                            log::debug!("Turn cancelled during retry delay, exiting");
-                            return Ok(());
-                        }
-                    }
+                match Self::retry_completion_error(
+                    this,
+                    event_stream,
+                    &mut cancellation_rx,
+                    error,
+                    attempt,
+                    cx,
+                )
+                .await?
+                {
+                    ControlFlow::Break(_) => return Ok(()),
+                    ControlFlow::Continue(_) => {}
                 }
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.last_message() {
@@ -2306,6 +2474,126 @@ impl Thread {
                 attempt = 0;
             }
         }
+    }
+
+    /// Computes the retry status for a failed completion, notifies listeners,
+    /// and waits out the backoff delay (or returns early if the turn is
+    /// cancelled while waiting). Returns an error if the completion is not
+    /// retryable or retries are exhausted.
+    async fn retry_completion_error(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: &mut watch::Receiver<bool>,
+        error: LanguageModelCompletionError,
+        attempt: u8,
+        cx: &mut AsyncApp,
+    ) -> Result<ControlFlow<()>> {
+        let retry = this.update(cx, |this, cx| {
+            let user_store = this.user_store.read(cx);
+            this.handle_completion_error(error, attempt, user_store.plan())
+        })??;
+        let timer = cx.background_executor().timer(retry.duration);
+        event_stream.send_retry(retry);
+        futures::select! {
+            _ = timer.fuse() => {}
+            _ = cancellation_rx.changed().fuse() => {
+                if *cancellation_rx.borrow() {
+                    log::debug!("Turn cancelled during retry delay, exiting");
+                    return Ok(ControlFlow::Break(()));
+                }
+            }
+        }
+        Ok(ControlFlow::Continue(()))
+    }
+
+    async fn perform_compaction_if_needed(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        mut cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<ControlFlow<()>> {
+        let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
+            let Some(insertion_ix) = this.compaction_message_target_ix() else {
+                return None;
+            };
+            let model = this.model.clone()?;
+            let request = this.build_compaction_request(insertion_ix, &model, cx);
+            Some((model, request, insertion_ix))
+        })?
+        else {
+            return Ok(ControlFlow::Continue(()));
+        };
+
+        log::debug!("Running compaction");
+        let stream = futures::select! {
+            result = model.stream_completion(request, cx).fuse() => result,
+            _ = cancellation_rx.changed().fuse() => {
+                if *cancellation_rx.borrow() {
+                    log::debug!("Compaction cancelled before request started");
+                    return Ok(ControlFlow::Break(()));
+                }
+                return Ok(ControlFlow::Continue(()));
+            }
+        };
+        let mut stream = stream?;
+
+        let mut summary = String::new();
+        loop {
+            let event = futures::select! {
+                event = stream.next().fuse() => event,
+                _ = cancellation_rx.changed().fuse() => {
+                    if *cancellation_rx.borrow() {
+                        log::debug!("Compaction cancelled while summarizing");
+                        return Ok(ControlFlow::Break(()));
+                    }
+                    continue;
+                }
+            };
+
+            let Some(event) = event else {
+                break;
+            };
+
+            match event? {
+                LanguageModelCompletionEvent::Text(text) => summary.push_str(&text),
+                LanguageModelCompletionEvent::Stop(_)
+                | LanguageModelCompletionEvent::Started
+                | LanguageModelCompletionEvent::Queued { .. }
+                | LanguageModelCompletionEvent::UsageUpdate(_)
+                | LanguageModelCompletionEvent::Thinking { .. }
+                | LanguageModelCompletionEvent::RedactedThinking { .. }
+                | LanguageModelCompletionEvent::ReasoningDetails(_)
+                | LanguageModelCompletionEvent::ToolUse(_)
+                | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+                | LanguageModelCompletionEvent::StartMessage { .. } => {}
+            }
+        }
+
+        if *cancellation_rx.borrow() {
+            log::debug!("Compaction cancelled after summarizing");
+            return Ok(ControlFlow::Break(()));
+        }
+
+        let summary = summary.trim().to_string();
+        if summary.is_empty() {
+            log::warn!("Compaction produced an empty summary");
+            return Err(anyhow::anyhow!("Compaction produced an empty summary"));
+        }
+
+        log::debug!("Compaction succeeded:\n{summary}");
+
+        this.update(cx, |this, cx| {
+            let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
+            if insertion_ix <= this.messages.len() {
+                this.messages.insert(insertion_ix, compaction);
+            } else {
+                this.messages.push(compaction);
+            }
+            event_stream.send_context_compaction();
+            cx.notify();
+        })?;
+
+        Ok(ControlFlow::Continue(()))
     }
 
     fn process_tool_result(
@@ -2605,6 +2893,7 @@ impl Thread {
             event_stream.clone(),
             Some(fs),
             cancellation_rx,
+            self.sandbox_grants.clone(),
         );
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
@@ -3077,14 +3366,35 @@ impl Thread {
             }
         }
 
+        // Terminal variants are configured by users under the canonical
+        // `terminal` name. Expose the one matching the current sandbox state
+        // to the model under that name.
+        let use_sandboxed_terminal = sandboxing_enabled(cx);
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
+                let terminal_variant = matches!(
+                    tool_name.as_ref(),
+                    TerminalTool::NAME | SandboxedTerminalTool::NAME
+                );
+                let profile_tool_name = if terminal_variant {
+                    TerminalTool::NAME
+                } else {
+                    tool_name.as_ref()
+                };
+
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
+                    && profile.is_tool_enabled(profile_tool_name)
                 {
-                    Some((truncate(tool_name), tool.clone()))
+                    match (tool_name.as_ref(), use_sandboxed_terminal) {
+                        (TerminalTool::NAME, false) | (SandboxedTerminalTool::NAME, true) => {
+                            Some((SharedString::from(TerminalTool::NAME), tool.clone()))
+                        }
+                        (TerminalTool::NAME | SandboxedTerminalTool::NAME, _) => None,
+                        _ => Some((truncate(tool_name), tool.clone())),
+                    }
                 } else {
                     None
                 }
@@ -3095,6 +3405,9 @@ impl Thread {
                 | GetCodeActionsTool::NAME
                 | ApplyCodeActionTool::NAME
                 | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+                CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
+                    cx.has_flag::<CreateThreadToolFeatureFlag>()
+                }
                 _ => true,
             })
             .collect::<BTreeMap<_, _>>();
@@ -3211,10 +3524,24 @@ impl Thread {
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> Vec<LanguageModelRequestMessage> {
-        log::trace!(
-            "Building request messages from {} thread messages",
-            self.messages.len()
-        );
+        let mut messages =
+            self.build_request_messages_until(available_tools, self.messages.len(), cx);
+
+        if let Some(message) = self.pending_message.as_ref() {
+            messages.extend(message.to_request());
+        }
+
+        messages
+    }
+
+    fn build_request_messages_until(
+        &self,
+        available_tools: Vec<SharedString>,
+        end_ix: usize,
+        cx: &App,
+    ) -> Vec<LanguageModelRequestMessage> {
+        let end_ix = end_ix.min(self.messages.len());
+        log::trace!("Building request messages from {} thread messages", end_ix);
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let system_prompt = SystemPromptTemplate {
@@ -3234,22 +3561,22 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        self.extend_request_history(&mut messages);
+        self.extend_request_history_until(&mut messages, end_ix);
 
         if let Some(last_message) = messages.last_mut() {
             last_message.cache = true;
         }
 
-        if let Some(message) = self.pending_message.as_ref() {
-            messages.extend(message.to_request());
-        }
-
         messages
     }
 
-    fn extend_request_history(&self, messages: &mut Vec<LanguageModelRequestMessage>) {
-        let Some(compaction_ix) = self.latest_compaction_message_ix() else {
-            for message in &self.messages {
+    fn extend_request_history_until(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        end_ix: usize,
+    ) {
+        let Some(compaction_ix) = self.latest_compaction_message_ix_before(end_ix) else {
+            for message in &self.messages[..end_ix] {
                 messages.extend(message.to_request());
             }
             return;
@@ -3262,15 +3589,97 @@ impl Thread {
             messages.extend(self.retained_user_request_messages_before(compaction_ix));
         }
 
-        for message in &self.messages[compaction_ix..] {
+        for message in &self.messages[compaction_ix..end_ix] {
             messages.extend(message.to_request());
         }
     }
 
-    fn latest_compaction_message_ix(&self) -> Option<usize> {
-        self.messages
+    fn latest_compaction_message_ix_before(&self, end_ix: usize) -> Option<usize> {
+        self.messages[..end_ix]
             .iter()
             .rposition(|message| matches!(&**message, Message::Compaction(_)))
+    }
+
+    fn compaction_message_target_ix(&self) -> Option<usize> {
+        let model = self.model.as_ref()?;
+        // Models with a small context window don't leave enough headroom for a
+        // compaction pass; the UI warns the user about the token limit instead.
+        if model.max_token_count() < MIN_COMPACTION_CONTEXT_WINDOW {
+            return None;
+        }
+        let (usage_ix, usage) = {
+            let this = &self;
+            this.messages
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, message)| {
+                    let Message::User(user_message) = &**message else {
+                        return None;
+                    };
+                    this.request_token_usage
+                        .get(&user_message.id)
+                        .copied()
+                        .map(|usage| (ix, usage))
+                })
+        }?;
+        if self
+            .latest_compaction_message_ix_before(self.messages.len())
+            .is_some_and(|compaction_ix| compaction_ix > usage_ix)
+        {
+            return None;
+        }
+
+        let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
+
+        let remaining_budget = AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR
+            .value
+            .as_ref()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(AGENT_COMPACTION_REMAINING_TOKEN_BUDGET);
+
+        let compaction_threshold = model.max_token_count().saturating_sub(remaining_budget);
+        if active_tokens < compaction_threshold {
+            return None;
+        }
+
+        let insertion_ix = match self.messages.last() {
+            Some(message)
+                if matches!(
+                    &**message,
+                    Message::User(UserMessage { id, .. }) if !self.request_token_usage.contains_key(id)
+                ) =>
+            {
+                self.messages.len().saturating_sub(1)
+            }
+            _ => self.messages.len(),
+        };
+        Some(insertion_ix)
+    }
+
+    fn build_compaction_request(
+        &self,
+        insertion_ix: usize,
+        model: &Arc<dyn LanguageModel>,
+        cx: &App,
+    ) -> LanguageModelRequest {
+        let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.prompt_id.to_string()),
+            intent: Some(CompletionIntent::ThreadContextSummarization),
+            temperature: AgentSettings::temperature_for_model(model, cx),
+            messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
+            ..Default::default()
+        };
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![COMPACTION_PROMPT.into()],
+            cache: false,
+            reasoning_details: None,
+        });
+
+        request
     }
 
     fn retained_user_request_messages_before(
@@ -4043,6 +4452,8 @@ pub struct ToolCallEventStream {
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
     cancellation_rx: watch::Receiver<bool>,
+    /// Shared, thread-scoped sandbox grants (see [`Thread::sandbox_grants`]).
+    sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
 }
 
 impl ToolCallEventStream {
@@ -4062,6 +4473,7 @@ impl ToolCallEventStream {
             ThreadEventStream(events_tx),
             None,
             cancellation_rx,
+            Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         );
 
         (
@@ -4082,12 +4494,14 @@ impl ToolCallEventStream {
         stream: ThreadEventStream,
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
+        sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
     ) -> Self {
         Self {
             tool_use_id,
             stream,
             fs,
             cancellation_rx,
+            sandbox_grants,
         }
     }
 
@@ -4268,6 +4682,222 @@ impl ToolCallEventStream {
         let title = title.into();
         let options = context.build_permission_options();
         self.run_authorization_loop(title, options, Some(context), None, cx)
+    }
+
+    /// Gate a sandbox *escalation* (network access, per-path writes, or full
+    /// filesystem write access) on user approval.
+    ///
+    /// Offers the user three grant lifetimes — "once", "for the rest of this
+    /// thread", and "always". Thread grants live in the shared, in-memory
+    /// [`ThreadSandboxGrants`]. Always grants are persisted in agent settings
+    /// and are also observed while a prompt is pending, matching the
+    /// settings-driven authorization flow for regular tools.
+    pub(crate) fn authorize_sandbox(
+        &self,
+        title: impl Into<String>,
+        request: SandboxRequest,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        if Self::sandbox_request_covered_by_grants(&request, &self.sandbox_grants, cx) {
+            return Task::ready(Ok(()));
+        }
+
+        let title = title.into();
+        let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
+            network: request.network,
+            allow_fs_write_all: request.allow_fs_write_all,
+            unsandboxed: request.unsandboxed,
+            write_paths: request.write_paths.clone(),
+        };
+        let options = acp_thread::PermissionOptions::Flat(vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
+                "Allow for this thread",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
+                "Allow always",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ]);
+
+        let fs = self.fs.clone();
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
+        let sandbox_grants = self.sandbox_grants.clone();
+        cx.spawn(async move |cx| {
+            let (response_tx, mut response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCallUpdate::new(
+                            tool_use_id.to_string(),
+                            acp::ToolCallUpdateFields::new().title(title),
+                        )
+                        .meta(acp_thread::meta_with_sandbox_authorization(
+                            sandbox_authorization_details,
+                        )),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::PermissionGrant,
+                    },
+                )))
+            {
+                log::error!("Failed to send sandbox authorization: {error}");
+                return Err(anyhow!("Failed to send sandbox authorization: {error}"));
+            }
+
+            let (mut settings_tx, mut settings_rx) = watch::channel(());
+            let _settings_subscription = cx.update(|cx| {
+                cx.observe_global::<SettingsStore>(move |_cx| {
+                    settings_tx.send(()).ok();
+                })
+            });
+
+            loop {
+                let settings_changed = async {
+                    if settings_rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                };
+                futures::select_biased! {
+                    outcome = (&mut response_rx).fuse() => {
+                        let outcome = outcome
+                            .map_err(|_| anyhow!("authorization channel closed"))?;
+                        return Self::handle_sandbox_permission_outcome(
+                            &outcome,
+                            &request,
+                            sandbox_grants.clone(),
+                            fs.clone(),
+                            cx,
+                        );
+                    }
+                    _ = settings_changed.fuse() => {
+                        if cx.update(|cx| Self::sandbox_request_covered_by_grants(
+                            &request,
+                            &sandbox_grants,
+                            cx,
+                        )) {
+                            drop(response_rx);
+                            stream.update_tool_call_fields(
+                                &tool_use_id,
+                                acp::ToolCallUpdateFields::new()
+                                    .status(acp::ToolCallStatus::InProgress),
+                                None,
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn sandbox_request_covered_by_grants(
+        request: &SandboxRequest,
+        sandbox_grants: &Rc<RefCell<ThreadSandboxGrants>>,
+        cx: &App,
+    ) -> bool {
+        let settings = AgentSettings::get_global(cx);
+        sandbox_grants
+            .borrow()
+            .covers_with_persistent(request, &settings.sandbox_permissions)
+    }
+
+    fn handle_sandbox_permission_outcome(
+        outcome: &acp_thread::SelectedPermissionOutcome,
+        request: &SandboxRequest,
+        sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+        fs: Option<Arc<dyn Fs>>,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        debug_assert!(
+            outcome.params.is_none(),
+            "unexpected params for sandbox permission"
+        );
+
+        match acp_thread::SandboxPermission::from_id(outcome.option_id.0.as_ref()) {
+            Some(acp_thread::SandboxPermission::AllowOnce) => Ok(()),
+            Some(acp_thread::SandboxPermission::AllowThread) => {
+                sandbox_grants.borrow_mut().record(request);
+                Ok(())
+            }
+            Some(acp_thread::SandboxPermission::AllowAlways) => {
+                sandbox_grants.borrow_mut().record(request);
+                Self::persist_sandbox_always_permission(request, fs, cx);
+                Ok(())
+            }
+            Some(acp_thread::SandboxPermission::Deny) => {
+                Err(anyhow!("Permission to run tool denied by user"))
+            }
+            None => {
+                let other = outcome.option_id.0.as_ref();
+                debug_assert!(false, "unexpected sandbox permission option_id: {other}");
+                Err(anyhow!("Permission to run tool denied by user"))
+            }
+        }
+    }
+
+    fn persist_sandbox_always_permission(
+        request: &SandboxRequest,
+        fs: Option<Arc<dyn Fs>>,
+        cx: &AsyncApp,
+    ) {
+        let Some(fs) = fs else {
+            log::error!(
+                "Cannot persist \"allow always\" sandbox permission: no filesystem available"
+            );
+            return;
+        };
+
+        let request = request.clone();
+        cx.update(|cx| {
+            update_settings_file(fs, cx, move |settings, _| {
+                let agent = settings.agent.get_or_insert_default();
+                if request.network {
+                    agent.allow_sandbox_network();
+                }
+                if request.allow_fs_write_all {
+                    agent.allow_sandbox_fs_write_all();
+                }
+                if request.unsandboxed {
+                    agent.allow_sandbox_unsandboxed();
+                }
+                for path in request.write_paths {
+                    agent.add_sandbox_write_path(path);
+                }
+            });
+        });
+    }
+
+    /// The sandbox permissions to actually enforce for a command: the union
+    /// of this command's `request`, everything granted "for the rest of the
+    /// conversation", and persistent "allow always" sandbox grants.
+    ///
+    /// Callers must apply this to the enforced sandbox policy (rather than
+    /// the raw `request`) so standing grants keep working for later commands
+    /// that write to a previously approved path without re-requesting it.
+    pub(crate) fn effective_sandbox_request(
+        &self,
+        request: &SandboxRequest,
+        persistent: &agent_settings::SandboxPermissions,
+    ) -> SandboxRequest {
+        self.sandbox_grants
+            .borrow()
+            .effective_with_persistent(request, persistent)
     }
 
     /// Prompts the user to choose between an explicit set of actions and
@@ -4819,6 +5449,137 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_compaction_threshold_uses_latest_reported_usage(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "near limit"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 960_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_unavailable_for_small_context_window(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        // A context window below the minimum disables auto-compaction.
+        model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "near limit"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: u64::MAX,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(), None);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_inserts_before_new_user_and_requests_compacted_window(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_user_message_id = UserMessageId::new();
+        let new_user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["handoff".to_string()]);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                thread.request_token_usage.insert(
+                    old_user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 960_000,
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(new_user_message_id, vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let compaction_request = model.pending_completions().pop().unwrap();
+        assert_eq!(
+            compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        let compaction_texts = request_texts_after_system(&compaction_request.messages);
+        assert_eq!(compaction_texts.len(), 3);
+        assert_eq!(compaction_texts[0], "old user");
+        assert_eq!(compaction_texts[1], "old assistant");
+        assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
+
+        model.send_completion_stream_text_chunk(&compaction_request, "compacted old context");
+        model.end_completion_stream(&compaction_request);
+        cx.run_until_parked();
+
+        let final_request = model.pending_completions().pop().unwrap();
+        assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(
+            request_texts_after_system(&final_request.messages),
+            vec![
+                "old user".to_string(),
+                summary_request_text("compacted old context"),
+                "new prompt".to_string(),
+            ]
+        );
+
+        model.send_completion_stream_text_chunk(&final_request, "answer");
+        model.end_completion_stream(&final_request);
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _cx| {
+                assert!(matches!(&*thread.messages[0], Message::User(_)));
+                assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+                assert!(matches!(
+                    &*thread.messages[2],
+                    Message::Compaction(CompactionInfo::Summary(summary)) if summary.as_ref() == "compacted old context"
+                ));
+                assert!(matches!(&*thread.messages[3], Message::User(_)));
+            });
+        });
+    }
+
+    #[gpui::test]
     async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let user_message_id = UserMessageId::new();
@@ -5025,6 +5786,91 @@ mod tests {
         ) -> Task<Result<Self::Output, Self::Output>> {
             Task::ready(Ok(String::new()))
         }
+    }
+
+    #[gpui::test]
+    async fn test_authorize_sandbox_allow_always_records_current_grant(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let request = SandboxRequest {
+            network: false,
+            allow_fs_write_all: false,
+            unsandboxed: false,
+            write_paths: vec![
+                PathBuf::from("/tmp/build"),
+                PathBuf::from("/tmp/cache"),
+                PathBuf::from("/tmp/logs"),
+                PathBuf::from("/tmp/secret"),
+            ],
+        };
+
+        let authorize = cx.update(|cx| {
+            event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
+        });
+        let authorization = receiver.expect_authorization().await;
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+                .expect("sandbox authorization should include request details");
+        assert_eq!(details.network, request.network);
+        assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
+        assert_eq!(details.unsandboxed, request.unsandboxed);
+        assert_eq!(details.write_paths, request.write_paths);
+        assert!(authorization.tool_call.fields.content.is_none());
+
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat sandbox permission options");
+        };
+        let options = options
+            .iter()
+            .map(|option| {
+                (
+                    option.option_id.0.as_ref(),
+                    option.name.as_ref(),
+                    option.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            vec![
+                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow_thread",
+                    "Allow for this thread",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                (
+                    "allow_always",
+                    "Allow always",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+            ]
+        );
+
+        let send_result = authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow_always"),
+                acp::PermissionOptionKind::AllowAlways,
+            ));
+        assert!(send_result.is_ok());
+        authorize.await.unwrap();
+
+        let effective = event_stream.effective_sandbox_request(
+            &SandboxRequest::default(),
+            &agent_settings::SandboxPermissions::default(),
+        );
+        assert_eq!(
+            effective.write_paths,
+            vec![
+                PathBuf::from("/tmp/build"),
+                PathBuf::from("/tmp/cache"),
+                PathBuf::from("/tmp/logs"),
+                PathBuf::from("/tmp/secret"),
+            ]
+        );
     }
 
     #[gpui::test]

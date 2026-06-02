@@ -430,6 +430,10 @@ fn push_notify_event(
         .collect::<Vec<_>>();
 
     if event.need_rescan() {
+        if !watcher_logging_rate_limited() {
+            log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
+        }
+
         path_events.retain(|path_event| path_event.path != watched_root);
         path_events.push(PathEvent {
             path: watched_root.to_path_buf(),
@@ -438,6 +442,28 @@ fn push_notify_event(
     }
     log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
+}
+
+fn watcher_logging_rate_limited() -> bool {
+    static LAST_WARN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
+    let Some((ref mut started, ref mut emitted)) = *LAST_WARN.lock() else {
+        *LAST_WARN.lock() = Some((Instant::now(), 0));
+        return false;
+    };
+
+    if started.elapsed().as_secs() < 1 {
+        if *emitted < 20 {
+            log::warn!("filesystem watcher lost sync for many files, not logging more");
+            return true;
+        } else {
+            *emitted += 1;
+        }
+    } else {
+        *emitted = 0;
+        *started = Instant::now()
+    }
+
+    true
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
