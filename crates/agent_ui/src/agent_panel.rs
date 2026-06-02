@@ -712,9 +712,19 @@ pub fn init(cx: &mut App) {
                                 } else if let Some(terminal_id) = panel.active_terminal_id()
                                     && let Some(agent_terminal) = panel.terminals.get(&terminal_id)
                                 {
+                                    // Mentions resolve against the terminal's cwd: prefer the
+                                    // live cwd, else the spawn directory.
+                                    let working_directory = agent_terminal
+                                        .view
+                                        .read(cx)
+                                        .terminal()
+                                        .read(cx)
+                                        .working_directory()
+                                        .or_else(|| agent_terminal.working_directory.clone());
                                     let text = format_selection_for_terminal(
                                         &selection,
                                         &panel.project,
+                                        working_directory.as_deref(),
                                         cx,
                                     );
                                     if !text.is_empty() {
@@ -739,6 +749,7 @@ pub fn init(cx: &mut App) {
 fn format_selection_for_terminal(
     selection: &AgentContextSelection,
     project: &Entity<Project>,
+    working_directory: Option<&std::path::Path>,
     cx: &App,
 ) -> String {
     match selection {
@@ -754,16 +765,42 @@ fn format_selection_for_terminal(
                 let point_range = range.to_point(&snapshot);
                 let start = point_range.start.row + 1;
                 let end = point_range.end.row + 1;
-                let path = project_path.path.display(path_style);
+                let path = mention_path_for_terminal(
+                    project,
+                    &project_path,
+                    working_directory,
+                    path_style,
+                    cx,
+                );
                 if start == end {
-                    parts.push(format!("@{path}:{start}"));
+                    parts.push(format!("@{path}:{start} "));
                 } else {
-                    parts.push(format!("@{path}:{start}-{end}"));
+                    parts.push(format!("@{path}:{start}-{end} "));
                 }
             }
             parts.join(" ")
         }
         AgentContextSelection::Terminal(texts) => texts.join("\n"),
+    }
+}
+
+/// Formats the path for a terminal `@path` mention, relative to the terminal's
+/// working directory when the selection lives under it, and absolute otherwise.
+fn mention_path_for_terminal(
+    project: &Entity<Project>,
+    project_path: &ProjectPath,
+    working_directory: Option<&std::path::Path>,
+    path_style: util::paths::PathStyle,
+    cx: &App,
+) -> String {
+    let abs_path = project.read(cx).absolute_path(project_path, cx);
+    match (abs_path, working_directory) {
+        (Some(abs_path), Some(working_directory)) => path_style
+            .strip_prefix(&abs_path, working_directory)
+            .map(|relative| relative.display(path_style).into_owned())
+            .unwrap_or_else(|| abs_path.to_string_lossy().into_owned()),
+        (Some(abs_path), None) => abs_path.to_string_lossy().into_owned(),
+        (None, _) => project_path.path.display(path_style).into_owned(),
     }
 }
 
