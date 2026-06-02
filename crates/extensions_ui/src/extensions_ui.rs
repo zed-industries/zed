@@ -389,15 +389,7 @@ impl ExtensionsPage {
 
     fn get_repository_icon(&self, repository_url: &str) -> IconName {
         parse_git_remote_url(Arc::clone(&self.provider_registry), repository_url)
-            .map(|(provider, _)| match provider.name().as_str() {
-                "Bitbucket" => IconName::Bitbucket,
-                "Codeberg" => IconName::Codeberg,
-                "Forgejo Self-Hosted" => IconName::Forgejo,
-                "GitHub" => IconName::Github,
-                "GitLab" => IconName::Gitlab,
-                "Gitea" => IconName::Gitea,
-                _ => IconName::Link,
-            })
+            .map(|(provider, _)| ui::git_hosting_provider_icon(provider.name().as_str()))
             .unwrap_or(IconName::Link)
     }
 
