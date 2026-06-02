@@ -5,14 +5,13 @@ use editor::{Editor, EditorMode, MultiBuffer, SizingBehavior};
 use futures::future::Shared;
 use gpui::{
     App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
-    StatefulInteractiveElement, Task, TextStyleRefinement, prelude::*,
+    StatefulInteractiveElement, Task, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
-use theme_settings::ThemeSettings;
 use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
 use util::ResultExt;
 
@@ -177,7 +176,7 @@ impl Cell {
                 source,
                 ..
             } => {
-                let source = source.join("");
+                let source = source.concat();
 
                 let entity = cx.new(|cx| {
                     MarkdownCell::new(
@@ -199,7 +198,7 @@ impl Cell {
                 source,
                 outputs,
             } => {
-                let text = source.join("");
+                let text = source.concat();
                 let outputs = convert_outputs(outputs, window, cx);
 
                 Cell::Code(cx.new(|cx| {
@@ -224,7 +223,7 @@ impl Cell {
             } => Cell::Raw(cx.new(|_| RawCell {
                 id: id.clone(),
                 metadata: metadata.clone(),
-                source: source.join(""),
+                source: source.concat(),
                 selected: false,
                 cell_position: None,
             })),
@@ -419,17 +418,7 @@ impl MarkdownCell {
                 cx,
             );
 
-            let theme = ThemeSettings::get_global(cx);
-            let refinement = TextStyleRefinement {
-                font_family: Some(theme.buffer_font.family.clone()),
-                font_size: Some(theme.buffer_font_size(cx).into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(gpui::transparent_black()),
-                ..Default::default()
-            };
-
             editor.set_show_gutter(false, cx);
-            editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
             editor.disable_mouse_wheel_zoom();
             editor.disable_scrollbars_and_minimap(window, cx);
@@ -606,10 +595,7 @@ impl Render for MarkdownCell {
 
         // Preview mode - show rendered markdown
 
-        let style = MarkdownStyle {
-            base_text_style: window.text_style(),
-            ..Default::default()
-        };
+        let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
 
         v_flex()
             .size_full()
@@ -710,20 +696,10 @@ impl CodeCell {
                 cx,
             );
 
-            let theme = ThemeSettings::get_global(cx);
-            let refinement = TextStyleRefinement {
-                font_family: Some(theme.buffer_font.family.clone()),
-                font_size: Some(theme.buffer_font_size(cx).into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(gpui::transparent_black()),
-                ..Default::default()
-            };
-
             editor.disable_mouse_wheel_zoom();
             editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
-            editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
             editor
         });

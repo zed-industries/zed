@@ -1,13 +1,13 @@
 mod agent_profile;
+mod user_agents_md;
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
-use agent_client_protocol::schema as acp;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
-use gpui::{App, Pixels, px};
+use gpui::{App, Pixels, SharedString, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
@@ -20,10 +20,12 @@ use settings::{
 };
 
 pub use crate::agent_profile::*;
+pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
     include_str!("prompts/summarize_thread_detailed_prompt.txt");
+pub const COMPACTION_PROMPT: &str = include_str!("prompts/compaction_prompt.txt");
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PanelLayout {
@@ -148,6 +150,7 @@ pub struct AgentSettings {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -168,6 +171,7 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
+    pub sandbox_permissions: SandboxPermissions,
 }
 
 impl AgentSettings {
@@ -204,10 +208,10 @@ impl AgentSettings {
         self.message_editor_min_lines * 2
     }
 
-    pub fn favorite_model_ids(&self) -> HashSet<acp::ModelId> {
+    pub fn favorite_model_ids(&self) -> HashSet<SharedString> {
         self.favorite_models
             .iter()
-            .map(|sel| acp::ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
+            .map(|sel| SharedString::from(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
     }
 }
@@ -331,6 +335,42 @@ impl std::fmt::Display for AgentProfileId {
 impl Default for AgentProfileId {
     fn default() -> Self {
         Self("write".into())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SandboxPermissions {
+    pub allow_network: bool,
+    pub allow_fs_write_all: bool,
+    pub allow_unsandboxed: bool,
+    pub write_paths: Vec<PathBuf>,
+}
+
+impl SandboxPermissions {
+    pub fn covers(
+        &self,
+        network: bool,
+        allow_fs_write_all: bool,
+        unsandboxed: bool,
+        write_paths: &[PathBuf],
+    ) -> bool {
+        if unsandboxed {
+            return self.allow_unsandboxed;
+        }
+        if network && !self.allow_network {
+            return false;
+        }
+        if allow_fs_write_all && !self.allow_fs_write_all {
+            return false;
+        }
+        if self.allow_fs_write_all {
+            return true;
+        }
+        write_paths.iter().all(|requested| {
+            self.write_paths
+                .iter()
+                .any(|granted| requested.starts_with(granted))
+        })
     }
 }
 
@@ -647,6 +687,7 @@ impl Settings for AgentSettings {
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
             commit_message_model: agent.commit_message_model,
+            commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
@@ -672,8 +713,37 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
         }
     }
+}
+
+fn compile_sandbox_permissions(
+    content: Option<settings::SandboxPermissionsContent>,
+) -> SandboxPermissions {
+    let Some(content) = content else {
+        return SandboxPermissions::default();
+    };
+
+    let mut write_paths = Vec::new();
+    for path in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
+        add_sandbox_write_path(&mut write_paths, &path);
+    }
+
+    SandboxPermissions {
+        allow_network: content.allow_network.unwrap_or(false),
+        allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
+        allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        write_paths,
+    }
+}
+
+fn add_sandbox_write_path(write_paths: &mut Vec<PathBuf>, path: &Path) {
+    if write_paths.iter().any(|granted| path.starts_with(granted)) {
+        return;
+    }
+    write_paths.retain(|granted| !granted.starts_with(path));
+    write_paths.push(path.to_path_buf());
 }
 
 fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
@@ -848,6 +918,54 @@ mod tests {
         let permissions = compile_tool_permissions(None);
         assert!(permissions.tools.is_empty());
         assert_eq!(permissions.default, ToolPermissionMode::Confirm);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_empty() {
+        let permissions = compile_sandbox_permissions(None);
+        assert_eq!(permissions, SandboxPermissions::default());
+        assert!(!permissions.covers(true, false, false, &[]));
+        assert!(!permissions.covers(false, true, false, &[]));
+        assert!(!permissions.covers(false, false, true, &[]));
+        assert!(!permissions.covers(false, false, false, &[PathBuf::from("/tmp/build")]));
+    }
+
+    #[test]
+    fn test_sandbox_permissions_parsing_and_pruning() {
+        let json = json!({
+            "allow_network": true,
+            "allow_unsandboxed": true,
+            "write_paths": [
+                "/tmp/build/cache",
+                "/tmp/build",
+                "/var/log"
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert!(permissions.allow_network);
+        assert!(!permissions.allow_fs_write_all);
+        assert!(permissions.allow_unsandboxed);
+        assert_eq!(
+            permissions.write_paths,
+            vec![PathBuf::from("/tmp/build"), PathBuf::from("/var/log")]
+        );
+        assert!(permissions.covers(true, false, true, &[PathBuf::from("/tmp/build/cache")]))
+    }
+
+    #[test]
+    fn test_sandbox_permissions_all_write_covers_paths() {
+        let json = json!({
+            "allow_fs_write_all": true,
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert!(permissions.covers(false, true, false, &[]));
+        assert!(permissions.covers(false, false, false, &[PathBuf::from("/anywhere")]))
     }
 
     #[test]

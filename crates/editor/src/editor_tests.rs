@@ -70,7 +70,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ViewId,
+    ToolbarItemLocation, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -915,6 +915,49 @@ fn test_clone(cx: &mut TestAppContext) {
                 .display_ranges(&e.display_snapshot(cx)))
             .unwrap()
     );
+}
+
+#[gpui::test]
+fn test_toggle_breadcrumb_does_not_change_settings(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().breadcrumbs = Some(true);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("hello", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(
+            editor.breadcrumb_location(cx),
+            ToolbarItemLocation::PrimaryLeft
+        );
+
+        editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(editor.breadcrumb_location(cx), ToolbarItemLocation::Hidden);
+    });
+
+    // Changing unrelated settings should not affect breadcrumbs visibility.
+    update_test_editor_settings(cx, &|settings| {
+        settings.vertical_scroll_margin = Some(4.0);
+    });
+    cx.run_until_parked();
+
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(editor.breadcrumb_location(cx), ToolbarItemLocation::Hidden);
+
+        editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+        assert!(EditorSettings::get_global(cx).toolbar.breadcrumbs);
+        assert_eq!(
+            editor.breadcrumb_location(cx),
+            ToolbarItemLocation::PrimaryLeft
+        );
+    });
 }
 
 #[gpui::test]
@@ -6899,6 +6942,61 @@ async fn test_convert_to_base64(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_manipulate_text_handles_cross_excerpt_edit_that_applies_differently(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let buffer_1 = cx.new(|cx| {
+        let mut buffer = Buffer::local("ab", cx);
+        // The selected multibuffer range starts in this excerpt, but edits to
+        // it are skipped because the underlying buffer is read-only.
+        buffer.set_capability(language::Capability::ReadOnly, cx);
+        buffer
+    });
+    let buffer_2 = cx.new(|cx| Buffer::local("cd", cx));
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_1.clone(),
+            [Point::new(0, 0)..Point::new(0, 2)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_2.clone(),
+            [Point::new(0, 0)..Point::new(0, 2)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    cx.add_window(|window, cx| {
+        let mut editor = build_editor(multibuffer, window, cx);
+        let len = editor.buffer().read(cx).len(cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([MultiBufferOffset(0)..len])
+        });
+
+        // No-op transformations should not be sent through `MultiBuffer::edit`.
+        editor.manipulate_text(window, cx, |text| text.to_string());
+        assert_eq!(buffer_1.read(cx).text(), "ab");
+        assert_eq!(buffer_2.read(cx).text(), "cd");
+
+        // A real replacement can apply differently than requested; selection
+        // remapping should follow the actual edit instead of predicted offsets.
+        editor.manipulate_text(window, cx, |_| "replacement".to_string());
+        assert_eq!(buffer_1.read(cx).text(), "ab");
+        assert_eq!(buffer_2.read(cx).text(), "");
+
+        editor
+    });
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -11735,9 +11833,9 @@ async fn test_fold_function_bodies(cx: &mut TestAppContext) {
             fn b() {
                 c();
             }
-
-      -     // this is another uncommitted comment
       -
+      -     // this is another uncommitted comment
+
             fn d() {
                 // e
                 // f
@@ -20452,6 +20550,130 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
 }
 
 #[gpui::test]
+async fn go_to_diagnostic(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
+
+    // Place the cursor inside the `def` diagnostic (`[12, 15)`) before any
+    // diagnostic is active so we can later confirm that running `editor: go to
+    // diagnostic` will activate this diagnostic instead of advancing to the
+    // next one.
+    cx.set_state(indoc! {"
+        fn func(abc dˇef: i32) -> u32 {
+        }
+    "});
+
+    // Set up the diagnostics:
+    //
+    // * `[11, 12)` (the space before `def`),
+    // * `[12, 15)` (`def`),
+    // * `[25, 28)` (`u32`).
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 12),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 25),
+                                    lsp::Position::new(0, 28),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+
+    executor.run_until_parked();
+
+    // When the cursor is at an inactive diagnostic, cursor should be moved to
+    // the start of that same diagnostic and activate it.
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Manually move the cursor to a different, not yet active diagnostic to
+    // confirm that using `editor: go to diagnostic` will now activate this one.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 26)..Point::new(0, 26)])
+        });
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -22227,7 +22449,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
                         .entries
                         .borrow()
                         .iter()
-                        .map(|mat| mat.string.clone())
+                        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                         .collect::<Vec<String>>(),
                     items
                         .iter()
@@ -22379,7 +22601,10 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
 
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     let entries = menu.entries.borrow();
-    entries.iter().map(|mat| mat.string.clone()).collect()
+    entries
+        .iter()
+        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
+        .collect()
 }
 
 #[gpui::test]
@@ -27955,7 +28180,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
         )
     });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28105,7 +28330,8 @@ async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
-    let project_path = first_editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path =
+        first_editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28173,7 +28399,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         )
     });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28344,7 +28570,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
         )
     });
 
-    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let project_path = editor.update(cx, |editor, cx| editor.active_project_path(cx).unwrap());
     let abs_path = project.read_with(cx, |project, cx| {
         project
             .absolute_path(&project_path, cx)
@@ -28505,9 +28731,9 @@ impl BookmarkTestContext {
     }
 
     fn abs_path(&self) -> Arc<Path> {
-        let project_path = self
-            .editor
-            .read_with(&self.cx, |editor, cx| editor.project_path(cx).unwrap());
+        let project_path = self.editor.read_with(&self.cx, |editor, cx| {
+            editor.active_project_path(cx).unwrap()
+        });
         self.project.read_with(&self.cx, |project, cx| {
             project
                 .absolute_path(&project_path, cx)
@@ -29077,6 +29303,72 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         struct FooRenamedˇ {}
     "});
+}
+
+#[gpui::test]
+async fn test_rename_with_out_of_order_document_highlights(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state(indoc! {"
+        struct Foo {}
+        fn main() {
+            let first = Foo {};
+            let second = Fˇoo {};
+        }
+    "});
+
+    cx.update_editor(|editor, _window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let read_highlight = (Point::new(2, 16)..Point::new(2, 19)).to_anchors(&snapshot);
+        let write_highlight = (Point::new(3, 17)..Point::new(3, 20)).to_anchors(&snapshot);
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
+            &[read_highlight],
+            |_, theme| theme.colors().editor_document_highlight_read_background,
+            cx,
+        );
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightWrite,
+            &[write_highlight],
+            |_, theme| theme.colors().editor_document_highlight_write_background,
+            cx,
+        );
+    });
+
+    let mut prepare_rename_handler = cx
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                    start: lsp::Position {
+                        line: 3,
+                        character: 17,
+                    },
+                    end: lsp::Position {
+                        line: 3,
+                        character: 20,
+                    },
+                })))
+            },
+        );
+    let prepare_rename_task = cx
+        .update_editor(|e, window, cx| e.rename(&Rename, window, cx))
+        .expect("Prepare rename was not started");
+    prepare_rename_handler.next().await.unwrap();
+    prepare_rename_task.await.expect("Prepare rename failed");
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .snapshot(window, cx)
+            .layout_row(DisplayRow(2), &editor.text_layout_details(window, cx));
+    });
 }
 
 #[gpui::test]
@@ -29916,7 +30208,18 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
             &::git::blame::BlameEntry {
                 sha: "1b1b1b".parse().unwrap(),
                 range: 0..1,
-                ..Default::default()
+                original_line_number: 0,
+                author: None,
+                author_mail: None,
+                author_time: None,
+                author_tz: None,
+                committer_name: None,
+                committer_email: None,
+                committer_time: None,
+                committer_tz: None,
+                summary: None,
+                previous: None,
+                filename: String::new(),
             },
             gpui::point(gpui::px(0.), gpui::px(0.)),
             false,
@@ -31298,7 +31601,8 @@ pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorL
             let entries = menu.entries.borrow();
             let entries = entries
                 .iter()
-                .map(|entry| entry.string.as_str())
+                .filter_map(|entry| entry.as_match())
+                .map(|m| m.string.as_str())
                 .collect::<Vec<_>>();
             assert_eq!(entries, expected);
         } else {
@@ -31385,7 +31689,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
                 let entries = context_menu.entries.borrow();
                 entries
                     .iter()
-                    .map(|entry| entry.string.clone())
+                    .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                     .collect_vec()
             }
             _ => vec![],
@@ -34764,6 +35068,42 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         -
         ˇitem
     "});
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings.defaults.tab_size = Some(4.try_into().unwrap());
+    });
+
+    // Case 9: Empty list item unindent works when tab size is larger than list indentation
+    cx.set_state(indoc! {"
+        - item
+          - sub item
+          - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(indoc! {"
+        - item
+          - sub item
+        - ˇ
+    "});
+
+    // Case 10: Empty list item unindent moves to the previous tab stop
+    cx.set_state(
+        indoc! {"
+        $$$$$$- ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state(
+        indoc! {"
+        $$$$- ˇ
+    "}
+        .replace("$", " ")
+        .as_str(),
+    );
 }
 
 #[gpui::test]

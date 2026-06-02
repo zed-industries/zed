@@ -80,6 +80,18 @@ impl GitJobDebugQueue {
         });
     }
 
+    pub fn mark_unfinished_complete(&mut self, status: CompletedJobStatus) {
+        let ids = self
+            .pending
+            .iter()
+            .map(|job| job.id)
+            .chain(self.running.iter().map(|job| job.id))
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.mark_complete(id, status);
+        }
+    }
+
     pub fn mark_complete(&mut self, id: JobId, status: CompletedJobStatus) {
         let (enqueued_at, started_at, description, key) =
             if let Some(index) = self.running.iter().position(|job| job.id == id) {
@@ -113,6 +125,10 @@ impl GitJobDebugQueue {
     }
 
     pub fn to_debug_string(&self) -> String {
+        serde_json::to_string_pretty(&self.to_debug_value()).unwrap_or_default()
+    }
+
+    pub fn to_debug_value(&self) -> serde_json::Value {
         let mut entries = Vec::new();
 
         let mut pending_count = 0u64;
@@ -141,7 +157,7 @@ impl GitJobDebugQueue {
         let json_entries: Vec<serde_json::Value> =
             entries.into_iter().map(|(_, json)| json).collect();
 
-        let json = serde_json::json!({
+        serde_json::json!({
             "summary": {
                 "pending": pending_count,
                 "running": running_count,
@@ -149,9 +165,7 @@ impl GitJobDebugQueue {
                 "skipped": skipped_count,
             },
             "entries": json_entries,
-        });
-
-        serde_json::to_string_pretty(&json).unwrap_or_default()
+        })
     }
 
     fn format_pending(&self, job: &PendingJob) -> serde_json::Value {

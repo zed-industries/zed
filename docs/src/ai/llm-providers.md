@@ -23,6 +23,7 @@ Zed supports these providers with your own API keys:
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
+- [ChatGPT Subscription](#chatgpt-subscription)
 - [DeepSeek](#deepseek)
 - [GitHub Copilot Chat](#github-copilot-chat)
 - [Google AI](#google-ai)
@@ -35,6 +36,27 @@ Zed supports these providers with your own API keys:
 - [OpenRouter](#openrouter)
 - [Vercel AI Gateway](#vercel-ai-gateway)
 - [xAI](#xai)
+
+### Custom Headers {#custom-headers}
+
+You can attach extra HTTP headers to every request Zed makes to supported HTTP-based providers. This is useful in corporate environments, or for observability tooling.
+
+Configure them via the `language_models.<provider>.custom_headers` settings key:
+
+```json [settings]
+{
+  "language_models": {
+    "openai": {
+      "custom_headers": {
+        "Fancy-Auth": "Bearer <your-fancy-key>",
+        "X-My-Tag": "zed"
+      }
+    }
+  }
+}
+```
+
+`custom_headers` is supported by Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI API Compatible providers, OpenCode, OpenRouter, Vercel AI Gateway, and xAI. Headers managed by Zed for each provider, such as `Authorization`, `Content-Type`, `Accept`, and provider-specific authentication headers, are ignored with a warning if you try to override them.
 
 ### Amazon Bedrock {#amazon-bedrock}
 
@@ -224,6 +246,18 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
   }
 }
 ```
+
+### ChatGPT Subscription {#chatgpt-subscription}
+
+Use your existing ChatGPT Plus or Pro subscription to access OpenAI models directly in Zed — no separate API key required.
+
+1. Open the settings view ({#action agent::OpenSettings}) and go to the ChatGPT Subscription section
+2. Click **Sign in** and complete the OpenAI authentication in your browser
+3. Once signed in, models appear in the model dropdown, including GPT-5.5 and GPT-5.3 Codex
+
+To sign out, click **Sign Out** in the ChatGPT Subscription settings.
+
+> **Note:** Model availability depends on your ChatGPT subscription tier. Some models may require ChatGPT Pro.
 
 ### DeepSeek {#deepseek}
 
@@ -502,7 +536,7 @@ One such service is [Ollama Turbo](https://ollama.com/turbo). To configure Zed t
 4. Paste your API key and press enter.
 5. For the API URL enter `https://ollama.com`
 
-Zed will also use the `OLLAMA_API_KEY` environment variables if defined.
+Zed will also use the `OLLAMA_API_KEY` environment variable if defined.
 
 ### OpenAI {#openai}
 
@@ -642,6 +676,8 @@ By default, models from all subscription types are shown. Optionally, you can hi
   }
 }
 ```
+
+**Note:** Zed only bundles configuration for long-term OpenCode Free models! Free models that are only available for a limited time are not included in Zed. To use such models, create a Custom Model using the configuration settings published on [the OpenCode website](https://opencode.ai/docs/zen#pricing) and on [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
 
 #### Custom Models {#opencode-custom-models}
 

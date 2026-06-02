@@ -5,10 +5,11 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use chardetng::EncodingDetector;
 use clock::ReplicaId;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use fs::{
-    Fs, MTime, PathEvent, RemoveOptions, TrashedEntry, Watcher, copy_recursive, read_dir_items,
+    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashedEntry, Watcher, copy_recursive,
+    read_dir_items,
 };
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -256,6 +257,10 @@ pub struct LocalSnapshot {
     /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
+    /// Maps canonical absolute paths of externally watched symlinked directories
+    /// to their relative paths within the worktree, used to translate FSEvents
+    /// canonical-path events back to worktree-relative paths.
+    external_canonical_to_relative: BTreeMap<Arc<Path>, Arc<RelPath>>,
 }
 
 struct BackgroundScannerState {
@@ -429,6 +434,7 @@ impl Worktree {
                 global_gitignore: Default::default(),
                 repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
+                external_canonical_to_relative: Default::default(),
                 snapshot: Snapshot::new(
                     worktree_id,
                     abs_path
@@ -2986,22 +2992,6 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
-    fn should_scan_directory(&self, entry: &Entry) -> bool {
-        (self.scanning_enabled && !entry.is_external && (!entry.is_ignored || entry.is_always_included))
-            || entry.path.file_name() == Some(DOT_GIT)
-            || entry.path.file_name() == Some(local_settings_folder_name())
-            || entry.path.file_name() == Some(local_vscode_folder_name())
-            || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
-            || self
-                .paths_to_scan
-                .iter()
-                .any(|p| p.starts_with(&entry.path))
-            || self
-                .path_prefixes_to_scan
-                .iter()
-                .any(|p| entry.path.starts_with(p))
-    }
-
     async fn enqueue_scan_dir(
         &self,
         abs_path: Arc<Path>,
@@ -3218,6 +3208,17 @@ impl BackgroundScannerState {
             watcher.remove(&removed_dir_abs_path).log_err();
         }
 
+        self.snapshot
+            .external_canonical_to_relative
+            .retain(|canonical, relative| {
+                if relative.starts_with(path) {
+                    watcher.remove(canonical.as_ref()).log_err();
+                    false
+                } else {
+                    true
+                }
+            });
+
         #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
     }
@@ -3339,12 +3340,16 @@ async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
+    build_gitignore_with_root(abs_path, parent, fs).await
+}
+
+async fn build_gitignore_with_root(abs_path: &Path, root: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let contents = fs
         .load(abs_path)
         .await
         .with_context(|| format!("failed to load gitignore file at {}", abs_path.display()))?;
-    let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
-    let mut builder = GitignoreBuilder::new(parent);
+    let mut builder = GitignoreBuilder::new(root);
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
     }
@@ -4374,6 +4379,8 @@ impl BackgroundScanner {
             events = Self::normalized_events_for_worktree(&state, &root_canonical_path, events);
         }
 
+        log::debug!("raw events for process_events: {events:?}");
+
         fn skip_ix(ranges: &mut SmallVec<[Range<usize>; 4]>, ix: usize) {
             if let Some(last_range) = ranges.last_mut()
                 && last_range.end == ix
@@ -4388,7 +4395,7 @@ impl BackgroundScanner {
         //
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
-        let skipped_files_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
+        let skipped_file_names_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
         let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
 
         let mut dot_git_abs_paths = Vec::new();
@@ -4418,22 +4425,36 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    let skip = skipped_files_in_dot_git.iter().any(|skipped| {
-                        OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
+                    let is_ignored = skipped_file_names_in_dot_git.iter().any(|skipped| {
+                        path_in_git_dir
+                            .file_name()
+                            .is_some_and(|file_name| file_name == OsStr::new(skipped))
                     }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
-                        || path_in_git_dir == Path::new("")
-                            && self.fs.is_dir(&dot_git_abs_path).await;
-                    if skip {
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir));
+                    let is_dot_git = path_in_git_dir == Path::new("")
+                        && matches!(event.kind, Some(PathEventKind::Changed))
+                        && self.fs.is_dir(&dot_git_abs_path).await;
+                    if is_ignored {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;
                     }
+                    if is_dot_git {
+                        log::debug!(
+                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
+                            event.kind
+                        );
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
+                    }
 
                     if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                        log::debug!(
+                            "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
+                        );
                         dot_git_abs_paths.push(dot_git_abs_path);
                     }
                 }
@@ -4487,6 +4508,24 @@ impl BackgroundScanner {
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
+                } else if let Some(path) = snapshot.external_canonical_to_relative.iter().find_map(
+                    |(canonical, relative)| {
+                        abs_path
+                            .as_path()
+                            .strip_prefix(canonical.as_ref())
+                            .ok()
+                            .and_then(|suffix| {
+                                RelPath::new(suffix, PathStyle::local())
+                                    .ok()
+                                    .map(|suffix_rel| {
+                                        std::borrow::Cow::Owned(
+                                            relative.join(&suffix_rel).to_rel_path_buf(),
+                                        )
+                                    })
+                            })
+                    },
+                ) {
+                    path
                 } else {
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
@@ -4514,7 +4553,7 @@ impl BackgroundScanner {
                         .is_some_and(|entry| entry.kind == EntryKind::Dir)
                 });
                 if !parent_dir_is_loaded {
-                    log::debug!("ignoring event {relative_path:?} within unloaded directory");
+                    log::debug!("filtering event {relative_path:?} within unloaded directory");
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
                 }
@@ -4555,13 +4594,15 @@ impl BackgroundScanner {
         self.state.lock().await.snapshot.scan_id += 1;
 
         let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
-        log::debug!(
-            "received fs events {:?}",
-            relative_paths
-                .iter()
-                .map(|event_root| &event_root.path)
-                .collect::<Vec<_>>()
-        );
+        if !relative_paths.is_empty() {
+            log::debug!(
+                "will update project paths {:?}",
+                relative_paths
+                    .iter()
+                    .map(|event_root| &event_root.path)
+                    .collect::<Vec<_>>()
+            );
+        }
         self.reload_entries_for_paths(
             &root_path,
             &root_canonical_path,
@@ -4979,13 +5020,12 @@ impl BackgroundScanner {
         }
 
         let mut state = self.state.lock().await;
-
         // Identify any subdirectories that should not be scanned.
         let mut job_ix = 0;
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(entry) {
+                if self.should_scan_directory(&state, entry) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -5002,17 +5042,49 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
+        // For external entries, watch the canonical (resolved) path so OS-level
+        // FS events on the real filesystem location are observed. The same
+        // canonical path is stored in both `external_canonical_to_relative`
+        // (for translating canonical-path FS events back to worktree-relative
+        // paths) and `watched_dir_abs_paths_by_entry_id` (used by `remove_path`
+        // to know which abs path to unwatch), so both cleanup paths agree on
+        // the path the watcher was actually registered on.
+        //
+        // `canonicalize` is an async filesystem operation that may suspend, so
+        // the lock must not be held across the await point below.
+        drop(state);
+        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
+            self.fs
+                .canonicalize(job.abs_path.as_ref())
+                .await
+                .ok()
+                .map(|canonical| {
+                    let canonical: Arc<Path> = canonical.into();
+                    self.watcher.add(&canonical).log_err();
+                    canonical
+                })
+        } else {
+            self.watcher.add(job.abs_path.as_ref()).log_err();
+            Some(job.abs_path.clone())
+        };
 
-        self.watcher.add(job.abs_path.as_ref()).log_err();
-
-        let entry_id = state
-            .snapshot
-            .entry_for_path(&job.path)
-            .map(|entry| entry.id);
-        if let Some(entry_id) = entry_id {
-            state
-                .watched_dir_abs_paths_by_entry_id
-                .insert(entry_id, job.abs_path.clone());
+        let mut state = self.state.lock().await;
+        if let Some(watched_abs_path) = &watched_abs_path {
+            if job.is_external {
+                state
+                    .snapshot
+                    .external_canonical_to_relative
+                    .insert(watched_abs_path.clone(), job.path.clone());
+            }
+            if let Some(entry_id) = state
+                .snapshot
+                .entry_for_path(&job.path)
+                .map(|entry| entry.id)
+            {
+                state
+                    .watched_dir_abs_paths_by_entry_id
+                    .insert(entry_id, watched_abs_path.clone());
+            }
         }
 
         for new_job in new_jobs.into_iter().flatten() {
@@ -5115,7 +5187,7 @@ impl BackgroundScanner {
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
-                        if state.should_scan_directory(&fs_entry)
+                        if self.should_scan_directory(&state, &fs_entry)
                             || (self.track_git_repositories
                                 && fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
@@ -5310,7 +5382,9 @@ impl BackgroundScanner {
         // Load gitignores asynchronously (outside the lock)
         let mut loaded_excludes: Vec<(Arc<Path>, Arc<Gitignore>)> = Vec::new();
         for (work_dir_abs_path, exclude_abs_path) in excludes_to_load {
-            if let Ok(current_exclude) = build_gitignore(&exclude_abs_path, self.fs.as_ref()).await
+            if let Ok(current_exclude) =
+                build_gitignore_with_root(&exclude_abs_path, &work_dir_abs_path, self.fs.as_ref())
+                    .await
             {
                 loaded_excludes.push((work_dir_abs_path, Arc::new(current_exclude)));
             }
@@ -5407,7 +5481,7 @@ impl BackgroundScanner {
                 // Scan any directories that were previously ignored and weren't previously scanned.
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock().await;
-                    if state.should_scan_directory(&entry) {
+                    if self.should_scan_directory(&state, &entry) {
                         state
                             .enqueue_scan_dir(
                                 abs_path.clone(),
@@ -5471,6 +5545,7 @@ impl BackgroundScanner {
                         if SanitizedPath::new(repo.common_dir_abs_path.as_ref()) == dot_git_dir
                             || SanitizedPath::new(repo.repository_dir_abs_path.as_ref())
                                 == dot_git_dir
+                            || SanitizedPath::new(repo.dot_git_abs_path.as_ref()) == dot_git_dir
                         {
                             Some(repo.clone())
                         } else {
@@ -5526,10 +5601,7 @@ impl BackgroundScanner {
                     });
 
             if exists_in_snapshot
-                || matches!(
-                    self.fs.metadata(&entry.common_dir_abs_path).await,
-                    Ok(Some(_))
-                )
+                || matches!(self.fs.metadata(&entry.dot_git_abs_path).await, Ok(Some(_)))
             {
                 ids_to_preserve.insert(work_directory_id);
             }
@@ -5566,6 +5638,27 @@ impl BackgroundScanner {
 
     fn is_path_private(&self, path: &RelPath) -> bool {
         !self.share_private_files && self.settings.is_path_private(path)
+    }
+
+    fn should_scan_directory(&self, state: &BackgroundScannerState, entry: &Entry) -> bool {
+        let scannable = state.scanning_enabled
+            && (!entry.is_external
+                || self.settings.scan_symlinks == settings::ScanSymlinksSetting::Always)
+            && (!entry.is_ignored || entry.is_always_included);
+
+        scannable
+            || entry.path.file_name() == Some(DOT_GIT)
+            || entry.path.file_name() == Some(local_settings_folder_name())
+            || entry.path.file_name() == Some(local_vscode_folder_name())
+            || state.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
+            || state
+                .paths_to_scan
+                .iter()
+                .any(|p| p.starts_with(&entry.path))
+            || state
+                .path_prefixes_to_scan
+                .iter()
+                .any(|p| entry.path.starts_with(p))
     }
 
     async fn next_scan_request(&self) -> Result<ScanRequest> {
@@ -5622,7 +5715,9 @@ async fn discover_ancestor_git_repo(
             let (_, common_dir_abs_path) = discover_git_paths(&dot_git_abs_path, fs.as_ref()).await;
 
             let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
-            if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
+            if let Ok(repo_exclude) =
+                build_gitignore_with_root(&repo_exclude_abs_path, ancestor, fs.as_ref()).await
+            {
                 exclude = Some(Arc::new(repo_exclude));
             }
 

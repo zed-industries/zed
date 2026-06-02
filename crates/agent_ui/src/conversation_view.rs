@@ -24,36 +24,35 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TaskExt, TextStyle,
-    WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
-    list, point, pulsating_between,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
+    TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
+    linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
-use language::Buffer;
+use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
-use parking_lot::RwLock;
-use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
-use prompt_store::{PromptId, PromptStore};
+use parking_lot::{Mutex, RwLock};
+use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
 
 use crate::message_editor::SessionCapabilities;
-use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
+use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
+use lru::LruCache;
 use rope::Point;
-use settings::{
-    NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
-};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use std::{rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme_settings::{AgentBufferFontSize, AgentUiFontSize};
@@ -63,14 +62,18 @@ use ui::{
     KeyBinding, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, WithScrollbar, prelude::*,
     right_click_menu,
 };
-use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use util::{debug_panic, defer};
-use workspace::PathList;
+use util::{
+    ResultExt, debug_panic, defer,
+    paths::{PathStyle, PathWithPosition},
+    rel_path::RelPath,
+    size::format_file_size,
+    time::duration_alt_display,
+};
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
+    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Toast, Workspace,
+    path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
-use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
@@ -80,7 +83,7 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
-use crate::completion_provider::AgentContextSelection;
+use crate::completion_provider::{AgentContextSelection, AvailableSkill};
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{InputAttempt, MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
@@ -351,6 +354,33 @@ impl Conversation {
             .collect()
     }
 
+    /// Returns the first pending tool call request for exactly `session_id`.
+    /// Unlike `pending_tool_call`, this does not use the global FIFO pending
+    /// request for non-subagent sessions.
+    pub fn pending_tool_call_for_session(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> Option<acp::ToolCallId> {
+        let thread = self.threads.get(session_id)?;
+        let tool_call_id = self.permission_requests.get(session_id)?.iter().next()?;
+        let (_, tool_call) = thread.read(cx).tool_call(tool_call_id)?;
+        if !matches!(
+            tool_call.status,
+            ToolCallStatus::WaitingForConfirmation { .. }
+        ) {
+            return None;
+        }
+        Some(tool_call_id.clone())
+    }
+
+    pub fn pending_tool_call_count_for_session(&self, session_id: &acp::SessionId) -> usize {
+        self.permission_requests
+            .get(session_id)
+            .map(|tool_call_ids| tool_call_ids.len())
+            .unwrap_or(0)
+    }
+
     pub fn authorize_pending_tool_call(
         &mut self,
         session_id: &acp::SessionId,
@@ -359,7 +389,7 @@ impl Conversation {
     ) -> Option<()> {
         let (authorize_session_id, tool_call_id, options) =
             self.pending_tool_call(session_id, cx)?;
-        let option = options.first_option_of_kind(kind)?;
+        let option = permission_option_for_action(options, kind)?;
         self.authorize_tool_call(
             authorize_session_id,
             tool_call_id,
@@ -422,6 +452,22 @@ impl Conversation {
 pub(crate) struct RootThreadUpdated;
 
 impl EventEmitter<RootThreadUpdated> for ConversationView {}
+
+fn permission_option_for_action(
+    options: &PermissionOptions,
+    kind: acp::PermissionOptionKind,
+) -> Option<&acp::PermissionOption> {
+    if kind == acp::PermissionOptionKind::AllowAlways
+        && let PermissionOptions::Flat(options) = options
+        && let Some(option) = options
+            .iter()
+            .find(|option| option.option_id.0.as_ref() == "allow_always")
+    {
+        return Some(option);
+    }
+
+    options.first_option_of_kind(kind)
+}
 
 fn resolve_outcome_from_selection(
     options: &PermissionOptions,
@@ -499,7 +545,6 @@ pub struct ConversationView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    prompt_store: Option<Entity<PromptStore>>,
     pub(crate) thread_id: ThreadId,
     pub(crate) root_session_id: Option<acp::SessionId>,
     server_state: ServerState,
@@ -507,10 +552,14 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    loading_status: Option<SharedString>,
     /// When settings change, use this to see if the theme has changed (which
     /// causes mermaid diagrams to re-render).
     last_theme_id: Option<String>,
     draft_prompt_persist_task: Option<Task<()>>,
+    /// Cache + worktree snapshot for resolving paths in markdown code spans.
+    /// Shared with the child [`ThreadView`] when one is constructed.
+    pub(crate) code_span_resolver: AgentCodeSpanResolver,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -518,6 +567,12 @@ impl ConversationView {
     pub fn has_auth_methods(&self) -> bool {
         self.as_connected().map_or(false, |connected| {
             !connected.connection.auth_methods().is_empty()
+        })
+    }
+
+    pub fn supports_logout(&self) -> bool {
+        self.as_connected().is_some_and(|connected| {
+            connected.auth_state.is_ok() && connected.connection.supports_logout()
         })
     }
 
@@ -697,13 +752,13 @@ impl ConversationView {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
-        source: &'static str,
+        source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let agent_server_store = project.read(cx).agent_server_store().clone();
-        let subscriptions = vec![
+        let code_span_resolver = AgentCodeSpanResolver::new(&project.downgrade(), cx);
+        let mut subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<SettingsStore>(window, Self::invalidate_mermaid_caches),
             cx.observe_global_in::<AgentUiFontSize>(window, Self::agent_ui_font_size_changed),
@@ -714,6 +769,20 @@ impl ConversationView {
                 Self::handle_agent_servers_updated,
             ),
         ];
+        subscriptions.push(cx.subscribe(&project, {
+            let resolver = code_span_resolver.clone();
+            move |_this: &mut Self, _project, event: &project::Event, cx| {
+                if matches!(
+                    event,
+                    project::Event::WorktreeAdded(_)
+                        | project::Event::WorktreeRemoved(_)
+                        | project::Event::WorktreeUpdatedEntries(_, _)
+                ) {
+                    resolver.clear_cache();
+                    cx.notify();
+                }
+            }
+        }));
 
         cx.on_release(|this, cx| {
             if let Some(connected) = this.as_connected() {
@@ -739,7 +808,6 @@ impl ConversationView {
             workspace,
             project: project.clone(),
             thread_store,
-            prompt_store,
             thread_id,
             root_session_id: resume_session_id.clone(),
             server_state: Self::initial_state(
@@ -758,8 +826,10 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            loading_status: None,
             last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
+            code_span_resolver,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -803,6 +873,8 @@ impl ConversationView {
                 (session_id, work_dirs, title)
             });
 
+        self.loading_status = None;
+
         let state = Self::initial_state(
             self.agent.clone(),
             self.connection_store.clone(),
@@ -812,7 +884,7 @@ impl ConversationView {
             title,
             self.project.clone(),
             None,
-            "agent_panel",
+            AgentThreadSource::AgentPanel,
             window,
             cx,
         );
@@ -837,7 +909,7 @@ impl ConversationView {
         title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
-        source: &'static str,
+        source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -866,14 +938,15 @@ impl ConversationView {
                         });
                     }
                 }
+                AgentConnectionEntryEvent::LoadingStatusChanged(status) => {
+                    this.loading_status = status.clone();
+                    cx.notify();
+                }
             });
 
         let connect_result = connection_entry.read(cx).wait_for_connection();
 
-        let side = match AgentSettings::get_global(cx).sidebar_side() {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
+        let side = crate::agent_sidebar_side(cx);
         let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -892,7 +965,7 @@ impl ConversationView {
             telemetry::event!(
                 "Agent Thread Started",
                 agent = connection.telemetry_id(),
-                source = source,
+                source = source.as_str(),
                 side = side,
                 thread_location = thread_location
             );
@@ -1030,9 +1103,17 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
         let agent_id = self.agent.agent_id();
+        let connection = thread.read(cx).connection().clone();
+        let session_id = thread.read(cx).session_id().clone();
+        let available_skills = connection
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+            .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
+            .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             thread.read(cx).prompt_capabilities(),
             thread.read(cx).available_commands().to_vec(),
+            available_skills,
         )));
 
         let action_log = thread.read(cx).action_log().clone();
@@ -1042,7 +1123,6 @@ impl ConversationView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                self.prompt_store.clone(),
                 session_capabilities.clone(),
                 self.agent.agent_id(),
             )
@@ -1092,16 +1172,12 @@ impl ConversationView {
             model_selector = None;
             mode_selector = None;
         } else {
-            // Fall back to legacy mode/model selectors
+            // Fall back to dedicated mode/model selectors
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
-                let agent_server = self.agent.clone();
-                let fs = self.project.read(cx).fs().clone();
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
                         selector,
-                        agent_server,
-                        fs,
                         PopoverMenuHandle::default(),
                         self.focus_handle(cx),
                         window,
@@ -1209,8 +1285,8 @@ impl ConversationView {
                 session_capabilities,
                 resumed_without_history,
                 self.project.downgrade(),
+                self.code_span_resolver.clone(),
                 self.thread_store.clone(),
-                self.prompt_store.clone(),
                 initial_content,
                 subscriptions,
                 window,
@@ -1354,7 +1430,10 @@ impl ConversationView {
                 .active_view()
                 .and_then(|v| v.read(cx).thread.read(cx).title())
                 .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into()),
-            ServerState::Loading { .. } => "Loading…".into(),
+            ServerState::Loading { .. } => self
+                .loading_status
+                .clone()
+                .unwrap_or_else(|| "Loading…".into()),
             ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => {
                     format!("Upgrade {}", self.agent.agent_id()).into()
@@ -1658,7 +1737,17 @@ impl ConversationView {
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 if let Some(thread_view) = self.thread_view(&session_id) {
-                    let has_commands = !available_commands.is_empty();
+                    let available_skills = thread
+                        .read(cx)
+                        .connection()
+                        .clone()
+                        .downcast::<agent::NativeAgentConnection>()
+                        .map(|native_connection| {
+                            native_available_skills(&native_connection, &session_id, cx)
+                        })
+                        .unwrap_or_default();
+                    let has_slash_completions =
+                        !available_commands.is_empty() || !available_skills.is_empty();
 
                     let agent_display_name = self
                         .agent_server_store
@@ -1667,13 +1756,12 @@ impl ConversationView {
                         .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
 
                     let new_placeholder =
-                        placeholder_text(agent_display_name.as_ref(), has_commands);
+                        placeholder_text(agent_display_name.as_ref(), has_slash_completions);
 
                     thread_view.update(cx, |thread_view, cx| {
-                        thread_view
-                            .session_capabilities
-                            .write()
-                            .set_available_commands(available_commands.clone());
+                        let mut session_capabilities = thread_view.session_capabilities.write();
+                        session_capabilities.set_available_commands(available_commands.clone());
+                        session_capabilities.set_available_skills(available_skills);
                         thread_view.message_editor.update(cx, |editor, cx| {
                             editor.set_placeholder_text(&new_placeholder, window, cx);
                         });
@@ -2420,7 +2508,6 @@ impl ConversationView {
                     workspace.clone(),
                     project.clone(),
                     None,
-                    None,
                     session_capabilities.clone(),
                     agent_name.clone(),
                     "",
@@ -2493,7 +2580,7 @@ impl ConversationView {
             markdown,
             style,
             &self.workspace,
-            &self.project.downgrade(),
+            &self.code_span_resolver,
             cx,
         )
     }
@@ -2515,18 +2602,24 @@ impl ConversationView {
             return false;
         };
 
-        multi_workspace.read(cx).sidebar_open()
-            || multi_workspace.read(cx).workspace() == &workspace
-                && AgentPanel::is_visible(&workspace, cx)
-                && multi_workspace
-                    .read(cx)
-                    .workspace()
-                    .read(cx)
-                    .panel::<AgentPanel>(cx)
-                    .map_or(false, |p| {
-                        p.read(cx).active_conversation_view().map(|c| c.entity_id())
-                            == Some(cx.entity_id())
-                    })
+        let multi_workspace = multi_workspace.read(cx);
+        multi_workspace.sidebar_open() && multi_workspace.is_threads_list_view_active(cx)
+            || multi_workspace.workspace() == &workspace
+                && self.is_visible_in_agent_panel(&workspace, cx)
+    }
+
+    fn is_visible_in_agent_panel(&self, workspace: &Entity<Workspace>, cx: &Context<Self>) -> bool {
+        AgentPanel::is_visible(workspace, cx)
+            && workspace
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .is_some_and(|panel| {
+                    panel
+                        .read(cx)
+                        .visible_conversation_view()
+                        .map(|conversation_view| conversation_view.entity_id())
+                        == Some(cx.entity_id())
+                })
     }
 
     fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
@@ -2539,7 +2632,7 @@ impl ConversationView {
         } else {
             self.workspace
                 .upgrade()
-                .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+                .is_some_and(|workspace| self.is_visible_in_agent_panel(&workspace, cx))
         }
     }
 
@@ -2551,7 +2644,7 @@ impl ConversationView {
             } else {
                 self.workspace
                     .upgrade()
-                    .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+                    .is_some_and(|workspace| self.is_visible_in_agent_panel(&workspace, cx))
             };
         let settings = AgentSettings::get_global(cx);
         if settings.play_sound_when_agent_done.should_play(visible) {
@@ -2701,7 +2794,7 @@ impl ConversationView {
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
-                                                            "agent_panel",
+                                                            AgentThreadSource::AgentPanel,
                                                             window,
                                                             cx,
                                                         );
@@ -2775,6 +2868,7 @@ impl ConversationView {
                             dismiss_if_visible(this, window, cx);
                         }
                         AgentPanelEvent::EntryChanged
+                        | AgentPanelEvent::TerminalClosed { .. }
                         | AgentPanelEvent::ThreadInteracted { .. } => {}
                     },
                 ));
@@ -2898,6 +2992,54 @@ impl ConversationView {
             Self::handle_auth_required(this, AuthRequired::new(), agent_id, connection, window, cx);
         })
     }
+
+    pub(crate) fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.supports_logout() {
+            return;
+        }
+
+        if let Some(active) = self.root_thread_view() {
+            active.update(cx, |active, cx| active.clear_thread_error(cx));
+        }
+        let Some(connection) = self
+            .as_connected()
+            .map(|connected| connected.connection.clone())
+        else {
+            return;
+        };
+        let logout = connection.logout(cx);
+        self.auth_task = Some(cx.spawn_in(window, {
+            async move |this, cx| {
+                let result = logout.await;
+                this.update_in(cx, |this, window, cx| {
+                    if let Err(err) = result {
+                        if let Some(active) = this.root_thread_view() {
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
+                        }
+                    } else if let Some(connected) = this.as_connected_mut() {
+                        connected.auth_state = AuthState::Unauthenticated {
+                            description: None,
+                            configuration_view: None,
+                            pending_auth_method: None,
+                            _subscription: None,
+                        };
+                        if let Some(view) = connected.active_view()
+                            && view
+                                .read(cx)
+                                .message_editor
+                                .focus_handle(cx)
+                                .is_focused(window)
+                        {
+                            this.focus_handle.focus(window, cx)
+                        }
+                        cx.notify();
+                    }
+                    drop(this.auth_task.take());
+                })
+                .ok();
+            }
+        }));
+    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -2908,9 +3050,29 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
         .into_any_element()
 }
 
+fn native_available_skills(
+    native_connection: &agent::NativeAgentConnection,
+    session_id: &acp::SessionId,
+    cx: &App,
+) -> Vec<AvailableSkill> {
+    native_connection
+        .available_skills(session_id, cx)
+        .into_iter()
+        .map(|skill| AvailableSkill {
+            name: skill.name.into(),
+            description: skill.description.into(),
+            source: skill.source,
+            skill_file_path: skill.skill_file_path,
+        })
+        .collect()
+}
+
 fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
     if agent_name == agent::ZED_AGENT_ID.as_ref() {
-        format!("Message the {} — @ to include context", agent_name)
+        format!(
+            "Message the {}, @ to include context, / for commands",
+            agent_name
+        )
     } else if has_commands {
         format!(
             "Message {} — @ to include context, / for commands",
@@ -2964,21 +3126,27 @@ impl Render for ConversationView {
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(match &self.server_state {
-                ServerState::Loading { .. } => v_flex()
-                    .flex_1()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        Label::new("Loading…").color(Color::Muted).with_animation(
-                            "loading-agent-label",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.3, 0.7)),
-                            |label, delta| label.alpha(delta),
-                        ),
-                    )
-                    .into_any(),
+                ServerState::Loading { .. } => {
+                    let label_text = self
+                        .loading_status
+                        .clone()
+                        .unwrap_or_else(|| "Loading…".into());
+                    v_flex()
+                        .flex_1()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Label::new(label_text).color(Color::Muted).with_animation(
+                                "loading-agent-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.3, 0.7)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                        )
+                        .into_any()
+                }
                 ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
                     .size_full()
@@ -3025,25 +3193,191 @@ fn render_agent_markdown(
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     workspace: &WeakEntity<Workspace>,
-    project: &WeakEntity<Project>,
+    code_span_resolver: &AgentCodeSpanResolver,
     cx: &App,
 ) -> MarkdownElement {
     let workspace = workspace.clone();
-    let worktree_roots: Vec<PathBuf> = project
-        .upgrade()
-        .map(|project| {
-            project
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect()
-        })
-        .unwrap_or_default();
+    let worktree_roots = code_span_resolver.worktree_roots(cx);
+    let resolver = code_span_resolver.clone();
     MarkdownElement::new(markdown, style)
+        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+            copy_button_visibility: markdown::CopyButtonVisibility::VisibleOnHover,
+            wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
+            border: false,
+        })
         .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
         })
+        .on_code_span_link(move |text, cx| resolver.try_resolve(text, cx))
+}
+
+/// Shared, cloneable handle for resolving inline markdown code spans like
+/// `` `src/main.rs:42` `` to clickable workspace file links.
+#[derive(Clone)]
+pub(crate) struct AgentCodeSpanResolver {
+    inner: Arc<AgentCodeSpanResolverInner>,
+}
+
+/// Maximum number of memoized code-span resolutions kept in the cache.
+const CODE_SPAN_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(2048) {
+    Some(n) => n,
+    None => unreachable!(),
+};
+
+struct AgentCodeSpanResolverInner {
+    project: WeakEntity<Project>,
+    cache: Mutex<LruCache<Arc<str>, Option<SharedString>>>,
+}
+
+impl AgentCodeSpanResolver {
+    pub(crate) fn new(project: &WeakEntity<Project>, _cx: &App) -> Self {
+        Self {
+            inner: Arc::new(AgentCodeSpanResolverInner {
+                project: project.clone(),
+                cache: Mutex::new(LruCache::new(CODE_SPAN_CACHE_CAPACITY)),
+            }),
+        }
+    }
+
+    pub(crate) fn clear_cache(&self) {
+        self.inner.cache.lock().clear();
+    }
+
+    /// Absolute paths of every current worktree.
+    /// Used by the markdown image resolver, which needs the same set of roots.
+    fn worktree_roots(&self, cx: &App) -> Vec<PathBuf> {
+        self.inner
+            .project
+            .upgrade()
+            .map(|project| {
+                project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn try_resolve(&self, text: &str, cx: &App) -> Option<SharedString> {
+        let trimmed = sanitize_path_text(text.trim());
+        if !Self::is_path_like(trimmed) {
+            return None;
+        }
+
+        if let Some(cached) = self.inner.cache.lock().get(trimmed).cloned() {
+            return cached;
+        }
+
+        let resolved = self.resolve_uncached(trimmed, cx);
+        self.inner
+            .cache
+            .lock()
+            .push(Arc::from(trimmed), resolved.clone());
+        resolved
+    }
+
+    fn resolve_uncached(&self, trimmed: &str, cx: &App) -> Option<SharedString> {
+        let path_with_position = PathWithPosition::parse_str(trimmed);
+        let candidate_path = &path_with_position.path;
+        if candidate_path.as_os_str().is_empty() {
+            return None;
+        }
+
+        let project = self.inner.project.upgrade()?;
+        let project = project.read(cx);
+        for worktree in project.visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            for relative_path in Self::candidate_relative_paths(
+                candidate_path,
+                &worktree.abs_path(),
+                worktree.path_style(),
+            ) {
+                let project_path = ProjectPath {
+                    worktree_id: worktree.id(),
+                    path: relative_path.clone(),
+                };
+                let Some(entry) = project.entry_for_path(&project_path, cx) else {
+                    continue;
+                };
+                if !entry.is_file() {
+                    continue;
+                }
+
+                let abs_path = worktree.absolutize(&relative_path);
+                let mention = match path_with_position.row.and_then(|row| row.checked_sub(1)) {
+                    Some(line) => MentionUri::Selection {
+                        abs_path: Some(abs_path),
+                        line_range: line..=line,
+                        column: path_with_position
+                            .column
+                            .map(|column| column.saturating_sub(1)),
+                    },
+                    None => MentionUri::File { abs_path },
+                };
+
+                return Some(mention.to_uri().to_string().into());
+            }
+        }
+
+        None
+    }
+
+    fn candidate_relative_paths(
+        path: &Path,
+        worktree_abs_path: &Path,
+        path_style: PathStyle,
+    ) -> Vec<Arc<RelPath>> {
+        let path_text = path.to_string_lossy();
+        let relative_path: Option<Arc<RelPath>> =
+            if util::paths::is_absolute(path_text.as_ref(), path_style) {
+                path_style
+                    .strip_prefix(path, worktree_abs_path)
+                    .map(std::borrow::Cow::into_owned)
+                    .map(Into::into)
+            } else {
+                RelPath::new(path, path_style)
+                    .ok()
+                    .map(std::borrow::Cow::into_owned)
+                    .map(Into::into)
+            };
+
+        let Some(relative_path) = relative_path else {
+            return Vec::new();
+        };
+
+        let mut paths = vec![relative_path.clone()];
+        if let Some(root_name) = worktree_abs_path.file_name().and_then(|name| name.to_str())
+            && let Ok(root_name) = RelPath::new(Path::new(root_name), path_style)
+            && let Ok(stripped) = relative_path.strip_prefix(root_name.as_ref())
+            && !stripped.is_empty()
+        {
+            paths.push(Arc::from(stripped));
+        }
+        paths
+    }
+
+    fn is_path_like(text: &str) -> bool {
+        if text.len() < 3
+            || text.contains("://")
+            || text.contains('|')
+            || text.chars().any(char::is_control)
+            || text.chars().all(|character| character.is_ascii_digit())
+        {
+            return false;
+        }
+
+        let path = PathWithPosition::parse_str(text).path;
+        let path_text = path.to_string_lossy();
+        if path_text.contains('/') || path_text.contains('\\') {
+            return true;
+        }
+
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| !extension.is_empty())
+    }
 }
 
 fn plan_label_markdown_style(
@@ -3079,7 +3413,7 @@ pub(crate) mod tests {
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext};
+    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, size};
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -3092,6 +3426,7 @@ pub(crate) mod tests {
 
     use crate::agent_panel;
     use crate::completion_provider::AgentContextSource;
+    use crate::test_support::register_test_sidebar;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
@@ -3155,6 +3490,82 @@ pub(crate) mod tests {
             assert_eq!(view.message_editor.read(cx).text(cx), "");
             assert_eq!(view.thread.read(cx).entries().len(), 2);
         });
+    }
+
+    #[gpui::test]
+    async fn test_agent_code_span_resolver_resolves_worktree_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            util::path!("/project"),
+            json!({
+                "src": {
+                    "main.rs": ""
+                },
+                "README.md": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new(util::path!("/project"))], cx).await;
+        let resolver = cx.update(|cx| AgentCodeSpanResolver::new(&project.downgrade(), cx));
+
+        let uri = cx
+            .update(|cx| resolver.try_resolve("src/main.rs:10", cx))
+            .expect("expected worktree-relative file path to resolve");
+        assert_eq!(
+            MentionUri::parse(&uri, PathStyle::local()).unwrap(),
+            MentionUri::Selection {
+                abs_path: Some(PathBuf::from(util::path!("/project/src/main.rs"))),
+                line_range: 9..=9,
+                column: None,
+            }
+        );
+
+        let uri = cx
+            .update(|cx| resolver.try_resolve("src/main.rs:10:5", cx))
+            .expect("expected worktree-relative file path with row and column to resolve");
+        assert_eq!(
+            MentionUri::parse(&uri, PathStyle::local()).unwrap(),
+            MentionUri::Selection {
+                abs_path: Some(PathBuf::from(util::path!("/project/src/main.rs"))),
+                line_range: 9..=9,
+                column: Some(4),
+            }
+        );
+
+        let uri = cx
+            .update(|cx| resolver.try_resolve("src/main.rs:0", cx))
+            .expect("`:0` should fall back to a file mention instead of returning None");
+        assert_eq!(
+            MentionUri::parse(&uri, PathStyle::local()).unwrap(),
+            MentionUri::File {
+                abs_path: PathBuf::from(util::path!("/project/src/main.rs")),
+            }
+        );
+
+        assert!(cx.update(|cx| resolver.try_resolve("String", cx)).is_none());
+        assert!(
+            cx.update(|cx| resolver.try_resolve("does/not/exist.rs", cx))
+                .is_none()
+        );
+        assert!(
+            cx.update(|cx| resolver.try_resolve("src/main.rs.", cx))
+                .is_some()
+        );
+
+        let uri = cx
+            .update(|cx| resolver.try_resolve("project/src/main.rs:10", cx))
+            .expect("expected root-prefixed worktree path to resolve");
+        assert_eq!(
+            MentionUri::parse(&uri, PathStyle::local()).unwrap(),
+            MentionUri::Selection {
+                abs_path: Some(PathBuf::from(util::path!("/project/src/main.rs"))),
+                line_range: 9..=9,
+                column: None,
+            }
+        );
     }
 
     #[gpui::test]
@@ -3331,8 +3742,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3468,8 +3878,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3550,8 +3959,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3689,8 +4097,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3765,6 +4172,10 @@ pub(crate) mod tests {
                 "Auth state should be Unauthenticated"
             );
             assert!(
+                !view.supports_logout(),
+                "Logout should be hidden while unauthenticated"
+            );
+            assert!(
                 connected.active_id.is_none(),
                 "There should be no active thread since no session was created"
             );
@@ -3800,6 +4211,10 @@ pub(crate) mod tests {
                 .expect("Should still be in Connected state after auth");
             assert!(connected.auth_state.is_ok(), "Auth state should be Ok");
             assert!(
+                view.supports_logout(),
+                "Logout should be available after authentication"
+            );
+            assert!(
                 connected.active_id.is_some(),
                 "There should be an active thread after successful auth"
             );
@@ -3815,6 +4230,23 @@ pub(crate) mod tests {
             assert!(
                 active.read(cx).thread_error.is_none(),
                 "The new thread should have no errors"
+            );
+        });
+
+        conversation_view.update_in(cx, |view, window, cx| view.logout(window, cx));
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, _cx| {
+            let connected = view
+                .as_connected()
+                .expect("Should still be in Connected state after logout");
+            assert!(
+                !connected.auth_state.is_ok(),
+                "Auth state should be Unauthenticated after logout"
+            );
+            assert!(
+                !view.supports_logout(),
+                "Logout should be hidden after logout"
             );
         });
     }
@@ -3949,7 +4381,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             workspace.focus_panel::<crate::AgentPanel>(window, cx);
             panel
@@ -3990,8 +4422,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4052,6 +4483,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        register_test_sidebar(true, cx);
 
         // Open the sidebar so that sidebar_open() returns true.
         multi_workspace_handle
@@ -4088,8 +4520,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4117,6 +4548,79 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_notification_when_sidebar_open_but_thread_list_hidden(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        register_test_sidebar(false, cx);
+        multi_workspace_handle
+            .update(cx, |mw, _window, cx| {
+                mw.open_sidebar(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when the sidebar is open but the thread list is hidden"
+        );
+    }
+
+    #[gpui::test]
     async fn test_notification_dismissed_when_sidebar_opens(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4138,6 +4642,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        register_test_sidebar(true, cx);
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let connection_store =
@@ -4157,8 +4662,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4233,7 +4737,7 @@ pub(crate) mod tests {
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
         let panel = workspace1.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             // Open the dock and activate the agent panel so it's visible
@@ -4279,8 +4783,7 @@ pub(crate) mod tests {
                     workspace1.downgrade(),
                     project1.clone(),
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4501,8 +5004,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4878,6 +5380,15 @@ pub(crate) mod tests {
             }
         }
 
+        fn supports_logout(&self) -> bool {
+            true
+        }
+
+        fn logout(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+            *self.authenticated.lock() = false;
+            Task::ready(Ok(()))
+        }
+
         fn prompt(
             &self,
             _id: acp_thread::UserMessageId,
@@ -5151,8 +5662,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project.clone(),
                     Some(thread_store.clone()),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -7036,6 +7546,42 @@ pub(crate) mod tests {
         ])
     }
 
+    fn sandbox_permission_options() -> PermissionOptions {
+        PermissionOptions::Flat(vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_thread"),
+                "Allow for this thread",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_always"),
+                "Allow always",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ])
+    }
+
+    #[test]
+    fn permission_option_for_action_prefers_explicit_sandbox_allow_always() {
+        let options = sandbox_permission_options();
+
+        let option =
+            super::permission_option_for_action(&options, acp::PermissionOptionKind::AllowAlways)
+                .unwrap();
+
+        assert_eq!(option.option_id.0.as_ref(), "allow_always");
+    }
+
     #[test]
     fn resolve_outcome_from_selection_flat_allow_picks_allow_once() {
         let options = flat_allow_deny_options();
@@ -7507,6 +8053,414 @@ pub(crate) mod tests {
         });
     }
 
+    /// Set up a `ConversationView` whose active thread has a single tool call
+    /// awaiting permission. Returns the conversation view, its active
+    /// `ThreadView`, and the entry index of the tool call within the thread.
+    async fn setup_pending_permission_thread<'a>(
+        tool_call_id: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (
+        Entity<ConversationView>,
+        Entity<ThreadView>,
+        usize,
+        &'a mut VisualTestContext,
+    ) {
+        let tool_call_id_value = acp::ToolCallId::new(tool_call_id);
+        let tool_call = acp::ToolCall::new(tool_call_id_value.clone(), "Run something")
+            .kind(acp::ToolKind::Edit);
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id_value.clone(),
+                PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                    "allow",
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )]),
+            )]));
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let entry_ix = thread_view.read_with(cx, |view, cx| {
+            view.thread
+                .read(cx)
+                .entries()
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        acp_thread::AgentThreadEntry::ToolCall(call)
+                            if call.id == tool_call_id_value
+                    )
+                })
+                .expect("tool call entry should exist after run_until_parked")
+        });
+
+        (conversation_view, thread_view, entry_ix, cx)
+    }
+
+    struct TestListView {
+        list_state: ListState,
+    }
+
+    impl Render for TestListView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            list(self.list_state.clone(), |_, _, _| {
+                div().h(px(20.0)).w_full().into_any_element()
+            })
+            .size_full()
+        }
+    }
+
+    fn draw_thread_list_at(
+        thread_view: &Entity<ThreadView>,
+        scroll_top: ListOffset,
+        cx: &mut VisualTestContext,
+    ) {
+        let list_state = thread_view.read_with(cx, |view, _cx| view.list_state.clone());
+        list_state.scroll_to(scroll_top);
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(20.0)),
+            |_, cx| {
+                cx.new(|_| TestListView {
+                    list_state: list_state.clone(),
+                })
+                .into_any_element()
+            },
+        );
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_hidden_when_inline_bounds_unavailable(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-no-bounds", cx).await;
+
+        // Pin the scroll top to the entry so it isn't treated as above the
+        // viewport, forcing the unmeasured-bounds path we want to exercise.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            });
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should stay hidden until the inline prompt has known list bounds"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pending_tool_call_for_session_scopes_to_that_session(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+
+        let session_id_a = acp::SessionId::new("thread-a");
+        let session_id_b = acp::SessionId::new("thread-b");
+        let (thread_a, thread_b, conversation) = cx.update(|cx| {
+            let thread_a =
+                create_test_acp_thread(None, "thread-a", connection.clone(), project.clone(), cx);
+            let thread_b =
+                create_test_acp_thread(None, "thread-b", connection.clone(), project.clone(), cx);
+            let conversation = cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(thread_a.clone(), cx);
+                conversation.register_thread(thread_b.clone(), cx);
+                conversation
+            });
+            (thread_a, thread_b, conversation)
+        });
+
+        // Pending tool calls in both threads. Unlike `pending_tool_call`,
+        // `pending_tool_call_for_session` must not fall back across threads.
+        let _task_a = request_test_tool_authorization(&thread_a, "tc-a", "allow-a", cx);
+        let _task_b = request_test_tool_authorization(&thread_b, "tc-b", "allow-b", cx);
+
+        cx.read(|cx| {
+            let tool_call_id_a = conversation
+                .read(cx)
+                .pending_tool_call_for_session(&session_id_a, cx)
+                .expect("Expected a pending tool call in thread A");
+            assert_eq!(tool_call_id_a, acp::ToolCallId::new("tc-a"));
+
+            let tool_call_id_b = conversation
+                .read(cx)
+                .pending_tool_call_for_session(&session_id_b, cx)
+                .expect("Expected a pending tool call in thread B");
+            assert_eq!(tool_call_id_b, acp::ToolCallId::new("tc-b"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_scroll_to_dismisses_row(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-scroll", cx).await;
+
+        // Start off-screen below the viewport. The row is visible because the
+        // item has bounds that do not intersect the viewport.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                view.list_state.bounds_for_item(entry_ix).is_some(),
+                "The tool call entry must be measured for this test to exercise the\
+                 \"entry below viewport\" branch. If list overdraw stops measuring\
+                 offscreen items, this test needs to drive measurement another way."
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some()
+            );
+        });
+
+        // Simulate clicking "Scroll to": the list scrolls to the entry and the
+        // measured item bounds intersect the viewport.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear after scrolling brings the inline prompt into view"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_shown_when_inline_prompt_is_above_viewport(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, entry_ix, cx) =
+            setup_pending_permission_thread("perm-above", cx).await;
+
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            let result = thread.handle_session_update(
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "More content".into(),
+                )),
+                cx,
+            );
+            assert!(
+                result.is_ok(),
+                "following assistant message should be accepted"
+            );
+        });
+
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix + 1,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                entry_ix < view.list_state.logical_scroll_top().item_ix,
+                "The tool call entry should be above the logical scroll top"
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some(),
+                "Floating row should be visible when the inline prompt is above the viewport"
+            );
+        });
+
+        // Scrolling up to the entry brings it back into view.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: entry_ix,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear after scrolling brings the inline prompt into view"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_disappears_when_authorized(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, thread_view, _entry_ix, cx) =
+            setup_pending_permission_thread("perm-allow", cx).await;
+
+        // Park the inline prompt below the viewport so the floating row would render.
+        draw_thread_list_at(
+            &thread_view,
+            ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            },
+            cx,
+        );
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_some(),
+                "Floating row should be visible before authorizing"
+            );
+        });
+
+        // Dispatch the same AuthorizeToolCall action the row's Allow button
+        // wires up.
+        conversation_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::AuthorizeToolCall {
+                    tool_call_id: "perm-allow".to_string(),
+                    option_id: "allow".to_string(),
+                    option_kind: "AllowOnce".to_string(),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            assert!(
+                view.pending_tool_call(cx).is_none(),
+                "Tool call should no longer be pending after Allow is clicked"
+            );
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Floating row should disappear once the permission is granted"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_ignores_subagent_requests(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Build a baseline ConversationView with no permission requests, so we
+        // have a real `ThreadView` to call `render_main_agent_awaiting_permission` on.
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let parent_session_id =
+            thread_view.read_with(cx, |view, cx| view.thread.read(cx).session_id().clone());
+        let conversation = thread_view.read_with(cx, |view, _cx| view.conversation.clone());
+
+        // Attach a subagent thread with a pending tool-call permission request.
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let stub: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let subagent_thread = cx.update(|_window, cx| {
+            create_test_acp_thread(
+                Some(parent_session_id.clone()),
+                "subagent",
+                stub,
+                project,
+                cx,
+            )
+        });
+        conversation.update(cx, |conversation, cx| {
+            conversation.register_thread(subagent_thread.clone(), cx);
+        });
+        let _subagent_task =
+            request_test_tool_authorization(&subagent_thread, "sub-tc", "allow-sub", cx);
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            assert!(
+                conversation
+                    .read(cx)
+                    .pending_tool_call_for_session(&parent_session_id, cx)
+                    .is_none(),
+                "Subagent requests must not surface as pending in the parent session"
+            );
+            assert!(
+                !conversation
+                    .read(cx)
+                    .subagents_awaiting_permission(cx)
+                    .is_empty(),
+                "Subagent permission row should still see the pending request"
+            );
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none(),
+                "Subagent permission requests should not trigger the main-agent floating row"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_move_queued_message_to_empty_main_editor(cx: &mut TestAppContext) {
         init_test(cx);
@@ -7719,8 +8673,7 @@ pub(crate) mod tests {
                     workspace.downgrade(),
                     project,
                     Some(thread_store),
-                    None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )

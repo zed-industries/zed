@@ -852,6 +852,46 @@ impl MultiWorkspace {
         }
     }
 
+    pub fn move_project_group_up(&mut self, key: &ProjectGroupKey, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        if index == 0 {
+            return false;
+        }
+        self.project_groups.swap(index - 1, index);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
+    pub fn move_project_group_down(
+        &mut self,
+        key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        if index + 1 >= self.project_groups.len() {
+            return false;
+        }
+        self.project_groups.swap(index, index + 1);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
     pub fn workspaces_for_project_group(
         &self,
         key: &ProjectGroupKey,
@@ -1461,6 +1501,29 @@ impl MultiWorkspace {
         cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged { source_workspace });
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        cx.notify();
+    }
+
+    /// Adds `workspace` as a retained background tab without switching the
+    /// active workspace to it or moving focus. Mirrors the registration and
+    /// retention bookkeeping `activate` performs for the incoming workspace,
+    /// but leaves the currently-active workspace focused.
+    ///
+    /// Used when something opens a workspace the user should not be yanked
+    /// into — e.g. the agent's `create_thread` tool spawning a sibling
+    /// worktree in the background.
+    pub fn add_background_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace() == &workspace || self.is_workspace_retained(&workspace) {
+            return;
+        }
+        self.register_workspace(&workspace, window, cx);
+        let key = workspace.read(cx).project_group_key(cx);
+        self.retain_workspace(workspace, key, cx);
         cx.notify();
     }
 

@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::DataCollection;
@@ -212,7 +214,7 @@ pub enum RequestMessage {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        reasoning_details: Option<serde_json::Value>,
+        reasoning_details: Option<std::sync::Arc<serde_json::Value>>,
     },
     User {
         content: MessageContent,
@@ -305,7 +307,7 @@ impl MessageContent {
                     }
                 })
                 .collect::<Vec<_>>()
-                .join(""),
+                .concat(),
         }
     }
 }
@@ -440,17 +442,17 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent, OpenRouterError>>, OpenRouterError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
+        .header("X-Title", "Zed Editor")
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(OpenRouterError::SerializeRequest)?,
         ))
@@ -533,17 +535,17 @@ pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<Model>, OpenRouterError> {
     let uri = format!("{api_url}/models/user");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
+        .header("X-Title", "Zed Editor")
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
     let mut response = client
