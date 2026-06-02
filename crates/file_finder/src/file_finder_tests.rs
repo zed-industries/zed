@@ -2638,7 +2638,7 @@ async fn test_single_file_search_result_split_open(cx: &mut gpui::TestAppContext
             .active_item_as::<Editor>(cx)
             .expect("Should have an active editor after splitting the search result");
         assert_eq!(
-            active_editor.read(cx).project_path(cx),
+            active_editor.read(cx).active_project_path(cx),
             Some(ProjectPath {
                 worktree_id,
                 path: RelPath::empty().into_arc(),
