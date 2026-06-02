@@ -9663,7 +9663,7 @@ impl ThreadView {
         });
     }
 
-    fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
+    fn cycle_native_agent_thinking_effort(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
@@ -9714,18 +9714,6 @@ impl ThreadView {
                     }
                 }
             });
-        });
-    }
-
-    fn toggle_thinking_effort_menu(
-        &mut self,
-        _action: &ToggleThinkingEffortMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let menu_handle = self.thinking_effort_menu_handle.clone();
-        window.defer(cx, move |window, cx| {
-            menu_handle.toggle(window, cx);
         });
     }
 }
@@ -9804,14 +9792,41 @@ impl Render for ThreadView {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
                 }
-                this.cycle_thinking_effort(cx);
+                if let Some(config_options_view) = this.config_options_view.clone() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.cycle_category_option(
+                            acp::SessionConfigOptionCategory::ThoughtLevel,
+                            false,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+                this.cycle_native_agent_thinking_effort(cx);
             }))
             .on_action(
-                cx.listener(|this, action: &ToggleThinkingEffortMenu, window, cx| {
+                cx.listener(|this, _: &ToggleThinkingEffortMenu, window, cx| {
                     if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                    this.toggle_thinking_effort_menu(action, window, cx);
+                    if let Some(config_options_view) = this.config_options_view.clone() {
+                        let handled = config_options_view.update(cx, |view, cx| {
+                            view.toggle_category_picker(
+                                acp::SessionConfigOptionCategory::ThoughtLevel,
+                                window,
+                                cx,
+                            )
+                        });
+                        if handled {
+                            return;
+                        }
+                    }
+                    let menu_handle = this.thinking_effort_menu_handle.clone();
+                    window.defer(cx, move |window, cx| {
+                        menu_handle.toggle(window, cx);
+                    });
                 }),
             )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
