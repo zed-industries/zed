@@ -2370,10 +2370,9 @@ impl GitRepository for RealGitRepository {
     }
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary;
                 let args: Vec<OsString> = vec!["worktree".into(), "repair".into()];
                 git.run(&args).await?;
                 Ok(())
@@ -2504,10 +2503,9 @@ impl GitRepository for RealGitRepository {
     }
 
     fn get_push_remote(&self, branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary;
                 let output = git
                     .build_command(&["rev-parse", "--abbrev-ref"])
                     .arg(format!("{branch}@{{push}}"))
@@ -2529,10 +2527,9 @@ impl GitRepository for RealGitRepository {
     }
 
     fn get_branch_remote(&self, branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary;
                 let output = git
                     .build_command(&["config", "--get"])
                     .arg(format!("branch.{branch}.remote"))
@@ -2551,10 +2548,9 @@ impl GitRepository for RealGitRepository {
     }
 
     fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary;
                 let output = git.build_command(&["remote", "-v"]).output().await?;
 
                 anyhow::ensure!(
@@ -2856,10 +2852,9 @@ impl GitRepository for RealGitRepository {
         &self,
         include_remote_name: bool,
     ) -> BoxFuture<'_, Result<Option<SharedString>>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let git = git_binary;
                 let strip_prefix = if include_remote_name {
                     "refs/remotes/"
                 } else {
@@ -2912,7 +2907,7 @@ impl GitRepository for RealGitRepository {
         hook: RunHook,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
+        let git_binary = self.git_binary_in_worktree();
         let git_dir = self.git_dir.clone();
         let help_output = self.any_git_binary_help_output();
 
@@ -2965,10 +2960,9 @@ impl GitRepository for RealGitRepository {
         log_order: LogOrder,
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
 
         async move {
-            let git = git_binary;
             let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
             git_log_command.extend(log_source.get_args()?);
             let mut command = git.build_command(&git_log_command);
@@ -3037,10 +3031,9 @@ impl GitRepository for RealGitRepository {
         search_args: SearchCommitArgs,
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
 
         async move {
-            let git = git_binary;
             let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
 
             args.push("--fixed-strings");
@@ -3091,10 +3084,9 @@ impl GitRepository for RealGitRepository {
         paths: Vec<RepoPath>,
         commit_limit: usize,
     ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
-        let git_binary = self.git_binary();
+        let git = self.git_binary();
 
         async move {
-            let git = git_binary;
             if paths.is_empty() {
                 return Ok(Vec::new());
             }
