@@ -24,7 +24,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;

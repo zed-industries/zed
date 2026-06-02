@@ -75,6 +75,12 @@ pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
 const AGENT_COMPACTION_REMAINING_TOKEN_BUDGET: u64 = 40_000;
 
+/// Auto-compaction is only available for models whose context window is at least
+/// this large. For smaller models there isn't enough headroom for a compaction
+/// pass to be worthwhile, so we leave the thread uncompacted and let the UI warn
+/// the user instead.
+pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
+
 static AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR: std::sync::LazyLock<EnvVar> =
     env_var!("AGENT_COMPACTION_REMAINING_TOKEN_BUDGET");
 
@@ -2236,7 +2242,7 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
-            if attempt == 0 && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
+            if cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
                 match Self::perform_compaction_if_needed(
                     this,
                     event_stream,
@@ -2249,7 +2255,27 @@ impl Thread {
                     Ok(CompactionResult::Cancelled) => return Ok(()),
                     Err(error) => {
                         log::error!("Compaction failed: {}", error);
-                        return Err(error);
+                        match error.downcast::<LanguageModelCompletionError>() {
+                            Ok(error) => {
+                                let retry = this.update(cx, |this, cx| {
+                                    let user_store = this.user_store.read(cx);
+                                    this.handle_completion_error(error, attempt, user_store.plan())
+                                })??;
+                                let timer = cx.background_executor().timer(retry.duration);
+                                event_stream.send_retry(retry);
+                                futures::select! {
+                                    _ = timer.fuse() => {}
+                                    _ = cancellation_rx.changed().fuse() => {
+                                        if *cancellation_rx.borrow() {
+                                            log::debug!("Turn cancelled during retry delay, exiting");
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            Err(error) => return Err(error),
+                        }
                     }
                 }
             }
@@ -3552,6 +3578,11 @@ impl Thread {
 
     fn compaction_message_target_ix(&self) -> Option<usize> {
         let model = self.model.as_ref()?;
+        // Models with a small context window don't leave enough headroom for a
+        // compaction pass; the UI warns the user about the token limit instead.
+        if model.max_token_count() < MIN_COMPACTION_CONTEXT_WINDOW {
+            return None;
+        }
         let (usage_ix, usage) = {
             let this = &self;
             this.messages
@@ -5362,6 +5393,33 @@ mod tests {
                 );
 
                 assert_eq!(thread.compaction_message_target_ix(), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_unavailable_for_small_context_window(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        // A context window below the minimum disables auto-compaction.
+        model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "near limit"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: u64::MAX,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(), None);
             });
         });
     }

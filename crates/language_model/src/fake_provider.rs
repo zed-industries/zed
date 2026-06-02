@@ -11,7 +11,7 @@ use http_client::Result;
 use parking_lot::Mutex;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
 };
 
 #[derive(Clone)]
@@ -126,6 +126,7 @@ pub struct FakeLanguageModel {
     supports_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
+    max_token_count: AtomicU64,
 }
 
 impl Default for FakeLanguageModel {
@@ -140,6 +141,7 @@ impl Default for FakeLanguageModel {
             supports_thinking: AtomicBool::new(false),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
+            max_token_count: AtomicU64::new(1_000_000),
         }
     }
 }
@@ -178,6 +180,10 @@ impl FakeLanguageModel {
 
     pub fn set_supports_images(&self, supports: bool) {
         self.supports_images.store(supports, SeqCst);
+    }
+
+    pub fn set_max_token_count(&self, count: u64) {
+        self.max_token_count.store(count, SeqCst);
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -302,7 +308,7 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        1000000
+        self.max_token_count.load(SeqCst)
     }
 
     fn stream_completion(
