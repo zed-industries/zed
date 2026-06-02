@@ -409,10 +409,9 @@ pub fn show_link_definition(
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
-    // Record the position we're about to request for, so a subsequent mouse
-    // move on the same point short-circuits above instead of re-querying the
-    // language server (which may not return an `originSelectionRange` to build
-    // a `symbol_range` from).
+    // Record the requested position so a mouse move on the same point short-circuits
+    // instead of re-querying, even when the server returns no `originSelectionRange`
+    // (which would otherwise leave `symbol_range` empty).
     hovered_link_state.last_trigger_point = trigger_point.clone();
 
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -1248,14 +1247,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_go_to_definition_link_dedup(cx: &mut gpui::TestAppContext) {
-        // Regression test for https://github.com/zed-industries/zed/issues/56193.
-        // Holding the go-to-definition modifier and jiggling the mouse must not
-        // re-issue a `textDocument/definition` request for a position that has
-        // already been queried. Language servers that answer with a bare
-        // `Location` (no `originSelectionRange`) used to trigger a request on
-        // every mouse-move event: `symbol_range` stays `None` and
-        // `last_trigger_point` is only recorded when the hovered-link state is
-        // first created, so the same-position check never matches afterwards.
+        // Jiggling the mouse over an already-queried position must not re-issue a
+        // definition request, even when the server replies with a bare `Location`
+        // and no `originSelectionRange` (issue #56193).
         init_test(cx, |_| {});
 
         let mut cx = EditorLspTestContext::new_rust(
@@ -1280,7 +1274,7 @@ mod tests {
                 let request_count = request_count.clone();
                 async move {
                     request_count.fetch_add(1, Ordering::SeqCst);
-                    // Bare `Location` with no `originSelectionRange`, like phpactor.
+                    // Bare `Location`, no `originSelectionRange` (like phpactor).
                     Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
                         uri: url,
                         range: lsp::Range::default(),
@@ -1298,23 +1292,20 @@ mod tests {
             fn do_work() { test(); }
         "});
 
-        // Hover the first position: exactly one definition request.
         cx.simulate_mouse_move(first_point, None, Modifiers::secondary_key());
         cx.run_until_parked();
 
-        // Move to a second position: exactly one more definition request.
         cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
         cx.run_until_parked();
 
-        // Jiggle the mouse without leaving the character: no new request expected.
+        // Jiggle within the same character: no new request.
         cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
         cx.run_until_parked();
 
         assert_eq!(
             request_count.load(Ordering::SeqCst),
             2,
-            "expected one definition request per distinct hovered position, but the \
-             language server was queried repeatedly for the same position (issue #56193)"
+            "expected one definition request per distinct position"
         );
     }
 

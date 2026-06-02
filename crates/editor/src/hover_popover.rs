@@ -1609,11 +1609,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_mouse_hover_dedup_null_response(cx: &mut gpui::TestAppContext) {
-        // Regression test for https://github.com/zed-industries/zed/issues/56193.
-        // When the language server answers `textDocument/hover` with `null`, no
-        // popover is shown, so moving the mouse within the same position must not
-        // re-issue the hover request every time. `HoverState::triggered_from` is
-        // meant to guard against this but is never recorded after a request.
+        // Hovering the same position twice must issue only one request, even when the
+        // server answers with `null` so no popover is shown (issue #56193).
         init_test(cx, |_| {});
 
         let mut cx = EditorLspTestContext::new_rust(
@@ -1660,8 +1657,7 @@ mod tests {
         assert_eq!(
             request_count.load(atomic::Ordering::SeqCst),
             1,
-            "hovering the same position twice should issue only one hover request, but \
-             the language server was queried again for a null response (issue #56193)"
+            "hovering the same position twice should issue only one request"
         );
     }
 
