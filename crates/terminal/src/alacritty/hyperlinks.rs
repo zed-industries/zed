@@ -11,67 +11,88 @@ use alacritty_terminal::{
 use log::{info, warn};
 use regex::Regex;
 use std::{
-    ops::{Index, Range},
+    ops::{Index, Range as StdRange},
     time::{Duration, Instant},
 };
 use url::Url;
 use util::paths::{PathStyle, UrlExt};
+
+use crate::Range;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 const WIDE_CHAR_SPACERS: Flags =
     Flags::from_bits(Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits())
         .unwrap();
 
-pub(super) struct RegexSearches {
-    url_regex: RegexSearch,
+pub(crate) struct RegexSearches {
+    url_regex: Option<RegexSearch>,
     path_hyperlink_regexes: Vec<Regex>,
     path_hyperlink_timeout: Duration,
 }
 
-impl Default for RegexSearches {
-    fn default() -> Self {
-        Self {
-            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            path_hyperlink_regexes: Vec::default(),
-            path_hyperlink_timeout: Duration::default(),
-        }
-    }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HyperlinkMatch {
+    pub(crate) text: String,
+    pub(crate) is_url: bool,
+    pub(crate) range: Range,
 }
-impl RegexSearches {
-    pub(super) fn new(
-        path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
-        path_hyperlink_timeout_ms: u64,
-    ) -> Self {
+
+impl From<(String, bool, Match)> for HyperlinkMatch {
+    fn from((text, is_url, range): (String, bool, Match)) -> Self {
         Self {
-            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            path_hyperlink_regexes: path_hyperlink_regexes
-                .into_iter()
-                .filter_map(|regex| {
-                    Regex::new(regex.as_ref())
-                        .inspect_err(|error| {
-                            warn!(
-                                concat!(
-                                    "Ignoring path hyperlink regex specified in ",
-                                    "`terminal.path_hyperlink_regexes`:\n\n\t{}\n\nError: {}",
-                                ),
-                                regex.as_ref(),
-                                error
-                            );
-                        })
-                        .ok()
-                })
-                .collect(),
-            path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
+            text,
+            is_url,
+            range: Range::from_alacritty(range),
         }
     }
 }
 
-pub(super) fn find_from_grid_point<T: EventListener>(
+impl Default for RegexSearches {
+    fn default() -> Self {
+        Self::new(Vec::<String>::new(), 0)
+    }
+}
+impl RegexSearches {
+    pub(crate) fn new(
+        path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
+        path_hyperlink_timeout_ms: u64,
+    ) -> Self {
+        Self {
+            url_regex: RegexSearch::new(URL_REGEX).ok(),
+            path_hyperlink_regexes: Self::path_hyperlink_regexes(path_hyperlink_regexes),
+            path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
+        }
+    }
+
+    fn path_hyperlink_regexes(
+        path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
+    ) -> Vec<Regex> {
+        path_hyperlink_regexes
+            .into_iter()
+            .filter_map(|regex| {
+                Regex::new(regex.as_ref())
+                    .inspect_err(|error| {
+                        warn!(
+                            concat!(
+                                "Ignoring path hyperlink regex specified in ",
+                                "`terminal.path_hyperlink_regexes`:\n\n\t{}\n\nError: {}",
+                            ),
+                            regex.as_ref(),
+                            error
+                        );
+                    })
+                    .ok()
+            })
+            .collect()
+    }
+}
+
+pub(crate) fn find_from_grid_point<T: EventListener>(
     term: &Term<T>,
     point: AlacPoint,
     regex_searches: &mut RegexSearches,
     path_style: PathStyle,
-) -> Option<(String, bool, Match)> {
+) -> Option<HyperlinkMatch> {
     let grid = term.grid();
     let link = grid.index(point).hyperlink();
     let found_word = if let Some(ref url) = link {
@@ -101,18 +122,16 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         Some((url, true, url_match))
     } else {
         let (line_start, line_end) = (term.line_search_left(point), term.line_search_right(point));
-        if let Some((url, url_match)) = RegexIter::new(
-            line_start,
-            line_end,
-            AlacDirection::Right,
-            term,
-            &mut regex_searches.url_regex,
-        )
-        .find(|rm| rm.contains(&point))
-        .map(|url_match| {
-            let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-            sanitize_url_punctuation(url, url_match, term)
-        }) {
+        let url_match = regex_searches.url_regex.as_mut().and_then(|url_regex| {
+            RegexIter::new(line_start, line_end, AlacDirection::Right, term, url_regex)
+                .find(|rm| rm.contains(&point))
+                .map(|url_match| {
+                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+                    sanitize_url_punctuation(url, url_match, term)
+                })
+        });
+
+        if let Some((url, url_match)) = url_match {
             Some((url, true, url_match))
         } else {
             path_match(
@@ -127,35 +146,75 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         }
     };
 
-    found_word.map(|(maybe_url_or_path, is_url, word_match)| {
-        if is_url {
-            // Treat "file://" IRIs like file paths to ensure
-            // that line numbers at the end of the path are
-            // handled correctly.
-            // Use Url::to_file_path() to properly handle Windows drive letters
-            // (e.g., file:///C:/path -> C:\path)
-            if maybe_url_or_path.starts_with("file://") {
-                if let Ok(url) = Url::parse(&maybe_url_or_path) {
-                    if let Ok(path) = url.to_file_path_ext(path_style) {
-                        return (path.to_string_lossy().into_owned(), false, word_match);
-                    } else if let Some(path) = try_osc8_url_to_path(url)
-                        && path_style.is_posix()
-                    {
-                        return (path, false, word_match);
-                    }
+    found_word.map(|found_word| normalize_found_word(found_word, path_style))
+}
+
+fn normalize_found_word(
+    found_word: (String, bool, Match),
+    path_style: PathStyle,
+) -> HyperlinkMatch {
+    let (maybe_url_or_path, is_url, word_match) = found_word;
+    normalize_hyperlink_match(
+        maybe_url_or_path,
+        is_url,
+        Range::from_alacritty(word_match),
+        path_style,
+    )
+}
+
+fn normalize_hyperlink_match(
+    maybe_url_or_path: String,
+    is_url: bool,
+    range: Range,
+    path_style: PathStyle,
+) -> HyperlinkMatch {
+    if is_url {
+        // Treat "file://" IRIs like file paths to ensure
+        // that line numbers at the end of the path are
+        // handled correctly.
+        // Use Url::to_file_path() to properly handle Windows drive letters
+        // (e.g., file:///C:/path -> C:\path)
+        if maybe_url_or_path.starts_with("file://") {
+            if let Ok(url) = Url::parse(&maybe_url_or_path) {
+                if let Ok(path) = url.to_file_path_ext(path_style) {
+                    return HyperlinkMatch {
+                        text: path.to_string_lossy().into_owned(),
+                        is_url: false,
+                        range,
+                    };
+                } else if let Some(path) = try_osc8_url_to_path(url)
+                    && path_style.is_posix()
+                {
+                    return HyperlinkMatch {
+                        text: path,
+                        is_url: false,
+                        range,
+                    };
                 }
-                // Fallback: strip file:// prefix if URL parsing fails
-                let path = maybe_url_or_path
-                    .strip_prefix("file://")
-                    .unwrap_or(&maybe_url_or_path);
-                (path.to_string(), false, word_match)
-            } else {
-                (maybe_url_or_path, true, word_match)
+            }
+            // Fallback: strip file:// prefix if URL parsing fails
+            let path = maybe_url_or_path
+                .strip_prefix("file://")
+                .unwrap_or(&maybe_url_or_path);
+            HyperlinkMatch {
+                text: path.to_string(),
+                is_url: false,
+                range,
             }
         } else {
-            (maybe_url_or_path, false, word_match)
+            HyperlinkMatch {
+                text: maybe_url_or_path,
+                is_url: true,
+                range,
+            }
         }
-    })
+    } else {
+        HyperlinkMatch {
+            text: maybe_url_or_path,
+            is_url: false,
+            range,
+        }
+    }
 }
 
 // OSC 8 mandates that file:// URIs must be encoded as file://{host}{path}
@@ -312,8 +371,8 @@ fn path_match<T>(
     if line.len() <= hovered_point_byte_offset {
         return None;
     }
-    let found_from_range = |path_range: Range<usize>,
-                            link_range: Range<usize>,
+    let found_from_range = |path_range: StdRange<usize>,
+                            link_range: StdRange<usize>,
                             position: Option<(u32, Option<u32>)>| {
         let advance_point_by_str = |mut point: AlacPoint, s: &str| {
             for _ in s.chars() {
@@ -572,7 +631,7 @@ mod tests {
 
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $hyperlink_kind:ident) => { {
-            use crate::terminal_hyperlinks::tests::line_cells_count;
+            use crate::alacritty::hyperlinks::tests::line_cells_count;
             use std::cmp;
 
             let test_lines = vec![$($lines),+];
@@ -598,7 +657,7 @@ mod tests {
         } };
 
         ($columns:expr; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
-            use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
+            use crate::alacritty::hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
 
             let source_location = format!("{}:{}", std::file!(), std::line!());
             for columns in $columns {
@@ -1080,8 +1139,7 @@ mod tests {
                 event::VoidListener,
                 grid::Scroll,
                 index::{Column, Point as AlacPoint},
-                term::test::mock_term,
-                term::{Term, search::Match},
+                term::{Term, test::mock_term},
             };
             use settings::{self, Settings, SettingsContent};
             use std::{cell::RefCell, rc::Rc};
@@ -1114,7 +1172,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal",
                         "Hyperlink should have been found"
@@ -1132,7 +1190,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal/terminal.rs:1000:42",
                         "Hyperlink should have been found"
@@ -1150,7 +1208,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "rust-toolchain.toml",
                         "Hyperlink should have been found"
@@ -1213,7 +1271,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "392",
                         "Hyperlink should have been found"
@@ -1247,7 +1305,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         LINE.trim_end_matches(['.', '\r', '\n']),
                         "Hyperlink should have been found"
@@ -1258,7 +1316,7 @@ mod tests {
             pub fn find_from_grid_point_bench(
                 term: &Term<VoidListener>,
                 point: AlacPoint,
-            ) -> Option<(String, bool, Match)> {
+            ) -> Option<HyperlinkMatch> {
                 const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
                 thread_local! {
@@ -1891,14 +1949,16 @@ mod tests {
         let check_hyperlink_match =
             CheckHyperlinkMatch::new(&term, &expected_hyperlink, source_location);
         match hyperlink_found {
-            Some((hyperlink_word, false, hyperlink_match)) => {
+            Some(hyperlink) if !hyperlink.is_url => {
+                let hyperlink_match = hyperlink.range.to_alacritty();
                 check_hyperlink_match.check_path_with_position_and_match(
-                    PathWithPosition::parse_str(&hyperlink_word),
+                    PathWithPosition::parse_str(&hyperlink.text),
                     &hyperlink_match,
                 );
             }
-            Some((hyperlink_word, true, hyperlink_match)) => {
-                check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
+            Some(hyperlink) => {
+                let hyperlink_match = hyperlink.range.to_alacritty();
+                check_hyperlink_match.check_iri_and_match(hyperlink.text, &hyperlink_match);
             }
             None => {
                 if expected_hyperlink.hyperlink_match.start()

@@ -12,7 +12,6 @@ workspace = true
 path = "src/agent_settings.rs"
 
 [dependencies]
-agent-client-protocol.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 convert_case.workspace = true
