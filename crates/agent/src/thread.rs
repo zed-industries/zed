@@ -55,8 +55,8 @@ use serde::{Deserialize, Serialize};
 use settings::{
     LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
 };
-use std::cell::RefCell;
 use std::fmt::Write;
+use std::{cell::RefCell, ops::ControlFlow};
 use std::{
     collections::BTreeMap,
     marker::PhantomData,
@@ -1087,12 +1087,6 @@ enum CompletionError {
     Refusal,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
-}
-
-enum CompactionResult {
-    Skipped,
-    Completed,
-    Cancelled,
 }
 
 pub struct Thread {
@@ -2251,28 +2245,25 @@ impl Thread {
                 )
                 .await
                 {
-                    Ok(CompactionResult::Skipped | CompactionResult::Completed) => {}
-                    Ok(CompactionResult::Cancelled) => return Ok(()),
+                    Ok(ControlFlow::Continue(())) => {}
+                    Ok(ControlFlow::Break(())) => return Ok(()),
                     Err(error) => {
                         log::error!("Compaction failed: {}", error);
                         match error.downcast::<LanguageModelCompletionError>() {
                             Ok(error) => {
-                                let retry = this.update(cx, |this, cx| {
-                                    let user_store = this.user_store.read(cx);
-                                    this.handle_completion_error(error, attempt, user_store.plan())
-                                })??;
-                                let timer = cx.background_executor().timer(retry.duration);
-                                event_stream.send_retry(retry);
-                                futures::select! {
-                                    _ = timer.fuse() => {}
-                                    _ = cancellation_rx.changed().fuse() => {
-                                        if *cancellation_rx.borrow() {
-                                            log::debug!("Turn cancelled during retry delay, exiting");
-                                            return Ok(());
-                                        }
-                                    }
+                                match Self::retry_completion_error(
+                                    this,
+                                    event_stream,
+                                    &mut cancellation_rx,
+                                    error,
+                                    attempt,
+                                    cx,
+                                )
+                                .await?
+                                {
+                                    ControlFlow::Break(()) => return Ok(()),
+                                    ControlFlow::Continue(()) => continue,
                                 }
-                                continue;
                             }
                             Err(error) => return Err(error),
                         }
@@ -2444,20 +2435,18 @@ impl Thread {
 
             if let Some(error) = error {
                 attempt += 1;
-                let retry = this.update(cx, |this, cx| {
-                    let user_store = this.user_store.read(cx);
-                    this.handle_completion_error(error, attempt, user_store.plan())
-                })??;
-                let timer = cx.background_executor().timer(retry.duration);
-                event_stream.send_retry(retry);
-                futures::select! {
-                    _ = timer.fuse() => {}
-                    _ = cancellation_rx.changed().fuse() => {
-                        if *cancellation_rx.borrow() {
-                            log::debug!("Turn cancelled during retry delay, exiting");
-                            return Ok(());
-                        }
-                    }
+                match Self::retry_completion_error(
+                    this,
+                    event_stream,
+                    &mut cancellation_rx,
+                    error,
+                    attempt,
+                    cx,
+                )
+                .await?
+                {
+                    ControlFlow::Break(_) => return Ok(()),
+                    ControlFlow::Continue(_) => {}
                 }
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.last_message() {
@@ -2481,12 +2470,42 @@ impl Thread {
         }
     }
 
+    /// Computes the retry status for a failed completion, notifies listeners,
+    /// and waits out the backoff delay (or returns early if the turn is
+    /// cancelled while waiting). Returns an error if the completion is not
+    /// retryable or retries are exhausted.
+    async fn retry_completion_error(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: &mut watch::Receiver<bool>,
+        error: LanguageModelCompletionError,
+        attempt: u8,
+        cx: &mut AsyncApp,
+    ) -> Result<ControlFlow<()>> {
+        let retry = this.update(cx, |this, cx| {
+            let user_store = this.user_store.read(cx);
+            this.handle_completion_error(error, attempt, user_store.plan())
+        })??;
+        let timer = cx.background_executor().timer(retry.duration);
+        event_stream.send_retry(retry);
+        futures::select! {
+            _ = timer.fuse() => {}
+            _ = cancellation_rx.changed().fuse() => {
+                if *cancellation_rx.borrow() {
+                    log::debug!("Turn cancelled during retry delay, exiting");
+                    return Ok(ControlFlow::Break(()));
+                }
+            }
+        }
+        Ok(ControlFlow::Continue(()))
+    }
+
     async fn perform_compaction_if_needed(
         this: &WeakEntity<Self>,
         event_stream: &ThreadEventStream,
         mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
-    ) -> Result<CompactionResult> {
+    ) -> Result<ControlFlow<()>> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
             let Some(insertion_ix) = this.compaction_message_target_ix() else {
                 return None;
@@ -2496,7 +2515,7 @@ impl Thread {
             Some((model, request, insertion_ix))
         })?
         else {
-            return Ok(CompactionResult::Skipped);
+            return Ok(ControlFlow::Continue(()));
         };
 
         log::debug!("Running compaction");
@@ -2505,9 +2524,9 @@ impl Thread {
             _ = cancellation_rx.changed().fuse() => {
                 if *cancellation_rx.borrow() {
                     log::debug!("Compaction cancelled before request started");
-                    return Ok(CompactionResult::Cancelled);
+                    return Ok(ControlFlow::Break(()));
                 }
-                return Ok(CompactionResult::Skipped);
+                return Ok(ControlFlow::Continue(()));
             }
         };
         let mut stream = stream?;
@@ -2519,7 +2538,7 @@ impl Thread {
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
                         log::debug!("Compaction cancelled while summarizing");
-                        return Ok(CompactionResult::Cancelled);
+                        return Ok(ControlFlow::Break(()));
                     }
                     continue;
                 }
@@ -2546,7 +2565,7 @@ impl Thread {
 
         if *cancellation_rx.borrow() {
             log::debug!("Compaction cancelled after summarizing");
-            return Ok(CompactionResult::Cancelled);
+            return Ok(ControlFlow::Break(()));
         }
 
         let summary = summary.trim().to_string();
@@ -2568,7 +2587,7 @@ impl Thread {
             cx.notify();
         })?;
 
-        Ok(CompactionResult::Completed)
+        Ok(ControlFlow::Continue(()))
     }
 
     fn process_tool_result(
