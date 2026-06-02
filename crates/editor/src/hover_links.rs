@@ -573,6 +573,16 @@ pub fn show_link_definition(
                                 }
                             });
 
+                        // When the server reports no `originSelectionRange`, fall back
+                        // to the highlighted word as the symbol range so that hovering
+                        // elsewhere within the same symbol reuses this result instead
+                        // of issuing another request.
+                        if let Some(hovered_link_state) = editor.hovered_link_state.as_mut()
+                            && hovered_link_state.symbol_range.is_none()
+                        {
+                            hovered_link_state.symbol_range = Some(highlight_range.clone());
+                        }
+
                         match highlight_range {
                             RangeInEditor::Text(text_range) => editor.highlight_text(
                                 HighlightKey::HoveredLinkState,
@@ -1251,9 +1261,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_go_to_definition_link_dedup(cx: &mut gpui::TestAppContext) {
-        // Jiggling the mouse over an already-queried position must not re-issue a
-        // definition request, even when the server replies with a bare `Location`
-        // and no `originSelectionRange` (issue #56193).
         init_test(cx, |_| {});
 
         let mut cx = EditorLspTestContext::new_rust(
@@ -1274,12 +1281,13 @@ mod tests {
         let request_count = Arc::new(AtomicUsize::new(0));
         let _requests = cx.set_request_handler::<GotoDefinition, _, _>({
             let request_count = request_count.clone();
-
             move |url, _, _| {
                 request_count.fetch_add(1, Ordering::SeqCst);
-
-                // Bare `Location`, no `originSelectionRange` (like phpactor).
                 async move {
+                    // Return a bare `Location`, not an `originSelectionRange`
+                    // so we can confirm that jiggling the mouse within the same
+                    // symbol range does not trigger a second request, even
+                    // though `originSelectionRange` was not returned.
                     Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
                         uri: url,
                         range: lsp::Range::default(),
@@ -1288,30 +1296,32 @@ mod tests {
             }
         });
 
-        let first_point = cx.pixel_position(indoc! {"
-            fn test() { do_wˇork(); }
+        let symbol_start = cx.pixel_position(indoc! {"
+            fn test() { ˇdo_work(); }
             fn do_work() { test(); }
         "});
-        let second_point = cx.pixel_position(indoc! {"
-            fn test() { do_woˇrk(); }
+        let symbol_end = cx.pixel_position(indoc! {"
+            fn test() { do_worˇk(); }
             fn do_work() { test(); }
         "});
+        let other_symbol = cx.pixel_position(indoc! {"
+            fn test() { do_work(); }
+            fn do_work() { teˇst(); }
+        "});
 
-        cx.simulate_mouse_move(first_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(symbol_start, None, Modifiers::secondary_key());
         cx.run_until_parked();
 
-        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(symbol_end, None, Modifiers::secondary_key());
         cx.run_until_parked();
 
-        // Jiggling within the same character should not produce new requests,
-        // as we already have the link for this specific position.
-        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.simulate_mouse_move(other_symbol, None, Modifiers::secondary_key());
         cx.run_until_parked();
 
         assert_eq!(
             request_count.load(Ordering::SeqCst),
             2,
-            "expected one definition request per distinct position"
+            "expected one request per symbol, reused within a symbol"
         );
     }
 
