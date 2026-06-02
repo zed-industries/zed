@@ -4,7 +4,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest,
+    http::{HeaderName, HeaderValue},
+};
 use language_model::{
     AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -510,15 +513,24 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
 
-            let mut extra_headers: Vec<(String, String)> = vec![
-                ("originator".into(), "zed".into()),
-                ("OpenAI-Beta".into(), "responses=experimental".into()),
+            let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
+                (
+                    HeaderName::from_static("originator"),
+                    HeaderValue::from_static("zed"),
+                ),
+                (
+                    HeaderName::from_static("openai-beta"),
+                    HeaderValue::from_static("responses=experimental"),
+                ),
             ];
             if let Some(ref id) = creds.account_id {
                 if !id.is_empty() {
-                    extra_headers.push(("ChatGPT-Account-Id".into(), id.clone()));
+                    if let Ok(value) = HeaderValue::from_str(id) {
+                        header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
+                    }
                 }
             }
+            let extra_headers = CustomHeaders::new(header_pairs);
 
             let access_token = creds.access_token.clone();
             request_limiter
@@ -529,7 +541,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                         CODEX_BASE_URL,
                         &access_token,
                         responses_request,
-                        extra_headers,
+                        &extra_headers,
                     )
                     .await
                     .map_err(LanguageModelCompletionError::from)

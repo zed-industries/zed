@@ -49,12 +49,21 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use http_client::CustomHeaders;
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("amazon-bedrock");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Amazon Bedrock");
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &[
+    "host",
+    "x-amz-date",
+    "x-amz-security-token",
+    "x-amz-content-sha256",
+    "amz-sdk-invocation-id",
+    "amz-sdk-request",
+];
 
 /// Credentials stored in the keychain for static authentication.
 /// Region is handled separately since it's orthogonal to auth method.
@@ -107,6 +116,7 @@ impl BedrockCredentials {
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AmazonBedrockSettings {
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
     pub region: Option<String>,
     pub endpoint: Option<String>,
     pub profile_name: Option<String>,
@@ -617,8 +627,17 @@ impl BedrockModel {
             return futures::future::ready(Err(BedrockError::Other(anyhow!("App state dropped"))))
                 .boxed();
         };
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .custom_headers
+                .clone()
+        });
 
-        let task = Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request));
+        let task = Tokio::spawn(
+            cx,
+            bedrock::stream_completion(runtime_client, request, extra_headers),
+        );
         async move { task.await.map_err(|e| BedrockError::Other(e.into()))? }.boxed()
     }
 }
