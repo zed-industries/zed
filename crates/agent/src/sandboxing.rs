@@ -23,7 +23,6 @@ use std::path::PathBuf;
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
-    // todo! think about platforms
     cx.has_flag::<SandboxingFeatureFlag>()
 }
 

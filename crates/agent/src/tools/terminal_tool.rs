@@ -389,9 +389,11 @@ async fn run_terminal_tool(
             .map(str::trim)
             .filter(|reason| !reason.is_empty());
         let Some(reason) = reason else {
-            return Err("This command requests elevated sandbox permissions, so a `reason` is \
+            return Err(
+                "This command requests elevated sandbox permissions, so a `reason` is \
                  required: briefly justify why the command needs them, then run it again."
-                .to_string());
+                    .to_string(),
+            );
         };
         let title = sandbox_approval_title(&request);
         let approve = cx.update(|cx| {

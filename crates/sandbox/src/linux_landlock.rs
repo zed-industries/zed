@@ -109,8 +109,7 @@ pub fn restrict_command(
     // which are valid to run in the post-`fork`, pre-`exec` child.
     unsafe {
         command.pre_exec(move || {
-            let writable: Vec<&Path> =
-                writable_directories.iter().map(PathBuf::as_path).collect();
+            let writable: Vec<&Path> = writable_directories.iter().map(PathBuf::as_path).collect();
             restrict_current_thread(&writable, permissions)
                 .map(|_status| ())
                 .map_err(std::io::Error::other)
@@ -161,7 +160,9 @@ pub fn restrict_current_thread(
             .context("failed to configure Landlock network access")?;
     }
 
-    let mut ruleset = ruleset.create().context("failed to create Landlock ruleset")?;
+    let mut ruleset = ruleset
+        .create()
+        .context("failed to create Landlock ruleset")?;
 
     // Allow reading from the entire filesystem.
     ruleset = ruleset
@@ -348,9 +349,7 @@ fn decode_launcher_args(mut args: impl Iterator<Item = OsString>) -> Result<Laun
 
     let mut writable_directories = Vec::with_capacity(count);
     for _ in 0..count {
-        writable_directories.push(PathBuf::from(
-            args.next().context("missing writable path")?,
-        ));
+        writable_directories.push(PathBuf::from(args.next().context("missing writable path")?));
     }
 
     let program = args.next().context("missing wrapped program")?;
@@ -437,10 +436,9 @@ mod tests {
         let forbidden_file = forbidden.path().join("denied");
 
         let mut command = Command::new("/bin/sh");
-        command.arg("-c").arg(format!(
-            "echo nope > {}",
-            forbidden_file.to_str().unwrap()
-        ));
+        command
+            .arg("-c")
+            .arg(format!("echo nope > {}", forbidden_file.to_str().unwrap()));
         restrict_in_child(
             &mut command,
             &[writable.path()],
@@ -471,7 +469,10 @@ mod tests {
         );
 
         let status = command.status().unwrap();
-        assert!(status.success(), "expected write to writable dir to succeed");
+        assert!(
+            status.success(),
+            "expected write to writable dir to succeed"
+        );
         assert!(allowed_file.exists());
     }
 
@@ -490,7 +491,11 @@ mod tests {
             .arg("-c")
             .arg(format!("echo ok > {}", target.to_str().unwrap()));
         // Pass the not-yet-created file path itself as the writable target.
-        restrict_in_child(&mut command, &[target.as_path()], SandboxPermissions::default());
+        restrict_in_child(
+            &mut command,
+            &[target.as_path()],
+            SandboxPermissions::default(),
+        );
 
         let status = command.status().unwrap();
         assert!(
@@ -527,9 +532,11 @@ mod tests {
         // SAFETY: only Landlock syscalls run between fork and exec.
         unsafe {
             command.pre_exec(move || {
-                let status =
-                    restrict_current_thread(&[writable_path.as_path()], SandboxPermissions::default())
-                        .map_err(std::io::Error::other)?;
+                let status = restrict_current_thread(
+                    &[writable_path.as_path()],
+                    SandboxPermissions::default(),
+                )
+                .map_err(std::io::Error::other)?;
                 if status.ruleset == RulesetStatus::NotEnforced {
                     return Err(std::io::Error::other("Landlock ruleset not enforced"));
                 }
@@ -587,8 +594,7 @@ mod tests {
             allow_network: false,
             allow_fs_write: true,
         };
-        let (launcher, args) =
-            wrap_invocation("/path/to/zed", "/bin/true", &[], &[], permissions);
+        let (launcher, args) = wrap_invocation("/path/to/zed", "/bin/true", &[], &[], permissions);
 
         let raw = launcher_argv(launcher, args);
         let decoded = parse_launcher_args(raw).unwrap().unwrap();
