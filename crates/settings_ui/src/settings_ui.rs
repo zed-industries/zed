@@ -1256,50 +1256,33 @@ fn render_settings_item(
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .render_code_spans(),
-                ), // .when(
-                   //     setting_item.field.is_overriden_by_organization(cx),
-                   //     |this| {
-                   //         this.child(h_flex()
-                   //             .gap_2()
-                   //             .child(
-                   //                 Icon::new(IconName::Warning)
-                   //                     .size(IconSize::Small)
-                   //                     .color(Color::Warning),
-                   //             )
-                   //             .child(
-                   //             Label::new(SharedString::new_static("This setting is managed by the selected organization and can’t be changed here."))
-                   //                 .size(LabelSize::Small)
-                   //                 .color(Color::Muted)
-                   //                 .render_code_spans(),
-                   //         ))
-                   //     },
-                   // ),
+                ),
         )
-        .child(
-
-if setting_item.field.is_overriden_by_organization(cx) {
-
-        h_flex()
-            .gap_2()
-            .child(
-                div()
-                    .id("organization-configuration-warning")
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .tooltip(Tooltip::text(
-                        "This setting is managed by the selected organization and can’t be changed here.",
-                    )),
-            )
-            .child(control)
-            .into_any_element()
-} else {
-
-control.into_any_element()
-}
-       )
+        .child(if setting_item.field.is_overriden_by_organization(cx) {
+            h_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .id("organization-configuration-warning")
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                        .tooltip(|_, cx| {
+                            Tooltip::with_meta(
+                                "Overriden by Organization",
+                                None,
+                                "Contact your organization admins to adjust this setting.",
+                                cx,
+                            )
+                        }),
+                )
+                .child(control)
+                .into_any_element()
+        } else {
+            control.into_any_element()
+        })
         .when(settings_window.sub_page_stack.is_empty(), |this| {
             this.child(render_settings_item_link(
                 setting_item.description,
