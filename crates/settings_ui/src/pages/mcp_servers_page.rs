@@ -513,6 +513,7 @@ fn render_add_server_popover(
                     menu.entry("Install from Extensions", None, {
                         move |_window, cx| {
                             if let Some(original_window) = original_window.as_ref() {
+                                cx.activate(true);
                                 original_window
                                     .update(cx, |_, window, cx| {
                                         window.activate_window();
