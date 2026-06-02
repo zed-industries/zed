@@ -1409,6 +1409,7 @@ mod tests {
             "get_code_actions",
             "go_to_definition",
             "grep",
+            "list_agents_and_models",
             "list_directory",
             "open",
             "read_file",
@@ -1417,8 +1418,9 @@ mod tests {
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.
             "streaming_edit_file",
-            // Subagent permission checks happen at the level of individual
-            // tool calls within the subagent, not at the spawning level.
+            // Sibling/subagent thread creation delegates permission checks to
+            // tool calls inside the spawned thread, not the spawning itself.
+            "create_thread",
             "spawn_agent",
             // update_plan updates UI-visible planning state but does not use
             // tool permission rules.

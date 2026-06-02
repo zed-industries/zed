@@ -1772,7 +1772,7 @@ impl Render for ExtensionsPage {
                     let scroll_handle = &self.list;
                     this.child(
                         uniform_list("entries", count, cx.processor(Self::render_extensions))
-                            .flex_grow()
+                            .flex_grow_1()
                             .pb_4()
                             .track_scroll(scroll_handle),
                     )

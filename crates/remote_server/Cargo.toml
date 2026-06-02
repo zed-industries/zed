@@ -22,6 +22,7 @@ debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
+acp_thread.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 askpass.workspace = true
@@ -38,7 +39,6 @@ fs.workspace = true
 futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
-git2 = { workspace = true, features = ["vendored-libgit2"] }
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui_tokio.workspace = true
@@ -88,6 +88,7 @@ gpui = { workspace = true, features = ["windows-manifest"] }
 [dev-dependencies]
 action_log.workspace = true
 agent = { workspace = true, features = ["test-support"] }
+agent-client-protocol.workspace = true
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
@@ -113,4 +114,4 @@ cargo_toml.workspace = true
 toml.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["git2", "rust-embed", "paths"]
+ignored = ["rust-embed", "paths"]

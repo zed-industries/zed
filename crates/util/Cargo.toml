@@ -15,7 +15,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["git2", "rand", "util_macros"]
+test-support = ["rand", "util_macros"]
 
 [dependencies]
 anyhow.workspace = true
@@ -46,7 +46,6 @@ gpui_util.workspace = true
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 smol.workspace = true
 which.workspace = true
-git2 = { workspace = true, optional = true }
 async-fs.workspace = true
 walkdir.workspace = true
 dirs.workspace = true
@@ -63,7 +62,6 @@ mach2.workspace = true
 tendril = "0.4.3"
 
 [dev-dependencies]
-git2.workspace = true
 rand.workspace = true
 util_macros.workspace = true
 pretty_assertions.workspace = true

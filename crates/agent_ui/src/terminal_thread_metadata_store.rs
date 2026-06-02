@@ -93,7 +93,7 @@ pub(crate) fn terminal_title_without_prefix(title: &str) -> &str {
         .unwrap_or(title)
 }
 
-fn terminal_title_prefix(title: &str) -> Option<&str> {
+pub fn terminal_title_prefix(title: &str) -> Option<&str> {
     let mut prefix_byte_len = 0;
     let mut saw_prefix_character = false;
     let mut saw_whitespace_after_prefix = false;
