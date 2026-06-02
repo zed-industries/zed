@@ -145,7 +145,7 @@ fn criterion_benches(criterion: &mut criterion::Criterion) {
     init_test_context(&cx);
 
     let text = String::from_iter(["char"; 1000]);
-    let input = (text, cx.clone());
+    let input = (text, cx);
     let mut group = criterion.benchmark_group("Build buffer with one long line");
     group.bench_with_input(
         BenchmarkId::new("editor_with_one_long_line", "(String, TestAppContext )"),
