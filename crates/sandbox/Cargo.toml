@@ -11,6 +11,13 @@ workspace = true
 [lib]
 path = "src/sandbox.rs"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+anyhow.workspace = true
+landlock.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tempfile.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow.workspace = true
 tempfile.workspace = true

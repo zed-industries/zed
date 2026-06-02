@@ -1,4 +1,6 @@
 use agent_client_protocol::schema as acp;
+#[cfg(target_os = "linux")]
+use anyhow::Context as _;
 use anyhow::Result;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
@@ -54,14 +56,19 @@ pub struct SandboxWrap {
 pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 
 /// Apply a [`SandboxWrap`] to a `(program, args)` pair, substituting the
-/// platform's sandbox-launcher invocation in place of the original. The
-/// returned `SandboxConfigHandle` (when `Some`) must be kept alive for the
-/// duration of the spawned command — dropping it deletes any on-disk
-/// config the launcher reads at startup.
+/// platform's sandboxed invocation in place of the original. The returned
+/// `SandboxConfigHandle` (when `Some`) must be kept alive for the duration
+/// of the spawned command — dropping it deletes any on-disk config the
+/// launcher reads at startup.
 ///
-/// On non-macOS hosts this is a no-op: the inputs pass through unchanged
-/// and the returned handle is `None`. (We don't yet have a sandbox
-/// integration for other platforms.)
+/// There is a dedicated code path per platform:
+/// * macOS wraps the command with `sandbox-exec` and a Seatbelt config file
+///   (returned as the handle).
+/// * Linux re-execs this binary as a Landlock launcher (see
+///   [`sandbox::linux_landlock`]); no handle is needed.
+/// * Windows and all other platforms pass the command through unchanged —
+///   we have no sandbox integration there, so the command runs with the
+///   agent's ambient permissions.
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
@@ -79,7 +86,7 @@ pub(crate) fn apply_sandbox_wrap(
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
-        let permissions = sandbox::macos_seatbelt::SandboxPermissions {
+        let permissions = sandbox::SandboxPermissions {
             allow_network: sandbox_wrap.allow_network,
             allow_fs_write: sandbox_wrap.allow_fs_write,
         };
@@ -91,10 +98,57 @@ pub(crate) fn apply_sandbox_wrap(
             Some(Box::new(config_file) as SandboxConfigHandle),
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        // No sandbox integration available; ignore the wrap request and
-        // let the command run with the agent's ambient permissions.
+        // Probe for Landlock right before sandboxing. If the kernel doesn't
+        // provide/enable it, run the command unsandboxed rather than failing.
+        // TODO: surface this to the user via the UI instead of only logging.
+        if !sandbox::linux_landlock::is_supported() {
+            log::warn!(
+                "Landlock is not available on this kernel; running terminal command \
+                 without an OS sandbox"
+            );
+            return Ok((program, args, None));
+        }
+
+        let writable: Vec<_> = sandbox_wrap
+            .writable_paths
+            .iter()
+            .chain(sandbox_wrap.extra_write_paths.iter())
+            .map(|p| p.as_path())
+            .collect();
+        let permissions = sandbox::SandboxPermissions {
+            allow_network: sandbox_wrap.allow_network,
+            allow_fs_write: sandbox_wrap.allow_fs_write,
+        };
+        let launcher = std::env::current_exe()
+            .context("failed to resolve current executable for Landlock sandbox launcher")?;
+        let launcher = launcher.to_str().with_context(|| {
+            format!(
+                "current executable path contains invalid UTF-8: {}",
+                launcher.display()
+            )
+        })?;
+        let (new_program, new_args) = sandbox::linux_landlock::wrap_invocation(
+            launcher,
+            &program,
+            &args,
+            &writable,
+            permissions,
+        );
+        // Landlock applies in-process via the re-exec'd launcher, so there's
+        // no on-disk resource to keep alive.
+        Ok((new_program, new_args, None))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // No sandbox integration on Windows; run with ambient permissions.
+        let _ = sandbox_wrap;
+        Ok((program, args, None))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        // No sandbox integration available; run with ambient permissions.
         let _ = sandbox_wrap;
         Ok((program, args, None))
     }

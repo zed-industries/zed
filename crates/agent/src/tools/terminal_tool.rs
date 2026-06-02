@@ -116,6 +116,12 @@ pub struct SandboxedTerminalToolInput {
     /// directory grants write access to its whole subtree. Prefer this over
     /// `allow_fs_write_all` whenever you can enumerate the paths. Requesting
     /// paths triggers a user approval prompt.
+    #[cfg_attr(
+        target_os = "linux",
+        doc = "\nOn Linux, every path here must be a directory that already exists. \
+        Requesting a file, or a path that does not exist yet, is an error. To create new \
+        files, request write access to the existing directory that will contain them."
+    )]
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
     /// Set to `true` only when the command needs to write outside the
@@ -338,6 +344,24 @@ async fn run_terminal_tool(
     } else {
         Vec::new()
     };
+
+    // On Linux the sandbox (Landlock) can only grant write access to a path it
+    // can open, and granting a not-yet-existing path would silently widen the
+    // grant to its nearest existing ancestor directory. Reject anything that
+    // isn't an already-existing directory so the user is only ever asked to
+    // approve — and only ever grants — exactly the paths shown to them.
+    #[cfg(target_os = "linux")]
+    for path in &write_paths {
+        if !path.is_dir() {
+            return Err(format!(
+                "Cannot request sandbox write access to `{}`: on Linux, write access can only \
+                 be granted to directories that already exist. To create or modify files, \
+                 request write access to the existing directory that contains them, not the \
+                 file path itself.",
+                path.display()
+            ));
+        }
+    }
 
     let request = crate::sandboxing::SandboxRequest {
         network: !want_unsandboxed && want_network,

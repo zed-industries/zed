@@ -25,23 +25,7 @@ use std::{io::Write, path::PathBuf};
 use anyhow::{Context, Result};
 use tempfile::NamedTempFile;
 
-/// Per-command relaxations of the default Seatbelt sandbox.
-///
-/// All-false is the default, fully-sandboxed run. Setting any field
-/// requires user approval before the command is launched.
-///
-/// There are some baseline OS operations (e.g. arbitrary hardware access)
-/// that are disallowed by Seatbelt's baseline policy regardless of these
-/// flags; even with everything `true` here those operations stay denied.
-/// The only way to allow them is to skip the sandbox entirely (which this
-/// module deliberately doesn't expose).
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SandboxPermissions {
-    /// Allow network access for the command.
-    pub allow_network: bool,
-    /// Allow unrestricted filesystem writes.
-    pub allow_fs_write: bool,
-}
+use crate::SandboxPermissions;
 
 /// A Seatbelt config file written to a temporary path on disk, suitable
 /// for `sandbox-exec -f <path>`. The file is deleted when this is dropped.
