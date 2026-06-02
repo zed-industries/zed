@@ -137,14 +137,25 @@ pub struct RedactionConfig {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunnableCapture {
-    Named(SharedString),
+    /// `@run` — marks the node that identifies the runnable (e.g. the test
+    /// function name, the subtest string literal).
     Run,
+    /// `@run_item` — marks one candidate runnable inside a larger grammar
+    /// match. Used by the per-match dispatch pipeline so a single tree-sitter
+    /// match can produce multiple runnables (e.g. Go table-test rows).
+    RunItem,
+    /// Any other named capture, exposed by name to language resolvers and used
+    /// to populate `RunnableRange::extra_captures`.
+    Named(SharedString),
 }
 
 pub struct RunnableConfig {
     pub query: Query,
     /// A mapping from capture index to capture kind
     pub extra_captures: Vec<RunnableCapture>,
+    /// `true` if the query uses `@run_item`, the marker for matches that
+    /// emit multiple runnables.
+    pub supports_grouped_runnables: bool,
 }
 
 pub struct OverrideConfig {
@@ -388,13 +399,18 @@ impl Grammar {
             .iter()
             .map(|&name| match name {
                 "run" => RunnableCapture::Run,
+                "run_item" => RunnableCapture::RunItem,
                 name => RunnableCapture::Named(name.to_string().into()),
             })
             .collect();
+        let supports_grouped_runnables = extra_captures
+            .iter()
+            .any(|capture| matches!(capture, RunnableCapture::RunItem));
 
         self.runnable_config = Some(RunnableConfig {
             extra_captures,
             query,
+            supports_grouped_runnables,
         });
 
         Ok(self)

@@ -51,7 +51,6 @@ members = [
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
-    "crates/denoise",
     "crates/dev_container",
     "crates/diagnostics",
     "crates/docs_preprocessor",
@@ -137,7 +136,6 @@ members = [
     "crates/miniprofiler_ui",
     "crates/mistral",
     "crates/multi_buffer",
-    "crates/nc",
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
@@ -172,7 +170,6 @@ members = [
     "crates/reqwest_client",
     "crates/rope",
     "crates/rpc",
-    "crates/rules_library",
     "crates/sandbox",
     "crates/skill_creator",
     "crates/scheduler",
@@ -399,7 +396,6 @@ migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
 miniprofiler_ui = { path = "crates/miniprofiler_ui" }
-nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
@@ -434,7 +430,6 @@ reqwest_client = { path = "crates/reqwest_client" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-rules_library = { path = "crates/rules_library" }
 skill_creator = { path = "crates/skill_creator" }
 scheduler = { path = "crates/scheduler" }
 sandbox = { path = "crates/sandbox" }
@@ -509,7 +504,7 @@ accesskit = "0.24.0"
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.32.1"
-agent-client-protocol = { version = "=0.12.1", features = ["unstable"] }
+agent-client-protocol = { version = "=0.13.1", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "fcf32feacb367b75ec84dd40f041e4fd411d3cc1" }
 any_vec = "0.14"
@@ -563,7 +558,7 @@ clap = { version = "4.4", features = ["derive", "wrap_help"] }
 cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
 const_format = "0.2"
-convert_case = "0.8.0"
+convert_case = "0.11.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
@@ -599,7 +594,7 @@ futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
-git2 = { version = "0.21.0", default-features = false, features = ["vendored-libgit2", "unstable-sha256"] }
+
 globset = "0.4"
 heapless = "0.9.2"
 handlebars = "4.3"
@@ -805,6 +800,7 @@ unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
@@ -895,9 +891,9 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
-webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c3a55bbc207008f1ca3474b6037fdd3c443cad0f" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c3a55bbc207008f1ca3474b6037fdd3c443cad0f" }
+webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c3a55bbc207008f1ca3474b6037fdd3c443cad0f" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
