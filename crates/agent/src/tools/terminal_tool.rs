@@ -116,6 +116,12 @@ pub struct SandboxedTerminalToolInput {
     /// directory grants write access to its whole subtree. Prefer this over
     /// `allow_fs_write_all` whenever you can enumerate the paths. Requesting
     /// paths triggers a user approval prompt.
+    #[cfg_attr(
+        target_os = "linux",
+        doc = "\nOn Linux, every path here must be a directory that already exists. \
+        Requesting a file, or a path that does not exist yet, is an error. To create new \
+        files, request write access to the existing directory that will contain them."
+    )]
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
     /// Set to `true` only when the command needs to write outside the
@@ -135,6 +141,16 @@ pub struct SandboxedTerminalToolInput {
     /// triggers a user approval prompt.
     #[serde(default)]
     pub unsandboxed: Option<bool>,
+    /// A short justification for why this command needs the sandbox
+    /// permission(s) it requests (`allow_network`, `fs_write_paths`,
+    /// `allow_fs_write_all`, or `unsandboxed`).
+    ///
+    /// Required whenever you request any of those permissions; omit it for
+    /// ordinary commands that request none. Write it in your own voice — it
+    /// is shown to the user, attributed to you, when they're asked to approve
+    /// the request.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -143,6 +159,7 @@ struct TerminalSandboxInput {
     fs_write_paths: Vec<String>,
     allow_fs_write_all: Option<bool>,
     unsandboxed: Option<bool>,
+    reason: Option<String>,
 }
 
 struct TerminalToolRequest {
@@ -183,6 +200,7 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
                 fs_write_paths: input.fs_write_paths,
                 allow_fs_write_all: input.allow_fs_write_all,
                 unsandboxed: input.unsandboxed,
+                reason: input.reason,
             }),
         }
     }
@@ -339,6 +357,24 @@ async fn run_terminal_tool(
         Vec::new()
     };
 
+    // On Linux the sandbox (Landlock) can only grant write access to a path it
+    // can open, and granting a not-yet-existing path would silently widen the
+    // grant to its nearest existing ancestor directory. Reject anything that
+    // isn't an already-existing directory so the user is only ever asked to
+    // approve — and only ever grants — exactly the paths shown to them.
+    #[cfg(target_os = "linux")]
+    for path in &write_paths {
+        if !path.is_dir() {
+            return Err(format!(
+                "Cannot request sandbox write access to `{}`: on Linux, write access can only \
+                 be granted to directories that already exist. To create or modify files, \
+                 request write access to the existing directory that contains them, not the \
+                 file path itself.",
+                path.display()
+            ));
+        }
+    }
+
     let request = crate::sandboxing::SandboxRequest {
         network: !want_unsandboxed && want_network,
         allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
@@ -347,8 +383,22 @@ async fn run_terminal_tool(
     };
 
     if request.needs_escalation() {
+        let reason = sandbox_input
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty());
+        let Some(reason) = reason else {
+            return Err(
+                "This command requests elevated sandbox permissions, so a `reason` is \
+                 required: briefly justify why the command needs them, then run it again."
+                    .to_string(),
+            );
+        };
         let title = sandbox_approval_title(&request);
-        let approve = cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
+        let approve = cx.update(|cx| {
+            event_stream.authorize_sandbox(title, request.clone(), reason.to_string(), cx)
+        });
         if let Err(error) = approve.await {
             if want_unsandboxed {
                 return Ok(format!(
@@ -2481,6 +2531,7 @@ mod tests {
             "command": "echo hi",
             "cd": "root",
             "allow_fs_write": true,
+            "reason": "needs to write outside the project",
         }))
         .expect("legacy allow_fs_write should deserialize");
 
@@ -2573,6 +2624,7 @@ mod tests {
             "allow_network": true,
             "allow_fs_write_all": true,
             "unsandboxed": true,
+            "reason": "needs full access for this task",
         }))
         .expect("unsandboxed input should deserialize");
 

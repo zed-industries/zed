@@ -7412,7 +7412,7 @@ impl ThreadView {
         details: &SandboxAuthorizationDetails,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if details.write_paths.is_empty() {
+        if details.reason.is_empty() && details.write_paths.is_empty() {
             return Empty.into_any_element();
         }
 
@@ -7430,64 +7430,83 @@ impl ThreadView {
             .gap_1()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .child(
-                h_flex()
-                    .id(("sandbox-authorization-details-header", entry_ix))
-                    .gap_1()
-                    .pl_0p5()
-                    .rounded_xs()
-                    .hover(|style| style.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown),
-                    )
-                    .child(
-                        Label::new("Paths")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .on_click(cx.listener({
-                        let tool_call_id = tool_call_id.clone();
-                        move |this, _event, _window, cx| {
-                            if this
-                                .collapsed_sandbox_authorization_details
-                                .remove(&tool_call_id)
-                            {
-                                cx.notify();
-                                return;
-                            }
-
-                            this.collapsed_sandbox_authorization_details
-                                .insert(tool_call_id.clone());
-                            cx.notify();
-                        }
-                    })),
-            )
-            .when(is_open, |this| {
+            .when(!details.reason.is_empty(), |this| {
                 this.child(
                     v_flex()
                         .gap_0p5()
-                        .pl_5()
-                        .children(paths.into_iter().enumerate().map(|(path_ix, path)| {
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("•").size(LabelSize::Small).color(Color::Muted))
-                                .child(
-                                    div()
-                                        .id(format!(
-                                            "sandbox-authorization-path-{entry_ix}-{path_ix}"
-                                        ))
-                                        .w_full()
-                                        .max_w_full()
-                                        .overflow_x_scroll()
-                                        .child(
-                                            Label::new(path).buffer_font(cx).size(LabelSize::Small),
-                                        ),
-                                )
+                        .child(
+                            Label::new("Reason from agent")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        )
+                        .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
+                )
+            })
+            .when(!paths.is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .id(("sandbox-authorization-details-header", entry_ix))
+                        .gap_1()
+                        .pl_0p5()
+                        .rounded_xs()
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown),
+                        )
+                        .child(
+                            Label::new("Paths")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        )
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            move |this, _event, _window, cx| {
+                                if this
+                                    .collapsed_sandbox_authorization_details
+                                    .remove(&tool_call_id)
+                                {
+                                    cx.notify();
+                                    return;
+                                }
+
+                                this.collapsed_sandbox_authorization_details
+                                    .insert(tool_call_id.clone());
+                                cx.notify();
+                            }
                         })),
                 )
+                .when(is_open, |this| {
+                    this.child(
+                        v_flex()
+                            .gap_0p5()
+                            .pl_5()
+                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new("•").size(LabelSize::Small).color(Color::Muted),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(format!(
+                                                "sandbox-authorization-path-{entry_ix}-{path_ix}"
+                                            ))
+                                            .w_full()
+                                            .max_w_full()
+                                            .overflow_x_scroll()
+                                            .child(
+                                                Label::new(path.clone())
+                                                    .buffer_font(cx)
+                                                    .size(LabelSize::Small),
+                                            ),
+                                    )
+                            })),
+                    )
+                })
             })
             .into_any_element()
     }

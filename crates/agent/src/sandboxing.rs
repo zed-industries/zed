@@ -23,7 +23,7 @@ use std::path::PathBuf;
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
-    cfg!(target_os = "macos") && cx.has_flag::<SandboxingFeatureFlag>()
+    cx.has_flag::<SandboxingFeatureFlag>()
 }
 
 /// A request for elevated sandbox permissions for a single terminal command.

@@ -4651,6 +4651,7 @@ impl ToolCallEventStream {
         &self,
         title: impl Into<String>,
         request: SandboxRequest,
+        reason: String,
         cx: &mut App,
     ) -> Task<Result<()>> {
         if Self::sandbox_request_covered_by_grants(&request, &self.sandbox_grants, cx) {
@@ -4663,6 +4664,7 @@ impl ToolCallEventStream {
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
+            reason,
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
@@ -5761,7 +5763,12 @@ mod tests {
         };
 
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
+            event_stream.authorize_sandbox(
+                "Allow write access?",
+                request.clone(),
+                "needs to write build artifacts".to_string(),
+                cx,
+            )
         });
         let authorization = receiver.expect_authorization().await;
         let details =
