@@ -3623,6 +3623,7 @@ fn search_and_files_page() -> SettingsPage {
                 description: "When to scan content of linked directories",
                 field: Box::new(SettingField {
                     json_path: Some("scan_symlinks"),
+                    org_override: None,
                     pick: |settings_content| {
                         settings_content.project.worktree.scan_symlinks.as_ref()
                     },

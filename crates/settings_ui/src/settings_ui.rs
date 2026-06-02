@@ -4374,7 +4374,7 @@ where
         .map(|current_value| (*current_value.value, current_value.disabled))
         .unwrap_or((variants()[0], false));
 
-    EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
+    let dropdown = EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
         move |value, window, cx| {
             if value == current_value {
                 return;
@@ -4393,8 +4393,28 @@ where
     })
     .disabled(disabled)
     .tab_index(0)
-    .title_case(should_do_titlecase)
-    .into_any_element()
+    .title_case(should_do_titlecase);
+
+    if disabled {
+        h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .id("organization-configuration-warning")
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .tooltip(Tooltip::text(
+                        "This setting is managed by the selected organization and can’t be changed here.",
+                    )),
+            )
+            .child(dropdown)
+            .into_any_element()
+    } else {
+        dropdown.into_any_element()
+    }
 }
 
 fn render_picker_trigger_button(id: SharedString, label: SharedString) -> Button {
