@@ -608,24 +608,12 @@ pub async fn restore_worktree_via_git(
         };
 
     if let Some(branch_name) = &row.branch_name {
-        let branch = wt_repo.read_with(cx, |repo, _cx| {
-            repo.branch_list
-                .iter()
-                .find(|branch| branch.name() == branch_name.as_str())
-                .cloned()
-        });
+        // Attempt to check out the branch the worktree was previously on.
+        let checkout_result = wt_repo
+            .update(cx, |repo, _cx| repo.change_branch(branch_name.clone()))
+            .await;
 
-        let checkout_result = if let Some(branch) = branch {
-            wt_repo
-                .update(cx, |repo, _cx| repo.change_branch(branch))
-                .await
-                .map_err(|e| anyhow!("{e}"))
-                .flatten()
-        } else {
-            Err(anyhow!("branch '{branch_name}' not found"))
-        };
-
-        match checkout_result {
+        match checkout_result.map_err(|e| anyhow!("{e}")).flatten() {
             Ok(()) => {
                 // Branch checkout succeeded. Check whether the branch has moved since
                 // we archived the worktree, by comparing HEAD to the expected SHA.

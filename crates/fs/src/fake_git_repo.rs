@@ -869,9 +869,9 @@ impl GitRepository for FakeGitRepository {
         async { Ok(()) }.boxed()
     }
 
-    fn change_branch(&self, branch: Branch) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.current_branch_name = Some(branch.name().to_string());
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, |state| {
+            state.current_branch_name = Some(name);
             Ok(())
         })
     }

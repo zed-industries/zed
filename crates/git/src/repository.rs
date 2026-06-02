@@ -824,7 +824,7 @@ pub trait GitRepository: Send + Sync {
 
     fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>>;
 
-    fn change_branch(&self, branch: Branch) -> BoxFuture<'_, Result<()>>;
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String, base_branch: Option<String>)
     -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
@@ -2028,18 +2028,49 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn change_branch(&self, branch: Branch) -> BoxFuture<'_, Result<()>> {
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let name = branch.name();
-                if branch.is_remote() {
-                    git_binary.run(&["switch", "--track", name]).await?;
-                } else {
-                    git_binary.run(&["switch", name]).await?;
+                let local_ref = format!("refs/heads/{name}");
+                if git_binary
+                    .run(&["show-ref", "--verify", "--quiet", &local_ref])
+                    .await
+                    .is_ok()
+                {
+                    git_binary.run(&["checkout", &name]).await?;
+                    return anyhow::Ok(());
                 }
-                anyhow::Ok(())
+
+                let remote_ref = format!("refs/remotes/{name}");
+                if git_binary
+                    .run(&["show-ref", "--verify", "--quiet", &remote_ref])
+                    .await
+                    .is_ok()
+                {
+                    let (_, branch_name) =
+                        name.split_once('/').context("Unexpected branch format")?;
+                    let local_branch_ref = format!("refs/heads/{branch_name}");
+                    if git_binary
+                        .run(&["show-ref", "--verify", "--quiet", &local_branch_ref])
+                        .await
+                        .is_ok()
+                    {
+                        git_binary
+                            .run(&["branch", "--set-upstream-to", &name, branch_name])
+                            .await?;
+                    } else {
+                        git_binary
+                            .run(&["branch", "--track", branch_name, &name])
+                            .await?;
+                    }
+
+                    git_binary.run(&["checkout", branch_name]).await?;
+                    return anyhow::Ok(());
+                }
+
+                anyhow::bail!("Branch '{}' not found", name);
             })
             .boxed()
     }
@@ -4013,12 +4044,29 @@ mod tests {
         );
 
         repository
-            .change_branch(Branch {
-                is_head: false,
-                ref_name: "refs/remotes/origin/feature".into(),
-                upstream: None,
-                most_recent_commit: None,
-            })
+            .change_branch("origin/feature".to_string())
+            .await
+            .unwrap();
+
+        let git = repository.git_binary_in_worktree().unwrap();
+        assert_eq!(
+            git.run(&["branch", "--show-current"]).await.unwrap(),
+            "feature"
+        );
+        assert_eq!(
+            git.run(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",])
+                .await
+                .unwrap(),
+            "origin/feature"
+        );
+
+        git.run(&["checkout", "main"]).await.unwrap();
+        git.run(&["branch", "--unset-upstream", "feature"])
+            .await
+            .unwrap();
+
+        repository
+            .change_branch("origin/feature".to_string())
             .await
             .unwrap();
 
