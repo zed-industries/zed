@@ -3866,7 +3866,10 @@ impl ScrollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext};
+    use crate::{
+        AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext,
+        util::FluentBuilder as _,
+    };
     use std::rc::Weak;
 
     struct TestTooltipView;
@@ -3953,6 +3956,7 @@ mod tests {
 
     struct TooltipOwner {
         captured_active_tooltip: CapturedActiveTooltip,
+        show_delay_override: Option<Duration>,
     }
 
     impl Render for TooltipOwner {
@@ -3965,7 +3969,10 @@ mod tests {
                             .id("target")
                             .w(px(50.))
                             .h(px(50.))
-                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                            .when_some(self.show_delay_override, |this, delay| {
+                                this.tooltip_show_delay(delay)
+                            }),
                     )
                     .into_any_element(),
                 captured_active_tooltip: self.captured_active_tooltip.clone(),
@@ -4011,7 +4018,9 @@ mod tests {
         assert_eq!(handle.offset().y, px(-25.));
     }
 
-    fn setup_tooltip_owner_test() -> (
+    fn setup_tooltip_owner_test(
+        show_delay_override: Option<Duration>,
+    ) -> (
         TestAppContext,
         crate::AnyWindowHandle,
         CapturedActiveTooltip,
@@ -4022,6 +4031,7 @@ mod tests {
             let captured_active_tooltip = captured_active_tooltip.clone();
             move |_, _| TooltipOwner {
                 captured_active_tooltip,
+                show_delay_override,
             }
         });
         let any_window = window.into();
@@ -4057,7 +4067,7 @@ mod tests {
 
     #[test]
     fn tooltip_waiting_for_show_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -4078,8 +4088,37 @@ mod tests {
     }
 
     #[test]
+    fn tooltip_respects_custom_show_delay() {
+        let extra_delay = Duration::from_secs(1);
+        let show_delay_override = DEFAULT_TOOLTIP_SHOW_DELAY + extra_delay;
+        let (mut test_app, _any_window, captured_active_tooltip) =
+            setup_tooltip_owner_test(Some(show_delay_override));
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        test_app.dispatcher.advance_clock(extra_delay);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+    }
+
+    #[test]
     fn tooltip_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -4107,7 +4146,7 @@ mod tests {
 
     #[test]
     fn tooltip_hides_after_mouse_leaves_origin() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
