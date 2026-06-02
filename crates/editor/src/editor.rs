@@ -148,6 +148,11 @@ use edit_prediction_types::{
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{LineWithInvisibles, PositionMap, layout_line};
+use extension::{
+    EditorCommandContext, EditorCommandResult, EditorEdit,
+    EditorSelection as ExtensionEditorSelection,
+};
+use extension_host::ExtensionStore;
 use futures::{
     FutureExt,
     future::{self, Shared},
@@ -266,7 +271,10 @@ use workspace::{
     searchable::SearchEvent,
 };
 pub use zed_actions::editor::RevealInFileManager;
-use zed_actions::editor::{MoveDown, MoveUp};
+use zed_actions::{
+    RunEditorCommand,
+    editor::{MoveDown, MoveUp},
+};
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -299,6 +307,10 @@ pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(50);
+
+struct FocusedEditor(gpui::WeakEntity<Editor>);
+
+impl gpui::Global for FocusedEditor {}
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const MINIMAP_FONT_SIZE: AbsoluteLength = AbsoluteLength::Pixels(px(2.));
@@ -360,6 +372,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::cancel_language_server_work);
             workspace.register_action(Editor::toggle_focus);
             workspace.register_action(Editor::view_bookmarks);
+            workspace.register_action(Editor::run_extension_editor_command);
         },
     )
     .detach();
@@ -393,6 +406,66 @@ pub fn init(cx: &mut App) {
         )) as Arc<dyn ErasedEditor>
     });
     _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
+}
+
+fn validated_editor_command_edits(
+    mut edits: Vec<EditorEdit>,
+    text: &str,
+) -> Result<Vec<(Range<MultiBufferOffset>, String)>> {
+    let text_len = text.len();
+    edits.sort_by_key(|edit| (edit.range.start, edit.range.end));
+
+    let mut previous_end = 0;
+    let mut validated_edits = Vec::with_capacity(edits.len());
+    for edit in edits {
+        if edit.range.start > edit.range.end {
+            bail!("editor command returned an edit with an inverted range");
+        }
+        if edit.range.end > text_len {
+            bail!("editor command returned an edit outside the buffer");
+        }
+        if edit.range.start < previous_end {
+            bail!("editor command returned overlapping edits");
+        }
+        if !text.is_char_boundary(edit.range.start) || !text.is_char_boundary(edit.range.end) {
+            bail!("editor command returned an edit that splits a UTF-8 character");
+        }
+
+        previous_end = edit.range.end;
+        validated_edits.push((
+            MultiBufferOffset(edit.range.start)..MultiBufferOffset(edit.range.end),
+            edit.new_text,
+        ));
+    }
+
+    Ok(validated_edits)
+}
+
+fn validated_editor_command_selections(
+    selections: Vec<ExtensionEditorSelection>,
+    text: &str,
+) -> Result<Vec<Selection<MultiBufferOffset>>> {
+    let text_len = text.len();
+    selections
+        .into_iter()
+        .enumerate()
+        .map(|(index, selection)| {
+            if selection.start > text_len || selection.end > text_len {
+                bail!("editor command returned a selection outside the buffer");
+            }
+            if !text.is_char_boundary(selection.start) || !text.is_char_boundary(selection.end) {
+                bail!("editor command returned a selection that splits a UTF-8 character");
+            }
+
+            Ok(Selection {
+                id: index,
+                start: MultiBufferOffset(selection.start),
+                end: MultiBufferOffset(selection.end),
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            })
+        })
+        .collect()
 }
 
 pub struct SearchWithinRange;
@@ -8248,6 +8321,119 @@ impl Editor {
         });
     }
 
+    fn run_extension_editor_command(
+        workspace: &mut Workspace,
+        action: &RunEditorCommand,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(editor) = Self::focused_editor(workspace, window, cx) else {
+            return;
+        };
+        let Some(extension_store) = ExtensionStore::try_global(cx) else {
+            return;
+        };
+
+        let command_id: Arc<str> = action.command.clone().into();
+        let context = editor.read_with(cx, |editor, cx| editor.editor_command_context(cx));
+        let task = extension_store.update(cx, |extension_store, cx| {
+            extension_store.run_editor_command(command_id.clone(), context, cx)
+        });
+
+        cx.spawn_in(window, async move |_, cx| {
+            let result = task.await;
+            editor
+                .update_in(cx, |editor, window, cx| match result {
+                    Ok(Some(result)) => {
+                        if let Err(error) = editor.apply_editor_command_result(result, window, cx) {
+                            log::error!(
+                                "failed to apply extension editor command `{command_id}`: {error:#}"
+                            );
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        log::error!("extension editor command `{command_id}` failed: {error:#}");
+                    }
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    fn focused_editor(workspace: &Workspace, window: &Window, cx: &App) -> Option<Entity<Editor>> {
+        if let Some(editor) = cx
+            .try_global::<FocusedEditor>()
+            .and_then(|focused_editor| focused_editor.0.upgrade())
+            && editor
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        {
+            return Some(editor);
+        }
+
+        workspace.active_item_as::<Editor>(cx)
+    }
+
+    fn editor_command_context(&self, cx: &App) -> EditorCommandContext {
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+        let selections = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|selection| ExtensionEditorSelection {
+                start: selection.start.to_offset(&snapshot).0,
+                end: selection.end.to_offset(&snapshot).0,
+                reversed: selection.reversed,
+            })
+            .collect();
+        let language = buffer
+            .language_at(MultiBufferOffset(0), cx)
+            .map(|language| language.name().to_proto());
+        let path = self
+            .active_buffer(cx)
+            .and_then(|buffer| buffer.read(cx).file())
+            .map(|file| file.path().to_proto());
+
+        EditorCommandContext {
+            text: snapshot.text(),
+            selections,
+            language,
+            path,
+        }
+    }
+
+    fn apply_editor_command_result(
+        &mut self,
+        result: EditorCommandResult,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let text = snapshot.text();
+        let edits = validated_editor_command_edits(result.edits, &text)?;
+        let selections = result
+            .selections
+            .map(|selections| validated_editor_command_selections(selections, &text))
+            .transpose()?;
+
+        self.transact(window, cx, |editor, window, cx| {
+            if !edits.is_empty() {
+                editor.edit(edits, cx);
+            }
+
+            if let Some(selections) = selections {
+                editor.change_selections(Default::default(), window, cx, |selection_state| {
+                    selection_state.select(selections);
+                });
+            }
+        });
+
+        Ok(())
+    }
+
     pub fn display_text(&self, cx: &mut App) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
@@ -10092,6 +10278,7 @@ impl Editor {
     }
 
     fn handle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.set_global(FocusedEditor(cx.weak_entity()));
         cx.emit(EditorEvent::Focused);
 
         if let Some(descendant) = self

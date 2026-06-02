@@ -15,8 +15,9 @@ pub use serde_json;
 // We explicitly enumerate the symbols we want to re-export, as there are some
 // that we may want to shadow to provide a cleaner Rust API.
 pub use wit::{
-    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
+    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType,
+    EditorCommandContext, EditorCommandResult, EditorEdit, EditorSelection, EnvVars, KeyValueStore,
+    LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
@@ -139,6 +140,15 @@ pub trait Extension: Send + Sync {
         _target_language_server_id: &LanguageServerId,
         _worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
+    /// Runs an editor command against the active editor context.
+    fn run_editor_command(
+        &mut self,
+        _command_id: String,
+        _context: EditorCommandContext,
+    ) -> Result<Option<EditorCommandResult>> {
         Ok(None)
     }
 
@@ -442,6 +452,13 @@ impl wit::Guest for Component {
                 worktree,
             )?
             .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn run_editor_command(
+        command_id: String,
+        context: EditorCommandContext,
+    ) -> Result<Option<EditorCommandResult>, String> {
+        extension().run_editor_command(command_id, context)
     }
 
     fn labels_for_completions(

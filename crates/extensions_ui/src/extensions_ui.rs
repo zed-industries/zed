@@ -69,6 +69,9 @@ pub fn init(cx: &mut App) {
                         }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
                         ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
+                        ExtensionCategoryFilter::EditorCommands => {
+                            ExtensionProvides::EditorCommands
+                        }
                     });
 
                     let existing = workspace
@@ -188,6 +191,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
         ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
         ExtensionProvides::Snippets => "Snippets",
         ExtensionProvides::DebugAdapters => "Debug Adapters",
+        ExtensionProvides::EditorCommands => "Editor Commands",
     }
 }
 

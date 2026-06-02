@@ -105,6 +105,12 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>>;
 
+    async fn run_editor_command(
+        &self,
+        command_id: Arc<str>,
+        context: EditorCommandContext,
+    ) -> Result<Option<EditorCommandResult>>;
+
     async fn labels_for_completions(
         &self,
         language_server_id: LanguageServerName,

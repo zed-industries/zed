@@ -78,6 +78,57 @@ impl From<Range> for std::ops::Range<usize> {
     }
 }
 
+impl From<extension::EditorSelection> for EditorSelection {
+    fn from(selection: extension::EditorSelection) -> Self {
+        Self {
+            start: selection.start as u64,
+            end: selection.end as u64,
+            reversed: selection.reversed,
+        }
+    }
+}
+
+impl From<EditorSelection> for extension::EditorSelection {
+    fn from(selection: EditorSelection) -> Self {
+        Self {
+            start: selection.start as usize,
+            end: selection.end as usize,
+            reversed: selection.reversed,
+        }
+    }
+}
+
+impl From<extension::EditorCommandContext> for EditorCommandContext {
+    fn from(context: extension::EditorCommandContext) -> Self {
+        Self {
+            text: context.text,
+            selections: context.selections.into_iter().map(Into::into).collect(),
+            language: context.language,
+            path: context.path,
+        }
+    }
+}
+
+impl From<EditorEdit> for extension::EditorEdit {
+    fn from(edit: EditorEdit) -> Self {
+        Self {
+            range: edit.range.into(),
+            new_text: edit.new_text,
+        }
+    }
+}
+
+impl From<EditorCommandResult> for extension::EditorCommandResult {
+    fn from(result: EditorCommandResult) -> Self {
+        Self {
+            edits: result.edits.into_iter().map(Into::into).collect(),
+            selections: result
+                .selections
+                .map(|selections| selections.into_iter().map(Into::into).collect()),
+        }
+    }
+}
+
 impl From<Command> for extension::Command {
     fn from(value: Command) -> Self {
         Self {

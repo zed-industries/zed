@@ -15,9 +15,10 @@ use collections::{BTreeMap, BTreeSet, FxHashSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    EditorCommandContext, EditorCommandResult, ExtensionContextServerProxy,
+    ExtensionDebugAdapterProviderProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSnippetProxy,
+    ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::join_all;
@@ -142,6 +143,7 @@ pub struct ExtensionStore {
     pub modified_extensions: HashSet<Arc<str>>,
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
+    pub editor_command_extensions: BTreeMap<Arc<str>, Arc<dyn extension::Extension>>,
     pub tasks: Vec<Task<()>>,
     pub remote_clients: Vec<WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
@@ -252,6 +254,23 @@ impl ExtensionStore {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
 
+    pub fn run_editor_command(
+        &self,
+        command_id: Arc<str>,
+        context: EditorCommandContext,
+        cx: &mut App,
+    ) -> Task<Result<Option<EditorCommandResult>>> {
+        let extension = self.editor_command_extensions.get(&command_id).cloned();
+
+        cx.background_spawn(async move {
+            let Some(extension) = extension else {
+                bail!("no extension provides editor command `{command_id}`");
+            };
+
+            extension.run_editor_command(command_id, context).await
+        })
+    }
+
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
@@ -290,6 +309,7 @@ impl ExtensionStore {
                 cx,
             ),
             wasm_extensions: Vec::new(),
+            editor_command_extensions: BTreeMap::default(),
             fs,
             http_client,
             telemetry,
@@ -1273,6 +1293,9 @@ impl ExtensionStore {
             for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
+            for command_id in extension.manifest.editor_commands.keys() {
+                self.editor_command_extensions.remove(command_id);
+            }
         }
 
         self.wasm_extensions
@@ -1519,6 +1542,11 @@ impl ExtensionStore {
                     for debug_adapter in manifest.debug_locators.keys() {
                         this.proxy
                             .register_debug_locator(extension.clone(), debug_adapter.clone());
+                    }
+
+                    for command_id in manifest.editor_commands.keys() {
+                        this.editor_command_extensions
+                            .insert(command_id.clone(), extension.clone());
                     }
                 }
 

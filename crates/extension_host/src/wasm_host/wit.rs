@@ -916,6 +916,23 @@ impl Extension {
         }
     }
 
+    pub async fn call_run_editor_command(
+        &self,
+        store: &mut Store<WasmState>,
+        command_id: String,
+        context: latest::EditorCommandContext,
+    ) -> Result<Result<Option<latest::EditorCommandResult>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_run_editor_command(store, &command_id, &context)
+                    .await
+            }
+            _ => {
+                anyhow::bail!("`run_editor_command` not available prior to v0.8.0");
+            }
+        }
+    }
+
     pub async fn call_context_server_command(
         &self,
         store: &mut Store<WasmState>,

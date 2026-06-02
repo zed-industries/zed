@@ -1,5 +1,6 @@
 mod context_server;
 mod dap;
+mod editor_command;
 mod lsp;
 mod slash_command;
 
@@ -9,6 +10,7 @@ use util::redact::should_redact;
 
 pub use context_server::*;
 pub use dap::*;
+pub use editor_command::*;
 pub use lsp::*;
 pub use slash_command::*;
 

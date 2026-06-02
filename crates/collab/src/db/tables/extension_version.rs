@@ -29,6 +29,7 @@ pub struct Model {
     pub provides_indexed_docs_providers: bool,
     pub provides_snippets: bool,
     pub provides_debug_adapters: bool,
+    pub provides_editor_commands: bool,
 }
 
 impl Model {
@@ -76,6 +77,10 @@ impl Model {
 
         if self.provides_debug_adapters {
             provides.insert(ExtensionProvides::DebugAdapters);
+        }
+
+        if self.provides_editor_commands {
+            provides.insert(ExtensionProvides::EditorCommands);
         }
 
         provides

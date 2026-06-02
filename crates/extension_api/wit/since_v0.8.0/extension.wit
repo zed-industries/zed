@@ -90,6 +90,33 @@ world extension {
         insert: func(key: string, value: string) -> result<_, string>;
     }
 
+    /// A selection in the active editor, represented as byte offsets into `editor-command-context.text`.
+    record editor-selection {
+        start: u64,
+        end: u64,
+        reversed: bool,
+    }
+
+    /// The active editor state available to an editor command extension.
+    record editor-command-context {
+        text: string,
+        selections: list<editor-selection>,
+        language: option<string>,
+        path: option<string>,
+    }
+
+    /// A text edit returned by an editor command extension.
+    record editor-edit {
+        range: range,
+        new-text: string,
+    }
+
+    /// The result of running an editor command.
+    record editor-command-result {
+        edits: list<editor-edit>,
+        selections: option<list<editor-selection>>,
+    }
+
     /// Returns the command used to start up the language server.
     export language-server-command: func(language-server-id: string, worktree: borrow<worktree>) -> result<command, string>;
 
@@ -116,6 +143,9 @@ world extension {
 
     /// Returns the workspace configuration options to pass to the other language server.
     export language-server-additional-workspace-configuration: func(language-server-id: string, target-language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// Runs the editor command with the given ID against the active editor context.
+    export run-editor-command: func(command-id: string, context: editor-command-context) -> result<option<editor-command-result>, string>;
 
     /// A label containing some code.
     record code-label {

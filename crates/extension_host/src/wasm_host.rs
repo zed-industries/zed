@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
-    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
-    WorktreeDelegate,
+    DebugTaskDefinition, EditorCommandContext, EditorCommandResult, ExtensionCapability,
+    ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
+    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::Fs;
 use futures::future::LocalBoxFuture;
@@ -245,6 +245,24 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn run_editor_command(
+        &self,
+        command_id: Arc<str>,
+        context: EditorCommandContext,
+    ) -> Result<Option<EditorCommandResult>> {
+        self.call(|extension, store| {
+            async move {
+                let result = extension
+                    .call_run_editor_command(store, command_id.to_string(), context.into())
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+                anyhow::Ok(result.map(Into::into))
             }
             .boxed()
         })

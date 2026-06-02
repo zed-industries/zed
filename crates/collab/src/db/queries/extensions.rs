@@ -296,6 +296,11 @@ impl Database {
                         provides_debug_adapters: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::DebugAdapters),
                         ),
+                        provides_editor_commands: ActiveValue::Set(
+                            version
+                                .provides
+                                .contains(&ExtensionProvides::EditorCommands),
+                        ),
                         download_count: ActiveValue::NotSet,
                     }
                 }))

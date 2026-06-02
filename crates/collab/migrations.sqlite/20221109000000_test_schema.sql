@@ -417,6 +417,7 @@ CREATE TABLE extension_versions (
     provides_indexed_docs_providers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_snippets BOOLEAN NOT NULL DEFAULT FALSE,
     provides_debug_adapters BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_editor_commands BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (extension_id, version)
 );
 

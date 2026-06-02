@@ -50,6 +50,7 @@ pub enum ExtensionProvides {
     IndexedDocsProviders,
     Snippets,
     DebugAdapters,
+    EditorCommands,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]

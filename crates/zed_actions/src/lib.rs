@@ -28,6 +28,14 @@ pub struct OpenZedUrl {
     pub url: String,
 }
 
+/// Runs an editor command provided by an extension.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = extension)]
+#[serde(deny_unknown_fields)]
+pub struct RunEditorCommand {
+    pub command: String,
+}
+
 /// Opens the keymap to either add a keybinding or change an existing one
 #[derive(PartialEq, Clone, Default, Action, JsonSchema, Serialize, Deserialize)]
 #[action(namespace = zed, no_json, no_register)]
@@ -91,6 +99,7 @@ pub enum ExtensionCategoryFilter {
     ContextServers,
     Snippets,
     DebugAdapters,
+    EditorCommands,
 }
 
 /// Opens the extensions management interface.

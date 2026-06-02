@@ -109,6 +109,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
+    pub editor_commands: BTreeMap<Arc<str>, EditorCommandManifestEntry>,
+    #[serde(default)]
     pub snippets: Option<ExtensionSnippets>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
@@ -154,6 +156,10 @@ impl ExtensionManifest {
 
         if !self.debug_adapters.is_empty() {
             provides.insert(ExtensionProvides::DebugAdapters);
+        }
+
+        if !self.editor_commands.is_empty() {
+            provides.insert(ExtensionProvides::EditorCommands);
         }
 
         provides
@@ -346,6 +352,11 @@ pub struct SlashCommandManifestEntry {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct EditorCommandManifestEntry {
+    pub description: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
     pub schema_path: Option<RelPathBuf>,
 }
@@ -428,6 +439,7 @@ fn manifest_from_old_manifest(
         language_servers: Default::default(),
         context_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
+        editor_commands: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
         debug_adapters: Default::default(),
@@ -462,6 +474,7 @@ mod tests {
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
+            editor_commands: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
             debug_adapters: Default::default(),
