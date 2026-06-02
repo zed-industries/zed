@@ -18,7 +18,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, SeedQuerySetting, Settings};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -536,6 +536,13 @@ impl SplittableEditor {
                     cx.emit(event.clone());
                 }
             }),
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let diff_view_style = EditorSettings::get_global(cx).diff_view_style;
+                if this.diff_view_style() != diff_view_style {
+                    this.toggle_split(&ToggleSplitDiff, window, cx);
+                    cx.notify();
+                }
+            }),
         ];
 
         let this = cx.weak_entity();
@@ -583,6 +590,10 @@ impl SplittableEditor {
             return;
         };
         let project = workspace.read(cx).project().clone();
+        let all_paths = self.diff_paths(cx);
+        if all_paths.is_empty() && !self.rhs_multibuffer.read(cx).is_empty() {
+            return;
+        }
 
         let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
         let lhs_multibuffer = cx.new(|cx| {
@@ -741,18 +752,6 @@ impl SplittableEditor {
             })
         });
 
-        let all_paths: Vec<_> = {
-            let rhs_multibuffer = self.rhs_multibuffer.read(cx);
-            let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
-            rhs_multibuffer_snapshot
-                .buffers_with_paths()
-                .filter_map(|(buffer, path)| {
-                    let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
-                    Some((path.clone(), diff))
-                })
-                .collect()
-        };
-
         self.lhs = Some(lhs);
 
         self.sync_lhs_for_paths(all_paths, cx);
@@ -812,6 +811,18 @@ impl SplittableEditor {
         });
 
         cx.notify();
+    }
+
+    fn diff_paths(&self, cx: &App) -> Vec<(PathKey, Entity<BufferDiff>)> {
+        let rhs_multibuffer = self.rhs_multibuffer.read(cx);
+        let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
+        rhs_multibuffer_snapshot
+            .buffers_with_paths()
+            .filter_map(|(buffer, path)| {
+                let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
+                Some((path.clone(), diff))
+            })
+            .collect()
     }
 
     fn activate_pane_left(
@@ -1756,6 +1767,10 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).buffer_kind(cx)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+        self.rhs_editor.read(cx).active_project_path(cx)
+    }
+
     fn is_dirty(&self, cx: &App) -> bool {
         self.rhs_editor.read(cx).is_dirty(cx)
     }
@@ -2109,8 +2124,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
-    use gpui::Element as _;
     use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
+    use gpui::{BorrowAppContext as _, Element as _};
     use language::language_settings::SoftWrap;
     use language::{Buffer, Capability};
     use multi_buffer::{MultiBuffer, PathKey};
@@ -2138,10 +2153,16 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(style);
+                });
+            });
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs as Arc<dyn fs::Fs>, [], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());

@@ -120,9 +120,8 @@ To see which files specifically have been edited, expand the accordion bar that 
 
 You can accept or reject each individual change hunk, or the whole set of changes made by the agent.
 
-Edit diffs also appear in singleton buffers.
-If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
-You can turn this off, though, through the `agent.single_file_review` setting.
+Edit diffs can also appear inline in individual files with the same
+keep/reject hunk controls as the multi-buffer review pane. This temporarily overrides the buffer's git diff while review is active. Enable it by setting `agent.single_file_review` to `true` in your settings.
 
 ## Terminal Threads {#terminal-threads}
 
@@ -148,7 +147,7 @@ Unlike agent threads, terminal threads are closed rather than archived — they 
 
 ### Claude Code Notifications {#claude-code-notifications}
 
-Claude Code can ring the terminal bell when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
+Claude Code can notify you when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
 
 ```json
 {
@@ -166,6 +165,58 @@ You can also set this from within Claude Code by running `/config`, selecting `L
 
 For more, see the [Claude Code documentation](https://code.claude.com/docs/en/terminal-config).
 
+### Amp Notifications {#amp-notifications}
+
+Amp updates terminal titles automatically and can also notify you when it needs your attention. To enable notifications in Zed terminal threads, add `AMP_FORCE_BEL=1` to your terminal environment settings:
+
+```json [settings]
+{
+  "terminal": {
+    "env": {
+      "AMP_FORCE_BEL": "1"
+    }
+  }
+}
+```
+
+Restart Amp after adding the environment variable.
+
+### OpenCode Notifications {#opencode-notifications}
+
+OpenCode can update terminal titles automatically. For Zed notifications, add an OpenCode plugin that emits a terminal bell when OpenCode needs your attention.
+
+Create `.opencode/plugins/zed-bell.js` in your project, or `~/.config/opencode/plugins/zed-bell.js` to use it globally:
+
+```js
+export const ZedBell = async () => {
+  return {
+    event: async ({ event }) => {
+      if (event.type === "session.idle" || event.type === "permission.asked") {
+        process.stdout.write("\x07");
+      }
+    },
+  };
+};
+```
+
+Restart OpenCode after adding the plugin.
+
+### Pi Notifications {#pi-notifications}
+
+Pi can use an extension to emit a notification when it finishes a turn. Create `.pi/extensions/zed-bell.ts` in your project, or `~/.pi/agent/extensions/zed-bell.ts` to use it globally:
+
+```ts
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("agent_end", async () => {
+    process.stdout.write("\x07");
+  });
+}
+```
+
+Restart Pi after adding the extension, or run `/reload` if the extension is in one of Pi's auto-discovered extension locations.
+
 ### Codex Terminal Titles {#codex-terminal-titles}
 
 Codex can update the terminal title as it works, which Zed uses to show useful context for Codex terminal threads in the sidebar — such as the project, current status, branch, model, or task progress.
@@ -182,7 +233,7 @@ terminal_title = ["spinner", "project-name", "run-state", "thread-title"]
 The agent can search your codebase to find relevant context, but providing it explicitly improves response quality and reduces latency.
 
 Add context by typing `@` in the message editor.
-You can mention files, directories, symbols, previous threads, rules files, and diagnostics.
+You can mention files, directories, symbols, previous threads, skills, and diagnostics.
 
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
@@ -204,7 +255,7 @@ Copying an image and pasting it is also supported.
 Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor.
 
 Once you approach the model's context window, a banner appears above the message editor suggesting to start a new thread with the current one summarized and added as context.
-You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right, where you'll see a "New from Summary" button, as well as simply @-mentioning a past thread in a new one..
+You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right, where you'll see a "New from Summary" button, as well as simply @-mentioning a past thread in a new one.
 
 ## Changing Models {#changing-models}
 
