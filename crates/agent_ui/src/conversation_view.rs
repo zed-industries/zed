@@ -3063,6 +3063,7 @@ fn native_available_skills(
             description: skill.description.into(),
             source: skill.source,
             skill_file_path: skill.skill_file_path,
+            warning: skill.warning,
         })
         .collect()
 }

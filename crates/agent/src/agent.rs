@@ -145,6 +145,7 @@ pub struct NativeAvailableSkill {
     pub description: String,
     pub source: SharedString,
     pub skill_file_path: PathBuf,
+    pub warning: Option<SharedString>,
 }
 
 impl From<&Skill> for NativeAvailableSkill {
@@ -154,6 +155,10 @@ impl From<&Skill> for NativeAvailableSkill {
             description: skill.description.clone(),
             source: skill.source.display_label().to_string().into(),
             skill_file_path: skill.skill_file_path.clone(),
+            warning: skill
+                .load_warnings
+                .first()
+                .map(|warning| warning.message().into()),
         }
     }
 }
@@ -4060,9 +4065,9 @@ mod internal_tests {
         });
 
         let connection = NativeAgentConnection(agent.clone());
-        let _acp_thread = cx
+        let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection).new_session(
+                Rc::new(connection.clone()).new_session(
                     project.clone(),
                     PathList::new(&[Path::new("/")]),
                     cx,
@@ -4102,6 +4107,24 @@ mod internal_tests {
             );
 
             (*user[0]).clone()
+        });
+
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
+        cx.update(|cx| {
+            let available_skills = connection.available_skills(&session_id, cx);
+            let available_skill = available_skills
+                .iter()
+                .find(|skill| skill.name == "long-description")
+                .expect("long-description should appear in available skills");
+            assert_eq!(available_skill.description, long_description);
+            assert!(
+                available_skill
+                    .warning
+                    .as_ref()
+                    .is_some_and(|warning| warning.contains("1024-byte limit")),
+                "available skill should expose warning text, got {:?}",
+                available_skill.warning
+            );
         });
 
         let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)

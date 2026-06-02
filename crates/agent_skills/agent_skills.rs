@@ -63,7 +63,7 @@ impl SkillLoadWarning {
                 actual_len,
                 max_len,
             } => format!(
-                "Skill description is {actual_len} bytes, exceeding the {max_len}-byte limit. The skill was loaded, but long descriptions may make the skill catalog larger than intended."
+                "Skill description is {actual_len} bytes, exceeding the {max_len}-byte limit. The skill was loaded, but long descriptions may consume more model-context tokens."
             ),
         }
     }

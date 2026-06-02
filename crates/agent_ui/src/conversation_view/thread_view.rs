@@ -9476,58 +9476,163 @@ impl ThreadView {
     }
 
     fn render_skill_loading_issues(&self, cx: &mut Context<Self>) -> Vec<Callout> {
-        self.skill_loading_issues
+        let mut callouts = Vec::new();
+        let description_warnings = self
+            .skill_loading_issues
             .iter()
-            .enumerate()
-            .map(|(index, issue)| {
-                let abs_path = issue.path.clone();
-                let workspace = self.workspace.clone();
-                let path_label = issue.path.display().to_string();
-                let target = issue.clone();
-                let title = match issue.kind {
-                    SkillLoadingIssueKind::LoadFailed => "Skill failed to load",
-                    SkillLoadingIssueKind::DescriptionTooLong => "Skill loaded with warning",
-                    SkillLoadingIssueKind::CatalogBudgetExceeded => {
-                        "Skill omitted from model catalog"
-                    }
-                };
+            .filter(|issue| issue.kind == SkillLoadingIssueKind::DescriptionTooLong)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if !description_warnings.is_empty() {
+            let rows = description_warnings
+                .iter()
+                .enumerate()
+                .map(|(index, issue)| {
+                    let abs_path = issue.path.clone();
+                    let workspace = self.workspace.clone();
+                    let path_label = issue.path.display().to_string();
+                    h_flex()
+                        .id(("skill-description-warning", index))
+                        .w_full()
+                        .min_w_0()
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .min_w_0()
+                                .flex_1()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    v_flex()
+                                        .min_w_0()
+                                        .child(
+                                            Label::new(path_label)
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx)
+                                                .truncate(),
+                                        )
+                                        .child(
+                                            Label::new(issue.message.clone())
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .truncate(),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            Button::new(("open-skill-warning-file", index), "Open File")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(move |_, _, window, cx| {
+                                    let abs_path = abs_path.clone();
+                                    workspace
+                                        .update(cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(
+                                                    abs_path,
+                                                    workspace::OpenOptions::default(),
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        })
+                                        .ok();
+                                })),
+                        )
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>();
+            let warning_count = description_warnings.len();
+            let title = if warning_count == 1 {
+                "1 skill loaded with warning".to_string()
+            } else {
+                format!("{warning_count} skills loaded with warnings")
+            };
+            let targets = description_warnings.clone();
+            callouts.push(
                 Callout::new()
                     .icon(IconName::Warning)
                     .severity(Severity::Warning)
                     .title(title)
-                    .description(format!("{}\n{path_label}", issue.message))
-                    .actions_slot(
-                        Button::new(("open-skill-file", index), "Open File").on_click(cx.listener(
-                            move |_, _, window, cx| {
-                                let abs_path = abs_path.clone();
-                                workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace
-                                            .open_abs_path(
-                                                abs_path,
-                                                workspace::OpenOptions::default(),
-                                                window,
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx);
-                                    })
-                                    .ok();
-                            },
-                        )),
-                    )
+                    .description_slot(v_flex().gap_1().children(rows))
                     .dismiss_action(
-                        IconButton::new(("dismiss-skill-issue", index), IconName::Close)
+                        IconButton::new("dismiss-skill-description-warnings", IconName::Close)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Dismiss"))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.skill_loading_issues.retain(|issue| *issue != target);
-                                this.dismissed_skill_loading_issues.insert(target.clone());
+                                this.skill_loading_issues
+                                    .retain(|issue| !targets.contains(issue));
+                                for target in &targets {
+                                    this.dismissed_skill_loading_issues.insert(target.clone());
+                                }
                                 cx.notify();
                             })),
-                    )
-            })
-            .collect()
+                    ),
+            );
+        }
+
+        callouts.extend(
+            self.skill_loading_issues
+                .iter()
+                .filter(|issue| issue.kind != SkillLoadingIssueKind::DescriptionTooLong)
+                .enumerate()
+                .map(|(index, issue)| {
+                    let abs_path = issue.path.clone();
+                    let workspace = self.workspace.clone();
+                    let path_label = issue.path.display().to_string();
+                    let target = issue.clone();
+                    let title = match issue.kind {
+                        SkillLoadingIssueKind::LoadFailed => "Skill failed to load",
+                        SkillLoadingIssueKind::DescriptionTooLong => unreachable!(),
+                        SkillLoadingIssueKind::CatalogBudgetExceeded => {
+                            "Skill omitted from model catalog"
+                        }
+                    };
+                    Callout::new()
+                        .icon(IconName::Warning)
+                        .severity(Severity::Warning)
+                        .title(title)
+                        .description(format!("{}\n{path_label}", issue.message))
+                        .actions_slot(
+                            Button::new(("open-skill-file", index), "Open File").on_click(
+                                cx.listener(move |_, _, window, cx| {
+                                    let abs_path = abs_path.clone();
+                                    workspace
+                                        .update(cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(
+                                                    abs_path,
+                                                    workspace::OpenOptions::default(),
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        })
+                                        .ok();
+                                }),
+                            ),
+                        )
+                        .dismiss_action(
+                            IconButton::new(("dismiss-skill-issue", index), IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Dismiss"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.skill_loading_issues.retain(|issue| *issue != target);
+                                    this.dismissed_skill_loading_issues.insert(target.clone());
+                                    cx.notify();
+                                })),
+                        )
+                }),
+        );
+
+        callouts
     }
 
     fn render_external_source_prompt_warning(&self, cx: &mut Context<Self>) -> Callout {
