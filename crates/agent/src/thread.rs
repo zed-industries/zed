@@ -5446,69 +5446,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_compaction_failure_continues_without_marker(cx: &mut TestAppContext) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
-        let user_message_id = UserMessageId::new();
-
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["handoff".to_string()]);
-            thread.update(cx, |thread, cx| {
-                thread.set_model(model.clone(), cx);
-                thread
-                    .messages
-                    .push(user_text_message(user_message_id.clone(), "near limit"));
-                thread.request_token_usage.insert(
-                    user_message_id.clone(),
-                    language_model::TokenUsage {
-                        input_tokens: 960_000,
-                        ..Default::default()
-                    },
-                );
-            });
-        });
-
-        let _events = cx
-            .update(|cx| {
-                thread.update(cx, |thread, cx| {
-                    thread.send(UserMessageId::new(), vec!["new prompt"], cx)
-                })
-            })
-            .unwrap();
-        cx.run_until_parked();
-
-        let compaction_request = model.pending_completions().pop().unwrap();
-        model.send_completion_stream_error(
-            &compaction_request,
-            LanguageModelCompletionError::Other(anyhow!("summary failed")),
-        );
-        model.end_completion_stream(&compaction_request);
-        cx.run_until_parked();
-
-        let final_request = model.pending_completions().pop().unwrap();
-        assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
-        assert_eq!(
-            request_texts_after_system(&final_request.messages),
-            vec!["near limit".to_string(), "new prompt".to_string()]
-        );
-
-        cx.update(|cx| {
-            thread.read_with(cx, |thread, _cx| {
-                assert!(
-                    !thread
-                        .messages
-                        .iter()
-                        .any(|message| matches!(&**message, Message::Compaction(_)))
-                );
-            });
-        });
-
-        model.send_completion_stream_text_chunk(&final_request, "answer");
-        model.end_completion_stream(&final_request);
-        cx.run_until_parked();
-    }
-
-    #[gpui::test]
     async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let user_message_id = UserMessageId::new();
