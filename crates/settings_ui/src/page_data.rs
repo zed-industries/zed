@@ -278,7 +278,7 @@ fn general_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn workspace_restoration_section() -> [SettingsPageItem; 3] {
+    fn workspace_restoration_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Workspace Restoration"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -297,6 +297,27 @@ fn general_page(cx: &App) -> SettingsPage {
                             .session
                             .get_or_insert_default()
                             .restore_unsaved_buffers = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Save Untitled Buffers To Disk",
+                description: "Whether or not to write dirty untitled buffers to files in the default scratch directory.",
+                field: Box::new(SettingField {
+                    json_path: Some("session.save_untitled_buffers_to_disk"),
+                    pick: |settings_content| {
+                        settings_content
+                            .session
+                            .as_ref()
+                            .and_then(|session| session.save_untitled_buffers_to_disk.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .session
+                            .get_or_insert_default()
+                            .save_untitled_buffers_to_disk = value;
                     },
                 }),
                 metadata: None,

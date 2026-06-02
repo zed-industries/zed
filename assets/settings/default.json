@@ -2400,6 +2400,13 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
+    // Whether or not to write dirty untitled buffers to real files on disk.
+    // When enabled, Zed writes untitled buffer snapshots to
+    // ~/Documents/Zed Scratch so their contents remain available outside of
+    // session restoration.
+    //
+    // Default: false
+    "save_untitled_buffers_to_disk": false,
     // Whether or not to skip worktree trust checks.
     // When trusted, project settings are synchronized automatically,
     // language and MCP servers are downloaded and started automatically.

@@ -41,7 +41,11 @@ use std::{
 };
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection};
 use ui::{IconDecorationKind, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::PathExt, rel_path::RelPath};
+use util::{
+    ResultExt, TryFutureExt,
+    paths::{PathExt, home_dir},
+    rel_path::RelPath,
+};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
@@ -1401,10 +1405,10 @@ impl SerializableItem for Editor {
             BufferSerialization::All => true,
             BufferSerialization::NonDirtyBuffers => false,
         };
-
-        if closing && !serialize_dirty_buffers {
-            return None;
-        }
+        let save_untitled_buffers_to_disk = ProjectSettings::get_global(cx)
+            .session
+            .save_untitled_buffers_to_disk
+            && project.read(cx).is_local();
 
         let workspace_id = workspace.database_id()?;
 
@@ -1425,26 +1429,30 @@ impl SerializableItem for Editor {
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
+        let materialize_untitled_buffer =
+            save_untitled_buffers_to_disk && is_dirty && abs_path.is_none();
+
+        if closing && !serialize_dirty_buffers && !materialize_untitled_buffer {
+            return None;
+        }
 
         let snapshot = buffer.read(cx).snapshot();
+        let fs = project.read(cx).fs().clone();
 
         let db = EditorDb::global(cx);
         Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
-                let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                    let contents = snapshot.text();
-                    let language = snapshot.language().map(|lang| lang.name().to_string());
-                    (Some(contents), language)
-                } else {
-                    (None, None)
-                };
-
-                let editor = SerializedEditor {
+                let editor = serialize_buffer_snapshot(
+                    fs,
+                    item_id,
                     abs_path,
-                    contents,
-                    language,
+                    is_dirty,
                     mtime,
-                };
+                    snapshot,
+                    serialize_dirty_buffers,
+                    materialize_untitled_buffer,
+                )
+                .await?;
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 db.save_serialized_editor(item_id, workspace_id, editor)
                     .await
@@ -1467,6 +1475,75 @@ impl SerializableItem for Editor {
                     | EditorEvent::FileHandleChanged
             )
     }
+}
+
+async fn serialize_buffer_snapshot(
+    fs: Arc<dyn fs::Fs>,
+    item_id: ItemId,
+    abs_path: Option<PathBuf>,
+    is_dirty: bool,
+    mtime: Option<MTime>,
+    snapshot: language::BufferSnapshot,
+    serialize_dirty_buffers: bool,
+    materialize_untitled_buffer: bool,
+) -> Result<SerializedEditor> {
+    let dirty_contents = is_dirty.then(|| snapshot.text());
+
+    if materialize_untitled_buffer {
+        let scratch_path = untitled_buffer_scratch_path(item_id);
+        materialize_untitled_buffer_to_disk(
+            fs,
+            scratch_path.clone(),
+            dirty_contents.unwrap_or_default(),
+        )
+        .await?;
+
+        Ok(SerializedEditor {
+            abs_path: Some(scratch_path),
+            contents: None,
+            language: None,
+            mtime: None,
+        })
+    } else if serialize_dirty_buffers && is_dirty {
+        Ok(SerializedEditor {
+            abs_path,
+            contents: dirty_contents,
+            language: snapshot.language().map(|lang| lang.name().to_string()),
+            mtime,
+        })
+    } else {
+        Ok(SerializedEditor {
+            abs_path,
+            contents: None,
+            language: None,
+            mtime,
+        })
+    }
+}
+
+fn untitled_buffer_scratch_path(item_id: ItemId) -> PathBuf {
+    home_dir()
+        .join("Documents")
+        .join("Zed Scratch")
+        .join(format!("Untitled-{item_id}.txt"))
+}
+
+async fn materialize_untitled_buffer_to_disk(
+    fs: Arc<dyn fs::Fs>,
+    path: PathBuf,
+    contents: String,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs.create_dir(parent)
+            .await
+            .with_context(|| format!("failed to create scratch directory {parent:?}"))?;
+    }
+
+    fs.atomic_write(path.clone(), contents)
+        .await
+        .with_context(|| format!("failed to write untitled buffer to {path:?}"))?;
+
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -2354,6 +2431,69 @@ mod tests {
                 window[0], window[1],
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_serialize_dirty_untitled_buffer_to_disk(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        let item_id = 1234 as ItemId;
+        let buffer = cx.new(|cx| Buffer::local("notes from an untitled tab", cx));
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        let serialized =
+            serialize_buffer_snapshot(fs.clone(), item_id, None, true, None, snapshot, true, true)
+                .await
+                .unwrap();
+
+        let scratch_path = untitled_buffer_scratch_path(item_id);
+        assert_eq!(
+            serialized,
+            SerializedEditor {
+                abs_path: Some(scratch_path.clone()),
+                contents: None,
+                language: None,
+                mtime: None,
+            }
+        );
+        assert_eq!(
+            fs.load(&scratch_path).await.unwrap(),
+            "notes from an untitled tab"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_serialize_clean_buffer_does_not_store_language(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        let buffer = cx
+            .new(|cx| Buffer::local("fn main() {}", cx).with_language(languages::rust_lang(), cx));
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        let serialized = serialize_buffer_snapshot(
+            fs,
+            5678 as ItemId,
+            Some(PathBuf::from(path!("/file.rs"))),
+            false,
+            None,
+            snapshot,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            serialized,
+            SerializedEditor {
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
+                contents: None,
+                language: None,
+                mtime: None,
+            }
+        );
     }
 
     async fn deserialize_editor(

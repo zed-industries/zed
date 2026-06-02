@@ -381,6 +381,14 @@ pub struct SessionSettingsContent {
     ///
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
+    /// Whether or not to write dirty untitled buffers to real files on disk.
+    ///
+    /// If this is true, Zed writes dirty untitled buffers to the default
+    /// scratch directory so their contents remain available outside of session
+    /// restoration.
+    ///
+    /// Default: false
+    pub save_untitled_buffers_to_disk: Option<bool>,
     /// Whether or not to skip worktree trust checks.
     /// When trusted, project settings are synchronized automatically,
     /// language and MCP servers are downloaded and started automatically.

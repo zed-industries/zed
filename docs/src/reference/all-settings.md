@@ -1543,6 +1543,7 @@ or
 {
   "session": {
     "restore_unsaved_buffers": true,
+    "save_untitled_buffers_to_disk": false,
     "trust_all_worktrees": false
   }
 }
@@ -1562,7 +1563,19 @@ or
 
 If this is true, user won't be prompted whether to save/discard dirty files when closing the application.
 
-2. Whether or not to skip worktree and workspace trust checks:
+2. Whether or not to write dirty untitled buffers to real files on disk:
+
+```json [settings]
+{
+  "session": {
+    "save_untitled_buffers_to_disk": false
+  }
+}
+```
+
+When enabled, dirty untitled buffers are written to `~/Documents/Zed Scratch` so their contents remain available outside of session restoration.
+
+3. Whether or not to skip worktree and workspace trust checks:
 
 ```json [settings]
 {
