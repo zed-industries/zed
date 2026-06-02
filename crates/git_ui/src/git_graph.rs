@@ -5059,7 +5059,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            Path::new("/project"),
+            Path::new(util::path!("/project")),
             json!({
                 ".git": {},
                 "tracked1.txt": "tracked 1",
@@ -5068,7 +5068,7 @@ mod tests {
         )
         .await;
         fs.set_status_for_repo(
-            Path::new("/project/.git"),
+            Path::new(util::path!("/project/.git")),
             &[
                 ("tracked1.txt", StatusCode::Modified.worktree()),
                 ("tracked2.txt", StatusCode::Modified.worktree()),
@@ -5080,9 +5080,10 @@ mod tests {
             parents: smallvec![],
             ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
         })];
-        fs.set_graph_commits(Path::new("/project/.git"), commits);
+        fs.set_graph_commits(Path::new(util::path!("/project/.git")), commits);
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx)
+            .await;
         cx.run_until_parked();
 
         let repository = project.read_with(cx, |project, cx| {
