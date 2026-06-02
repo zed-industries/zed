@@ -26,6 +26,7 @@ pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_us
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
     include_str!("prompts/summarize_thread_detailed_prompt.txt");
+pub const COMPACTION_PROMPT: &str = include_str!("prompts/compaction_prompt.txt");
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PanelLayout {
