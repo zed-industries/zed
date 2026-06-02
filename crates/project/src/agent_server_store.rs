@@ -116,7 +116,7 @@ pub enum ExternalAgentSource {
 
 pub trait ExternalAgentServer {
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -131,6 +131,12 @@ pub trait ExternalAgentServer {
     }
 
     fn set_new_version_available_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
+
+    fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        None
+    }
+
+    fn set_loading_status_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
 
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -256,6 +262,7 @@ impl AgentServerStore {
 
     pub fn init_remote(session: &AnyProtoClient) {
         session.add_entity_message_handler(Self::handle_external_agents_updated);
+        session.add_entity_message_handler(Self::handle_loading_status_updated);
         session.add_entity_message_handler(Self::handle_new_version_available);
     }
 
@@ -334,12 +341,19 @@ impl AgentServerStore {
         // reconnect when the version changes.
         let mut old_versioned_agents: HashMap<
             AgentId,
-            (SharedString, watch::Sender<Option<String>>),
+            (
+                SharedString,
+                Option<watch::Sender<Option<String>>>,
+                Option<watch::Sender<Option<String>>>,
+            ),
         > = HashMap::default();
         for (name, mut entry) in self.external_agents.drain() {
             if let Some(version) = entry.server.version().cloned() {
-                if let Some(tx) = entry.server.take_new_version_available_tx() {
-                    old_versioned_agents.insert(name, (version, tx));
+                let new_version_available_tx = entry.server.take_new_version_available_tx();
+                let loading_status_tx = entry.server.take_loading_status_tx();
+                if new_version_available_tx.is_some() || loading_status_tx.is_some() {
+                    old_versioned_agents
+                        .insert(name, (version, new_version_available_tx, loading_status_tx));
                 }
             }
         }
@@ -393,6 +407,7 @@ impl AgentServerStore {
                                         targets: agent.targets.clone(),
                                         env: env.clone(),
                                         new_version_available_tx: None,
+                                        loading_status_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -433,7 +448,9 @@ impl AgentServerStore {
         // changed, notify the active connection to reconnect. Otherwise,
         // transfer the channel to the new entry so future updates can use it.
         for (name, entry) in &mut self.external_agents {
-            let Some((old_version, mut tx)) = old_versioned_agents.remove(name) else {
+            let Some((old_version, new_version_available_tx, loading_status_tx)) =
+                old_versioned_agents.remove(name)
+            else {
                 continue;
             };
             let Some(new_version) = entry.server.version() else {
@@ -441,9 +458,16 @@ impl AgentServerStore {
             };
 
             if new_version != &old_version {
-                tx.send(Some(new_version.to_string())).ok();
+                if let Some(mut tx) = new_version_available_tx {
+                    tx.send(Some(new_version.to_string())).ok();
+                }
             } else {
-                entry.server.set_new_version_available_tx(tx);
+                if let Some(tx) = new_version_available_tx {
+                    entry.server.set_new_version_available_tx(tx);
+                }
+                if let Some(tx) = loading_status_tx {
+                    entry.server.set_loading_status_tx(tx);
+                }
             }
         }
 
@@ -632,12 +656,38 @@ impl AgentServerStore {
                             .detach_and_log_err(cx);
                             new_version_available_tx
                         });
+                let loading_status_tx =
+                    downstream_client
+                        .clone()
+                        .map(|(project_id, downstream_client)| {
+                            let (loading_status_tx, mut loading_status_rx) = watch::channel(None);
+                            cx.spawn({
+                                let name = envelope.payload.name.clone();
+                                async move |_, _| {
+                                    while let Ok(status) = loading_status_rx.recv().await {
+                                        downstream_client.send(
+                                            proto::ExternalAgentLoadingStatusUpdated {
+                                                project_id,
+                                                name: name.clone(),
+                                                status,
+                                            },
+                                        )?;
+                                    }
+                                    anyhow::Ok(())
+                                }
+                            })
+                            .detach_and_log_err(cx);
+                            loading_status_tx
+                        });
                 let mut extra_env = HashMap::default();
                 if no_browser {
                     extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                 }
                 if let Some(new_version_available_tx) = new_version_available_tx {
                     agent.set_new_version_available_tx(new_version_available_tx);
+                }
+                if let Some(loading_status_tx) = loading_status_tx {
+                    agent.set_loading_status_tx(loading_status_tx);
                 }
                 anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
             })?
@@ -677,11 +727,15 @@ impl AgentServerStore {
 
             let mut previous_entries = std::mem::take(&mut this.external_agents);
             let mut new_version_available_txs = HashMap::default();
+            let mut loading_status_txs = HashMap::default();
             let mut metadata = HashMap::default();
 
             for (name, mut entry) in previous_entries.drain() {
                 if let Some(tx) = entry.server.take_new_version_available_tx() {
                     new_version_available_txs.insert(name.clone(), tx);
+                }
+                if let Some(tx) = entry.server.take_loading_status_tx() {
+                    loading_status_txs.insert(name.clone(), tx);
                 }
 
                 metadata.insert(name, (entry.icon, entry.display_name, entry.source));
@@ -713,6 +767,7 @@ impl AgentServerStore {
                         worktree_store: worktree_store.clone(),
                         name: agent_id.clone(),
                         new_version_available_tx: new_version_available_txs.remove(&agent_id),
+                        loading_status_tx: loading_status_txs.remove(&agent_id),
                     };
                     (
                         agent_id,
@@ -728,6 +783,22 @@ impl AgentServerStore {
             cx.emit(AgentServersUpdated);
             Ok(())
         })
+    }
+
+    async fn handle_loading_status_updated(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExternalAgentLoadingStatusUpdated>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            if let Some(entry) = this.external_agents.get_mut(&*envelope.payload.name)
+                && let Some(mut tx) = entry.server.take_loading_status_tx()
+            {
+                tx.send(envelope.payload.status).ok();
+                entry.server.set_loading_status_tx(tx);
+            }
+        });
+        Ok(())
     }
 
     async fn handle_new_version_available(
@@ -753,6 +824,7 @@ struct RemoteExternalAgentServer {
     worktree_store: Entity<WorktreeStore>,
     name: AgentId,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
+    loading_status_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for RemoteExternalAgentServer {
@@ -764,8 +836,16 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         self.new_version_available_tx = Some(tx);
     }
 
+    fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.loading_status_tx.take()
+    }
+
+    fn set_loading_status_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.loading_status_tx = Some(tx);
+    }
+
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -980,6 +1060,7 @@ struct LocalRegistryArchiveAgent {
     targets: HashMap<String, RegistryTargetConfig>,
     env: HashMap<String, String>,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
+    loading_status_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalRegistryArchiveAgent {
@@ -995,8 +1076,16 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         self.new_version_available_tx = Some(tx);
     }
 
+    fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.loading_status_tx.take()
+    }
+
+    fn set_loading_status_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.loading_status_tx = Some(tx);
+    }
+
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -1009,6 +1098,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
         let version = self.version.clone();
+        let loading_status_tx = self.loading_status_tx.take();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1063,6 +1153,12 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 versioned_archive_cache_dir(&dir, Some(version.as_ref()), archive_url);
 
             if !fs.is_dir(&version_dir).await {
+                let mut loading_status_tx = loading_status_tx;
+                if let Some(tx) = loading_status_tx.as_mut() {
+                    tx.send(Some(format!("Installing {}…", version.as_ref())))
+                        .ok();
+                }
+
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     Some(provided_sha.clone())
                 } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
@@ -1188,7 +1284,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     }
 
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -1292,7 +1388,7 @@ struct LocalCustomAgent {
 
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,

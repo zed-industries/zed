@@ -17,7 +17,6 @@ test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
 
 [dependencies]
 agent_settings.workspace = true
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 buffer_diff.workspace = true
@@ -59,6 +58,7 @@ smallvec.workspace = true
 strum.workspace = true
 sysinfo.workspace = true
 telemetry.workspace = true
+terminal.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true
@@ -72,6 +72,7 @@ zed_actions.workspace = true
 zeroize.workspace = true
 ztracing.workspace = true
 tracing.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 

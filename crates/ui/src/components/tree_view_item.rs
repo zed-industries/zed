@@ -193,7 +193,7 @@ impl RenderOnce for TreeViewItem {
                                 h_flex()
                                     .id("nested_inner_tree_view_item")
                                     .w_full()
-                                    .flex_grow()
+                                    .flex_grow_1()
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),

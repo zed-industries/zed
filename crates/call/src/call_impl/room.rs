@@ -895,7 +895,8 @@ impl Room {
                             if this.created.elapsed() > Duration::from_millis(100) {
                                 if let proto::ChannelRole::Guest = role {
                                     Audio::play_sound(Sound::GuestJoined, cx);
-                                } else {
+                                // Do not play join sound in large meetings
+                                } else if this.remote_participants().len() < 10 {
                                     Audio::play_sound(Sound::Joined, cx);
                                 }
                             }
