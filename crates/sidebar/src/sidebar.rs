@@ -2,6 +2,7 @@ mod thread_switcher;
 
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
+use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
@@ -18,7 +19,7 @@ use agent_ui::threads_archive_view::{
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
     ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
-    NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
+    NewThread, RemoveSelectedThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
@@ -26,6 +27,7 @@ use editor::Editor;
 use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
+use fs::Fs;
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
     Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
@@ -498,6 +500,61 @@ impl From<ThreadEntry> for ListEntry {
 impl From<TerminalEntry> for ListEntry {
     fn from(terminal: TerminalEntry) -> Self {
         ListEntry::Terminal(terminal)
+    }
+}
+
+fn shortcut_tooltip_row(
+    label: &'static str,
+    action: &dyn gpui::Action,
+    focus_handle: &FocusHandle,
+    window: &Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    let key_binding = KeyBinding::for_action_in(action, focus_handle, cx);
+    key_binding.has_binding(window).then(|| {
+        h_flex()
+            .pt_1()
+            .gap_2()
+            .justify_between()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(Label::new(label))
+            .child(key_binding)
+            .into_any_element()
+    })
+}
+
+fn thread_status_tooltip_row(status: AgentThreadStatus, cx: &App) -> Option<AnyElement> {
+    match status {
+        AgentThreadStatus::Error => Some(
+            h_flex()
+                .pt_1()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Icon::new(IconName::Close)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .child(Label::new("Thread has an Error"))
+                .into_any_element(),
+        ),
+        AgentThreadStatus::WaitingForConfirmation => Some(
+            h_flex()
+                .pt_1()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .child(Label::new("Waiting for Confirmation"))
+                .into_any_element(),
+        ),
+        AgentThreadStatus::Completed | AgentThreadStatus::Running => None,
     }
 }
 
@@ -5429,6 +5486,167 @@ impl Sidebar {
         }
     }
 
+    fn remove_selected_thread(
+        &mut self,
+        _: &RemoveSelectedThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+        let Some(entry) = self.contents.entries.get(ix).cloned() else {
+            return;
+        };
+
+        match entry {
+            ListEntry::Thread(thread) => {
+                if thread.draft.is_some() {
+                    self.remove_draft(thread.metadata.thread_id, &thread.workspace, window, cx);
+                } else {
+                    self.delete_thread_entry(ix, &thread, window, cx);
+                }
+            }
+            ListEntry::Terminal(terminal) => {
+                self.close_terminal(&terminal.metadata, &terminal.workspace, window, cx);
+            }
+            ListEntry::ProjectHeader { .. } => {}
+        }
+    }
+
+    fn delete_thread_entry(
+        &mut self,
+        ix: usize,
+        thread: &ThreadEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread_id = thread.metadata.thread_id;
+        let session_id = thread.metadata.session_id.clone();
+        let agent_id = thread.metadata.agent_id.clone();
+        let folder_paths = thread.metadata.folder_paths().clone();
+        let remote_connection = thread.metadata.remote_connection.clone();
+        let neighbor = self.neighboring_activatable_entry(ix);
+        let is_active = self
+            .active_entry
+            .as_ref()
+            .is_some_and(|entry| entry.is_active_thread(&thread_id));
+
+        let removed_from_panel = if let ThreadEntryWorkspace::Open(workspace) = &thread.workspace {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel.remove_thread_without_activating_draft(thread_id, window, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        };
+
+        if !removed_from_panel {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.delete(thread_id, cx);
+            });
+        }
+        self.thread_last_accessed.remove(&thread_id);
+        self.delete_agent_session(thread_id, session_id, agent_id, cx);
+
+        if is_active {
+            self.active_entry = None;
+            if neighbor
+                .as_ref()
+                .is_some_and(|neighbor| self.activate_entry(neighbor, window, cx))
+            {
+                return;
+            }
+        }
+
+        if let Some(workspace) = self.multi_workspace.upgrade().and_then(|multi_workspace| {
+            multi_workspace.read(cx).workspace_for_paths(
+                &folder_paths,
+                remote_connection.as_ref(),
+                cx,
+            )
+        }) {
+            if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                let panel_shows_deleted = panel
+                    .read(cx)
+                    .active_conversation_view()
+                    .map(|conversation| conversation.read(cx).parent_id())
+                    .is_some_and(|active_thread_id| active_thread_id == thread_id);
+                if panel_shows_deleted {
+                    panel.update(cx, |panel, cx| {
+                        panel.clear_base_view(window, cx);
+                    });
+                }
+            }
+        }
+
+        self.update_entries(cx);
+    }
+
+    fn delete_agent_session(
+        &self,
+        thread_id: ThreadId,
+        session_id: Option<acp::SessionId>,
+        agent_id: AgentId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_workspace) = self.active_workspace(cx) else {
+            cx.spawn(async move |_this, cx| {
+                thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx).await;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+            return;
+        };
+        let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
+            cx.spawn(async move |_this, cx| {
+                thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx).await;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+            return;
+        };
+
+        let connection_store = agent_panel.read(cx).connection_store().clone();
+        let agent = Agent::from(agent_id);
+        let fs = <dyn Fs>::global(cx);
+        let wait_for_connection = connection_store.update(cx, |store, cx| {
+            store
+                .request_connection(agent.clone(), agent.server(fs, ThreadStore::global(cx)), cx)
+                .read(cx)
+                .wait_for_connection()
+        });
+
+        cx.spawn(async move |_this, cx| {
+            thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx).await;
+
+            let state = wait_for_connection.await?;
+            let delete_session = cx.update(|cx| {
+                if let Some(session_id) = &session_id {
+                    if let Some(list) = state
+                        .connection
+                        .session_list(cx)
+                        .filter(|list| list.supports_delete(cx))
+                    {
+                        list.delete_session(session_id, cx)
+                    } else {
+                        Task::ready(Ok(()))
+                    }
+                } else {
+                    Task::ready(Ok(()))
+                }
+            });
+            delete_session.await
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn rename_selected_thread(
         &mut self,
         _: &RenameSelectedThread,
@@ -5889,6 +6107,89 @@ impl Sidebar {
         let session_id_for_delete = thread.metadata.session_id.clone();
         let focus_handle = self.focus_handle.clone();
         let title_editor = self.thread_rename_editor.clone();
+        let shortcut_focus_handle = self.focus_handle.clone();
+        let shortcut_title = if is_draft {
+            "Draft Shortcuts"
+        } else {
+            "Thread Shortcuts"
+        };
+        let archive_shortcut_label = if is_running {
+            None
+        } else {
+            match thread.draft {
+                Some(DraftKind::WithContent) => Some("Discard Draft"),
+                Some(DraftKind::Empty) => None,
+                None => Some("Archive Thread"),
+            }
+        };
+        let show_delete_shortcut = thread.draft.is_none();
+        let thread_status = thread.status;
+        let thread_shortcuts_tooltip = move |window: &mut Window, cx: &mut App| {
+            let focus_handle = shortcut_focus_handle.clone();
+            Tooltip::element(move |window, cx| {
+                let mut rows = Vec::new();
+
+                if let Some(row) =
+                    shortcut_tooltip_row("Open Thread", &Confirm, &focus_handle, window, cx)
+                {
+                    rows.push(row);
+                }
+                if let Some(row) = shortcut_tooltip_row(
+                    "Rename Thread",
+                    &RenameSelectedThread,
+                    &focus_handle,
+                    window,
+                    cx,
+                ) {
+                    rows.push(row);
+                }
+                if let Some(label) = archive_shortcut_label
+                    && let Some(row) = shortcut_tooltip_row(
+                        label,
+                        &ArchiveSelectedThread,
+                        &focus_handle,
+                        window,
+                        cx,
+                    )
+                {
+                    rows.push(row);
+                }
+                if show_delete_shortcut
+                    && let Some(row) = shortcut_tooltip_row(
+                        "Delete Thread",
+                        &RemoveSelectedThread,
+                        &focus_handle,
+                        window,
+                        cx,
+                    )
+                {
+                    rows.push(row);
+                }
+                let toggle_thread_switcher = ToggleThreadSwitcher::default();
+                if let Some(row) = shortcut_tooltip_row(
+                    "Switch Recent Threads",
+                    &toggle_thread_switcher,
+                    &focus_handle,
+                    window,
+                    cx,
+                ) {
+                    rows.push(row);
+                }
+                if let Some(row) = thread_status_tooltip_row(thread_status, cx) {
+                    rows.push(row);
+                }
+
+                if rows.is_empty() {
+                    return gpui::Empty.into_any_element();
+                }
+
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(shortcut_title))
+                    .children(rows)
+                    .into_any_element()
+            })(window, cx)
+        };
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
@@ -5941,6 +6242,7 @@ impl Sidebar {
             .selected(is_selected)
             .focused(is_focused)
             .hovered(is_hovered)
+            .tooltip(thread_shortcuts_tooltip)
             .on_hover(cx.listener(move |this, is_hovered: &bool, _window, cx| {
                 if *is_hovered {
                     this.hovered_thread_index = Some(ix);
@@ -6123,6 +6425,49 @@ impl Sidebar {
                 None => (None, display_title, terminal.highlight_positions.clone()),
             };
 
+        let shortcut_focus_handle = self.focus_handle.clone();
+        let terminal_shortcuts_tooltip = move |window: &mut Window, cx: &mut App| {
+            let focus_handle = shortcut_focus_handle.clone();
+            Tooltip::element(move |window, cx| {
+                let mut rows = Vec::new();
+
+                if let Some(row) =
+                    shortcut_tooltip_row("Open Terminal", &Confirm, &focus_handle, window, cx)
+                {
+                    rows.push(row);
+                }
+                if let Some(row) = shortcut_tooltip_row(
+                    "Close Terminal",
+                    &ArchiveSelectedThread,
+                    &focus_handle,
+                    window,
+                    cx,
+                ) {
+                    rows.push(row);
+                }
+                let toggle_thread_switcher = ToggleThreadSwitcher::default();
+                if let Some(row) = shortcut_tooltip_row(
+                    "Switch Recent Threads",
+                    &toggle_thread_switcher,
+                    &focus_handle,
+                    window,
+                    cx,
+                ) {
+                    rows.push(row);
+                }
+
+                if rows.is_empty() {
+                    return gpui::Empty.into_any_element();
+                }
+
+                v_flex()
+                    .gap_1()
+                    .child(Label::new("Terminal Shortcuts"))
+                    .children(rows)
+                    .into_any_element()
+            })(window, cx)
+        };
+
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
@@ -6135,6 +6480,7 @@ impl Sidebar {
             .selected(is_active)
             .focused(is_focused)
             .hovered(is_hovered)
+            .tooltip(terminal_shortcuts_tooltip)
             .on_hover(cx.listener(move |this, is_hovered: &bool, _window, cx| {
                 if *is_hovered {
                     this.hovered_thread_index = Some(ix);
@@ -7503,6 +7849,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::archive_selected_thread))
+            .on_action(cx.listener(Self::remove_selected_thread))
             .on_action(cx.listener(Self::rename_selected_thread))
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::new_terminal_thread))

@@ -1,7 +1,8 @@
 use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
-    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString, pulsating_between,
+    Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
+    pulsating_between,
 };
 use itertools::Itertools as _;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -63,6 +64,7 @@ pub struct ThreadItem {
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
     base_bg: Option<Hsla>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl ThreadItem {
@@ -98,6 +100,7 @@ impl ThreadItem {
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
             base_bg: None,
+            tooltip: None,
         }
     }
 
@@ -243,6 +246,11 @@ impl ThreadItem {
 
     pub fn base_bg(mut self, color: Hsla) -> Self {
         self.base_bg = Some(color);
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
         self
     }
 }
@@ -396,10 +404,12 @@ impl RenderOnce for ThreadItem {
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
-        let show_tooltip = matches!(
-            self.status,
-            AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
-        );
+        let custom_tooltip = self.tooltip;
+        let show_status_tooltip = custom_tooltip.is_none()
+            && matches!(
+                self.status,
+                AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
+            );
 
         let linked_worktrees: Vec<ThreadItemWorktreeInfo> = self
             .worktrees
@@ -447,7 +457,8 @@ impl RenderOnce for ThreadItem {
                             .flex_1()
                             .gap_1p5()
                             .child(icon)
-                            .child(title_label),
+                            .child(title_label)
+                            .when_some(custom_tooltip, |this, tooltip| this.tooltip(tooltip)),
                     )
                     .when(self.is_truncated, |this| this.child(gradient_overlay))
                     .when(self.hovered, |this| {
@@ -595,7 +606,7 @@ impl RenderOnce for ThreadItem {
                         }),
                 )
             })
-            .when(show_tooltip, |this| {
+            .when(show_status_tooltip, |this| {
                 let status = self.status;
                 this.tooltip(Tooltip::element(move |_, _| match status {
                     AgentThreadStatus::Error => h_flex()
