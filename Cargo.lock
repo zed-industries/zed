@@ -5329,8 +5329,7 @@ dependencies = [
 [[package]]
 name = "dugong"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f5b0a9f36306eb29685e6e27b82df4d0bb5af64261324f7d5f7716d7c39ba1b"
+source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.1",
@@ -5341,8 +5340,7 @@ dependencies = [
 [[package]]
 name = "dugong-graphlib"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75aca4df30a85b3ba8cead498f4e38e9de4aff630155ce47515d11dfd729c6ea"
+source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
 dependencies = [
  "hashbrown 0.16.1",
  "rustc-hash 2.1.1",
@@ -10852,8 +10850,7 @@ dependencies = [
 [[package]]
 name = "manatee"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c5ed3cc0bf5f911d242bed4b4cdf12c00186e471e9fdf57d9dd0a033bbbdc87"
+source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
 dependencies = [
  "indexmap 2.11.4",
  "nalgebra",
@@ -11149,8 +11146,7 @@ dependencies = [
 [[package]]
 name = "merman"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3209bcfe9c8e9787a7534f8d97f1d27f7d2fdd54d3c49d9f59bb693aedabbf95"
+source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
 dependencies = [
  "merman-core",
  "merman-render",
@@ -11160,8 +11156,7 @@ dependencies = [
 [[package]]
 name = "merman-core"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72fc438439ca428b449486f8eaf9ce2f8ab76cea159181d0b1b454e1192e4649"
+source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
 dependencies = [
  "chrono",
  "euclid",
@@ -11187,8 +11182,7 @@ dependencies = [
 [[package]]
 name = "merman-render"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5698e2681196051479ae8bc5153ed7eda6490f56240fd8d92da7c3932a00735"
+source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -15690,8 +15684,7 @@ dependencies = [
 [[package]]
 name = "roughr-merman"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c34fd013a888d8b2119b3ed57cd3df0f1f9dd2db3fa94fdb98f58d60f9855ef0"
+source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
 dependencies = [
  "derive_builder",
  "euclid",
