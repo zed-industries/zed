@@ -1150,15 +1150,22 @@ impl DisplayMap {
                 Some((previous_style, previous_ranges)) => {
                     *previous_style = style;
                     *previous_ranges = ranges;
+                    previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                 }
                 None if merge => {
                     ranges.extend(slot.get().1.iter().cloned());
                     ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                     slot.insert(Arc::new((style, ranges)));
                 }
-                None => _ = slot.insert(Arc::new((style, ranges))),
+                None => {
+                    ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    slot.insert(Arc::new((style, ranges)));
+                }
             },
-            Entry::Vacant(slot) => _ = slot.insert(Arc::new((style, ranges))),
+            Entry::Vacant(slot) => {
+                ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                slot.insert(Arc::new((style, ranges)));
+            }
         }
     }
 

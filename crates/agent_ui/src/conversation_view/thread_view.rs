@@ -7,7 +7,7 @@ use crate::{
 use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
-use acp_thread::{ContentBlock, PlanEntry};
+use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
 use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
 use agent_settings::UserAgentsMd;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
@@ -19,6 +19,7 @@ use crate::message_editor::SharedSessionCapabilities;
 
 use db::kvp::KeyValueStore;
 use gpui::List;
+use gpui::Stateful;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{
@@ -571,6 +572,7 @@ pub struct ThreadView {
     /// Used for showing/hiding tool call results, terminal output, etc.
     pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
+    collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
@@ -885,6 +887,7 @@ impl ThreadView {
             thread_feedback: Default::default(),
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
+            collapsed_sandbox_authorization_details: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
@@ -7027,6 +7030,17 @@ impl ThreadView {
                                     .into_any_element()
                             }),
                     )
+                    .when_some(
+                        tool_call.sandbox_authorization_details.as_ref(),
+                        |this, details| {
+                            this.child(self.render_sandbox_authorization_details(
+                                entry_ix,
+                                &tool_call.id,
+                                details,
+                                cx,
+                            ))
+                        },
+                    )
                     .when(should_show_raw_input, |this| {
                         let is_raw_input_expanded =
                             self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
@@ -7390,6 +7404,162 @@ impl ThreadView {
                 }
             })
             .children(tool_output_display)
+    }
+
+    fn render_sandbox_authorization_details(
+        &self,
+        entry_ix: usize,
+        tool_call_id: &acp::ToolCallId,
+        details: &SandboxAuthorizationDetails,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        if details.write_paths.is_empty() {
+            return Empty.into_any_element();
+        }
+
+        let is_open = !self
+            .collapsed_sandbox_authorization_details
+            .contains(tool_call_id);
+        let mut paths = details.write_paths.clone();
+        paths.sort();
+
+        v_flex()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                h_flex()
+                    .id(("sandbox-authorization-details-header", entry_ix))
+                    .p_1()
+                    .justify_between()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Write access")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("•")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{} {}",
+                                    paths.len(),
+                                    if paths.len() == 1 { "path" } else { "paths" }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown),
+                    )
+                    .on_click(cx.listener({
+                        let tool_call_id = tool_call_id.clone();
+                        move |this, _event, _window, cx| {
+                            if this
+                                .collapsed_sandbox_authorization_details
+                                .remove(&tool_call_id)
+                            {
+                                cx.notify();
+                                return;
+                            }
+
+                            this.collapsed_sandbox_authorization_details
+                                .insert(tool_call_id.clone());
+                            cx.notify();
+                        }
+                    })),
+            )
+            .when(is_open, |this| {
+                this.child(
+                    v_flex()
+                        .id(("sandbox-authorization-paths-list", entry_ix))
+                        .max_h_40()
+                        .overflow_y_scroll()
+                        .children(paths.iter().enumerate().map(|(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
+                        })),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn render_sandbox_authorization_path_row(
+        &self,
+        entry_ix: usize,
+        path_ix: usize,
+        path: &Path,
+        show_border: bool,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let display_path = path.display().to_string();
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| display_path.clone());
+        let parent_path = path.parent().and_then(|parent| {
+            let parent = parent.display().to_string();
+            (!parent.is_empty()).then_some(parent)
+        });
+        let path_icon = FileIcons::get_icon(path, cx)
+            .map(Icon::from_path)
+            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+            .unwrap_or_else(|| {
+                Icon::new(IconName::Folder)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+            });
+
+        h_flex()
+            .id(SharedString::from(format!(
+                "sandbox-authorization-path-{entry_ix}-{path_ix}"
+            )))
+            .min_w_0()
+            .p_1p5()
+            .gap_2()
+            .bg(cx.theme().colors().editor_background)
+            .when(show_border, |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .child(
+                h_flex()
+                    .id(SharedString::from(format!(
+                        "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
+                    )))
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(path_icon)
+                    .child(
+                        Label::new(file_name)
+                            .size(LabelSize::XSmall)
+                            .buffer_font(cx),
+                    )
+                    .when_some(parent_path, |this, parent_path| {
+                        this.child(
+                            Label::new(format!(" {parent_path}"))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
+                        )
+                    })
+                    .tooltip(move |_window, cx| {
+                        Tooltip::with_meta("Requested write path", None, display_path.clone(), cx)
+                    }),
+            )
     }
 
     fn render_permission_buttons(
@@ -7860,7 +8030,13 @@ impl ThreadView {
                                 Icon::new(IconName::CheckDouble)
                                     .size(IconSize::XSmall)
                                     .color(Color::Success),
-                                Some(&AllowAlways as &dyn Action),
+                                if option.option_id.0.as_ref()
+                                    == acp_thread::SandboxPermission::AllowThread.as_id()
+                                {
+                                    None
+                                } else {
+                                    Some(&AllowAlways as &dyn Action)
+                                },
                             ),
                             acp::PermissionOptionKind::RejectOnce => (
                                 Icon::new(IconName::Close)
@@ -9546,6 +9722,18 @@ impl ThreadView {
         }
 
         let token_usage = self.thread.read(cx).token_usage()?;
+
+        // When auto-compaction is available (the handoff feature flag is enabled
+        // and the model's context window is large enough), the thread is
+        // compacted automatically before it reaches the limit, so there's no
+        // need to warn the user. Models with a context window that's too small
+        // can't be auto-compacted, so we fall back to the normal warning.
+        if cx.has_flag::<HandoffFeatureFlag>()
+            && token_usage.max_tokens >= agent::MIN_COMPACTION_CONTEXT_WINDOW
+        {
+            return None;
+        }
+
         let ratio = token_usage.ratio();
 
         let (severity, icon, title) = match ratio {
