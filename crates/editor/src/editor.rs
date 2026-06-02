@@ -8335,7 +8335,10 @@ impl Editor {
         };
 
         let command_id: Arc<str> = action.command_id.clone().into();
-        let context = editor.read_with(cx, |editor, cx| editor.editor_command_context(cx));
+        let (context, edit_count) = editor.read_with(cx, |editor, cx| {
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            (editor.editor_command_context(&snapshot, cx), snapshot.edit_count())
+        });
         let task = extension_store.update(cx, |extension_store, cx| {
             extension_store.run_editor_command(command_id.clone(), context, cx)
         });
@@ -8345,7 +8348,9 @@ impl Editor {
             editor
                 .update_in(cx, |editor, window, cx| match result {
                     Ok(Some(result)) => {
-                        if let Err(error) = editor.apply_editor_command_result(result, window, cx) {
+                        if let Err(error) =
+                            editor.apply_editor_command_result(result, edit_count, window, cx)
+                        {
                             log::error!(
                                 "failed to apply extension editor command `{command_id}`: {error:#}"
                             );
@@ -8376,9 +8381,12 @@ impl Editor {
         workspace.active_item_as::<Editor>(cx)
     }
 
-    fn editor_command_context(&self, cx: &App) -> EditorCommandContext {
+    fn editor_command_context(
+        &self,
+        snapshot: &multi_buffer::MultiBufferSnapshot,
+        cx: &App,
+    ) -> EditorCommandContext {
         let buffer = self.buffer.read(cx);
-        let snapshot = buffer.snapshot(cx);
         let selections = self
             .selections
             .disjoint_anchors()
@@ -8408,10 +8416,15 @@ impl Editor {
     fn apply_editor_command_result(
         &mut self,
         result: EditorCommandResult,
+        edit_count: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
+        if snapshot.edit_count() != edit_count {
+            anyhow::bail!("editor contents changed before extension editor command completed");
+        }
+
         let text = snapshot.text();
         let edits = validated_editor_command_edits(result.edits, &text)?;
         let selections = result
