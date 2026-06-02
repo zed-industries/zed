@@ -211,7 +211,25 @@ pub enum AgentThreadEntry {
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
     CompletedPlan(Vec<PlanEntry>),
-    ContextCompaction,
+    ContextCompaction(ContextCompaction),
+}
+
+/// A point in the thread where the conversation history was compacted to free
+/// up room in the model's context window. While compaction is running the entry
+/// is shown with a spinner; once it finishes (or while it streams) the summary
+/// can be expanded to inspect what the model retained.
+#[derive(Debug)]
+pub struct ContextCompaction {
+    pub status: CompactionStatus,
+    /// The compaction summary, streamed in as the model produces it. This is
+    /// `None` for provider-native compaction, which produces no summary to show.
+    pub summary: Option<Entity<Markdown>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionStatus {
+    InProgress,
+    Completed,
 }
 
 impl AgentThreadEntry {
@@ -221,7 +239,7 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
             Self::CompletedPlan(_) => false,
-            Self::ContextCompaction => false,
+            Self::ContextCompaction(_) => false,
         }
     }
 
@@ -238,7 +256,7 @@ impl AgentThreadEntry {
                 }
                 md
             }
-            Self::ContextCompaction => "--- Context Compacted ---\n\n".to_string(),
+            Self::ContextCompaction(_) => "--- Context Compacted ---\n\n".to_string(),
         }
     }
 
@@ -1508,7 +1526,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
         false
@@ -1537,7 +1555,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
@@ -1557,7 +1575,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
@@ -1570,7 +1588,7 @@ impl AcpThread {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
                 | AgentThreadEntry::CompletedPlan(..)
-                | AgentThreadEntry::ContextCompaction => continue,
+                | AgentThreadEntry::ContextCompaction(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
             }
         }
@@ -1914,8 +1932,76 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
-    pub fn push_context_compaction(&mut self, cx: &mut Context<Self>) {
-        self.push_entry(AgentThreadEntry::ContextCompaction, cx);
+    /// Starts (or restarts, e.g. across retries) an in-progress compaction
+    /// entry. When `has_summary` is true an empty `Markdown` is created for the
+    /// summary to stream into; provider-native compaction passes `false`.
+    pub fn start_context_compaction(&mut self, has_summary: bool, cx: &mut Context<Self>) {
+        // A retry re-runs compaction for the same turn, so reuse the existing
+        // in-progress entry (clearing any partial summary) instead of pushing a
+        // duplicate.
+        if let Some((ix, compaction)) = self.in_progress_compaction_mut() {
+            if let Some(summary) = compaction.summary.clone() {
+                summary.update(cx, |markdown, cx| {
+                    markdown.reset(SharedString::default(), cx)
+                });
+            }
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+            return;
+        }
+
+        let summary = has_summary.then(|| {
+            let language_registry = self.project.read(cx).languages().clone();
+            cx.new(|cx| Markdown::new(SharedString::default(), Some(language_registry), None, cx))
+        });
+        self.push_entry(
+            AgentThreadEntry::ContextCompaction(ContextCompaction {
+                status: CompactionStatus::InProgress,
+                summary,
+            }),
+            cx,
+        );
+    }
+
+    /// Appends streamed summary text to the in-progress compaction entry.
+    pub fn update_context_compaction_summary(&mut self, delta: &str, cx: &mut Context<Self>) {
+        if let Some((ix, compaction)) = self.in_progress_compaction_mut()
+            && let Some(summary) = compaction.summary.clone()
+        {
+            summary.update(cx, |markdown, cx| markdown.append(delta, cx));
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        }
+    }
+
+    /// Marks the in-progress compaction entry as completed.
+    pub fn finish_context_compaction(&mut self, cx: &mut Context<Self>) {
+        if let Some((ix, compaction)) = self.in_progress_compaction_mut() {
+            compaction.status = CompactionStatus::Completed;
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        }
+    }
+
+    /// Removes the in-progress compaction entry, if any. Used when a turn is
+    /// cancelled or fails mid-compaction so the UI stops showing the spinner.
+    fn remove_in_progress_compaction(&mut self, cx: &mut Context<Self>) {
+        if let Some((ix, _)) = self.in_progress_compaction_mut() {
+            self.entries.remove(ix);
+            cx.emit(AcpThreadEvent::EntriesRemoved(ix..ix + 1));
+        }
+    }
+
+    fn in_progress_compaction_mut(&mut self) -> Option<(usize, &mut ContextCompaction)> {
+        self.entries
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(ix, entry)| match entry {
+                AgentThreadEntry::ContextCompaction(compaction)
+                    if compaction.status == CompactionStatus::InProgress =>
+                {
+                    Some((ix, compaction))
+                }
+                _ => None,
+            })
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
@@ -2507,6 +2593,7 @@ impl AcpThread {
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
                         if canceled {
                             this.mark_pending_tools_as_canceled();
+                            this.remove_in_progress_compaction(cx);
                         }
 
                         if !canceled {
@@ -2563,6 +2650,7 @@ impl AcpThread {
                     }
                     Err(e) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
+                        this.remove_in_progress_compaction(cx);
 
                         this.had_error = true;
                         cx.emit(AcpThreadEvent::Error);
@@ -2583,6 +2671,7 @@ impl AcpThread {
 
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.mark_pending_tools_as_canceled();
+        self.remove_in_progress_compaction(cx);
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)

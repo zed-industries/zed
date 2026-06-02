@@ -2037,9 +2037,19 @@ impl NativeAgentConnection {
                                     thread.update_retry_status(status, cx)
                                 })?;
                             }
-                            ThreadEvent::ContextCompaction => {
+                            ThreadEvent::ContextCompactionStarted { has_summary } => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.push_context_compaction(cx);
+                                    thread.start_context_compaction(has_summary, cx);
+                                })?;
+                            }
+                            ThreadEvent::ContextCompactionSummaryDelta(delta) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.update_context_compaction_summary(&delta, cx);
+                                })?;
+                            }
+                            ThreadEvent::ContextCompactionFinished => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.finish_context_compaction(cx);
                                 })?;
                             }
                             ThreadEvent::Stop(stop_reason) => {

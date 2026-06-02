@@ -575,6 +575,9 @@ pub struct ThreadView {
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
+    /// Tracks which context compaction entries (by entry index) have their
+    /// summary expanded.
+    expanded_compactions: HashSet<usize>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -890,6 +893,7 @@ impl ThreadView {
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
+            expanded_compactions: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -3437,6 +3441,97 @@ impl ThreadView {
             .into_any()
     }
 
+    fn render_context_compaction(
+        &self,
+        entry_ix: usize,
+        compaction: &acp_thread::ContextCompaction,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let in_progress = matches!(compaction.status, acp_thread::CompactionStatus::InProgress);
+        let label_text = if in_progress {
+            "Compacting thread…"
+        } else {
+            "Context Compacted"
+        };
+
+        let summary = compaction.summary.clone();
+        let has_summary = summary.is_some();
+        let is_expanded = has_summary && self.expanded_compactions.contains(&entry_ix);
+
+        let middle = h_flex()
+            .id(("context_compaction", entry_ix))
+            .flex_none()
+            .gap_1p5()
+            .when(in_progress, |this| {
+                this.child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+            })
+            .child(
+                Label::new(label_text)
+                    .size(LabelSize::Custom(self.tool_name_font_size()))
+                    .color(Color::Muted),
+            )
+            .when(has_summary, |this| {
+                this.child(
+                    Disclosure::new(("compaction-disclosure", entry_ix), is_expanded)
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown),
+                )
+                .cursor_pointer()
+                .on_click(cx.listener(
+                    move |this, _event: &ClickEvent, _window, cx| {
+                        this.toggle_compaction_expansion(entry_ix, cx);
+                    },
+                ))
+            });
+
+        let header = h_flex()
+            .px_5()
+            .py_1()
+            .gap_2()
+            .child(Divider::horizontal())
+            .child(middle)
+            .child(Divider::horizontal());
+
+        if let Some(summary) = summary.filter(|_| is_expanded) {
+            v_flex()
+                .w_full()
+                .child(header)
+                .child(
+                    div()
+                        .id(("compaction-summary", entry_ix))
+                        .mx_5()
+                        .mb_1()
+                        .pl_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(
+                            self.render_markdown(
+                                summary,
+                                MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+                                    .with_muted_text(cx),
+                                cx,
+                            ),
+                        ),
+                )
+                .into_any()
+        } else {
+            header.into_any()
+        }
+    }
+
+    fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        if !self.expanded_compactions.remove(&entry_ix) {
+            self.expanded_compactions.insert(entry_ix);
+        }
+        cx.notify();
+    }
+
     fn render_edits_summary(
         &self,
         changed_buffers: &[(Entity<Buffer>, Entity<BufferDiff>)],
@@ -5395,19 +5490,9 @@ impl ThreadView {
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
-            AgentThreadEntry::ContextCompaction => h_flex()
-                .id(("context_compaction", entry_ix))
-                .px_5()
-                .py_1()
-                .gap_2()
-                .child(Divider::horizontal())
-                .child(
-                    Label::new("Context Compacted")
-                        .size(LabelSize::Custom(self.tool_name_font_size()))
-                        .color(Color::Muted),
-                )
-                .child(Divider::horizontal())
-                .into_any(),
+            AgentThreadEntry::ContextCompaction(compaction) => {
+                self.render_context_compaction(entry_ix, compaction, window, cx)
+            }
         };
 
         let is_subagent_output = self.is_subagent()
@@ -6518,7 +6603,7 @@ impl ThreadView {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 

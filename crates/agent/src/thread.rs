@@ -828,7 +828,9 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
-    ContextCompaction,
+    ContextCompactionStarted { has_summary: bool },
+    ContextCompactionSummaryDelta(String),
+    ContextCompactionFinished,
     Stop(acp::StopReason),
 }
 
@@ -1372,7 +1374,17 @@ impl Thread {
                     }
                 }
                 Message::Resume => {}
-                Message::Compaction(_) => stream.send_context_compaction(),
+                Message::Compaction(info) => match info {
+                    CompactionInfo::Summary(summary) => {
+                        stream.send_context_compaction_started(/* has_summary */ true);
+                        stream.send_context_compaction_summary_delta(summary);
+                        stream.send_context_compaction_finished();
+                    }
+                    CompactionInfo::ProviderNative { .. } => {
+                        stream.send_context_compaction_started(/* has_summary */ false);
+                        stream.send_context_compaction_finished();
+                    }
+                },
             }
         }
         rx
@@ -2519,6 +2531,9 @@ impl Thread {
         };
 
         log::debug!("Running compaction");
+        // Show the in-progress compaction entry (with a summary to stream into)
+        // as soon as we know compaction will run.
+        event_stream.send_context_compaction_started(/* has_summary */ true);
         let stream = futures::select! {
             result = model.stream_completion(request, cx).fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
@@ -2549,7 +2564,10 @@ impl Thread {
             };
 
             match event? {
-                LanguageModelCompletionEvent::Text(text) => summary.push_str(&text),
+                LanguageModelCompletionEvent::Text(text) => {
+                    summary.push_str(&text);
+                    event_stream.send_context_compaction_summary_delta(&text);
+                }
                 LanguageModelCompletionEvent::Stop(_)
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::Queued { .. }
@@ -2583,7 +2601,7 @@ impl Thread {
             } else {
                 this.messages.push(compaction);
             }
-            event_stream.send_context_compaction();
+            event_stream.send_context_compaction_finished();
             cx.notify();
         })?;
 
@@ -4374,9 +4392,23 @@ impl ThreadEventStream {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
     }
 
-    fn send_context_compaction(&self) {
+    fn send_context_compaction_started(&self, has_summary: bool) {
         self.0
-            .unbounded_send(Ok(ThreadEvent::ContextCompaction))
+            .unbounded_send(Ok(ThreadEvent::ContextCompactionStarted { has_summary }))
+            .ok();
+    }
+
+    fn send_context_compaction_summary_delta(&self, delta: &str) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompactionSummaryDelta(
+                delta.to_string(),
+            )))
+            .ok();
+    }
+
+    fn send_context_compaction_finished(&self) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompactionFinished))
             .ok();
     }
 
@@ -5550,8 +5582,28 @@ mod tests {
 
         let event = replay_events.next().await;
         assert!(
-            matches!(&event, Some(Ok(ThreadEvent::ContextCompaction))),
-            "expected context compaction event, got {event:?}"
+            matches!(
+                &event,
+                Some(Ok(ThreadEvent::ContextCompactionStarted {
+                    has_summary: true
+                }))
+            ),
+            "expected context compaction started event, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(
+                &event,
+                Some(Ok(ThreadEvent::ContextCompactionSummaryDelta(summary))) if summary == "summary"
+            ),
+            "expected context compaction summary event, got {event:?}"
+        );
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::ContextCompactionFinished))),
+            "expected context compaction finished event, got {event:?}"
         );
 
         let event = replay_events.next().await;
