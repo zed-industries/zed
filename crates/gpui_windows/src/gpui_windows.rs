@@ -11,6 +11,7 @@ mod dispatcher;
 mod display;
 mod events;
 mod keyboard;
+mod notifications;
 mod platform;
 mod system_settings;
 mod util;
