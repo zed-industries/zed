@@ -56,6 +56,7 @@ use ui::{
     prelude::*, render_redistributable_columns_resize_handles, render_table_header,
     table_row::TableRow,
 };
+use util::ResultExt as _;
 use workspace::{
     ModalView, Workspace,
     item::{Item, ItemEvent, TabTooltipContent},
@@ -73,6 +74,9 @@ const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
+// Per-depth indentation used by the changed-files tree view in the commit
+// detail panel. Matches the value used by the git panel's tree view.
+const CHANGED_FILES_TREE_INDENT: Pixels = px(16.0);
 
 struct CopiedState {
     copied_at: Option<Instant>,
@@ -265,10 +269,13 @@ impl ChangedFileEntry {
         commit_sha: SharedString,
         repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
+        depth: usize,
+        show_dir_suffix: bool,
         _cx: &App,
     ) -> AnyElement {
         let file_name = self.file_name.clone();
         let dir_path = self.dir_path.clone();
+        let show_dir_suffix = show_dir_suffix && !dir_path.is_empty();
 
         div()
             .w_full()
@@ -280,13 +287,17 @@ impl ChangedFileEntry {
                             .w_full()
                             .gap_1()
                             .overflow_hidden()
+                            .when(depth > 0, |this| {
+                                this.pl(CHANGED_FILES_TREE_INDENT * depth as f32)
+                            })
                             .child(git_status_icon(self.status))
                             .child(
                                 Label::new(file_name.clone())
                                     .size(LabelSize::Small)
+                                    .when(self.status.is_deleted(), Label::strikethrough)
                                     .truncate(),
                             )
-                            .when(!dir_path.is_empty(), |this| {
+                            .when(show_dir_suffix, |this| {
                                 this.child(
                                     Label::new(dir_path.clone())
                                         .size(LabelSize::Small)
@@ -318,6 +329,178 @@ impl ChangedFileEntry {
             )
             .into_any_element()
     }
+}
+
+/// A row in the commit detail panel's changed-files list. Flat mode emits only
+/// `File` rows (with the directory suffix shown); tree mode interleaves
+/// `Directory` rows and hides the redundant suffix on nested files.
+#[derive(Clone)]
+enum ChangedFilesItem {
+    Directory {
+        path: RepoPath,
+        name: SharedString,
+        depth: usize,
+        expanded: bool,
+    },
+    File {
+        entry: ChangedFileEntry,
+        depth: usize,
+        show_dir_suffix: bool,
+    },
+}
+
+enum ChangedFilesView {
+    Flat,
+    Tree(ChangedFilesTreeState),
+}
+
+impl ChangedFilesView {
+    fn is_tree(&self) -> bool {
+        matches!(self, ChangedFilesView::Tree(_))
+    }
+
+    fn build_items(&self, entries: &[ChangedFileEntry]) -> Vec<ChangedFilesItem> {
+        match self {
+            ChangedFilesView::Flat => entries
+                .iter()
+                .cloned()
+                .map(|entry| ChangedFilesItem::File {
+                    entry,
+                    depth: 0,
+                    show_dir_suffix: true,
+                })
+                .collect(),
+            ChangedFilesView::Tree(state) => state.build_items(entries),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ChangedFilesTreeState {
+    expanded_dirs: HashMap<RepoPath, bool>,
+}
+
+impl ChangedFilesTreeState {
+    fn is_expanded(&self, path: &RepoPath) -> bool {
+        // Directories are expanded by default; only explicit entries (set by
+        // the user toggling) are stored. This keeps the map small for typical
+        // commits and avoids needing `&mut self` during rendering.
+        self.expanded_dirs.get(path).copied().unwrap_or(true)
+    }
+
+    fn toggle(&mut self, path: &RepoPath) {
+        let entry = self.expanded_dirs.entry(path.clone()).or_insert(true);
+        *entry = !*entry;
+    }
+
+    fn build_items(&self, entries: &[ChangedFileEntry]) -> Vec<ChangedFilesItem> {
+        if entries.is_empty() {
+            return Vec::new();
+        }
+
+        let mut sorted = entries.to_vec();
+        sorted.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+
+        let mut root = ChangedFilesTreeNode::default();
+        for entry in sorted {
+            // Collect owned directory names up front so no borrow of
+            // `entry.repo_path` is held across the `push(entry)` below.
+            let mut dir_names: Vec<SharedString> = entry
+                .repo_path
+                .components()
+                .map(|component| SharedString::from(component.to_string()))
+                .collect();
+            // The last component is the file name, not a directory.
+            dir_names.pop();
+
+            let mut current = &mut root;
+            let mut current_path = String::new();
+            for name in dir_names {
+                if !current_path.is_empty() {
+                    current_path.push('/');
+                }
+                current_path.push_str(&name);
+                let Ok(dir_path) = RepoPath::new(&current_path) else {
+                    break;
+                };
+                current = current
+                    .children
+                    .entry(name.clone())
+                    .or_insert_with(|| ChangedFilesTreeNode {
+                        name,
+                        path: Some(dir_path),
+                        ..Default::default()
+                    });
+            }
+            current.files.push(entry);
+        }
+
+        let mut items = Vec::new();
+        self.flatten(&root, 0, &mut items);
+        items
+    }
+
+    fn flatten(
+        &self,
+        node: &ChangedFilesTreeNode,
+        depth: usize,
+        out: &mut Vec<ChangedFilesItem>,
+    ) {
+        for child in node.children.values() {
+            let (terminal, name) = compact_directory_chain(child);
+            let Some(path) = terminal.path.clone().or_else(|| child.path.clone()) else {
+                continue;
+            };
+            let expanded = self.is_expanded(&path);
+            out.push(ChangedFilesItem::Directory {
+                path,
+                name,
+                depth,
+                expanded,
+            });
+            if expanded {
+                self.flatten(terminal, depth + 1, out);
+            }
+        }
+
+        for file in &node.files {
+            out.push(ChangedFilesItem::File {
+                entry: file.clone(),
+                depth,
+                show_dir_suffix: false,
+            });
+        }
+    }
+}
+
+#[derive(Default)]
+struct ChangedFilesTreeNode {
+    name: SharedString,
+    path: Option<RepoPath>,
+    children: BTreeMap<SharedString, ChangedFilesTreeNode>,
+    files: Vec<ChangedFileEntry>,
+}
+
+/// Collapses a chain of single-child directories with no files into a single
+/// row. For example, the tree `a -> b -> c -> [files]` is rendered as a single
+/// `a/b/c` row instead of three nested rows. This mirrors the behavior of the
+/// git panel's tree view.
+fn compact_directory_chain(
+    mut node: &ChangedFilesTreeNode,
+) -> (&ChangedFilesTreeNode, SharedString) {
+    let mut parts = vec![node.name.clone()];
+    while node.files.is_empty() && node.children.len() == 1 {
+        let Some(child) = node.children.values().next() else {
+            break;
+        };
+        if child.path.is_none() {
+            break;
+        }
+        parts.push(child.name.clone());
+        node = child;
+    }
+    let name = parts.join("/");
+    (node, SharedString::from(name))
 }
 
 enum QueryState {
@@ -408,6 +591,9 @@ actions!(
         ScrollUp,
         /// Selects a commit half a page below the current selection.
         ScrollDown,
+        /// Toggles between a flat list and a hierarchical tree view of the
+        /// selected commit's changed files.
+        ToggleChangedFilesTreeView,
     ]
 );
 
@@ -1134,6 +1320,7 @@ pub struct GitGraph {
     repo_id: RepositoryId,
     changed_files_scroll_handle: UniformListScrollHandle,
     pending_select_sha: Option<Oid>,
+    changed_files_view: ChangedFilesView,
 }
 
 impl GitGraph {
@@ -1354,6 +1541,7 @@ impl GitGraph {
             repo_id,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
             pending_select_sha: None,
+            changed_files_view: ChangedFilesView::Flat,
         };
 
         this.fetch_initial_graph_data(cx);
@@ -1689,8 +1877,37 @@ impl GitGraph {
         self.selected_entry_idx = None;
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
+        self.reset_changed_files_tree_expansion();
         cx.emit(ItemEvent::Edit);
         cx.notify();
+    }
+
+    /// Resets per-directory expansion state in the changed-files tree.
+    ///
+    /// Called when the commit selection changes: different commits have
+    /// different file sets, and carrying over collapse state across commits
+    /// is confusing because the user can't see what was collapsed. The view
+    /// mode (flat vs tree) is intentionally preserved.
+    fn reset_changed_files_tree_expansion(&mut self) {
+        if let ChangedFilesView::Tree(state) = &mut self.changed_files_view {
+            state.expanded_dirs.clear();
+        }
+    }
+
+    fn toggle_changed_files_tree_view(&mut self, cx: &mut Context<Self>) {
+        self.changed_files_view = if self.changed_files_view.is_tree() {
+            ChangedFilesView::Flat
+        } else {
+            ChangedFilesView::Tree(ChangedFilesTreeState::default())
+        };
+        cx.notify();
+    }
+
+    fn toggle_changed_files_directory(&mut self, path: &RepoPath, cx: &mut Context<Self>) {
+        if let ChangedFilesView::Tree(state) = &mut self.changed_files_view {
+            state.toggle(path);
+            cx.notify();
+        }
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1880,6 +2097,7 @@ impl GitGraph {
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
+        self.reset_changed_files_tree_expansion();
         self.changed_files_scroll_handle
             .scroll_to_item(0, ScrollStrategy::Top);
         self.table_interaction_state.update(cx, |state, cx| {
@@ -2464,6 +2682,97 @@ impl GitGraph {
             .into_any_element()
     }
 
+    fn render_changed_files_item(
+        ix: usize,
+        item: &ChangedFilesItem,
+        commit_sha: &SharedString,
+        repository: &WeakEntity<Repository>,
+        workspace: &WeakEntity<Workspace>,
+        graph: &WeakEntity<GitGraph>,
+        cx: &App,
+    ) -> AnyElement {
+        match item {
+            ChangedFilesItem::File {
+                entry,
+                depth,
+                show_dir_suffix,
+            } => entry.render(
+                ix,
+                commit_sha.clone(),
+                repository.clone(),
+                workspace.clone(),
+                *depth,
+                *show_dir_suffix,
+                cx,
+            ),
+            ChangedFilesItem::Directory {
+                path,
+                name,
+                depth,
+                expanded,
+            } => Self::render_changed_files_directory(
+                ix,
+                path.clone(),
+                name.clone(),
+                *depth,
+                *expanded,
+                graph.clone(),
+            ),
+        }
+    }
+
+    fn render_changed_files_directory(
+        ix: usize,
+        path: RepoPath,
+        name: SharedString,
+        depth: usize,
+        expanded: bool,
+        graph: WeakEntity<GitGraph>,
+    ) -> AnyElement {
+        let folder_icon = if expanded {
+            IconName::FolderOpen
+        } else {
+            IconName::Folder
+        };
+        let tooltip_path = path.as_unix_str().to_string();
+
+        div()
+            .w_full()
+            .child(
+                ButtonLike::new(("changed-files-dir", ix))
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .w_full()
+                            .gap_1()
+                            .overflow_hidden()
+                            .when(depth > 0, |this| {
+                                this.pl(CHANGED_FILES_TREE_INDENT * depth as f32)
+                            })
+                            .child(
+                                Icon::new(folder_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            ),
+                    )
+                    .tooltip(move |_, cx| Tooltip::simple(tooltip_path.clone(), cx))
+                    .on_click(move |_, _window, cx| {
+                        graph
+                            .update(cx, |this, cx| {
+                                this.toggle_changed_files_directory(&path, cx);
+                            })
+                            .log_err();
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn render_commit_detail_panel(
         &self,
         window: &mut Window,
@@ -2560,19 +2869,22 @@ impl GitGraph {
         let (total_lines_added, total_lines_removed) =
             self.selected_commit_diff_stats.unwrap_or((0, 0));
 
-        let sorted_file_entries: Rc<Vec<ChangedFileEntry>> = Rc::new(
-            self.selected_commit_diff
-                .as_ref()
-                .map(|diff| {
-                    let mut files: Vec<_> = diff.files.iter().collect();
-                    files.sort_by_key(|file| file.status());
-                    files
-                        .into_iter()
-                        .map(|file| ChangedFileEntry::from_commit_file(file, cx))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        );
+        let sorted_file_entries: Vec<ChangedFileEntry> = self
+            .selected_commit_diff
+            .as_ref()
+            .map(|diff| {
+                let mut files: Vec<_> = diff.files.iter().collect();
+                files.sort_by_key(|file| file.status());
+                files
+                    .into_iter()
+                    .map(|file| ChangedFileEntry::from_commit_file(file, cx))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let is_tree_view = self.changed_files_view.is_tree();
+        let changed_files_items: Rc<Vec<ChangedFilesItem>> =
+            Rc::new(self.changed_files_view.build_items(&sorted_file_entries));
 
         v_flex()
             .min_w(px(300.))
@@ -2596,6 +2908,7 @@ impl GitGraph {
                                     this.selected_commit_diff = None;
                                     this.selected_commit_diff_stats = None;
                                     this._commit_diff_task = None;
+                                    this.reset_changed_files_tree_expansion();
                                     cx.notify();
                                 })),
                         ),
@@ -2794,11 +3107,36 @@ impl GitGraph {
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                             )
-                            .child(DiffStat::new(
-                                "commit-diff-stat",
-                                total_lines_added,
-                                total_lines_removed,
-                            )),
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        IconButton::new(
+                                            "toggle-changed-files-tree-view",
+                                            IconName::ListTree,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .toggle_state(is_tree_view)
+                                        .tooltip(Tooltip::for_action_title(
+                                            if is_tree_view {
+                                                "Show as Flat List"
+                                            } else {
+                                                "Show as Tree"
+                                            },
+                                            &ToggleChangedFilesTreeView,
+                                        ))
+                                        .on_click(cx.listener(
+                                            |this, _, _window, cx| {
+                                                this.toggle_changed_files_tree_view(cx);
+                                            },
+                                        )),
+                                    )
+                                    .child(DiffStat::new(
+                                        "commit-diff-stat",
+                                        total_lines_added,
+                                        total_lines_removed,
+                                    )),
+                            ),
                     )
                     .child(
                         div()
@@ -2806,24 +3144,28 @@ impl GitGraph {
                             .flex_1()
                             .min_h_0()
                             .child({
-                                let entries = sorted_file_entries;
-                                let entry_count = entries.len();
+                                let items = changed_files_items;
+                                let item_count = items.len();
                                 let commit_sha = full_sha.clone();
                                 let repository = repository.downgrade();
                                 let workspace = self.workspace.clone();
+                                let graph = cx.weak_entity();
                                 uniform_list(
                                     "changed-files-list",
-                                    entry_count,
+                                    item_count,
                                     move |range, _window, cx| {
                                         range
-                                            .map(|ix| {
-                                                entries[ix].render(
+                                            .filter_map(|ix| {
+                                                let item = items.get(ix)?;
+                                                Some(Self::render_changed_files_item(
                                                     ix,
-                                                    commit_sha.clone(),
-                                                    repository.clone(),
-                                                    workspace.clone(),
+                                                    item,
+                                                    &commit_sha,
+                                                    &repository,
+                                                    &workspace,
+                                                    &graph,
                                                     cx,
-                                                )
+                                                ))
                                             })
                                             .collect()
                                     },
@@ -3625,6 +3967,11 @@ impl Render for GitGraph {
                 cx.emit(ItemEvent::Edit);
                 cx.notify();
             }))
+            .on_action(cx.listener(
+                |this, _: &ToggleChangedFilesTreeView, _window, cx| {
+                    this.toggle_changed_files_tree_view(cx);
+                },
+            ))
             .child(
                 v_flex()
                     .size_full()
@@ -6284,5 +6631,184 @@ mod tests {
             resolved_task.resolved.env.get("REPOSITORY"),
             Some(&"project".to_string())
         );
+    }
+
+    fn make_changed_file(path: &str) -> ChangedFileEntry {
+        let repo_path = RepoPath::new(path).unwrap();
+        let file_name: SharedString = repo_path
+            .file_name()
+            .map(|n| n.to_string())
+            .unwrap_or_default()
+            .into();
+        let dir_path: SharedString = repo_path
+            .parent()
+            .map(|p| p.as_unix_str().to_string())
+            .unwrap_or_default()
+            .into();
+        ChangedFileEntry {
+            status: FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Unmodified,
+            }),
+            file_name,
+            dir_path,
+            repo_path,
+        }
+    }
+
+    fn summarize_items(items: &[ChangedFilesItem]) -> Vec<String> {
+        items
+            .iter()
+            .map(|item| match item {
+                ChangedFilesItem::Directory {
+                    name,
+                    depth,
+                    expanded,
+                    ..
+                } => format!(
+                    "D{} {}{}",
+                    depth,
+                    name,
+                    if *expanded { "" } else { " (collapsed)" }
+                ),
+                ChangedFilesItem::File { entry, depth, .. } => {
+                    format!("F{} {}", depth, entry.repo_path.as_unix_str())
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_changed_files_flat_view_keeps_entries_unchanged() {
+        let entries = vec![
+            make_changed_file("a/b.rs"),
+            make_changed_file("a/c.rs"),
+            make_changed_file("d.rs"),
+        ];
+        let items = ChangedFilesView::Flat.build_items(&entries);
+        assert_eq!(
+            summarize_items(&items),
+            vec!["F0 a/b.rs", "F0 a/c.rs", "F0 d.rs"]
+        );
+        for item in &items {
+            match item {
+                ChangedFilesItem::File {
+                    show_dir_suffix, ..
+                } => assert!(
+                    *show_dir_suffix,
+                    "flat view should display directory suffix on each file"
+                ),
+                ChangedFilesItem::Directory { .. } => {
+                    panic!("flat view should not emit directory rows")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_changed_files_tree_nests_files_under_directories() {
+        let state = ChangedFilesTreeState::default();
+        let entries = vec![
+            make_changed_file("src/main.rs"),
+            make_changed_file("src/lib.rs"),
+            make_changed_file("README.md"),
+        ];
+        let items = state.build_items(&entries);
+        assert_eq!(
+            summarize_items(&items),
+            vec!["D0 src", "F1 src/lib.rs", "F1 src/main.rs", "F0 README.md"]
+        );
+    }
+
+    #[test]
+    fn test_changed_files_tree_compacts_single_child_directory_chains() {
+        let state = ChangedFilesTreeState::default();
+        let entries = vec![
+            make_changed_file("crates/git_graph/src/git_graph.rs"),
+            make_changed_file("crates/git_graph/Cargo.toml"),
+        ];
+        let items = state.build_items(&entries);
+        // `crates` has only one child `git_graph` (and no files), so the
+        // chain compacts. `git_graph` has both a file (`Cargo.toml`) and a
+        // child directory (`src`), so it does not compact further.
+        assert_eq!(
+            summarize_items(&items),
+            vec![
+                "D0 crates/git_graph",
+                "D1 src",
+                "F2 crates/git_graph/src/git_graph.rs",
+                "F1 crates/git_graph/Cargo.toml",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_changed_files_tree_resembles_libreoffice_screenshot_layout() {
+        // Mirrors the directory layout shown in the LibreOffice screenshot
+        // that motivated this feature.
+        let state = ChangedFilesTreeState::default();
+        let entries = vec![
+            make_changed_file("sc/inc/conditio.hxx"),
+            make_changed_file("sc/inc/rangelst.hxx"),
+            make_changed_file("sc/source/core/data/conditio.cxx"),
+            make_changed_file("sc/source/core/tool/rangelst.cxx"),
+        ];
+        let items = state.build_items(&entries);
+        assert_eq!(
+            summarize_items(&items),
+            vec![
+                "D0 sc",
+                "D1 inc",
+                "F2 sc/inc/conditio.hxx",
+                "F2 sc/inc/rangelst.hxx",
+                // `sc/source` has only one child `core`, which also has no
+                // files of its own, so `source/core` compacts onto one row.
+                "D1 source/core",
+                "D2 data",
+                "F3 sc/source/core/data/conditio.cxx",
+                "D2 tool",
+                "F3 sc/source/core/tool/rangelst.cxx",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_changed_files_tree_hides_descendants_of_collapsed_directory() {
+        let mut state = ChangedFilesTreeState::default();
+        let entries = vec![
+            make_changed_file("src/main.rs"),
+            make_changed_file("src/lib.rs"),
+            make_changed_file("README.md"),
+        ];
+        let src_path = RepoPath::new("src").unwrap();
+        state.toggle(&src_path);
+        let items = state.build_items(&entries);
+        assert_eq!(
+            summarize_items(&items),
+            vec!["D0 src (collapsed)", "F0 README.md"]
+        );
+    }
+
+    #[test]
+    fn test_changed_files_tree_toggle_round_trips_back_to_expanded() {
+        let mut state = ChangedFilesTreeState::default();
+        let entries = vec![make_changed_file("src/main.rs")];
+        let src_path = RepoPath::new("src").unwrap();
+
+        state.toggle(&src_path);
+        assert!(!state.is_expanded(&src_path));
+
+        state.toggle(&src_path);
+        assert!(state.is_expanded(&src_path));
+
+        let items = state.build_items(&entries);
+        assert_eq!(summarize_items(&items), vec!["D0 src", "F1 src/main.rs"]);
+    }
+
+    #[test]
+    fn test_changed_files_tree_empty_entries_yields_no_items() {
+        let state = ChangedFilesTreeState::default();
+        assert!(state.build_items(&[]).is_empty());
+        assert!(ChangedFilesView::Flat.build_items(&[]).is_empty());
     }
 }
