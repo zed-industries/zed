@@ -9,9 +9,10 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use anyhow::{Context as _, Result, anyhow, bail};
+use util::command::new_command;
 
 pub struct GitLogIndex {
     index: HashMap<PathBuf, HashMap<PathBuf, usize>>,
@@ -36,9 +37,9 @@ impl GitLogIndex {
         // add the reverse mapping
         let reverse_count = self
             .index
-            .entry(related.clone())
+            .entry(related)
             .or_default()
-            .entry(path.clone())
+            .entry(path)
             .or_default();
         *reverse_count += 1;
     }
@@ -75,16 +76,17 @@ impl Default for GitLogIndex {
     }
 }
 
-pub fn build_git_log_index(worktree_dir: &Path) -> Result<GitLogIndex> {
+pub async fn build_git_log_index(worktree_dir: &Path) -> Result<GitLogIndex> {
     let mut index = GitLogIndex::new();
 
-    let output = Command::new("git")
+    let output = new_command("git")
         .arg("log")
         .arg("-5000")
         .arg("--pretty=tformat:@@COMMIT %H")
         .arg("--name-only")
         .current_dir(worktree_dir)
         .output()
+        .await
         .with_context(|| format!("failed to run git log in {}", worktree_dir.display()))?;
 
     if !output.status.success() {
@@ -145,7 +147,7 @@ fn run() -> Result<()> {
 
     let worktree_dir = PathBuf::from(worktree_dir);
     let query_path = normalize_query_path(&worktree_dir, &PathBuf::from(query_path));
-    let index = build_git_log_index(&worktree_dir)?;
+    let index = futures::executor::block_on(build_git_log_index(&worktree_dir))?;
 
     for (path, count) in index.get_related_with_counts(&query_path, 10) {
         println!("{count}\t{}", path.display());

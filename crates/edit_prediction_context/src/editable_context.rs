@@ -15,7 +15,6 @@ use crate::git_log_context::build_git_log_index;
 
 /// This module contains collectors for editable context:
 /// excerpts or full files that are likely to be edited.
-
 const CURSOR_CONTEXT_LINE_COUNT: u32 = 20;
 const EDIT_HISTORY_CONTEXT_LINE_COUNT: u32 = 20;
 const GIT_LOG_CONTEXT_LINE_COUNT: u32 = 10000;
@@ -177,9 +176,8 @@ pub fn limit_retrieved_context_to_bytes(
 
 fn uncovered_excerpt_bytes(excerpt: &RelatedExcerpt, covered_ranges: &[Range<u32>]) -> usize {
     let mut bytes = 0;
-    let mut row = excerpt.row_range.start;
 
-    for line in excerpt.text.split_inclusive('\n') {
+    for (row, line) in (excerpt.row_range.start..).zip(excerpt.text.split_inclusive('\n')) {
         if row >= excerpt.row_range.end {
             break;
         }
@@ -189,7 +187,6 @@ fn uncovered_excerpt_bytes(excerpt: &RelatedExcerpt, covered_ranges: &[Range<u32
         {
             bytes += line.len();
         }
-        row += 1;
     }
 
     bytes
@@ -423,7 +420,7 @@ async fn collect_git_log_context(
     };
 
     let index_result = cx
-        .background_spawn(async move { build_git_log_index(&worktree_abs_path) })
+        .background_spawn(async move { build_git_log_index(&worktree_abs_path).await })
         .await;
     let index = match index_result {
         Ok(index) => index,
