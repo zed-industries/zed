@@ -86,8 +86,8 @@ if (modifiedSchemaFiles.length > 0) {
     const modifiedSchemaFilesStr = modifiedSchemaFiles.map((path) => "`" + path + "`").join(", ");
     fail(
       [
-        `This PR modifies database schema files (${modifiedSchemaFilesStr}), which are typically expected to remain unchanged.`,
-        "If these changes are intentional and required, please add the following attestation to your PR description: ",
+        `This PR modifies database schema files (${modifiedSchemaFilesStr}), which requires creating a schema migration in the Cloud repository.`,
+        "Once the schema migraation has been created and applied, please add the following attestation to your PR description: ",
         `"${SCHEMA_CHANGE_ATTESTATION}"`,
       ].join("\n\n"),
     );
