@@ -374,6 +374,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "tag.component.jsx": {
+            "color": "#6eb4bfff",
+            "font_style": null,
+            "font_weight": null
+          },
           "text.literal": {
             "color": "#a1c181ff",
             "font_style": null,
@@ -783,6 +788,11 @@
           },
           "tag": {
             "color": "#5c78e2ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "tag.component.jsx": {
+            "color": "#3882b7ff",
             "font_style": null,
             "font_weight": null
           },

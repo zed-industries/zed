@@ -377,6 +377,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "tag.component.jsx": {
+            "color": "#fabd2eff",
+            "font_style": null,
+            "font_weight": null
+          },
           "text.literal": {
             "color": "#83a598ff",
             "font_style": null,
@@ -791,6 +796,11 @@
           },
           "tag": {
             "color": "#8ec07cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "tag.component.jsx": {
+            "color": "#fabd2eff",
             "font_style": null,
             "font_weight": null
           },
@@ -1211,6 +1221,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "tag.component.jsx": {
+            "color": "#fabd2eff",
+            "font_style": null,
+            "font_weight": null
+          },
           "text.literal": {
             "color": "#83a598ff",
             "font_style": null,
@@ -1625,6 +1640,11 @@
           },
           "tag": {
             "color": "#427b58ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "tag.component.jsx": {
+            "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
@@ -2045,6 +2065,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "tag.component.jsx": {
+            "color": "#b57613ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "text.literal": {
             "color": "#066578ff",
             "font_style": null,
@@ -2459,6 +2484,11 @@
           },
           "tag": {
             "color": "#427b58ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "tag.component.jsx": {
+            "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
