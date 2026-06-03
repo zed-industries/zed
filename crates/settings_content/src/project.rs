@@ -13,8 +13,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, fallible_options,
+    AllLanguageSettingsContent, CustomLabelsContent, DelayMs, ExtendingVec, ParseStatus,
+    ProjectTerminalSettingsContent, RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -85,6 +85,29 @@ pub struct ProjectSettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
+
+    /// Custom labels for editor tabs. Maps glob patterns (relative to the
+    /// worktree root) to label templates that are rendered instead of the
+    /// file name.
+    ///
+    /// Available template variables:
+    ///
+    /// - `${filename}`: the file name without its extension
+    /// - `${extname}`: the final extension of the file
+    /// - `${dirname}`: the name of the file's immediate parent folder
+    /// - `${dirname(N)}`: the name of the Nth ancestor folder. Positive `N`
+    ///   walks up from the file (`1` is the immediate parent, `2` is the
+    ///   grandparent, ...). Negative `N` counts from the worktree root
+    ///   (`-1` is the topmost folder, `-2` is its child, ...).
+    ///
+    /// Patterns are evaluated in declaration order and the first match wins.
+    /// When `custom_labels` is set in multiple scopes, project-local patterns
+    /// take precedence over global ones. Templates that reference a variable
+    /// which cannot be resolved for a given file are skipped.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub custom_labels: CustomLabelsContent,
 }
 
 /// When to scan content of linked directories.

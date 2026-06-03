@@ -29,7 +29,7 @@ use project::{
 };
 use rope::TextSummary;
 use rpc::proto::{self, update_view};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -708,7 +708,9 @@ impl Item for Editor {
     }
 
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
-        if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
+        if let Some(label) = custom_label_for_buffer(&self.buffer, cx) {
+            label.into()
+        } else if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
             path.to_string().into()
         } else {
             // Use the same logic as the displayed title for consistency
@@ -759,16 +761,22 @@ impl Item for Editor {
             entry_label_color(params.selected)
         };
 
-        let description = params.detail.and_then(|detail| {
-            let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-            let description = path.trim();
+        let custom_label = custom_label_for_buffer(&self.buffer, cx);
 
-            if description.is_empty() {
-                return None;
-            }
+        let description = if custom_label.is_some() {
+            None
+        } else {
+            params.detail.and_then(|detail| {
+                let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+                let description = path.trim();
 
-            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
-        });
+                if description.is_empty() {
+                    return None;
+                }
+
+                Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
+            })
+        };
 
         // Whether the file was saved in the past but is now deleted.
         let was_deleted: bool = self
@@ -778,16 +786,18 @@ impl Item for Editor {
             .and_then(|buffer| buffer.read(cx).file())
             .is_some_and(|file| file.disk_state().is_deleted());
 
+        let title = custom_label
+            .as_deref()
+            .map(|label| util::truncate_and_trailoff(label, MAX_TAB_TITLE_LEN))
+            .unwrap_or_else(|| util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN));
+
         h_flex()
             .gap_2()
             .child(
-                Label::new(util::truncate_and_trailoff(
-                    &self.title(cx),
-                    MAX_TAB_TITLE_LEN,
-                ))
-                .color(label_color)
-                .when(params.preview, |this| this.italic())
-                .when(was_deleted, |this| this.strikethrough()),
+                Label::new(title)
+                    .color(label_color)
+                    .when(params.preview, |this| this.italic())
+                    .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(
@@ -2101,6 +2111,23 @@ fn path_for_buffer<'a>(
 ) -> Option<Cow<'a, str>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
     path_for_file(file, height, include_filename, cx)
+}
+
+fn custom_label_for_buffer(buffer: &Entity<MultiBuffer>, cx: &App) -> Option<String> {
+    let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
+    let file = project::File::from_dyn(Some(file))?;
+    let labels = &WorkspaceSettings::get(
+        Some(SettingsLocation {
+            worktree_id: file.worktree_id(cx),
+            path: &file.path,
+        }),
+        cx,
+    )
+    .custom_labels;
+    if labels.is_empty() {
+        return None;
+    }
+    labels.label_for(&file.path)
 }
 
 fn path_for_file<'a>(

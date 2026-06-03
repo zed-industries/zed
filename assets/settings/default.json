@@ -2629,6 +2629,30 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
+  // Customize the labels shown on editor tabs. Keys are glob patterns
+  // (matched against the file path relative to the worktree root) and
+  // values are label templates.
+  //
+  // Available template variables:
+  //   - "${filename}": file name without its extension
+  //   - "${extname}": final extension of the file
+  //   - "${dirname}": name of the file's immediate parent folder
+  //   - "${dirname(N)}": name of the Nth ancestor folder. Positive N walks
+  //     up from the file (1 is the immediate parent, 2 is the grandparent,
+  //     ...). Negative N counts from the worktree root (-1 is the topmost
+  //     folder, -2 is its child, ...).
+  //
+  // Patterns are evaluated in declaration order; the first matching
+  // pattern wins. When a tab has a custom label, the parent directory
+  // hint that Zed normally appends for disambiguation is hidden.
+  //
+  // Examples:
+  // {
+  //   "**/src/routes/**/+page.svelte": "${dirname} - page",
+  //   "**/app/**/page.tsx": "${dirname} - page",
+  //   "**/mod.rs": "${dirname}/mod.rs"
+  // }
+  "custom_labels": {},
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
