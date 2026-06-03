@@ -3445,59 +3445,55 @@ impl ThreadView {
     fn render_context_compaction(
         &self,
         entry_ix: usize,
+        total_entries: usize,
         compaction: &acp_thread::ContextCompaction,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let in_progress = matches!(compaction.status, acp_thread::CompactionStatus::InProgress);
-        let label_text = if in_progress {
-            "Compacting thread…"
-        } else {
-            "Context Compacted"
-        };
-
+        let is_compacting = entry_ix + 1 == total_entries
+            && self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
         let summary = compaction.summary.clone();
-        let has_summary = summary.is_some();
-        let is_expanded = has_summary && self.expanded_compactions.contains(&entry_ix);
-
-        let middle = h_flex()
-            .id(("context_compaction", entry_ix))
-            .flex_none()
-            .gap_1p5()
-            .when(in_progress, |this| {
-                this.child(
-                    Icon::new(IconName::ArrowCircle)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted)
-                        .with_rotate_animation(2),
-                )
-            })
-            .child(
-                Label::new(label_text)
-                    .size(LabelSize::Custom(self.tool_name_font_size()))
-                    .color(Color::Muted),
-            )
-            .when(has_summary, |this| {
-                this.child(
-                    Disclosure::new(("compaction-disclosure", entry_ix), is_expanded)
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown),
-                )
-                .cursor_pointer()
-                .on_click(cx.listener(
-                    move |this, _event: &ClickEvent, _window, cx| {
-                        this.toggle_compaction_expansion(entry_ix, cx);
-                    },
-                ))
-            });
+        let summary_available = summary.is_some();
+        let is_expanded = summary_available && self.expanded_compactions.contains(&entry_ix);
 
         let header = h_flex()
+            .id(("context-compaction", entry_ix))
             .px_5()
             .py_1()
             .gap_2()
-            .child(Divider::horizontal())
-            .child(middle)
-            .child(Divider::horizontal());
+            .w_full()
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Scissors)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(if is_compacting {
+                            "Compacting context…"
+                        } else {
+                            "Context compacted"
+                        })
+                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(if is_compacting {
+                div().flex_1().into_any_element()
+            } else {
+                Divider::horizontal().into_any_element()
+            })
+            .child(
+                Disclosure::new(("compaction-disclosure", entry_ix), is_expanded)
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown),
+            )
+            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                this.toggle_compaction_expansion(entry_ix, cx);
+            }));
 
         if let Some(summary) = summary.filter(|_| is_expanded) {
             v_flex()
@@ -3507,17 +3503,37 @@ impl ThreadView {
                     div()
                         .id(("compaction-summary", entry_ix))
                         .mx_5()
-                        .mb_1()
                         .pl_3p5()
                         .border_l_1()
                         .border_color(self.tool_card_border_color(cx))
+                        .child(self.render_markdown(
+                            summary,
+                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                            cx,
+                        )),
+                )
+                .child(
+                    div()
+                        .mx_5()
+                        .mb_1()
+                        .pl_3p5()
+                        .pt_2()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
                         .child(
-                            self.render_markdown(
-                                summary,
-                                MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
-                                    .with_muted_text(cx),
-                                cx,
-                            ),
+                            IconButton::new(
+                                ("compaction-summary-collapse", entry_ix),
+                                IconName::ChevronUp,
+                            )
+                            .full_width()
+                            .style(ButtonStyle::Outlined)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener(
+                                move |this, _event: &ClickEvent, _window, cx| {
+                                    this.expanded_compactions.remove(&entry_ix);
+                                    cx.notify();
+                                },
+                            )),
                         ),
                 )
                 .into_any()
@@ -5492,7 +5508,7 @@ impl ThreadView {
                 self.render_completed_plan(entries, window, cx)
             }
             AgentThreadEntry::ContextCompaction(compaction) => {
-                self.render_context_compaction(entry_ix, compaction, window, cx)
+                self.render_context_compaction(entry_ix, total_entries, compaction, window, cx)
             }
         };
 
