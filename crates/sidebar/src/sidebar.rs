@@ -344,7 +344,7 @@ enum DraftKind {
 }
 
 fn is_native_thread(agent_id: &AgentId) -> bool {
-    *agent_id == ZED_AGENT_ID.clone()
+    agent_id == &ZED_AGENT_ID
 }
 
 fn should_render_thread_context_menu(is_draft: bool, session_id: Option<&acp::SessionId>) -> bool {
