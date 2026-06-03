@@ -401,6 +401,61 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
     }
 }
 
+/// Delimiters used by response-only SFT (e.g. Unsloth `train_on_responses_only`)
+/// to mask the prompt and train only on the model's completion.
+///
+/// Both strings must appear verbatim in the prompt produced by
+/// [`format_zeta_prompt`] for the same format: `instruction_part` marks the
+/// start of an example, and `response_part` is the final marker before the
+/// completion begins.
+pub struct TrainingDelimiters {
+    pub instruction_part: &'static str,
+    pub response_part: &'static str,
+}
+
+/// Return the response-only training delimiters for a format.
+///
+/// This match is intentionally exhaustive with no wildcard arm so that adding a
+/// new [`ZetaFormat`] fails to compile until its delimiters are specified.
+pub fn training_delimiters_for_format(format: ZetaFormat) -> TrainingDelimiters {
+    match format {
+        ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0318SeedMultiRegions
+        | ZetaFormat::V0327SingleFile
+        | ZetaFormat::V0420Diagnostics => TrainingDelimiters {
+            instruction_part: seed_coder::FIM_SUFFIX,
+            response_part: seed_coder::FIM_MIDDLE,
+        },
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: "<|fim_middle|>updated\n",
+        },
+        ZetaFormat::V0120GitMergeMarkers => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: v0120_git_merge_markers::SEPARATOR,
+        },
+        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: "<|fim_middle|>",
+        },
+        ZetaFormat::v0226Hashline => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: hashline::END_MARKER,
+        },
+        ZetaFormat::V0304VariableEdit => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: "<|fim_prefix|>",
+        },
+    }
+}
+
 /// Return (editable_range, context_range) for the prompt format
 pub fn excerpt_ranges_for_format(
     format: ZetaFormat,
