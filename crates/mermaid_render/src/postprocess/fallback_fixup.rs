@@ -4,12 +4,12 @@
 //! ```xml
 //! <!-- before -->
 //! <g data-merman-foreignobject="fallback">
-//!   <text>List&amp;lt;T&amp;gt;</text>
+//!   <text>List&amp;lt;T&amp;gt; &amp;apos;x&amp;apos;</text>
 //! </g>
 //!
 //! <!-- after -->
 //! <g data-merman-foreignobject="fallback">
-//!   <text>List&lt;T&gt;</text>
+//!   <text>List&lt;T&gt; &apos;x&apos;</text>
 //! </g>
 //! ```
 
@@ -108,17 +108,7 @@ impl<'a, I> FallbackFixup<'a, I> {
         if self.text_buffer.is_empty() {
             return;
         }
-        let text = if self.text_buffer.contains("&amp;lt;") || self.text_buffer.contains("&amp;gt;")
-        {
-            let fixed = self
-                .text_buffer
-                .replace("&amp;lt;", "&lt;")
-                .replace("&amp;gt;", "&gt;");
-            self.text_buffer.clear();
-            fixed
-        } else {
-            std::mem::take(&mut self.text_buffer)
-        };
+        let text = fix_double_escaped_entities(std::mem::take(&mut self.text_buffer));
         self.output_queue
             .push_back(Event::Text(BytesText::from_escaped(text)));
     }
@@ -145,6 +135,66 @@ impl<'a, I> FallbackFixup<'a, I> {
             _ => Ok(event),
         }
     }
+}
+
+fn fix_double_escaped_entities(input: String) -> String {
+    const PREFIX: &str = "&amp;";
+    if !input.contains(PREFIX) {
+        return input;
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input.as_str();
+    while let Some(idx) = rest.find(PREFIX) {
+        let after = &rest[idx + PREFIX.len()..];
+        if let Some(entity_len) = recognized_entity_len(after) {
+            out.push_str(&rest[..idx]);
+            out.push('&');
+            out.push_str(&after[..entity_len]);
+            rest = &after[entity_len..];
+        } else {
+            let consumed = idx + PREFIX.len();
+            out.push_str(&rest[..consumed]);
+            rest = &rest[consumed..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn recognized_entity_len(s: &str) -> Option<usize> {
+    for body in ["lt;", "gt;", "amp;", "apos;", "quot;"] {
+        if s.starts_with(body) {
+            return Some(body.len());
+        }
+    }
+
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'#') {
+        return None;
+    }
+    let mut i = 1;
+    let hex = matches!(bytes.get(i), Some(b'x' | b'X'));
+    if hex {
+        i += 1;
+    }
+    let digits_start = i;
+    while let Some(&b) = bytes.get(i) {
+        let is_digit = if hex {
+            b.is_ascii_hexdigit()
+        } else {
+            b.is_ascii_digit()
+        };
+        if is_digit {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if i == digits_start || bytes.get(i) != Some(&b';') {
+        return None;
+    }
+    Some(i + 1)
 }
 
 pub(super) fn process<'a>(
@@ -200,24 +250,78 @@ mod tests {
     #[test]
     fn fixes_double_escaped_entities_in_fallback() {
         let svg = r##"<g data-merman-foreignobject="fallback"><text fill="#333">-List&amp;lt;Animal&amp;gt; animals</text></g>"##;
-        let result = run_fixup(svg);
-        assert!(
-            !result.contains("&amp;lt;"),
-            "Should fix double-escaped entities, got: {result}"
-        );
-        assert!(
-            result.contains("&lt;"),
-            "Should contain single-escaped entity, got: {result}"
+        assert_eq!(
+            run_fixup(svg),
+            r##"<g data-merman-foreignobject="fallback"><text fill="#333">-List&lt;Animal&gt; animals</text></g>"##
         );
     }
 
     #[test]
     fn preserves_text_outside_fallback_group() {
         let svg = r##"<text>-List&amp;lt;Animal&amp;gt;</text>"##;
-        let result = run_fixup(svg);
-        assert!(
-            result.contains("&amp;lt;"),
-            "Should not fix entities outside fallback group, got: {result}"
+        assert_eq!(run_fixup(svg), svg);
+    }
+
+    #[test]
+    fn fixes_double_escaped_apostrophes_and_quotes() {
+        let svg = r##"<g data-merman-foreignobject="fallback"><text fill="#333">Parent{7, &amp;apos;main.rs&amp;apos;} &amp;quot;x&amp;quot;</text></g>"##;
+        assert_eq!(
+            run_fixup(svg),
+            r##"<g data-merman-foreignobject="fallback"><text fill="#333">Parent{7, &apos;main.rs&apos;} &quot;x&quot;</text></g>"##
+        );
+    }
+
+    #[test]
+    fn fixes_double_escaped_numeric_references() {
+        let svg =
+            r##"<g data-merman-foreignobject="fallback"><text>a&amp;#39;b&amp;#x2F;c</text></g>"##;
+        assert_eq!(
+            run_fixup(svg),
+            r##"<g data-merman-foreignobject="fallback"><text>a&#39;b&#x2F;c</text></g>"##
+        );
+    }
+
+    #[test]
+    fn fixes_double_escaped_ampersand() {
+        let svg =
+            r##"<g data-merman-foreignobject="fallback"><text>Tom &amp;amp; Jerry</text></g>"##;
+        assert_eq!(
+            run_fixup(svg),
+            r##"<g data-merman-foreignobject="fallback"><text>Tom &amp; Jerry</text></g>"##
+        );
+    }
+
+    #[test]
+    fn leaves_single_escaped_and_unknown_entities_untouched() {
+        // A lone `&amp;` (literal `&`) and an unknown named entity must survive
+        // so the SVG stays parseable.
+        let svg =
+            r##"<g data-merman-foreignobject="fallback"><text>A &amp; B &amp;nbsp; C</text></g>"##;
+        assert_eq!(run_fixup(svg), svg);
+    }
+
+    #[test]
+    fn fix_helper_direct() {
+        assert_eq!(
+            fix_double_escaped_entities("&amp;apos;x&amp;apos;".to_string()),
+            "&apos;x&apos;"
+        );
+        assert_eq!(
+            fix_double_escaped_entities("a&amp;#39;b".to_string()),
+            "a&#39;b"
+        );
+    }
+
+    #[test]
+    fn reuses_allocation_when_no_double_escaping_present() {
+        let input = String::from("no entities here & there");
+        let ptr = input.as_ptr();
+        let output = fix_double_escaped_entities(input);
+        assert_eq!(output, "no entities here & there");
+        assert_eq!(
+            output.as_ptr(),
+            ptr,
+            "unchanged input should not reallocate"
         );
     }
 }
