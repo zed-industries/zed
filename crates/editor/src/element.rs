@@ -6226,6 +6226,62 @@ impl EditorElement {
     }
 
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+        let diagnostic_overlays: Vec<(u32, Hsla)> =
+            if scrollbar_settings.diagnostics != ScrollbarDiagnostics::None {
+                let snapshot = &layout.position_map.snapshot;
+                let max_point = snapshot.display_snapshot.buffer_snapshot().max_point();
+                let error_color = cx.theme().status().error.opacity(0.35);
+                let warning_color = cx.theme().status().warning.opacity(0.35);
+                let info_color = cx.theme().status().info.opacity(0.35);
+                let hint_color = cx.theme().status().hint.opacity(0.35);
+                snapshot
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .diagnostics_in_range::<Point>(Point::zero()..max_point)
+                    .filter(|diagnostic| {
+                        match (
+                            scrollbar_settings.diagnostics,
+                            diagnostic.diagnostic.severity,
+                        ) {
+                            (ScrollbarDiagnostics::All, _) => true,
+                            (ScrollbarDiagnostics::Error, lsp::DiagnosticSeverity::ERROR) => true,
+                            (
+                                ScrollbarDiagnostics::Warning,
+                                lsp::DiagnosticSeverity::ERROR | lsp::DiagnosticSeverity::WARNING,
+                            ) => true,
+                            (
+                                ScrollbarDiagnostics::Information,
+                                lsp::DiagnosticSeverity::ERROR
+                                | lsp::DiagnosticSeverity::WARNING
+                                | lsp::DiagnosticSeverity::INFORMATION,
+                            ) => true,
+                            _ => false,
+                        }
+                    })
+                    .sorted_by_key(|diagnostic| {
+                        std::cmp::Reverse(diagnostic.diagnostic.severity)
+                    })
+                    .map(|diagnostic| {
+                        let row = diagnostic
+                            .range
+                            .start
+                            .to_display_point(&snapshot.display_snapshot)
+                            .row()
+                            .0;
+                        let color = match diagnostic.diagnostic.severity {
+                            lsp::DiagnosticSeverity::ERROR => error_color,
+                            lsp::DiagnosticSeverity::WARNING => warning_color,
+                            lsp::DiagnosticSeverity::INFORMATION => info_color,
+                            _ => hint_color,
+                        };
+                        (row, color)
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+
         if let Some(mut layout) = layout.minimap.take() {
             let minimap_hitbox = layout.thumb_layout.hitbox.clone();
             let dragging_minimap = self.editor.read(cx).scroll_manager.is_dragging_minimap();
@@ -6233,6 +6289,25 @@ impl EditorElement {
             window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
                     layout.minimap.paint(window, cx);
+                    for &(row, color) in &diagnostic_overlays {
+                        let y_offset = layout.minimap_line_height
+                            * (row as f32 - layout.minimap_scroll_top as f32);
+                        if y_offset >= px(0.) && y_offset < minimap_hitbox.bounds.size.height {
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: point(
+                                        minimap_hitbox.bounds.origin.x,
+                                        minimap_hitbox.bounds.origin.y + y_offset,
+                                    ),
+                                    size: size(
+                                        minimap_hitbox.bounds.size.width,
+                                        layout.minimap_line_height,
+                                    ),
+                                },
+                                color,
+                            ));
+                        }
+                    }
                     if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
                         let minimap_thumb_color = match layout.thumb_layout.thumb_state {
                             ScrollbarThumbState::Idle => {

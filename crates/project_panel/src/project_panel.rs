@@ -6269,8 +6269,11 @@ impl ProjectPanel {
             .get(&(worktree_id, entry.path.clone()))
             .copied();
 
-        let filename_text_color =
-            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
+        let filename_text_color = match diagnostic_severity {
+            Some(DiagnosticSeverity::ERROR) => Color::Error,
+            Some(DiagnosticSeverity::WARNING) => Color::Warning,
+            _ => entry_git_aware_label_color(git_status, entry.is_ignored, is_marked),
+        };
 
         let is_cut = self
             .clipboard
