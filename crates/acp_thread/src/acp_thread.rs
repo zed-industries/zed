@@ -1980,9 +1980,7 @@ impl AcpThread {
                 .enumerate()
                 .rev()
                 .find_map(|(ix, entry)| match entry {
-                    AgentThreadEntry::ContextCompaction(compaction) if &compaction.id == id => {
-                        Some(ix)
-                    }
+                    AgentThreadEntry::ContextCompaction(c) if &c.id == &compaction.id => Some(ix),
                     _ => None,
                 })
         {
@@ -2005,9 +2003,7 @@ impl AcpThread {
                 .enumerate()
                 .rev()
                 .find_map(|(ix, entry)| match entry {
-                    AgentThreadEntry::ContextCompaction(compaction) if &compaction.id == id => {
-                        Some((ix, compaction))
-                    }
+                    AgentThreadEntry::ContextCompaction(c) if &c.id == &update.id => Some((ix, c)),
                     _ => None,
                 })
         else {
