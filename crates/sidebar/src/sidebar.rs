@@ -3566,19 +3566,18 @@ impl Sidebar {
             }
         }
 
-        if !self.regenerating_titles.insert(thread_id) {
-            return;
-        }
-
         let Some(configured_model) =
             LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
         else {
-            self.regenerating_titles.remove(&thread_id);
             if let Some(workspace) = self.active_workspace(cx) {
                 Self::show_no_thread_summary_model_toast(workspace, cx);
             }
             return;
         };
+
+        if !self.regenerating_titles.insert(thread_id) {
+            return;
+        }
 
         let model = configured_model.model;
         let temperature = AgentSettings::temperature_for_model(&model, cx);
@@ -3592,13 +3591,20 @@ impl Sidebar {
 
         cx.spawn(async move |this, cx| {
             let result: anyhow::Result<SharedString> = async {
-                let Some(mut db_thread) = load_task.await? else {
+                let Some(db_thread) = load_task.await? else {
                     anyhow::bail!("Thread not found in database");
                 };
 
                 let request = agent::build_thread_title_request(&db_thread.messages, temperature);
                 let title =
                     SharedString::from(agent::stream_thread_title(model, request, cx).await?);
+
+                let Some(mut db_thread) = thread_store
+                    .update(cx, |store, cx| store.load_thread(session_id.clone(), cx))
+                    .await?
+                else {
+                    anyhow::bail!("Thread not found in database");
+                };
                 db_thread.title = title.clone();
 
                 thread_store

@@ -3410,10 +3410,10 @@ async fn test_stream_thread_title_stops_when_newline_ends_chunk(cx: &mut TestApp
     assert_eq!(title, "Hello world");
 }
 
-// `Thread::to_markdown` (live) and `DbThread::to_markdown` (persisted) must
-// stay byte-for-byte identical for the same messages, since both back the
-// sidebar's "Open Thread as Markdown" action. This pins that they share a
-// single rendering path.
+// `Thread::to_markdown` (live native) and `DbThread::to_markdown` (persisted
+// native) must stay byte-for-byte identical for the same messages, since both
+// back the sidebar's native "Open Thread as Markdown" action. This pins that
+// they share a single rendering path.
 #[gpui::test]
 async fn test_db_thread_markdown_matches_live_thread(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
