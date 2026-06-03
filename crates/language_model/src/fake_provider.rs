@@ -127,6 +127,7 @@ pub struct FakeLanguageModel {
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
     max_token_count: AtomicU64,
+    max_output_tokens: AtomicU64,
 }
 
 impl Default for FakeLanguageModel {
@@ -142,6 +143,7 @@ impl Default for FakeLanguageModel {
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
+            max_output_tokens: AtomicU64::new(0),
         }
     }
 }
@@ -184,6 +186,11 @@ impl FakeLanguageModel {
 
     pub fn set_max_token_count(&self, count: u64) {
         self.max_token_count.store(count, SeqCst);
+    }
+
+    pub fn set_max_output_tokens(&self, count: Option<u64>) {
+        self.max_output_tokens
+            .store(count.unwrap_or_default(), SeqCst);
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -309,6 +316,15 @@ impl LanguageModel for FakeLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.max_token_count.load(SeqCst)
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        let max_output_tokens = self.max_output_tokens.load(SeqCst);
+        if max_output_tokens == 0 {
+            None
+        } else {
+            Some(max_output_tokens)
+        }
     }
 
     fn stream_completion(
