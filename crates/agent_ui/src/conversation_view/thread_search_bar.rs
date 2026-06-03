@@ -900,6 +900,8 @@ fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
             collect_tool_call_markdowns(tool_call, &mut out);
         }
         AgentThreadEntry::CompletedPlan(_) => {}
+        // No searchable markdown content — it's a non-textual marker entry.
+        AgentThreadEntry::ContextCompaction(_) => {}
     }
     out
 }
