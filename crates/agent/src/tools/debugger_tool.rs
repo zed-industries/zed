@@ -33,63 +33,92 @@ use util::markdown::MarkdownInlineCode;
 /// </guidelines>
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DebuggerToolInput {
-    /// The debugger operation to perform
+    /// The debugger operation to perform, including any operation-specific inputs.
     pub operation: DebuggerOperation,
-    /// The path to the file (required for set_breakpoint and remove_breakpoint operations)
-    #[serde(default)]
-    pub path: Option<String>,
-    /// The 1-based line number (required for set_breakpoint and remove_breakpoint operations)
-    #[serde(default)]
-    pub line: Option<u32>,
-    /// Whether to enable or disable the breakpoint (for set_breakpoint only)
-    #[serde(default)]
-    pub enabled: Option<bool>,
-    /// Optional condition expression that must evaluate to true for the breakpoint to trigger (for set_breakpoint only)
-    #[serde(default)]
-    pub condition: Option<String>,
-    /// Optional log message to output when the breakpoint is hit (for set_breakpoint only)
-    #[serde(default)]
-    pub log_message: Option<String>,
-    /// Optional hit count condition (for set_breakpoint only)
-    #[serde(default)]
-    pub hit_condition: Option<String>,
     /// Optional session ID. If not provided, uses the active session.
     #[serde(default)]
     pub session_id: Option<u32>,
-    /// Optional thread ID. If not provided, uses an appropriate thread based on the operation.
-    #[serde(default)]
-    pub thread_id: Option<i64>,
-    /// Optional stack frame index (0 = top of stack). Used for get_variables operation.
-    #[serde(default)]
-    pub frame_index: Option<usize>,
 }
 
-/// The debugger operation to perform
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+/// The debugger operation to perform.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum DebuggerOperation {
-    /// Set or update a breakpoint at a specific file and line
-    SetBreakpoint,
-    /// Remove a breakpoint at a specific file and line
-    RemoveBreakpoint,
-    /// List all breakpoints in the project
+    /// Set or update a breakpoint at a specific file and line.
+    SetBreakpoint {
+        /// The path to the file.
+        path: String,
+        /// The 1-based line number.
+        line: u32,
+        /// Whether to enable or disable the breakpoint.
+        #[serde(default)]
+        enabled: Option<bool>,
+        /// Optional condition expression that must evaluate to true for the breakpoint to trigger.
+        #[serde(default)]
+        condition: Option<String>,
+        /// Optional log message to output when the breakpoint is hit.
+        #[serde(default)]
+        log_message: Option<String>,
+        /// Optional hit count condition.
+        #[serde(default)]
+        hit_condition: Option<String>,
+    },
+    /// Remove a breakpoint at a specific file and line.
+    RemoveBreakpoint {
+        /// The path to the file.
+        path: String,
+        /// The 1-based line number.
+        line: u32,
+    },
+    /// List all breakpoints in the project.
     ListBreakpoints,
-    /// List all active debug sessions
+    /// List all active debug sessions.
     ListSessions,
-    /// Continue execution of a paused thread
-    Continue,
-    /// Pause execution of a running thread
-    Pause,
-    /// Step over the current line (execute without entering functions)
-    StepOver,
-    /// Step into the current line (enter function calls)
-    StepIn,
-    /// Step out of the current function
-    StepOut,
-    /// Get the stack trace for a stopped thread
-    GetStackTrace,
-    /// Get variables in the current scope
-    GetVariables,
+    /// Continue execution of a paused thread.
+    Continue {
+        /// Optional thread ID. If not provided, uses a stopped thread.
+        #[serde(default)]
+        thread_id: Option<i64>,
+    },
+    /// Pause execution of a running thread.
+    Pause {
+        /// Optional thread ID. If not provided, uses a running thread.
+        #[serde(default)]
+        thread_id: Option<i64>,
+    },
+    /// Step over the current line (execute without entering functions).
+    StepOver {
+        /// Optional thread ID. If not provided, uses a stopped thread.
+        #[serde(default)]
+        thread_id: Option<i64>,
+    },
+    /// Step into the current line (enter function calls).
+    StepIn {
+        /// Optional thread ID. If not provided, uses a stopped thread.
+        #[serde(default)]
+        thread_id: Option<i64>,
+    },
+    /// Step out of the current function.
+    StepOut {
+        /// Optional thread ID. If not provided, uses a stopped thread.
+        #[serde(default)]
+        thread_id: Option<i64>,
+    },
+    /// Get the stack trace for a stopped thread.
+    GetStackTrace {
+        /// Optional thread ID. If not provided, uses an appropriate thread.
+        #[serde(default)]
+        thread_id: Option<i64>,
+    },
+    /// Get variables in the current scope.
+    GetVariables {
+        /// Optional thread ID. If not provided, uses a stopped thread.
+        #[serde(default)]
+        thread_id: Option<i64>,
+        /// Optional stack frame index (0 = top of stack).
+        #[serde(default)]
+        frame_index: Option<usize>,
+    },
 }
 
 pub struct DebuggerTool {
@@ -214,19 +243,16 @@ impl DebuggerTool {
         input: DebuggerToolInput,
         cx: &mut AsyncApp,
     ) -> Result<String> {
+        let session_id = input.session_id;
         match input.operation {
-            DebuggerOperation::SetBreakpoint => {
-                let path = input
-                    .path
-                    .ok_or_else(|| anyhow!("path is required for set_breakpoint operation"))?;
-                let line = input
-                    .line
-                    .ok_or_else(|| anyhow!("line is required for set_breakpoint operation"))?;
-                let enabled = input.enabled;
-                let condition = input.condition;
-                let log_message = input.log_message;
-                let hit_condition = input.hit_condition;
-
+            DebuggerOperation::SetBreakpoint {
+                path,
+                line,
+                enabled,
+                condition,
+                log_message,
+                hit_condition,
+            } => {
                 let (buffer_task, breakpoint_store, abs_path): (_, _, _) = cx.update(|cx| {
                     let project_path = project.read(cx).find_project_path(&path, cx);
                     let Some(project_path) = project_path else {
@@ -285,48 +311,38 @@ impl DebuggerTool {
                     format!("Breakpoint set at {}:{}", abs_path.display(), line)
                 }))
             }
+            DebuggerOperation::RemoveBreakpoint { path, line } => cx.update(|cx| {
+                let project = project.read(cx);
+                let Some(project_path) = project.find_project_path(&path, cx) else {
+                    return Err(anyhow!("Could not find path {} in project", path));
+                };
 
-            DebuggerOperation::RemoveBreakpoint => {
-                let path = input
-                    .path
-                    .ok_or_else(|| anyhow!("path is required for remove_breakpoint operation"))?;
-                let line = input
-                    .line
-                    .ok_or_else(|| anyhow!("line is required for remove_breakpoint operation"))?;
+                let worktree = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .ok_or_else(|| anyhow!("Worktree not found"))?;
+                let abs_path = worktree.read(cx).absolutize(&project_path.path);
 
-                cx.update(|cx| {
-                    let project = project.read(cx);
-                    let Some(project_path) = project.find_project_path(&path, cx) else {
-                        return Err(anyhow!("Could not find path {} in project", path));
-                    };
+                let breakpoint_store = project.breakpoint_store();
+                let row = line.saturating_sub(1);
 
-                    let worktree = project
-                        .worktree_for_id(project_path.worktree_id, cx)
-                        .ok_or_else(|| anyhow!("Worktree not found"))?;
-                    let abs_path = worktree.read(cx).absolutize(&project_path.path);
+                let result = breakpoint_store
+                    .read(cx)
+                    .breakpoint_at_row(&abs_path, row, cx);
 
-                    let breakpoint_store = project.breakpoint_store();
-                    let row = line.saturating_sub(1);
-
-                    let result = breakpoint_store
-                        .read(cx)
-                        .breakpoint_at_row(&abs_path, row, cx);
-
-                    if let Some((buffer, breakpoint)) = result {
-                        breakpoint_store.update(cx, |store, cx| {
-                            store.toggle_breakpoint(
-                                buffer,
-                                breakpoint,
-                                BreakpointEditAction::Toggle,
-                                cx,
-                            );
-                        });
-                        Ok(format!("Breakpoint removed at {}:{}", path, line))
-                    } else {
-                        Ok(format!("No breakpoint found at {}:{}", path, line))
-                    }
-                })
-            }
+                if let Some((buffer, breakpoint)) = result {
+                    breakpoint_store.update(cx, |store, cx| {
+                        store.toggle_breakpoint(
+                            buffer,
+                            breakpoint,
+                            BreakpointEditAction::Toggle,
+                            cx,
+                        );
+                    });
+                    Ok(format!("Breakpoint removed at {}:{}", path, line))
+                } else {
+                    Ok(format!("No breakpoint found at {}:{}", path, line))
+                }
+            }),
             DebuggerOperation::ListBreakpoints => Ok(cx.update(|cx| {
                 let breakpoint_store = project.read(cx).breakpoint_store();
                 let breakpoints = breakpoint_store.read(cx).all_source_breakpoints(cx);
@@ -368,7 +384,6 @@ impl DebuggerTool {
                 }
                 output
             })),
-
             DebuggerOperation::ListSessions => Ok(cx.update(|cx| {
                 let dap_store = project.read(cx).dap_store();
                 let sessions: Vec<_> = dap_store.read(cx).sessions().cloned().collect();
@@ -405,9 +420,9 @@ impl DebuggerTool {
                 output
             })),
 
-            DebuggerOperation::Continue => cx.update(|cx| {
-                let session = Self::find_session(&project, input.session_id, cx)?;
-                let tid = Self::find_stopped_thread(&session, input.thread_id, cx)?;
+            DebuggerOperation::Continue { thread_id } => cx.update(|cx| {
+                let session = Self::find_session(&project, session_id, cx)?;
+                let tid = Self::find_stopped_thread(&session, thread_id, cx)?;
 
                 session.update(cx, |session, cx| {
                     session.continue_thread(tid, cx);
@@ -416,9 +431,9 @@ impl DebuggerTool {
                 Ok(format!("Continued execution of thread {}", tid.0))
             }),
 
-            DebuggerOperation::Pause => cx.update(|cx| {
-                let session = Self::find_session(&project, input.session_id, cx)?;
-                let tid = Self::find_running_thread(&session, input.thread_id, cx)?;
+            DebuggerOperation::Pause { thread_id } => cx.update(|cx| {
+                let session = Self::find_session(&project, session_id, cx)?;
+                let tid = Self::find_running_thread(&session, thread_id, cx)?;
 
                 session.update(cx, |session, cx| {
                     session.pause_thread(tid, cx);
@@ -427,9 +442,9 @@ impl DebuggerTool {
                 Ok(format!("Paused thread {}", tid.0))
             }),
 
-            DebuggerOperation::StepOver => cx.update(|cx| {
-                let session = Self::find_session(&project, input.session_id, cx)?;
-                let tid = Self::find_stopped_thread(&session, input.thread_id, cx)?;
+            DebuggerOperation::StepOver { thread_id } => cx.update(|cx| {
+                let session = Self::find_session(&project, session_id, cx)?;
+                let tid = Self::find_stopped_thread(&session, thread_id, cx)?;
 
                 session.update(cx, |session, cx| {
                     session.step_over(tid, SteppingGranularity::Line, cx);
@@ -438,9 +453,9 @@ impl DebuggerTool {
                 Ok(format!("Stepped over on thread {}", tid.0))
             }),
 
-            DebuggerOperation::StepIn => cx.update(|cx| {
-                let session = Self::find_session(&project, input.session_id, cx)?;
-                let tid = Self::find_stopped_thread(&session, input.thread_id, cx)?;
+            DebuggerOperation::StepIn { thread_id } => cx.update(|cx| {
+                let session = Self::find_session(&project, session_id, cx)?;
+                let tid = Self::find_stopped_thread(&session, thread_id, cx)?;
 
                 session.update(cx, |session, cx| {
                     session.step_in(tid, SteppingGranularity::Line, cx);
@@ -449,9 +464,9 @@ impl DebuggerTool {
                 Ok(format!("Stepped into on thread {}", tid.0))
             }),
 
-            DebuggerOperation::StepOut => cx.update(|cx| {
-                let session = Self::find_session(&project, input.session_id, cx)?;
-                let tid = Self::find_stopped_thread(&session, input.thread_id, cx)?;
+            DebuggerOperation::StepOut { thread_id } => cx.update(|cx| {
+                let session = Self::find_session(&project, session_id, cx)?;
+                let tid = Self::find_stopped_thread(&session, thread_id, cx)?;
 
                 session.update(cx, |session, cx| {
                     session.step_out(tid, SteppingGranularity::Line, cx);
@@ -460,9 +475,9 @@ impl DebuggerTool {
                 Ok(format!("Stepped out on thread {}", tid.0))
             }),
 
-            DebuggerOperation::GetStackTrace => cx.update(|cx| {
-                let session = Self::find_session(&project, input.session_id, cx)?;
-                let tid = Self::find_any_thread(&session, input.thread_id, cx)?;
+            DebuggerOperation::GetStackTrace { thread_id } => cx.update(|cx| {
+                let session = Self::find_session(&project, session_id, cx)?;
+                let tid = Self::find_any_thread(&session, thread_id, cx)?;
 
                 let frames = session.update(cx, |session, cx| session.stack_frames(tid, cx))?;
 
@@ -486,10 +501,13 @@ impl DebuggerTool {
                 Ok(output)
             }),
 
-            DebuggerOperation::GetVariables => cx.update(|cx| {
-                let session = Self::find_session(&project, input.session_id, cx)?;
-                let tid = Self::find_stopped_thread(&session, input.thread_id, cx)?;
-                let frame_idx = input.frame_index.unwrap_or(0);
+            DebuggerOperation::GetVariables {
+                thread_id,
+                frame_index,
+            } => cx.update(|cx| {
+                let session = Self::find_session(&project, session_id, cx)?;
+                let tid = Self::find_stopped_thread(&session, thread_id, cx)?;
+                let frame_idx = frame_index.unwrap_or(0);
 
                 session.update(cx, |session, cx| {
                     let frames = session.stack_frames(tid, cx)?;
@@ -559,29 +577,24 @@ impl AgentTool for DebuggerTool {
     ) -> SharedString {
         match input {
             Ok(input) => match input.operation {
-                DebuggerOperation::SetBreakpoint => {
-                    if let (Some(path), Some(line)) = (&input.path, input.line) {
-                        format!("Set breakpoint at {}:{}", MarkdownInlineCode(path), line).into()
-                    } else {
-                        "Set breakpoint".into()
-                    }
+                DebuggerOperation::SetBreakpoint { path, line, .. } => {
+                    format!("Set breakpoint at {}:{}", MarkdownInlineCode(&path), line).into()
                 }
-                DebuggerOperation::RemoveBreakpoint => {
-                    if let (Some(path), Some(line)) = (&input.path, input.line) {
-                        format!("Remove breakpoint at {}:{}", MarkdownInlineCode(path), line).into()
-                    } else {
-                        "Remove breakpoint".into()
-                    }
-                }
+                DebuggerOperation::RemoveBreakpoint { path, line } => format!(
+                    "Remove breakpoint at {}:{}",
+                    MarkdownInlineCode(&path),
+                    line
+                )
+                .into(),
                 DebuggerOperation::ListBreakpoints => "List breakpoints".into(),
                 DebuggerOperation::ListSessions => "List debug sessions".into(),
-                DebuggerOperation::Continue => "Continue execution".into(),
-                DebuggerOperation::Pause => "Pause execution".into(),
-                DebuggerOperation::StepOver => "Step over".into(),
-                DebuggerOperation::StepIn => "Step into".into(),
-                DebuggerOperation::StepOut => "Step out".into(),
-                DebuggerOperation::GetStackTrace => "Get stack trace".into(),
-                DebuggerOperation::GetVariables => "Get variables".into(),
+                DebuggerOperation::Continue { .. } => "Continue execution".into(),
+                DebuggerOperation::Pause { .. } => "Pause execution".into(),
+                DebuggerOperation::StepOver { .. } => "Step over".into(),
+                DebuggerOperation::StepIn { .. } => "Step into".into(),
+                DebuggerOperation::StepOut { .. } => "Step out".into(),
+                DebuggerOperation::GetStackTrace { .. } => "Get stack trace".into(),
+                DebuggerOperation::GetVariables { .. } => "Get variables".into(),
             },
             Err(_) => "Debugger operation".into(),
         }
