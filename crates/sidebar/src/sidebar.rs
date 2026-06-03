@@ -344,7 +344,7 @@ enum DraftKind {
 }
 
 fn is_native_thread(agent_id: &AgentId) -> bool {
-    agent_id == &ZED_AGENT_ID
+    agent_id == &*ZED_AGENT_ID
 }
 
 fn should_render_thread_context_menu(is_draft: bool, session_id: Option<&acp::SessionId>) -> bool {
@@ -357,13 +357,6 @@ fn should_show_thread_title_regeneration(agent_id: &AgentId) -> bool {
 
 fn should_show_open_thread_as_markdown(agent_id: &AgentId, is_live: bool) -> bool {
     is_live || is_native_thread(agent_id)
-}
-
-fn start_title_regeneration(
-    regenerating_titles: &mut HashSet<ThreadId>,
-    thread_id: ThreadId,
-) -> bool {
-    regenerating_titles.insert(thread_id)
 }
 
 #[derive(Clone)]
@@ -3572,25 +3565,27 @@ impl Sidebar {
         session_id: &acp::SessionId,
         thread_id: ThreadId,
         folder_paths: PathList,
-        active_thread_workspace: Option<Entity<Workspace>>,
-        toast_workspace: Option<Entity<Workspace>>,
+        thread_workspace: Option<Entity<Workspace>>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(workspace) = active_thread_workspace
-            && let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx)
+        if let Some(panel) = thread_workspace
+            .as_ref()
+            .and_then(|w| w.read(cx).panel::<AgentPanel>(cx))
         {
             match panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx)) {
                 ThreadTitleRegenerationResult::Started
                 | ThreadTitleRegenerationResult::AlreadyGenerating => return,
                 ThreadTitleRegenerationResult::NoModel => {
-                    Self::show_no_thread_summary_model_toast(workspace, cx);
+                    if let Some(workspace) = self.active_workspace(cx) {
+                        Self::show_no_thread_summary_model_toast(workspace, cx);
+                    }
                     return;
                 }
                 ThreadTitleRegenerationResult::NotOpen => {}
             }
         }
 
-        if !start_title_regeneration(&mut self.regenerating_titles, thread_id) {
+        if !self.regenerating_titles.insert(thread_id) {
             return;
         }
 
@@ -3598,7 +3593,7 @@ impl Sidebar {
             LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
         else {
             self.regenerating_titles.remove(&thread_id);
-            if let Some(workspace) = toast_workspace.or_else(|| self.active_workspace(cx)) {
+            if let Some(workspace) = self.active_workspace(cx) {
                 Self::show_no_thread_summary_model_toast(workspace, cx);
             }
             return;
@@ -3644,7 +3639,7 @@ impl Sidebar {
                         });
                     }
                     Err(_) => {
-                        if let Some(workspace) = toast_workspace {
+                        if let Some(workspace) = this.active_workspace(cx) {
                             Self::show_thread_title_regeneration_failed_toast(workspace, cx);
                         }
                     }
@@ -6293,32 +6288,12 @@ impl Sidebar {
         let context_menu_id = SharedString::from(format!("thread-context-menu-{}", ix));
         let sidebar = cx.weak_entity();
 
-        let workspace_for_markdown = match &thread_workspace {
-            ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
-            ThreadEntryWorkspace::Closed { .. } => self.active_workspace(cx),
-        };
-
-        let open_workspace = match &thread_workspace {
-            ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
+        let active_workspace = self.active_workspace(cx);
+        let thread_workspace = match &thread_workspace {
+            ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
             ThreadEntryWorkspace::Closed { .. } => None,
         };
-        let active_thread_workspace = is_active
-            .then(|| {
-                self.active_entry.as_ref().and_then(|entry| match entry {
-                    ActiveEntry::Thread { workspace, .. } => Some(workspace.clone()),
-                    ActiveEntry::Terminal { .. } => None,
-                })
-            })
-            .flatten();
-        let mut markdown_panel_workspaces = Vec::new();
-        if let Some(open_workspace) = open_workspace {
-            markdown_panel_workspaces.push(open_workspace);
-        }
-        if let Some(active_thread_workspace) = active_thread_workspace.clone()
-            && !markdown_panel_workspaces.contains(&active_thread_workspace)
-        {
-            markdown_panel_workspaces.push(active_thread_workspace);
-        }
+
         let can_load_markdown_from_database = is_native_thread(&thread.metadata.agent_id);
         let can_regenerate_title = should_show_thread_title_regeneration(&thread.metadata.agent_id);
         let can_open_as_markdown =
@@ -6334,9 +6309,8 @@ impl Sidebar {
                 move |_window, cx| {
                     let session_id = session_id.clone();
                     let sidebar = sidebar.clone();
-                    let workspace_for_markdown = workspace_for_markdown.clone();
-                    let active_thread_workspace = active_thread_workspace.clone();
-                    let markdown_panel_workspaces = markdown_panel_workspaces.clone();
+                    let active_workspace = active_workspace.clone();
+                    let thread_workspace = thread_workspace.clone();
                     let markdown_title = markdown_title.clone();
                     let rename_title = rename_title.clone();
                     let folder_paths = folder_paths.clone();
@@ -6363,8 +6337,7 @@ impl Sidebar {
                             menu = menu.entry("Regenerate Thread Title", None, {
                                 let session_id = session_id.clone();
                                 let sidebar = sidebar.clone();
-                                let active_thread_workspace = active_thread_workspace.clone();
-                                let toast_workspace = workspace_for_markdown.clone();
+                                let thread_workspace = thread_workspace.clone();
                                 let folder_paths = folder_paths.clone();
                                 move |_window, cx| {
                                     sidebar
@@ -6373,8 +6346,7 @@ impl Sidebar {
                                                 &session_id,
                                                 thread_id,
                                                 folder_paths.clone(),
-                                                active_thread_workspace.clone(),
-                                                toast_workspace.clone(),
+                                                thread_workspace.clone(),
                                                 cx,
                                             );
                                         })
@@ -6387,18 +6359,20 @@ impl Sidebar {
                             menu = menu.entry("Open Thread as Markdown", None, {
                                 let session_id = session_id.clone();
                                 let markdown_title = markdown_title.clone();
-                                let markdown_panel_workspaces = markdown_panel_workspaces.clone();
+                                let open_thread_workspace = thread_workspace.clone();
                                 move |window, cx| {
-                                    let Some(ref workspace) = workspace_for_markdown else {
+                                    let Some(active_workspace) = &active_workspace else {
                                         return;
                                     };
-                                    for candidate_workspace in &markdown_panel_workspaces {
+                                    if let Some(open_thread_workspace) =
+                                        open_thread_workspace.as_ref()
+                                    {
                                         if let Some(panel) =
-                                            candidate_workspace.read(cx).panel::<AgentPanel>(cx)
+                                            open_thread_workspace.read(cx).panel::<AgentPanel>(cx)
                                             && panel.update(cx, |panel, cx| {
                                                 panel.open_thread_as_markdown(
                                                     thread_id,
-                                                    workspace.clone(),
+                                                    active_workspace.clone(),
                                                     window,
                                                     cx,
                                                 )
@@ -6406,12 +6380,11 @@ impl Sidebar {
                                         {
                                             return;
                                         }
-                                    }
-                                    if can_load_markdown_from_database {
+                                    } else if can_load_markdown_from_database {
                                         Self::open_closed_native_thread_as_markdown(
                                             &session_id,
                                             markdown_title.clone(),
-                                            workspace,
+                                            &active_workspace,
                                             window,
                                             cx,
                                         );
