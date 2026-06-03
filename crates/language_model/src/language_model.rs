@@ -112,6 +112,17 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// When this model refuses a request, the model ID to fall back to (same provider).
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Whether this model supports the send_to_user tool, which bypasses summarization
+    /// to deliver content to the user verbatim.
+    fn supports_send_to_user_tool(&self) -> bool {
+        false
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }

@@ -1125,6 +1125,7 @@
           "rename_symbol": true,
           "read_file": true,
           "grep": true,
+          "send_to_user": true,
           "skill": true,
           "spawn_agent": true,
           "terminal": true,
@@ -1147,6 +1148,7 @@
           "go_to_definition": true,
           "read_file": true,
           "grep": true,
+          "send_to_user": true,
           "skill": true,
           "spawn_agent": true,
           "search_web": true,
@@ -1155,7 +1157,9 @@
       "minimal": {
         "name": "Minimal",
         "enable_all_context_servers": false,
-        "tools": {},
+        "tools": {
+          "send_to_user": true,
+        },
       },
     },
     // Where to show notifications when the agent has either completed

@@ -343,6 +343,18 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         matches!(self.model.provider, OpenAi | XAi)
     }
 
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self.id.0.as_ref().starts_with(anthropic::FABLE_MODEL_ID_PREFIX) {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
+    fn supports_send_to_user_tool(&self) -> bool {
+        self.id.0.as_ref().starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+    }
+
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id)
     }

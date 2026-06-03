@@ -3,8 +3,8 @@ use crate::{
     CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
     FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
-    RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
+    RenameTool, SandboxedTerminalTool, SendToUserTool, SpawnAgentTool, SystemPromptTemplate,
+    Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -1433,6 +1433,13 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
+        // A tool call left only with the canceled sentinel produced nothing useful
+        // (the sentinel is model-facing only, and is inserted exactly when a tool
+        // had no real result). Don't replay it into the UI at all.
+        if tool_result.is_some_and(Self::is_canceled_tool_result) {
+            return;
+        }
+
         let output = tool_result
             .as_ref()
             .and_then(|result| result.output.clone());
@@ -1528,6 +1535,18 @@ impl Thread {
                 .raw_output(output),
             None,
         );
+    }
+
+    /// A canceled tool result carries only the model-facing `TOOL_CANCELED_MESSAGE`
+    /// sentinel (inserted exactly when a tool had no real result). It's never
+    /// meaningful to the user, so we detect it to skip replaying the tool call.
+    fn is_canceled_tool_result(tool_result: &LanguageModelToolResult) -> bool {
+        tool_result.is_error
+            && matches!(
+                tool_result.content.as_slice(),
+                [LanguageModelToolResultContent::Text(text)]
+                    if text.as_ref() == TOOL_CANCELED_MESSAGE
+            )
     }
 
     fn tool_result_content_for_replay(
@@ -1909,6 +1928,7 @@ impl Thread {
             environment.clone(),
         ));
         self.add_tool(WebSearchTool);
+        self.add_tool(SendToUserTool);
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
 
@@ -2310,6 +2330,8 @@ impl Thread {
     ) -> Result<()> {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
+        // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
+        let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
         loop {
             if cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
                 match Self::perform_compaction_if_needed(
@@ -2349,10 +2371,11 @@ impl Thread {
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
+            // If a refusal fallback is active, use that model instead.
             let (model, request) = this.update(cx, |this, cx| {
-                let model = this
-                    .model
+                let model = refusal_fallback_model
                     .clone()
+                    .or_else(|| this.model.clone())
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
@@ -2382,6 +2405,7 @@ impl Thread {
                 FuturesUnordered::new();
             let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
+            let mut had_refusal = false;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
@@ -2463,6 +2487,14 @@ impl Thread {
 
                 tool_results.extend(batch_result.0);
                 if let Some(err) = batch_result.1 {
+                    let is_refusal = err
+                        .downcast_ref::<CompletionError>()
+                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
+                    if is_refusal {
+                        log::info!("Model refused request; checking for fallback model");
+                        had_refusal = true;
+                        break;
+                    }
                     error = Some(err.downcast()?);
                     break;
                 }
@@ -2487,6 +2519,59 @@ impl Thread {
                     running_turn.streaming_tool_inputs.drain();
                 }
             })?;
+
+            if had_refusal {
+                let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
+                    let current_model = refusal_fallback_model.as_ref().or(this.model.as_ref())?;
+                    let fallback_id = match current_model.refusal_fallback_model_id() {
+                        Some(id) => id,
+                        None => {
+                            log::info!(
+                                "Refusal fallback: no fallback configured for model {} (provider {})",
+                                current_model.id().0,
+                                current_model.provider_id()
+                            );
+                            return None;
+                        }
+                    };
+                    let provider_id = current_model.provider_id();
+                    let found = LanguageModelRegistry::global(cx)
+                        .read(cx)
+                        .available_models(cx)
+                        .find(|m| {
+                            m.provider_id() == provider_id && m.id().0.as_ref() == fallback_id
+                        });
+                    if found.is_none() {
+                        log::info!(
+                            "Refusal fallback: fallback model {}/{} not found in available models",
+                            provider_id,
+                            fallback_id
+                        );
+                    }
+                    found
+                })?;
+
+                if let Some(fallback) = maybe_fallback {
+                    log::info!("Refusal fallback: retrying with {}", fallback.id().0);
+                    let fallback_name = fallback.name().0.clone();
+                    this.update(cx, |this, cx| {
+                        this.pending_message = None;
+                        this.set_model(fallback.clone(), cx);
+                    })?;
+                    event_stream.send_retry(acp_thread::RetryStatus {
+                        last_error: "Safety filter triggered".into(),
+                        attempt: 1,
+                        max_attempts: 1,
+                        started_at: Instant::now(),
+                        duration: Duration::MAX,
+                        meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
+                    });
+                    refusal_fallback_model = Some(fallback);
+                    continue;
+                }
+                log::info!("Request refused with no fallback model available");
+                return Err(CompletionError::Refusal.into());
+            }
 
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
@@ -2750,6 +2835,7 @@ impl Thread {
             max_attempts: max_attempts as usize,
             started_at: Instant::now(),
             duration: delay,
+            meta: None,
         })
     }
 
@@ -3470,6 +3556,9 @@ impl Thread {
                 }
             })
             .filter(|(tool_name, _)| crate::tools::tool_feature_flag_enabled(tool_name, cx))
+            .filter(|(tool_name, _)| {
+                tool_name.as_ref() != SendToUserTool::NAME || model.supports_send_to_user_tool()
+            })
             .collect::<BTreeMap<_, _>>();
 
         let mut context_server_tools = Vec::new();

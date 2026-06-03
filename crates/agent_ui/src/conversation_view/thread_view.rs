@@ -2621,8 +2621,27 @@ impl ThreadView {
         }
     }
 
-    pub fn render_thread_retry_status_callout(&self) -> Option<Callout> {
+    pub fn render_thread_retry_status_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
         let state = self.thread_retry_status.as_ref()?;
+
+        if let Some(fallback_model) = acp_thread::refusal_fallback_model_from_meta(&state.meta) {
+            return Some(
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title(state.last_error.clone())
+                    .description(format!("Retrying with {fallback_model}"))
+                    .dismiss_action(
+                        IconButton::new("dismiss-refusal-fallback", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Dismiss"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.thread_retry_status = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
 
         let next_attempt_in = state
             .duration
@@ -5558,6 +5577,28 @@ impl ThreadView {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                // A canceled tool call that produced visible output is still worth
+                // showing, but one that was canceled before producing anything just
+                // renders as a useless "Canceled" card — hide those entirely.
+                if matches!(tool_call.status, ToolCallStatus::Canceled) {
+                    let has_visible_content =
+                        tool_call.content.iter().any(|content| match content {
+                            ToolCallContent::ContentBlock(block) => match block {
+                                ContentBlock::Empty => false,
+                                ContentBlock::Markdown { markdown } => {
+                                    !markdown.read(cx).source().trim().is_empty()
+                                }
+                                ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => {
+                                    true
+                                }
+                            },
+                            ToolCallContent::Diff(_) | ToolCallContent::Terminal(_) => true,
+                        });
+                    if !has_visible_content {
+                        return Empty.into_any();
+                    }
+                }
+
                 let tool_call = self.render_any_tool_call(
                     self.thread.read(cx).session_id(),
                     entry_ix,
@@ -7037,7 +7078,9 @@ impl ThreadView {
         let has_terminals = tool_call.terminals().next().is_some();
 
         div().w_full().map(|this| {
-            if tool_call.is_subagent() {
+            if tool_call.tool_name.as_deref() == Some("send_to_user") {
+                this.child(self.render_send_to_user_tool_call(tool_call, window, cx))
+            } else if tool_call.is_subagent() {
                 this.child(
                     self.render_subagent_tool_call(
                         active_session_id,
@@ -7077,6 +7120,39 @@ impl ThreadView {
                 ))
             }
         })
+    }
+
+    /// `send_to_user` delivers content the user must see verbatim, so we render
+    /// its message as a first-class markdown block (streaming in as it arrives)
+    /// rather than tucking it inside a collapsible tool-call card.
+    fn render_send_to_user_tool_call(
+        &self,
+        tool_call: &ToolCall,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+        let messages = tool_call.content.iter().filter_map(|content| {
+            let ToolCallContent::ContentBlock(block) = content else {
+                return None;
+            };
+            let markdown = block.markdown()?;
+            if markdown.read(cx).source().trim().is_empty() {
+                return None;
+            }
+            Some(
+                self.render_markdown(markdown.clone(), style.clone(), cx)
+                    .into_any_element(),
+            )
+        });
+
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .gap_2()
+            .text_ui(cx)
+            .children(messages)
     }
 
     fn render_tool_call(
@@ -10437,7 +10513,7 @@ impl Render for ThreadView {
                 this.child(self.render_codex_windows_warning(cx))
             })
             .children(self.render_skill_loading_issues(cx))
-            .children(self.render_thread_retry_status_callout())
+            .children(self.render_thread_retry_status_callout(cx))
             .children(self.render_thread_error(window, cx))
             .when_some(
                 match has_messages {
