@@ -3,8 +3,8 @@ mod icon_theme_selector;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
-    Window, actions,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, SharedString,
+    UpdateGlobal, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -134,6 +134,8 @@ struct ThemeSelectorDelegate {
     original_theme_settings: ThemeSettings,
     /// The current system appearance.
     original_system_appearance: Appearance,
+    /// The name of the original theme.
+    original_theme_name: SharedString,
     /// The currently selected new theme.
     new_theme: Arc<Theme>,
     selection_completed: bool,
@@ -196,12 +198,19 @@ impl ThemeSelectorDelegate {
             matches,
             original_theme_settings,
             original_system_appearance,
+            original_theme_name: original_theme.name.clone(),
             new_theme: original_theme, // Start with the original theme.
             selected_index,
             selection_completed: false,
             selected_theme: None,
             selector,
         }
+    }
+
+    fn is_original_theme(&self, index: usize) -> bool {
+        self.matches
+            .get(index)
+            .is_some_and(|mat| mat.string == self.original_theme_name)
     }
 
     fn show_selected_theme(
@@ -487,16 +496,28 @@ impl PickerDelegate for ThemeSelectorDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let theme_match = &self.matches.get(ix)?;
+        let is_original_theme = self.is_original_theme(ix);
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(HighlightedLabel::new(
-                    theme_match.string.clone(),
-                    theme_match.positions.clone(),
-                )),
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(HighlightedLabel::new(
+                            theme_match.string.clone(),
+                            theme_match.positions.clone(),
+                        ))
+                        .when(is_original_theme, |this| {
+                            this.child(Icon::new(IconName::Check).color(Color::Selected))
+                        }),
+                ),
         )
     }
 
