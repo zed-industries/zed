@@ -1,6 +1,6 @@
-use agent_skills::{Skill, SkillIndex};
+use agent_skills::{Skill, SkillIndex, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{Action as _, ScrollHandle, SharedString, prelude::*};
+use gpui::{Action as _, ClipboardItem, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -93,7 +93,8 @@ pub(crate) fn render_skills_setup_page(
                 this.track_scroll(scroll_handle)
                     .overflow_y_scroll()
                     .children(skills.iter().enumerate().flat_map(|(i, skill)| {
-                        let mut elements: Vec<AnyElement> = vec![render_skill_row(skill, cx)];
+                        let mut elements: Vec<AnyElement> =
+                            vec![render_skill_row(skill, settings_window, cx)];
                         if i + 1 < skills.len() {
                             elements.push(Divider::horizontal().into_any_element());
                         }
@@ -104,9 +105,21 @@ pub(crate) fn render_skills_setup_page(
         .into_any_element()
 }
 
-fn render_skill_row(skill: &Skill, cx: &mut Context<SettingsWindow>) -> AnyElement {
+fn render_skill_row(
+    skill: &Skill,
+    settings_window: &SettingsWindow,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
+
+    let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
+        == Some(skill.directory_path.as_path());
+    let (share_icon, share_icon_color) = if share_copied {
+        (IconName::Check, Color::Success)
+    } else {
+        (IconName::Link, Color::Muted)
+    };
 
     h_flex()
         .w_full()
@@ -128,6 +141,50 @@ fn render_skill_row(skill: &Skill, cx: &mut Context<SettingsWindow>) -> AnyEleme
         .child(
             h_flex()
                 .gap_2()
+                .child({
+                    let share_skill_file_path = skill.skill_file_path.clone();
+                    let share_directory_path = skill.directory_path.clone();
+                    IconButton::new(
+                        SharedString::from(format!("share-{}", skill.name)),
+                        share_icon,
+                    )
+                    .tab_index(0_isize)
+                    .icon_size(IconSize::Small)
+                    .icon_color(share_icon_color)
+                    .tooltip(Tooltip::text("Copy Share Link"))
+                    .on_click(cx.listener(
+                        move |_settings_window, _event, _window, cx| {
+                            let skill_file_path = share_skill_file_path.clone();
+                            let directory_path = share_directory_path.clone();
+                            let app_state = workspace::AppState::global(cx);
+                            let fs = app_state.fs.clone();
+                            cx.spawn(async move |settings_window, cx| {
+                                match fs.load(&skill_file_path).await {
+                                    Ok(content) => {
+                                        let link = encode_skill_share_link(&content);
+                                        settings_window
+                                            .update(cx, |settings_window, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    link,
+                                                ));
+                                                settings_window.last_copied_skill_directory_path =
+                                                    Some(directory_path.clone());
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                    }
+                                    Err(error) => {
+                                        log::error!(
+                                            "failed to read skill file {} for sharing: {error:#}",
+                                            skill_file_path.display()
+                                        );
+                                    }
+                                }
+                            })
+                            .detach();
+                        },
+                    ))
+                })
                 .child(
                     IconButton::new(
                         SharedString::from(format!("delete-{}", skill.name)),

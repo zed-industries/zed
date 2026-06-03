@@ -253,7 +253,6 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
 
     editor.hover_state.info_task = None;
-    editor.hover_state.triggered_from = None;
     editor.hover_state.hiding_delay_task = None;
     editor.hover_state.closest_mouse_distance = None;
 
@@ -307,15 +306,6 @@ fn show_hover(
         } else {
             hide_hover(editor, cx);
         }
-    }
-
-    // Don't request again if the location is the same as the previous request
-    if let Some(triggered_from) = &editor.hover_state.triggered_from
-        && triggered_from
-            .cmp(&anchor, &snapshot.buffer_snapshot())
-            .is_eq()
-    {
-        return None;
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
@@ -864,7 +854,6 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
 pub struct HoverState {
     pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
-    pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,
     pub closest_mouse_distance: Option<Pixels>,
     pub hiding_delay_task: Option<Task<()>>,
@@ -2691,10 +2680,6 @@ mod tests {
             assert!(
                 editor.hover_state.info_task.is_none(),
                 "No hover info task should be scheduled when hover is disabled"
-            );
-            assert!(
-                editor.hover_state.triggered_from.is_none(),
-                "No hover trigger should be recorded when hover is disabled"
             );
         });
     }

@@ -1,10 +1,68 @@
 use crate::tasks::workflows::{
     runners::{Arch, Platform},
-    steps::{CommonJobConditions, NamedJob},
+    steps::{CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob},
 };
 
 use super::{runners, steps, steps::named, vars};
 use gh_workflow::*;
+
+/// Generates the nix_build.yml workflow, which builds the Nix package on PRs
+/// that carry the `run-nix` or `run-bundling` label. The Nix jobs live only
+/// here (not in run_bundling.yml) so that setting both labels doesn't build
+/// them twice.
+pub fn nix_build() -> Workflow {
+    let [nix_linux_x86_64, nix_mac_aarch64] = nix_pr_jobs(&["run-nix", "run-bundling"]);
+    named::workflow()
+        .on(Event::default().pull_request(
+            PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
+        ))
+        .concurrency(
+            Concurrency::new(Expression::new(
+                "${{ github.workflow }}-${{ github.head_ref || github.ref }}",
+            ))
+            .cancel_in_progress(true),
+        )
+        .add_env(("CARGO_TERM_COLOR", "always"))
+        .add_env(("RUST_BACKTRACE", "1"))
+        .add_job(nix_linux_x86_64.name, nix_linux_x86_64.job)
+        .add_job(nix_mac_aarch64.name, nix_mac_aarch64.job)
+}
+
+/// Builds the pair of PR Nix jobs (Linux x86_64 + macOS aarch64), each gated so
+/// they run when any of the given PR `labels` is present (on
+/// `labeled`/`synchronize` events).
+fn nix_pr_jobs(labels: &[&str]) -> [NamedJob; 2] {
+    let labeled = labels
+        .iter()
+        .map(|label| format!("github.event.label.name == '{label}'"))
+        .collect::<Vec<_>>()
+        .join(" || ");
+    let synchronized = labels
+        .iter()
+        .map(|label| format!("contains(github.event.pull_request.labels.*.name, '{label}')"))
+        .collect::<Vec<_>>()
+        .join(" || ");
+    [
+        (Platform::Linux, Arch::X86_64),
+        (Platform::Mac, Arch::AARCH64),
+    ]
+    .map(|(platform, arch)| {
+        let mut job = build_nix(
+            platform,
+            arch,
+            "default",
+            // don't push PR builds to the cache
+            Some("-zed-editor-[0-9.]*"),
+            &[],
+        );
+        job.job = job.job.cond(Expression::new(format!(
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} && \
+            ((github.event.action == 'labeled' && ({labeled})) || \
+            (github.event.action == 'synchronize' && ({synchronized})))"
+        )));
+        job
+    })
+}
 
 pub(crate) fn build_nix(
     platform: Platform,

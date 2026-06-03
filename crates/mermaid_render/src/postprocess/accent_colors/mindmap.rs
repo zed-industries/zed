@@ -47,7 +47,7 @@ impl MindmapAccents {
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if let Some(entry) = self.section_g_stack.pop() {
                     if entry.tracks_node() {
-                        self.nodes.finish_node();
+                        self.nodes.maybe_finish_node();
                     }
                 }
                 Ok(event)
