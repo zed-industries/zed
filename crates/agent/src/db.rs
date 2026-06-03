@@ -152,6 +152,10 @@ impl SharedThread {
 impl DbThread {
     pub const VERSION: &'static str = "0.3.0";
 
+    pub fn to_markdown(&self) -> String {
+        crate::messages_to_markdown(&self.messages)
+    }
+
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
         match saved_thread_json.get("version") {
