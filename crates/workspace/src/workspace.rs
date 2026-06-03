@@ -192,6 +192,16 @@ pub trait TerminalProvider {
     ) -> Task<Option<Result<ExitStatus>>>;
 }
 
+#[derive(Debug, Clone)]
+pub struct DebugSessionStartInfo {
+    /// The DAP session id allocated for the created session.
+    pub session_id: u64,
+    /// The label assigned to the session.
+    pub label: String,
+    /// The debug adapter used to start the session.
+    pub adapter: String,
+}
+
 pub trait DebuggerProvider {
     // `active_buffer` is used to resolve build task's name against language-specific tasks.
     fn start_session(
@@ -202,7 +212,7 @@ pub trait DebuggerProvider {
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut App,
-    );
+    ) -> Result<DebugSessionStartInfo>;
 
     fn spawn_task_or_modal(
         &self,

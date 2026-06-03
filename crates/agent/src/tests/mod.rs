@@ -971,6 +971,172 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_debugger_tool_ask_mode_gating(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Enable the debugger tool in an "ask" profile and a write-capable profile.
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "profiles": {
+                    "ask": {
+                        "name": "Ask",
+                        "tools": { DebuggerTool::NAME: true }
+                    },
+                    "test-write": {
+                        "name": "Test Write",
+                        "tools": { DebuggerTool::NAME: true }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/test"),
+        json!({ "main.js": "let a = 1;\nlet b = 2;\n" }),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        let project = thread.project().clone();
+        let environment = Rc::new(FakeThreadEnvironment::default());
+        thread.add_tool(DebuggerTool::new(project, environment, cx.weak_entity()));
+        thread.set_profile(AgentProfileId("ask".into()), cx);
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["debug"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Read-only operations are available in Ask mode without a permission prompt.
+    let list_breakpoints_input = json!({ "operation": "list_breakpoints" });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "debugger_1".into(),
+            name: DebuggerTool::NAME.into(),
+            raw_input: list_breakpoints_input.to_string(),
+            input: list_breakpoints_input,
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let result = debugger_tool_result(&completion, "debugger_1");
+    assert!(
+        !result.is_error,
+        "read-only debugger operation should succeed in ask mode: {:?}",
+        result.content
+    );
+
+    // Mutating operations are rejected in Ask mode before requesting permission.
+    let set_breakpoints_input = json!({
+        "operation": "set_breakpoints",
+        "breakpoints": [{ "path": path!("/test/main.js"), "line": 1 }]
+    });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "debugger_2".into(),
+            name: DebuggerTool::NAME.into(),
+            raw_input: set_breakpoints_input.to_string(),
+            input: set_breakpoints_input.clone(),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let result = debugger_tool_result(&completion, "debugger_2");
+    assert!(result.is_error, "write operation should fail in ask mode");
+    let text = result
+        .content
+        .first()
+        .and_then(|content| content.to_str())
+        .unwrap_or_default();
+    assert!(
+        text.contains("Ask mode"),
+        "expected ask-mode rejection, got: {text}"
+    );
+
+    // In a write-capable profile the same operation runs once the user grants
+    // permission.
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test-write".into()), cx);
+    });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "debugger_3".into(),
+            name: DebuggerTool::NAME.into(),
+            raw_input: set_breakpoints_input.to_string(),
+            input: set_breakpoints_input,
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let auth = next_tool_call_authorization(&mut events).await;
+    auth.response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let result = debugger_tool_result(&completion, "debugger_3");
+    assert!(
+        !result.is_error,
+        "write operation should succeed in write mode after permission: {:?}",
+        result.content
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|content| content.to_str())
+        .unwrap_or_default();
+    assert!(
+        text.contains("\"changed\": true"),
+        "expected the breakpoint to be added, got: {text}"
+    );
+}
+
+fn debugger_tool_result<'a>(
+    completion: &'a LanguageModelRequest,
+    tool_use_id: &str,
+) -> &'a LanguageModelToolResult {
+    completion
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .iter()
+        .find_map(|content| match content {
+            MessageContent::ToolResult(result) if result.tool_use_id.to_string() == tool_use_id => {
+                Some(result)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no tool result for {tool_use_id}"))
+}
+
+#[gpui::test]
 async fn test_tool_hallucination(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();

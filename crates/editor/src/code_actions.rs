@@ -248,14 +248,9 @@ impl Editor {
 
                 workspace.update(cx, |workspace, cx| {
                     dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
-                    workspace.start_debug_session(
-                        scenario,
-                        context,
-                        Some(buffer),
-                        None,
-                        window,
-                        cx,
-                    );
+                    workspace
+                        .start_debug_session(scenario, context, Some(buffer), None, window, cx)
+                        .log_err();
                 });
                 Some(Task::ready(Ok(())))
             }

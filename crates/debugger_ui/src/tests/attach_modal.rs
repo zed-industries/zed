@@ -233,9 +233,10 @@ async fn test_attach_with_pick_pid_variable(executor: BackgroundExecutor, cx: &m
                     None,
                     window,
                     cx,
-                );
+                )
             })
         })
+        .unwrap()
         .unwrap();
 
     cx.run_until_parked();
