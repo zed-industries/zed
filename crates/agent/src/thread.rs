@@ -3657,7 +3657,10 @@ impl Thread {
             .and_then(|v| v.parse().ok())
             .unwrap_or(AGENT_COMPACTION_REMAINING_TOKEN_BUDGET);
 
-        let compaction_threshold = model.max_token_count().saturating_sub(remaining_budget);
+        let compaction_threshold = model
+            .max_token_count()
+            .saturating_sub(model.max_output_tokens().unwrap_or_default())
+            .saturating_sub(remaining_budget);
         if active_tokens < compaction_threshold {
             return None;
         }
@@ -5500,6 +5503,34 @@ mod tests {
                     user_message_id.clone(),
                     language_model::TokenUsage {
                         input_tokens: 960_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_reserves_max_output_tokens(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_max_token_count(272_000);
+        model.set_max_output_tokens(Some(128_000));
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread.messages.push(user_text_message(
+                    user_message_id.clone(),
+                    "near output-reserved limit",
+                ));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 105_000,
                         ..Default::default()
                     },
                 );
