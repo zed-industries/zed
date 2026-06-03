@@ -1,11 +1,11 @@
 use crate::{
     ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
-    CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
-    FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
-    ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
-    RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    CreateThreadTool, DbLanguageModel, DbThread, DebuggerTool, DeletePathTool, DiagnosticsTool,
+    EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
+    GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
+    ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
+    WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -38,6 +38,7 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
 use heck::ToSnakeCase as _;
+use language::Buffer;
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
@@ -46,7 +47,7 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
     StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use project::Project;
+use project::{Project, WorktreeId};
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
@@ -65,6 +66,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::{DebugScenario, SharedTaskContext};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
 use uuid::Uuid;
 
@@ -776,6 +778,19 @@ pub trait ThreadEnvironment {
             "Listing available agents is not supported in this environment"
         ))
     }
+
+    /// Starts a debug session through the host UI, if the environment provides one.
+    fn start_debug_session(
+        &self,
+        request: DebugSessionRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<DebugSessionInfo>> {
+        let _ = request;
+        let _ = cx;
+        Task::ready(Err(anyhow::anyhow!(
+            "Starting debug sessions is not supported in this environment"
+        )))
+    }
 }
 
 /// A request to create a new sibling thread.
@@ -815,6 +830,31 @@ pub struct SiblingThreadInfo {
     /// unusual worktree layout that affected how the new worktree was set
     /// up). Empty when nothing noteworthy happened.
     pub warning: Option<String>,
+}
+
+/// A request to start a debug session through the workspace debugger UI.
+#[derive(Clone)]
+pub struct DebugSessionRequest {
+    /// Debug scenario to start.
+    pub scenario: DebugScenario,
+    /// Task context used for variable substitution and build-task resolution.
+    pub task_context: SharedTaskContext,
+    /// Buffer used to resolve build-task variables, when available.
+    pub active_buffer: Option<Entity<Buffer>>,
+    /// Worktree to start the debug session in. When absent, the debugger UI
+    /// falls back to the active buffer's worktree or the first visible worktree.
+    pub worktree_id: Option<WorktreeId>,
+}
+
+/// Information returned when a debug session is accepted by the debugger UI.
+#[derive(Debug, Clone)]
+pub struct DebugSessionInfo {
+    /// The DAP session id allocated for the created session.
+    pub session_id: u64,
+    /// The label assigned to the session.
+    pub label: String,
+    /// The debug adapter used to start the session.
+    pub adapter: String,
 }
 
 /// A list of agents and, for each, the models available for use.
@@ -2127,6 +2167,11 @@ impl Thread {
         self.add_tool(DeletePathTool::new(
             self.project.clone(),
             self.action_log.clone(),
+        ));
+        self.add_tool(DebuggerTool::new(
+            self.project.clone(),
+            environment.clone(),
+            cx.weak_entity(),
         ));
         self.add_tool(EditFileTool::new(
             self.project.clone(),

@@ -69,6 +69,12 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the URL being fetched.",
     },
     ToolInfo {
+        id: "debugger",
+        name: "Debugger",
+        description: "Debugger session starts, breakpoint edits, and execution controls",
+        regex_explanation: "Patterns are matched against debugger operation details such as `start_session`, `set_breakpoints`, source paths, session ids, and thread ids. Read-only debugger inspections do not request permission.",
+    },
+    ToolInfo {
         id: "search_web",
         name: "Web Search",
         description: "Web search queries",

@@ -1159,6 +1159,7 @@
           "create_directory": true,
           "create_thread": true,
           "delete_path": true,
+          "debugger": true,
           "diagnostics": true,
           "apply_code_action": true,
           "edit_file": true,
@@ -1186,6 +1187,7 @@
         // "enable_all_context_servers": true,
         "tools": {
           "create_thread": true,
+          "debugger": true,
           "diagnostics": true,
           "fetch": true,
           "list_agents_and_models": true,

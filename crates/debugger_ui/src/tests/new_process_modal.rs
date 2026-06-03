@@ -155,9 +155,10 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                         None,
                         window,
                         cx,
-                    );
+                    )
                 })
             })
+            .unwrap()
             .unwrap();
 
         cx.run_until_parked();

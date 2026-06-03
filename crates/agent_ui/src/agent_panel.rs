@@ -4665,15 +4665,15 @@ impl AgentPanel {
                 } else {
                     cx.emit(AgentPanelEvent::EntryChanged);
                 }
-                this.ensure_sibling_host_installed(&server_view, window, cx);
+                this.ensure_native_agent_hosts_installed(&server_view, window, cx);
                 cx.notify();
             },
         )
         .detach();
 
-        // Try installing the host eagerly as well, in case the connection is
+        // Try installing the hosts eagerly as well, in case the connection is
         // already established by the time the observe fires.
-        self.ensure_sibling_host_installed(&conversation_view, window, cx);
+        self.ensure_native_agent_hosts_installed(&conversation_view, window, cx);
 
         if let Some(model) = model_override {
             // The native thread is constructed asynchronously after the
@@ -4699,24 +4699,30 @@ impl AgentPanel {
         AgentThread { conversation_view }
     }
 
-    fn ensure_sibling_host_installed(
+    fn ensure_native_agent_hosts_installed(
         &self,
         conversation_view: &Entity<ConversationView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<CreateThreadToolFeatureFlag>() {
-            return;
-        }
         let Some(native_connection) = conversation_view.read(cx).as_native_connection(cx) else {
             return;
         };
-        let host = Rc::new(AgentPanelSiblingHost::new(
+        let debugger_host = Rc::new(AgentPanelDebuggerHost::new(
             cx.weak_entity(),
             window.window_handle(),
-        )) as Rc<dyn agent::SiblingThreadHost>;
+        )) as Rc<dyn agent::DebuggerHost>;
+        let sibling_thread_host = cx.has_flag::<CreateThreadToolFeatureFlag>().then(|| {
+            Rc::new(AgentPanelSiblingHost::new(
+                cx.weak_entity(),
+                window.window_handle(),
+            )) as Rc<dyn agent::SiblingThreadHost>
+        });
         native_connection.0.update(cx, |native_agent, _cx| {
-            native_agent.set_sibling_thread_host(host);
+            native_agent.set_debugger_host(debugger_host);
+            if let Some(host) = sibling_thread_host {
+                native_agent.set_sibling_thread_host(host);
+            }
         });
     }
 
@@ -4780,6 +4786,58 @@ fn parse_provider_slash_model(input: &str) -> Option<language_model::SelectedMod
         provider: language_model::LanguageModelProviderId::from(provider.to_string()),
         model: language_model::LanguageModelId::from(model.to_string()),
     })
+}
+
+pub(crate) struct AgentPanelDebuggerHost {
+    panel: WeakEntity<AgentPanel>,
+    window: gpui::AnyWindowHandle,
+}
+
+impl AgentPanelDebuggerHost {
+    pub(crate) fn new(panel: WeakEntity<AgentPanel>, window: gpui::AnyWindowHandle) -> Self {
+        Self { panel, window }
+    }
+}
+
+impl agent::DebuggerHost for AgentPanelDebuggerHost {
+    fn start_debug_session(
+        &self,
+        request: agent::DebugSessionRequest,
+        cx: &mut gpui::AsyncApp,
+    ) -> Task<Result<agent::DebugSessionInfo>> {
+        let panel = self.panel.clone();
+        let window = self.window;
+        cx.spawn(async move |cx| {
+            let workspace = panel.read_with(cx, |panel, _cx| panel.workspace.clone())?;
+            let workspace = workspace
+                .upgrade()
+                .ok_or_else(|| anyhow!("Workspace is no longer available"))?;
+            let agent::DebugSessionRequest {
+                scenario,
+                task_context,
+                active_buffer,
+                worktree_id,
+            } = request;
+            let info = window.update(cx, |_root, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.start_debug_session(
+                        scenario,
+                        task_context,
+                        active_buffer,
+                        worktree_id,
+                        window,
+                        cx,
+                    )
+                })
+            })??;
+
+            Ok(agent::DebugSessionInfo {
+                session_id: info.session_id,
+                label: info.label,
+                adapter: info.adapter,
+            })
+        })
+    }
 }
 
 /// Bridges agent-side `SiblingThreadHost` calls to `AgentPanel`. Constructed
