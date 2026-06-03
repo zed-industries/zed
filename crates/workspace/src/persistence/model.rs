@@ -146,6 +146,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
+    pub(crate) recent_navigation_history: Vec<PathBuf>,
     pub(crate) window_id: Option<u64>,
 }
 

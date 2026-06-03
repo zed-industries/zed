@@ -75,6 +75,23 @@ fn contains_wsl_path(paths: &PathList) -> bool {
             .any(|path| util::paths::WslPath::from_path(path).is_some())
 }
 
+fn serialize_recent_navigation_history(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .filter_map(|path| path.to_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn deserialize_recent_navigation_history(paths: Option<String>) -> Vec<PathBuf> {
+    paths
+        .unwrap_or_default()
+        .split('\n')
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
 impl sqlez::bindable::StaticColumnCount for SerializedAxis {}
@@ -1036,6 +1053,7 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
             ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
+            ALTER TABLE workspaces ADD COLUMN recent_navigation_history TEXT;
         ),
     ];
 
@@ -1096,6 +1114,7 @@ impl WorkspaceDb {
             centered_layout,
             docks,
             window_id,
+            recent_navigation_history,
         ): (
             WorkspaceId,
             String,
@@ -1107,6 +1126,7 @@ impl WorkspaceDb {
             Option<bool>,
             DockStructure,
             Option<u64>,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1131,7 +1151,8 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
-                    window_id
+                    window_id,
+                    recent_navigation_history
                 FROM workspaces
                 WHERE
                     paths IS ? AND
@@ -1188,6 +1209,9 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            recent_navigation_history: deserialize_recent_navigation_history(
+                recent_navigation_history,
+            ),
         })
     }
 
@@ -1207,6 +1231,7 @@ impl WorkspaceDb {
             docks,
             window_id,
             remote_connection_id,
+            recent_navigation_history,
         ): (
             String,
             String,
@@ -1218,6 +1243,7 @@ impl WorkspaceDb {
             DockStructure,
             Option<u64>,
             Option<i32>,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -1242,7 +1268,8 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
                     window_id,
-                    remote_connection_id
+                    remote_connection_id,
+                    recent_navigation_history
                 FROM workspaces
                 WHERE workspace_id = ?
             })
@@ -1292,6 +1319,9 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            recent_navigation_history: deserialize_recent_navigation_history(
+                recent_navigation_history,
+            ),
         })
     }
 
@@ -1579,9 +1609,10 @@ impl WorkspaceDb {
                         bottom_dock_zoom,
                         session_id,
                         window_id,
+                        recent_navigation_history,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
@@ -1600,9 +1631,12 @@ impl WorkspaceDb {
                         bottom_dock_zoom = ?15,
                         session_id = ?16,
                         window_id = ?17,
+                        recent_navigation_history = ?18,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
+                let recent_navigation_history =
+                    serialize_recent_navigation_history(&workspace.recent_navigation_history);
                 let args = (
                     workspace.id,
                     paths.paths.clone(),
@@ -1613,6 +1647,7 @@ impl WorkspaceDb {
                     workspace.docks,
                     workspace.session_id,
                     workspace.window_id,
+                    recent_navigation_history,
                 );
 
                 prepared_query(args).context("Updating workspace")?;
@@ -2953,6 +2988,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3076,6 +3112,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3112,6 +3149,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_without_breakpoint.clone())
@@ -3212,6 +3250,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -3229,6 +3268,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3338,6 +3378,9 @@ mod tests {
             session_id: None,
             window_id: Some(999),
             user_toolchains: Default::default(),
+            recent_navigation_history: (0..20)
+                .map(|index| PathBuf::from(format!("/tmp2/src/{index}.rs")))
+                .collect(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3374,6 +3417,7 @@ mod tests {
             session_id: None,
             window_id: Some(1),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -3391,6 +3435,7 @@ mod tests {
             session_id: None,
             window_id: Some(2),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3435,6 +3480,7 @@ mod tests {
             session_id: None,
             window_id: Some(3),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -3475,6 +3521,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -3492,6 +3539,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -3509,6 +3557,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -3526,6 +3575,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let connection_id = db
@@ -3554,6 +3604,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_6 = SerializedWorkspace {
@@ -3571,6 +3622,7 @@ mod tests {
             session_id: Some("session-id-3".to_owned()),
             window_id: Some(60),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3630,6 +3682,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         }
     }
 
@@ -3673,6 +3726,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .collect::<Vec<_>>();
 
@@ -3772,6 +3826,7 @@ mod tests {
             session_id: session_id.map(|s| s.to_owned()),
             window_id: Some(id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         }
     }
 
@@ -4054,6 +4109,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .collect::<Vec<_>>();
 
@@ -4417,6 +4473,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         // Save the workspace (this creates the record with empty paths)
@@ -4495,6 +4552,7 @@ mod tests {
                 breakpoints: Default::default(),
                 window_id: Some(*window_id),
                 user_toolchains: Default::default(),
+                recent_navigation_history: Default::default(),
             })
             .await;
         }
@@ -4782,6 +4840,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(99),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
 
@@ -4879,6 +4938,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
 
@@ -4897,6 +4957,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
 
@@ -4977,6 +5038,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(88),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
         cx.run_until_parked();

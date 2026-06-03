@@ -844,7 +844,7 @@ impl FoundPath {
     }
 }
 
-const MAX_RECENT_SELECTIONS: usize = 20;
+use workspace::MAX_RECENT_SELECTIONS;
 
 pub enum Event {
     Selected(ProjectPath),
