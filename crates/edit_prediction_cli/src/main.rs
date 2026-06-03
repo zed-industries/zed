@@ -275,11 +275,7 @@ impl Display for Command {
                     write!(f, " --context-only")?;
                 }
                 if args.related_context_limit != score::EVAL_RELATED_CONTEXT_TOKENS_LIMIT {
-                    write!(
-                        f,
-                        " --related-context-limit={}",
-                        args.related_context_limit
-                    )?;
+                    write!(f, " --related-context-limit={}", args.related_context_limit)?;
                 }
                 if let Some(provider) = &args.predict.provider {
                     write!(f, " --provider={}", provider)?;
