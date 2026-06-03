@@ -315,11 +315,13 @@ impl RatePredictionsModal {
             let new_buffer_snapshot = new_buffer.read(cx).snapshot();
             let new_buffer_id = new_buffer_snapshot.remote_id();
             let language = new_buffer_snapshot.language().cloned();
-            let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
+            let language_registry = new_buffer.read(cx).language_registry();
+            let diff = cx.new(|cx| {
+                BufferDiff::new(&new_buffer_snapshot.text, language, language_registry, cx)
+            });
             diff.update(cx, |diff, cx| {
                 let _ = diff.set_base_text(
                     Some(old_buffer_snapshot.text().into()),
-                    language,
                     new_buffer_snapshot.text,
                     cx,
                 );

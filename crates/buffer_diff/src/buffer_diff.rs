@@ -1510,11 +1510,20 @@ pub enum BufferDiffEvent {
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
 
 impl BufferDiff {
-    pub fn new(buffer: &text::BufferSnapshot, cx: &mut App) -> Self {
+    pub fn new(
+        buffer: &text::BufferSnapshot,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut App,
+    ) -> Self {
         let base_text = cx.new(|cx| {
-            let mut buffer = language::Buffer::local("", cx);
-            buffer.set_capability(Capability::ReadOnly, cx);
-            buffer
+            let mut base_buffer = language::Buffer::local("", cx);
+            base_buffer.set_capability(Capability::ReadOnly, cx);
+            if let Some(language_registry) = language_registry {
+                base_buffer.set_language_registry(language_registry);
+            }
+            base_buffer.set_language_async(language, cx);
+            base_buffer
         });
 
         let base_text_snapshot = base_text.read(cx).snapshot();
@@ -1552,12 +1561,21 @@ impl BufferDiff {
         }
     }
 
-    pub fn new_unchanged(buffer: &text::BufferSnapshot, cx: &mut Context<Self>) -> Self {
+    pub fn new_unchanged(
+        buffer: &text::BufferSnapshot,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let base_text = buffer.text();
         let base_text = cx.new(|cx| {
-            let mut buffer = language::Buffer::local(base_text, cx);
-            buffer.set_capability(Capability::ReadOnly, cx);
-            buffer
+            let mut base_buffer = language::Buffer::local(base_text, cx);
+            base_buffer.set_capability(Capability::ReadOnly, cx);
+            if let Some(language_registry) = language_registry {
+                base_buffer.set_language_registry(language_registry);
+            }
+            base_buffer.set_language_async(language, cx);
+            base_buffer
         });
 
         let base_text_snapshot = base_text.read(cx).snapshot();
@@ -1580,7 +1598,7 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut this = BufferDiff::new(&buffer, cx);
+        let mut this = BufferDiff::new(buffer, None, None, cx);
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
         let base_text_buffer = cx.new(|cx| {
@@ -1594,7 +1612,6 @@ impl BufferDiff {
             buffer.clone(),
             &base_text,
             Some(Arc::from(base_text.text())),
-            None,
             cx,
         ));
         this.set_snapshot(update, cx);
@@ -1692,12 +1709,13 @@ impl BufferDiff {
         buffer: text::BufferSnapshot,
         base_text_snapshot: &language::BufferSnapshot,
         base_text: Option<Arc<str>>,
-        language: Option<Arc<Language>>,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
+        let base_text = base_text.map(|t| text::LineEnding::normalize_arc(t));
+        let language = base_text_snapshot.language();
         let diff_options = build_diff_options(
-            language.as_ref().map(|l| l.name()),
-            language.as_ref().map(|l| l.default_scope()),
+            language.map(|l| l.name()),
+            language.map(|l| l.default_scope()),
             cx,
         );
         let buffer_snapshot = buffer.clone();
@@ -1912,7 +1930,6 @@ impl BufferDiff {
     pub fn set_base_text(
         &mut self,
         base_text: Option<Arc<str>>,
-        language: Option<Arc<Language>>,
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
@@ -1954,7 +1971,6 @@ impl BufferDiff {
                         buffer.clone(),
                         &base_text_snapshot,
                         base_text_exists.then(|| base_text.clone()),
-                        language,
                         cx,
                     )
                 })
@@ -1982,13 +1998,11 @@ impl BufferDiff {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn recalculate_diff_sync(&mut self, buffer: &text::BufferSnapshot, cx: &mut Context<Self>) {
-        let language = self.base_text(cx).language().cloned();
         let base_text = self.base_text(cx);
         let fut = self.update_diff(
             buffer.clone(),
             &base_text,
             self.base_text_exists.then(|| Arc::from(base_text.text())),
-            language,
             cx,
         );
         let fg_executor = cx.foreground_executor().clone();
@@ -2196,7 +2210,7 @@ mod tests {
             ],
         );
 
-        diff = cx.update(|cx| BufferDiff::new(&buffer, cx).snapshot(cx));
+        diff = cx.update(|cx| BufferDiff::new(&buffer, None, None, cx).snapshot(cx));
         assert_hunks::<&str, _>(
             diff.hunks_intersecting_range(
                 Anchor::min_max_range_for_buffer(buffer.remote_id()),
@@ -2826,7 +2840,7 @@ mod tests {
 
         let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
 
-        let empty_diff = cx.update(|cx| BufferDiff::new(&buffer, cx).snapshot(cx));
+        let empty_diff = cx.update(|cx| BufferDiff::new(&buffer, None, None, cx).snapshot(cx));
         let diff_1 = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
         let DiffChanged {
             changed_range,
@@ -3317,7 +3331,6 @@ mod tests {
                     snapshot.clone(),
                     &base_text_snapshot,
                     Some(Arc::from(base_text_snapshot.text())),
-                    None,
                     cx,
                 )
             })
@@ -3985,14 +3998,9 @@ mod tests {
         );
         let buffer_snapshot = buffer.snapshot();
 
-        let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+        let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, cx));
         diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                Some(Arc::from(base_text_crlf)),
-                None,
-                buffer_snapshot.clone(),
-                cx,
-            )
+            diff.set_base_text(Some(Arc::from(base_text_crlf)), buffer_snapshot.clone(), cx)
         })
         .await
         .ok();

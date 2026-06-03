@@ -1000,21 +1000,18 @@ impl GitStore {
                             content.into()
                         }),
                     };
-                    let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+                    let buffer_diff = cx.new(|cx| {
+                        BufferDiff::new(
+                            &buffer_snapshot,
+                            buffer_snapshot.language().cloned(),
+                            language_registry,
+                            cx,
+                        )
+                    });
 
                     buffer_diff
                         .update(cx, |buffer_diff, cx| {
-                            buffer_diff.language_changed(
-                                buffer_snapshot.language().cloned(),
-                                language_registry,
-                                cx,
-                            );
-                            buffer_diff.set_base_text(
-                                content.clone(),
-                                buffer_snapshot.language().cloned(),
-                                buffer_snapshot.text,
-                                cx,
-                            )
+                            buffer_diff.set_base_text(content.clone(), buffer_snapshot.text, cx)
                         })
                         .await?;
                     let unstaged_diff = this
@@ -4117,7 +4114,6 @@ impl BufferGitState {
                             buffer.clone(),
                             index_text_snapshot,
                             index.clone(),
-                            language.clone(),
                             cx,
                         )
                     })
@@ -4179,7 +4175,6 @@ impl BufferGitState {
                                 index_base_text_snapshot.text.clone(),
                                 &head_text_snapshot,
                                 head.clone(),
-                                language.clone(),
                                 cx,
                             )
                         })
@@ -4206,7 +4201,6 @@ impl BufferGitState {
                                     buffer.clone(),
                                     &head_text_snapshot,
                                     head.clone(),
-                                    language.clone(),
                                     cx,
                                 )
                             })
@@ -4323,7 +4317,6 @@ impl BufferGitState {
                             buffer.clone(),
                             &base_text_snapshot,
                             base_text.clone(),
-                            language.clone(),
                             cx,
                         )
                     })

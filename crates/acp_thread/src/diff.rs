@@ -89,9 +89,7 @@ impl Diff {
         let language = buffer.read(cx).language().cloned();
         let language_registry = buffer.read(cx).language_registry();
         let buffer_diff = cx.new(|cx| {
-            let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
-            diff.language_changed(language.clone(), language_registry.clone(), cx);
-            diff
+            BufferDiff::new_unchanged(&buffer_text_snapshot, language, language_registry, cx)
         });
 
         let multibuffer = cx.new(|cx| {
@@ -227,7 +225,6 @@ impl PendingDiff {
         let base_text = self.base_text.clone();
         self.update_diff = cx.spawn(async move |diff, cx| {
             let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-            let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
             let base_text_snapshot = buffer_diff.read_with(cx, |diff, cx| diff.base_text(cx));
             let update = buffer_diff
                 .update(cx, |diff, cx| {
@@ -235,7 +232,6 @@ impl PendingDiff {
                         text_snapshot.clone(),
                         &base_text_snapshot,
                         Some(base_text.clone()),
-                        language,
                         cx,
                     )
                 })
@@ -389,12 +385,13 @@ async fn build_buffer_diff(
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
+    let language_registry = cx.update(|cx| buffer.read(cx).language_registry());
     let buffer = cx.update(|cx| buffer.read(cx).snapshot());
     let base_text = base_text_exists.then(|| old_text);
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer, cx));
+    let diff = cx.new(|cx| BufferDiff::new(&buffer, language, language_registry, cx));
     diff.update(cx, |diff, cx| {
-        diff.set_base_text(base_text, language, buffer.text, cx)
+        diff.set_base_text(base_text, buffer.text, cx)
     })
     .await?;
     Ok(diff)

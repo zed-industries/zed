@@ -879,14 +879,14 @@ async fn build_buffer_diff(
     }
 
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
+    let language_registry = cx.update(|cx| buffer.read(cx).language_registry());
     let buffer = cx.update(|cx| buffer.read(cx).snapshot());
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
+    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, language, language_registry, cx));
 
     diff.update(cx, |diff, cx| {
         diff.set_base_text(
             old_text.map(|old_text| Arc::from(old_text.as_str())),
-            language,
             buffer.text.clone(),
             cx,
         )

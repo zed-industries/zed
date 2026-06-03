@@ -3607,7 +3607,7 @@ mod tests {
         .unindent();
 
         let buffer2 = cx.new(|cx| Buffer::local(current_text.to_string(), cx));
-        let diff2 = cx.new(|cx| BufferDiff::new(&buffer2.read(cx).text_snapshot(), cx));
+        let diff2 = cx.new(|cx| BufferDiff::new(&buffer2.read(cx).text_snapshot(), None, None, cx));
 
         editor.update(cx, |editor, cx| {
             let path1 = PathKey::for_buffer(&buffer1, cx);

@@ -4756,7 +4756,6 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
                 buffer_snapshot,
                 &base_text_snapshot,
                 Some(Arc::from(base_text)),
-                None,
                 cx,
             )
         })
@@ -4793,7 +4792,6 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
                 buffer_snapshot,
                 &base_text_snapshot,
                 Some(Arc::from(base_text)),
-                None,
                 cx,
             )
         })
@@ -4821,7 +4819,6 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
     diff.update(cx, |diff, cx| {
         diff.set_base_text(
             Some("new base\n".into()),
-            None,
             buffer.read(cx).text_snapshot(),
             cx,
         )
@@ -4879,12 +4876,7 @@ async fn test_inverted_diff_base_text_change(cx: &mut TestAppContext) {
     );
 
     diff.update(cx, |diff, cx| {
-        diff.set_base_text(
-            Some("ddd\n".into()),
-            None,
-            buffer.read(cx).text_snapshot(),
-            cx,
-        )
+        diff.set_base_text(Some("ddd\n".into()), buffer.read(cx).text_snapshot(), cx)
     })
     .await
     .unwrap();
@@ -4927,7 +4919,6 @@ async fn test_inverted_diff_secondary_version_mismatch(cx: &mut TestAppContext) 
                 buffer_snapshot,
                 &base_text_snapshot,
                 Some(Arc::from(index_text)),
-                None,
                 cx,
             )
         })

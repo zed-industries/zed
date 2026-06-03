@@ -153,7 +153,6 @@ impl FileDiffView {
                     diff.update(cx, |diff, cx| {
                         diff.set_base_text(
                             Some(old_snapshot.text().as_str().into()),
-                            old_snapshot.language().cloned(),
                             new_snapshot.text.clone(),
                             cx,
                         )
@@ -176,13 +175,20 @@ pub(crate) async fn build_buffer_diff(
 ) -> Result<Entity<BufferDiff>> {
     let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let language_registry = new_buffer.read_with(cx, |buffer, _| buffer.language_registry());
 
-    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
+    let diff = cx.new(|cx| {
+        BufferDiff::new(
+            &new_buffer_snapshot.text,
+            new_buffer_snapshot.language().cloned(),
+            language_registry,
+            cx,
+        )
+    });
 
     diff.update(cx, |diff, cx| {
         diff.set_base_text(
             Some(old_buffer_snapshot.text().into()),
-            new_buffer_snapshot.language().cloned(),
             new_buffer_snapshot.text.clone(),
             cx,
         )

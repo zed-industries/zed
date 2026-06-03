@@ -266,6 +266,9 @@ fn build_clipboard_buffer(
     cx.new(|cx| {
         let mut buffer = language::Buffer::local(source_buffer_snapshot.text(), cx);
         let language = source_buffer.read(cx).language().cloned();
+        if let Some(language_registry) = source_buffer.read(cx).language_registry() {
+            buffer.set_language_registry(language_registry);
+        }
         buffer.set_language(language, cx);
 
         let range_start = source_buffer_snapshot.point_to_offset(replacement_range.start);
@@ -297,7 +300,6 @@ async fn update_diff_buffer(
                 source_buffer_snapshot.text.clone(),
                 &base_buffer_snapshot,
                 Some(base_text.clone()),
-                language.clone(),
                 cx,
             )
         })
