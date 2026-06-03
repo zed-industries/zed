@@ -630,6 +630,13 @@ pub fn save_task_timing() {
 }
 
 #[doc(hidden)]
+pub fn ensure_current_thread_registered() {
+    THREAD_TIMINGS.with(|timings| {
+        LazyCell::force(timings);
+    });
+}
+
+#[doc(hidden)]
 pub fn get_current_thread_task_timings(include_running: TasksIncluded) -> ThreadTaskTimings {
     THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings(include_running))
 }
