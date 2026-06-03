@@ -170,28 +170,56 @@ impl SvgRenderer {
     }
 
     /// Renders the given bytes into an image buffer.
+    ///
+    /// The SVG is rasterized at a fixed [`SMOOTH_SVG_SCALE_FACTOR`] density. For
+    /// content that may be shown on high-DPI or fractional-DPI displays, prefer
+    /// [`Self::render_single_frame_at_density`], which rasterizes at the display's
+    /// actual device pixel ratio so the result stays crisp instead of being
+    /// upscaled from a fixed 2x bitmap.
     pub fn render_single_frame(
         &self,
         bytes: &[u8],
         scale_factor: f32,
     ) -> Result<Arc<RenderImage>, usvg::Error> {
-        self.render_pixmap(
-            bytes,
-            SvgSize::ScaleFactor(scale_factor * SMOOTH_SVG_SCALE_FACTOR),
-        )
-        .map(|pixmap| {
-            let mut buffer =
-                image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
-                    .unwrap();
+        self.render_single_frame_at_density(bytes, scale_factor, SMOOTH_SVG_SCALE_FACTOR)
+    }
 
-            for pixel in buffer.chunks_exact_mut(4) {
-                swap_rgba_pa_to_bgra(pixel);
-            }
+    /// Renders the given SVG bytes into a raster image, rasterizing at the
+    /// display's device pixel density so the result is crisp on any DPI
+    /// (including fractional and >2x displays) rather than at a fixed 2x.
+    ///
+    /// `content_scale` is the logical scaling applied to the SVG's intrinsic
+    /// size (e.g. `1.0` for natural size). `device_scale_factor` is the
+    /// display's pixel density, i.e. `Window::scale_factor()`.
+    ///
+    /// The returned image's `scale_factor` is set so its logical (layout) size
+    /// is `intrinsic_size * content_scale`, independent of the rasterization
+    /// density — only the pixel resolution changes with the display DPI.
+    pub fn render_single_frame_at_density(
+        &self,
+        bytes: &[u8],
+        content_scale: f32,
+        device_scale_factor: f32,
+    ) -> Result<Arc<RenderImage>, usvg::Error> {
+        // Never rasterize below the historical 2x supersample floor, so standard
+        // and low-DPI displays keep their existing anti-aliasing quality; raise
+        // it to the real device density so high-DPI/fractional displays are
+        // sampled 1:1 and crisp instead of being upscaled from a 2x bitmap.
+        let raster_density = device_scale_factor.max(SMOOTH_SVG_SCALE_FACTOR);
+        self.render_pixmap(bytes, SvgSize::ScaleFactor(content_scale * raster_density))
+            .map(|pixmap| {
+                let mut buffer =
+                    image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
+                        .unwrap();
 
-            let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
-            image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
-            Arc::new(image)
-        })
+                for pixel in buffer.chunks_exact_mut(4) {
+                    swap_rgba_pa_to_bgra(pixel);
+                }
+
+                let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
+                image.scale_factor = raster_density;
+                Arc::new(image)
+            })
     }
 
     pub(crate) fn render_alpha_mask(
@@ -301,6 +329,41 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 mod tests {
     use super::*;
     use usvg::fontdb::{Database, Family, Query};
+
+    const TEST_SVG: &[u8] =
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>"#;
+
+    #[test]
+    fn render_density_controls_resolution_not_logical_size() {
+        let renderer = SvgRenderer::new(Arc::new(()));
+
+        // At a low/standard DPI we never go below the 2x supersample floor, so
+        // the pixel buffer is 2x the intrinsic size and the logical size is 1:1.
+        let standard = renderer
+            .render_single_frame_at_density(TEST_SVG, 1.0, 1.0)
+            .expect("standard render");
+        assert_eq!(standard.size(0).width.0, 200);
+        assert_eq!(standard.size(0).height.0, 100);
+        assert_eq!(standard.scale_factor, SMOOTH_SVG_SCALE_FACTOR);
+        assert_eq!(standard.render_size(0).width.0 as i32, 100);
+
+        // On a 3x display we rasterize at 3x for crisp pixels, but the logical
+        // (layout) size is unchanged because scale_factor tracks the density.
+        let high_dpi = renderer
+            .render_single_frame_at_density(TEST_SVG, 1.0, 3.0)
+            .expect("high-dpi render");
+        assert_eq!(high_dpi.size(0).width.0, 300);
+        assert_eq!(high_dpi.size(0).height.0, 150);
+        assert_eq!(high_dpi.scale_factor, 3.0);
+        assert_eq!(high_dpi.render_size(0).width.0 as i32, 100);
+
+        // The legacy entry point is unchanged: still a fixed 2x rasterization.
+        let legacy = renderer
+            .render_single_frame(TEST_SVG, 1.0)
+            .expect("legacy render");
+        assert_eq!(legacy.size(0).width.0, 200);
+        assert_eq!(legacy.scale_factor, SMOOTH_SVG_SCALE_FACTOR);
+    }
 
     const IBM_PLEX_REGULAR: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");

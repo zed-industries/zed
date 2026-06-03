@@ -587,6 +587,27 @@ impl Markdown {
         cx.notify();
     }
 
+    /// Updates the display density used to rasterize Mermaid diagrams. When the
+    /// preview is shown on (or moved to) a display with a different DPI, the
+    /// cached bitmaps are re-rasterized at the new density so they stay crisp
+    /// rather than being upscaled from a stale, lower-resolution bitmap.
+    pub(crate) fn set_mermaid_device_scale_factor(
+        &mut self,
+        device_scale_factor: f32,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.options.render_mermaid_diagrams {
+            return;
+        }
+        if self
+            .mermaid_state
+            .set_device_scale_factor(device_scale_factor)
+        {
+            self.mermaid_state.update(&self.parsed_markdown, cx);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
         self.mermaid_showing_code.contains(&source_offset)
     }
@@ -1909,6 +1930,13 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
+        // Ensure Mermaid diagrams are rasterized at the current display's device
+        // pixel ratio so they stay crisp on high-DPI / fractional-DPI displays
+        // and re-render when the window moves to a different-DPI monitor.
+        let device_scale_factor = window.scale_factor();
+        self.markdown.update(cx, |markdown, cx| {
+            markdown.set_mermaid_device_scale_factor(device_scale_factor, cx);
+        });
         let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
             let markdown = self.markdown.read(cx);
             (

@@ -31,10 +31,26 @@ pub(crate) struct ParsedMarkdownMermaidDiagramContents {
     pub(crate) scale: u32,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct MermaidState {
     cache: MermaidDiagramCache,
     order: Vec<ParsedMarkdownMermaidDiagramContents>,
+    /// The display device pixel ratio the cached diagrams were rasterized at.
+    /// When the preview moves to a display with a different DPI, the cache is
+    /// invalidated so diagrams are re-rasterized crisply at the new density.
+    device_scale_factor: f32,
+}
+
+impl Default for MermaidState {
+    fn default() -> Self {
+        Self {
+            cache: MermaidDiagramCache::default(),
+            order: Vec::new(),
+            // 2.0 matches gpui's historical fixed supersample, so the first
+            // render before a real scale factor is known matches prior behavior.
+            device_scale_factor: 2.0,
+        }
+    }
 }
 
 struct CachedMermaidDiagram {
@@ -47,6 +63,20 @@ impl MermaidState {
     pub(crate) fn clear(&mut self) {
         self.cache.clear();
         self.order.clear();
+    }
+
+    /// Updates the display density used for rasterization. If it changed
+    /// (e.g. the window moved to a different-DPI monitor), the cached bitmaps
+    /// are dropped so the next `update` re-rasterizes them at the new density.
+    /// Returns `true` if the cache was invalidated.
+    pub(crate) fn set_device_scale_factor(&mut self, device_scale_factor: f32) -> bool {
+        if (self.device_scale_factor - device_scale_factor).abs() < f32::EPSILON {
+            return false;
+        }
+        self.device_scale_factor = device_scale_factor;
+        self.cache.clear();
+        self.order.clear();
+        true
     }
 
     fn get_fallback_image(
@@ -82,7 +112,12 @@ impl MermaidState {
                     Self::get_fallback_image(idx, &self.order, new_order.len(), &self.cache);
                 self.cache.insert(
                     new_content.clone(),
-                    Arc::new(CachedMermaidDiagram::new(new_content.clone(), fallback, cx)),
+                    Arc::new(CachedMermaidDiagram::new(
+                        new_content.clone(),
+                        fallback,
+                        self.device_scale_factor,
+                        cx,
+                    )),
                 );
             }
         }
@@ -98,6 +133,7 @@ impl CachedMermaidDiagram {
     fn new(
         contents: ParsedMarkdownMermaidDiagramContents,
         fallback_image: Option<Arc<RenderImage>>,
+        device_scale_factor: f32,
         cx: &mut Context<Markdown>,
     ) -> Self {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
@@ -111,8 +147,15 @@ impl CachedMermaidDiagram {
                     let svg_string =
                         mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
                     let scale = contents.scale as f32 / 100.0;
+                    // Rasterize at the display's actual device pixel ratio so the
+                    // diagram is crisp on high-DPI and fractional-DPI displays,
+                    // rather than being upscaled from a fixed 2x bitmap.
                     svg_renderer
-                        .render_single_frame(svg_string.as_bytes(), scale)
+                        .render_single_frame_at_density(
+                            svg_string.as_bytes(),
+                            scale,
+                            device_scale_factor,
+                        )
                         .map_err(|error| anyhow::anyhow!("{error}"))
                 })
                 .await;
