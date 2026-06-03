@@ -46,11 +46,13 @@ If you require historical Stripe invoices, email [billing-support@zed.dev](mailt
 
 ## Organization billing {#organization}
 
-Zed Business consolidates your team's costs. Seat licenses and AI usage for all members appear on one bill, with no separate invoices per member. For a full feature overview, see [Zed Business](../business/overview.md).
+Zed Business consolidates your team's costs. Paid Business seats and member AI usage appear on one bill, with no separate invoices per member. For a full feature overview, see [Zed Business](../business/overview.md).
 
 ### Billing dashboard {#dashboard}
 
-Owners and admins can access billing information at [dashboard.zed.dev](https://dashboard.zed.dev). The dashboard shows the plan you're currently on and offers jumping off points to update billing details, such as the billing name and address, as well as payment information. You can also access your invoice history, accessible through the Orb billing portal.
+Owners, admins, and Billing Managers can access billing information at [dashboard.zed.dev](https://dashboard.zed.dev). The dashboard shows the current plan and links to update billing details, tax ID information, and payment information. You can also access invoice history through the Orb billing portal.
+
+Use the Billing Manager role for someone who needs billing access but does not need a paid Business seat. Billing Managers can view subscription usage, update billing details and payment methods, and access invoice history. They cannot manage members, change organization settings, cancel the subscription, or use Zed-hosted AI models and Edit Predictions through the Business subscription. For the full permissions list, see [Roles](../roles.md#role-billing-manager).
 
 ### AI usage {#ai-usage}
 
@@ -60,13 +62,13 @@ Administrators can set an org-wide AI spend limit from the Data & Privacy page i
 
 ### Invoice history {#org-invoice-history}
 
-Owners and Admins can access an organization's invoice history from the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev) by clicking `Invoice history` within the embedded Orb portal.
+Owners, admins, and Billing Managers can access an organization's invoice history from the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev) by clicking `Invoice history` within the embedded Orb portal.
 
 If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev).
 
 ## Updating billing information {#updating-billing-info}
 
-From the _Billing_ page, owners can update their billing name, address, and payment method. Tax IDs are collected during checkout and cannot be changed self-serve; email [billing-support@zed.dev](mailto:billing-support@zed.dev) to update your tax ID.
+From the _Billing_ page, owners, admins, and Billing Managers can update billing name, address, tax ID information, and payment method.
 
 Changes to billing information will **only** affect future invoices. We cannot modify historical invoices. Email [billing-support@zed.dev](mailto:billing-support@zed.dev) with any questions.
 
@@ -74,8 +76,8 @@ Changes to billing information will **only** affect future invoices. We cannot m
 
 Zed partners with [Sphere](https://www.getsphere.com/) to calculate indirect tax rates for invoices, based on customer location and the product being sold. Tax is listed as a separate line item on invoices, based preferentially on your billing address, followed by the card issue country known to Stripe.
 
-If you have a VAT/GST ID, you can add it during checkout. Check the box that denotes you as a business.
+If you have a tax ID, such as a VAT or GST ID, you can add it during checkout or update it later from the Billing page. Check the box that denotes you as a business.
 
-Changes to VAT/GST IDs and address will **only** affect future invoices. We cannot modify historical invoices.
+Changes to tax IDs and addresses will **only** affect future invoices. We cannot modify historical invoices.
 
 Email [billing-support@zed.dev](mailto:billing-support@zed.dev) with any tax questions.
