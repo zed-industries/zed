@@ -9,6 +9,10 @@ External Agents are agents that integrate with Zed through the [Agent Client Pro
 
 Use [Terminal Threads](./terminal-threads.md) instead when you want to run a CLI or TUI directly in a terminal-backed thread.
 
+External Agents run through their own process and provider relationship. Billing, legal terms, retention, and data handling are between you and the agent provider. Zed does not charge for External Agents.
+
+For Zed-hosted models and Zed-managed AI features, see [AI Privacy](./privacy-and-security.md) and [Feedback and Training Data](./ai-improvement.md).
+
 ## Install from the ACP Registry {#registry}
 
 The ACP Registry is the primary way to install common External Agents in Zed.
@@ -29,6 +33,8 @@ Common External Agents include:
 - Pi Coding Agent
 
 This list is curated, not exhaustive. Open the ACP Registry in Zed for the current list of available agents.
+
+For company-specific setup paths, including Claude, Codex, Gemini, OpenCode, Copilot, Cursor, and Pi, see [AI by Company](./by-company.md).
 
 ## Claude Agent {#claude-agent}
 

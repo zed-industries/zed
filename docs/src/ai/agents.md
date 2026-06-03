@@ -28,8 +28,8 @@ The [Zed Agent](./zed-agent.md) uses models configured in Zed. [External Agents]
 
 Threads are the units shown in the [Threads Sidebar](./parallel-agents.md#threads-sidebar). Thread types include:
 
-- Zed Agent threads
-- External Agent threads
-- Terminal Threads
+- [Zed Agent](./zed-agent.md) threads
+- [External Agent](./external-agents.md) threads
+- [Terminal Threads](./terminal-threads.md)
 
 Use [Parallel Agents](./parallel-agents.md) to run and manage multiple threads at once.

@@ -1,11 +1,11 @@
 ---
 title: Parallel Agents - Zed
-description: Run multiple agent threads and terminal threads concurrently using the Threads Sidebar, manage them across projects, and isolate work using Git worktrees.
+description: Run multiple agent threads and Terminal Threads concurrently using the Threads Sidebar, manage them across projects, and isolate work using Git worktrees.
 ---
 
 # Parallel Agents
 
-Parallel Agents lets you run multiple agent threads and terminal threads at once from the Threads Sidebar. Each thread works independently with its own agent, context window, and conversation history. Terminal threads appear alongside agent threads in the same sidebar, so you can switch between them without leaving the Agent Panel.
+Parallel Agents lets you run multiple agent threads and Terminal Threads at once from the Threads Sidebar. Each thread works independently with its own agent, context window, and conversation history. Terminal Threads appear alongside agent threads in the same sidebar, so you can switch between them without leaving the Agent Panel.
 
 Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 
@@ -15,7 +15,7 @@ Use **Zed > Panel Layout > Agentic** to place the Agent Panel and Threads Sideba
 
 The sidebar shows your threads grouped by project. Each project gets its own section with a header. Threads appear below with their title, status indicator, and which agent is running them. Threads running in linked Git worktrees appear under the same project as their main worktree. See [Worktree Isolation](#worktree-isolation).
 
-Terminal threads also appear as entries in the sidebar alongside agent threads, identified by a terminal icon. Click one to switch to it. See [terminal threads](./agent-panel.md#terminal-threads) for details.
+Terminal Threads also appear as entries in the sidebar alongside agent threads, identified by a terminal icon. Click one to switch to it.
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
@@ -53,13 +53,11 @@ Each thread can use a different agent, so you can run Zed's built-in agent in on
 
 The Threads Sidebar can hold different thread types:
 
-| Thread type           | Configuration                                                                   |
-| --------------------- | ------------------------------------------------------------------------------- |
-| Zed Agent thread      | Uses Zed Agent settings, profiles, tools, Skills, Instructions, and MCP         |
-| External Agent thread | Uses the ACP integration and the agent's native configuration                   |
-| Terminal Thread       | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration |
-
-For terminal-backed CLI/TUI workflows, see [Terminal Threads](./terminal-threads.md).
+| Thread type                                   | Configuration                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------- |
+| [Zed Agent thread](./zed-agent.md)            | Uses Zed Agent settings, profiles, tools, Skills, Instructions, and MCP         |
+| [External Agent thread](./external-agents.md) | Uses the ACP integration and the agent's native configuration                   |
+| [Terminal Thread](./terminal-threads.md)      | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration |
 
 ## Multiple Projects {#multiple-projects}
 

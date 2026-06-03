@@ -32,10 +32,10 @@ Use Zed Agent when you want the agent to:
 
 ## How It Differs from Other Agent Paths {#other-agent-paths}
 
-| Agent path       | Main difference                                                                              |
-| ---------------- | -------------------------------------------------------------------------------------------- |
-| Zed Agent        | Uses Zed's model, tool, profile, skill, instruction, and MCP configuration                   |
-| External Agents  | Use an ACP integration and often own auth, model, tool, and native instruction configuration |
-| Terminal Threads | Run a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration               |
+| Agent path                                | Main difference                                                                              |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [Zed Agent](./zed-agent.md)               | Uses Zed's model, tool, profile, skill, instruction, and MCP configuration                   |
+| [External Agents](./external-agents.md)   | Use an ACP integration and often own auth, model, tool, and native instruction configuration |
+| [Terminal Threads](./terminal-threads.md) | Run a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration               |
 
 See [Agents](./agents.md) for the full comparison.
