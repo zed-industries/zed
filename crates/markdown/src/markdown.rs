@@ -2138,7 +2138,9 @@ impl Element for MarkdownElement {
                             };
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
-                            let scroll_handle = if self.style.code_block_overflow_x_scroll {
+                            let is_wrapped =
+                                self.markdown.read(cx).is_code_block_wrapped(range.start);
+                            let scroll_handle = if self.style.code_block_overflow_x_scroll && !is_wrapped {
                                 code_block_ids.insert(range.start);
                                 Some(self.markdown.update(cx, |markdown, _| {
                                     markdown.code_block_scroll_handle(range.start)
@@ -2184,9 +2186,6 @@ impl Element for MarkdownElement {
 
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
-
-                                    let is_wrapped =
-                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
 
                                     let code_block = div()
                                         .id(("code-block", range.start))
