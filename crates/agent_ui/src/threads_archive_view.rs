@@ -102,27 +102,6 @@ impl TimeBucket {
     }
 }
 
-fn shortcut_tooltip_row(
-    label: &'static str,
-    action: &dyn gpui::Action,
-    focus_handle: &FocusHandle,
-    window: &Window,
-    cx: &mut App,
-) -> Option<AnyElement> {
-    let key_binding = KeyBinding::for_action_in(action, focus_handle, cx);
-    key_binding.has_binding(window).then(|| {
-        h_flex()
-            .pt_1()
-            .gap_2()
-            .justify_between()
-            .border_t_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(Label::new(label))
-            .child(key_binding)
-            .into_any_element()
-    })
-}
-
 pub fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>> {
     let query_chars: Vec<char> = query.chars().collect();
     if query_chars.is_empty() {
@@ -651,53 +630,16 @@ impl ThreadsArchiveView {
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
                 let is_archived = thread.archived;
-                let shortcut_focus_handle = focus_handle.clone();
-                let history_shortcuts_tooltip = move |window: &mut Window, cx: &mut App| {
-                    let focus_handle = shortcut_focus_handle.clone();
-                    Tooltip::element(move |window, cx| {
-                        let mut rows = Vec::new();
-                        let confirm_label = if is_archived {
-                            "Restore Thread"
-                        } else {
-                            "Open Thread"
-                        };
-
-                        if let Some(row) =
-                            shortcut_tooltip_row(confirm_label, &Confirm, &focus_handle, window, cx)
-                        {
-                            rows.push(row);
-                        }
-
-                        if is_archived {
-                            if let Some(row) = shortcut_tooltip_row(
-                                "Delete Thread",
-                                &RemoveSelectedThread,
-                                &focus_handle,
-                                window,
-                                cx,
-                            ) {
-                                rows.push(row);
-                            }
-                        } else if let Some(row) = shortcut_tooltip_row(
-                            "Archive Thread",
-                            &ArchiveSelectedThread,
-                            &focus_handle,
-                            window,
-                            cx,
-                        ) {
-                            rows.push(row);
-                        }
-
-                        if rows.is_empty() {
-                            return gpui::Empty.into_any_element();
-                        }
-
-                        v_flex()
-                            .gap_1()
-                            .child(Label::new("Thread History Shortcuts"))
-                            .children(rows)
-                            .into_any_element()
-                    })(window, cx)
+                let open_tooltip = {
+                    let focus_handle = focus_handle.clone();
+                    let label = if is_archived {
+                        "Restore Thread"
+                    } else {
+                        "Open Thread"
+                    };
+                    move |_window: &mut Window, cx: &mut App| {
+                        Tooltip::for_action_in(label, &Confirm, &focus_handle, cx)
+                    }
                 };
 
                 let branch_names_for_thread: HashMap<PathBuf, SharedString> = self
@@ -733,9 +675,7 @@ impl ThreadsArchiveView {
                     .worktrees(worktrees)
                     .focused(is_focused)
                     .hovered(is_hovered)
-                    .when(!is_restoring, |this| {
-                        this.tooltip(history_shortcuts_tooltip)
-                    })
+                    .when(!is_restoring, |this| this.tooltip(open_tooltip))
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         let previously_hovered = this.hovered_index;
                         this.hovered_index = if *is_hovered {
