@@ -38052,7 +38052,8 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
         second
         >
 
-        > thirdˇ»
+        > third
+        >fourthˇ»
     "});
     cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
     cx.assert_editor_state(indoc! {"
@@ -38060,7 +38061,8 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
         > second
         >
         >
-        > thirdˇ»
+        > third
+        > fourthˇ»
     "});
 
     // A multi-line selection is unquoted.
@@ -38070,6 +38072,7 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
         second
 
 
-        thirdˇ»
+        third
+        fourthˇ»
     "});
 }

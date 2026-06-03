@@ -11,22 +11,18 @@ impl Editor {
             let all_lines_quoted = lines.iter().all(|line| line.starts_with('>'));
 
             for line in lines.iter_mut() {
-                if all_lines_quoted {
-                    let stripped_line = line
-                        .strip_prefix("> ")
-                        .or_else(|| line.strip_prefix('>'))
-                        .map(str::to_string);
+                let content = match line.strip_prefix("> ").or_else(|| line.strip_prefix('>')) {
+                    Some(rest) => rest.to_string(),
+                    None => line.to_string(),
+                };
 
-                    if let Some(stripped_line) = stripped_line {
-                        *line = Cow::Owned(stripped_line);
-                    }
-                } else if !line.starts_with('>') {
-                    *line = if line.trim().is_empty() {
-                        Cow::Borrowed(">")
-                    } else {
-                        Cow::Owned(format!("> {line}"))
-                    };
-                }
+                *line = if all_lines_quoted {
+                    Cow::Owned(content)
+                } else if content.trim().is_empty() {
+                    Cow::Borrowed(">")
+                } else {
+                    Cow::Owned(format!("> {content}"))
+                };
             }
         });
     }
