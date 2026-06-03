@@ -545,7 +545,7 @@ async fn predict_openai(
                             _ => None,
                         })
                         .collect::<Vec<_>>()
-                        .join(""),
+                        .concat(),
                 }),
                 _ => None,
             })

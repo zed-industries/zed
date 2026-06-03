@@ -652,7 +652,7 @@ pub fn render_table_row(
         // restrict_scroll_to_axis lets vertical scroll events pass through to the list.
         let mut scrollable_section = div()
             .id(("table-row-scrollable", row_index as u64))
-            .flex_grow()
+            .flex_grow_1()
             .overflow_x_scroll()
             .flex()
             .child(
@@ -769,7 +769,7 @@ pub fn render_table_header(
         );
         let mut scrollable_section = div()
             .id("table-header-scrollable")
-            .flex_grow()
+            .flex_grow_1()
             .overflow_x_scroll()
             .flex()
             .child(inner);
@@ -1136,7 +1136,7 @@ impl RenderOnce for Table {
             })
             .child({
                 let content = div()
-                    .flex_grow()
+                    .flex_grow_1()
                     .w_full()
                     .relative()
                     .overflow_hidden()
@@ -1180,7 +1180,7 @@ impl RenderOnce for Table {
                                 },
                             )
                             .size_full()
-                            .flex_grow()
+                            .flex_grow_1()
                             .with_sizing_behavior(ListSizingBehavior::Auto)
                             .with_horizontal_sizing_behavior(horizontal_sizing)
                             .when_some(
@@ -1208,7 +1208,7 @@ impl RenderOnce for Table {
                                 }
                             })
                             .size_full()
-                            .flex_grow()
+                            .flex_grow_1()
                             .with_sizing_behavior(ListSizingBehavior::Auto),
                         ),
                     })
@@ -1237,7 +1237,7 @@ impl RenderOnce for Table {
                 let mut h_scroll_container = div()
                     .id("table-h-scroll")
                     .overflow_x_scroll()
-                    .flex_grow()
+                    .flex_grow_1()
                     .h_full()
                     .track_scroll(&state.read(cx).horizontal_scroll_handle)
                     .child(table);
@@ -1289,109 +1289,107 @@ impl Component for Table {
         ComponentScope::Layout
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A table component for displaying data in rows and columns with optional styling.")
+    fn description() -> &'static str {
+        "A table component for displaying data in rows and columns with optional styling."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Basic Tables",
-                        vec![
-                            single_example(
-                                "Simple Table",
-                                Table::new(3)
-                                    .width(px(400.))
-                                    .header(vec!["Name", "Age", "City"])
-                                    .row(vec!["Alice", "28", "New York"])
-                                    .row(vec!["Bob", "32", "San Francisco"])
-                                    .row(vec!["Charlie", "25", "London"])
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Two Column Table",
-                                Table::new(2)
-                                    .header(vec!["Category", "Value"])
-                                    .width(px(300.))
-                                    .row(vec!["Revenue", "$100,000"])
-                                    .row(vec!["Expenses", "$75,000"])
-                                    .row(vec!["Profit", "$25,000"])
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Styled Tables",
-                        vec![
-                            single_example(
-                                "Default",
-                                Table::new(3)
-                                    .width(px(400.))
-                                    .header(vec!["Product", "Price", "Stock"])
-                                    .row(vec!["Laptop", "$999", "In Stock"])
-                                    .row(vec!["Phone", "$599", "Low Stock"])
-                                    .row(vec!["Tablet", "$399", "Out of Stock"])
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Striped",
-                                Table::new(3)
-                                    .width(px(400.))
-                                    .striped()
-                                    .header(vec!["Product", "Price", "Stock"])
-                                    .row(vec!["Laptop", "$999", "In Stock"])
-                                    .row(vec!["Phone", "$599", "Low Stock"])
-                                    .row(vec!["Tablet", "$399", "Out of Stock"])
-                                    .row(vec!["Headphones", "$199", "In Stock"])
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Mixed Content Table",
-                        vec![single_example(
-                            "Table with Elements",
-                            Table::new(5)
-                                .width(px(840.))
-                                .header(vec!["Status", "Name", "Priority", "Deadline", "Action"])
-                                .row(vec![
-                                    Indicator::dot().color(Color::Success).into_any_element(),
-                                    "Project A".into_any_element(),
-                                    "High".into_any_element(),
-                                    "2023-12-31".into_any_element(),
-                                    Button::new("view_a", "View")
-                                        .style(ButtonStyle::Filled)
-                                        .full_width()
-                                        .into_any_element(),
-                                ])
-                                .row(vec![
-                                    Indicator::dot().color(Color::Warning).into_any_element(),
-                                    "Project B".into_any_element(),
-                                    "Medium".into_any_element(),
-                                    "2024-03-15".into_any_element(),
-                                    Button::new("view_b", "View")
-                                        .style(ButtonStyle::Filled)
-                                        .full_width()
-                                        .into_any_element(),
-                                ])
-                                .row(vec![
-                                    Indicator::dot().color(Color::Error).into_any_element(),
-                                    "Project C".into_any_element(),
-                                    "Low".into_any_element(),
-                                    "2024-06-30".into_any_element(),
-                                    Button::new("view_c", "View")
-                                        .style(ButtonStyle::Filled)
-                                        .full_width()
-                                        .into_any_element(),
-                                ])
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic Tables",
+                    vec![
+                        single_example(
+                            "Simple Table",
+                            Table::new(3)
+                                .width(px(400.))
+                                .header(vec!["Name", "Age", "City"])
+                                .row(vec!["Alice", "28", "New York"])
+                                .row(vec!["Bob", "32", "San Francisco"])
+                                .row(vec!["Charlie", "25", "London"])
                                 .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                        single_example(
+                            "Two Column Table",
+                            Table::new(2)
+                                .header(vec!["Category", "Value"])
+                                .width(px(300.))
+                                .row(vec!["Revenue", "$100,000"])
+                                .row(vec!["Expenses", "$75,000"])
+                                .row(vec!["Profit", "$25,000"])
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Styled Tables",
+                    vec![
+                        single_example(
+                            "Default",
+                            Table::new(3)
+                                .width(px(400.))
+                                .header(vec!["Product", "Price", "Stock"])
+                                .row(vec!["Laptop", "$999", "In Stock"])
+                                .row(vec!["Phone", "$599", "Low Stock"])
+                                .row(vec!["Tablet", "$399", "Out of Stock"])
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Striped",
+                            Table::new(3)
+                                .width(px(400.))
+                                .striped()
+                                .header(vec!["Product", "Price", "Stock"])
+                                .row(vec!["Laptop", "$999", "In Stock"])
+                                .row(vec!["Phone", "$599", "Low Stock"])
+                                .row(vec!["Tablet", "$399", "Out of Stock"])
+                                .row(vec!["Headphones", "$199", "In Stock"])
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Mixed Content Table",
+                    vec![single_example(
+                        "Table with Elements",
+                        Table::new(5)
+                            .width(px(840.))
+                            .header(vec!["Status", "Name", "Priority", "Deadline", "Action"])
+                            .row(vec![
+                                Indicator::dot().color(Color::Success).into_any_element(),
+                                "Project A".into_any_element(),
+                                "High".into_any_element(),
+                                "2023-12-31".into_any_element(),
+                                Button::new("view_a", "View")
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .into_any_element(),
+                            ])
+                            .row(vec![
+                                Indicator::dot().color(Color::Warning).into_any_element(),
+                                "Project B".into_any_element(),
+                                "Medium".into_any_element(),
+                                "2024-03-15".into_any_element(),
+                                Button::new("view_b", "View")
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .into_any_element(),
+                            ])
+                            .row(vec![
+                                Indicator::dot().color(Color::Error).into_any_element(),
+                                "Project C".into_any_element(),
+                                "Low".into_any_element(),
+                                "2024-06-30".into_any_element(),
+                                Button::new("view_c", "View")
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .into_any_element(),
+                            ])
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

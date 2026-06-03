@@ -419,11 +419,11 @@ impl CommitModal {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .overflow_x_hidden()
                     .child(
                         h_flex()
-                            .flex_shrink()
+                            .flex_shrink_1()
                             .overflow_x_hidden()
                             .child(branch_picker),
                     )
@@ -622,7 +622,7 @@ impl Render for CommitModal {
                 }),
             )
             .w(width)
-            .h_112()
+            .min_h_112()
             .p(container_padding)
             .elevation_3(cx)
             .overflow_hidden()

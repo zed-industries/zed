@@ -558,6 +558,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ScanSymlinksSetting>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -772,6 +773,9 @@ pub struct SettingsWindow {
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
+    /// Directory path of the skill whose share link was most recently copied,
+    /// used to show a transient "copied" checkmark on its share button.
+    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
 }
 
 struct SearchDocument {
@@ -1718,6 +1722,7 @@ impl SettingsWindow {
             regex_validation_error: None,
             list_state,
             last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -2323,6 +2328,10 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        // Navigating to another page dismisses the transient "copied share
+        // link" checkmark shown on a Skills page row.
+        self.last_copied_skill_directory_path = None;
+
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
@@ -4577,6 +4586,7 @@ pub mod test {
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
                 last_copied_link_path: None,
+                last_copied_skill_directory_path: None,
             }
         }
     }
@@ -4704,6 +4714,7 @@ pub mod test {
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         settings_window.build_filter_table();

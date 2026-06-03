@@ -15,11 +15,17 @@ use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{
-    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+    ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
+use zed_actions::agent::ToggleModelSelector;
 
-use crate::ui::{HoldForDefault, documentation_aside_side};
+use crate::ui::documentation_aside_side;
+use crate::{
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
+    ToggleThinkingEffortMenu,
+};
 
 const PICKER_THRESHOLD: usize = 5;
 
@@ -100,6 +106,13 @@ impl ConfigOptionsView {
         let Some(next_value) = self.next_value_for_config(&config_id, favorites_only, cx) else {
             return false;
         };
+
+        self.agent_server.set_default_config_option(
+            config_id.0.as_ref(),
+            Some(next_value.0.as_ref()),
+            self.fs.clone(),
+            cx,
+        );
 
         let task = self
             .config_options
@@ -329,6 +342,14 @@ impl ConfigOptionSelector {
         }
     }
 
+    fn handles_category_keybindings(&self, category: &acp::SessionConfigOptionCategory) -> bool {
+        self.config_options
+            .config_options()
+            .into_iter()
+            .find(|option| option.category.as_ref() == Some(category))
+            .is_some_and(|option| option.id == self.config_id)
+    }
+
     fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
         let Some(option) = self.current_option() else {
             return Button::new("config-option-trigger", "Unknown")
@@ -362,10 +383,15 @@ impl Render for ConfigOptionSelector {
 
         let trigger_button = self.render_trigger_button(window, cx);
 
+        let show_category_keybindings = option
+            .category
+            .as_ref()
+            .is_some_and(|category| self.handles_category_keybindings(category));
+        let option_category = option.category.clone();
         let option_name = option.name.clone();
         let option_description: Option<SharedString> = option.description.map(Into::into);
 
-        let tooltip = Tooltip::element(move |_window, _cx| {
+        let tooltip = Tooltip::element(move |_window, cx| {
             let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
             if let Some(desc) = option_description.as_ref() {
                 content = content.child(
@@ -373,6 +399,56 @@ impl Render for ConfigOptionSelector {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 );
+            }
+
+            let action_tooltip_container = |label: &str, keybinding: KeyBinding| {
+                h_flex()
+                    .pt_1()
+                    .gap_2()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(Label::new(label))
+                    .child(keybinding)
+            };
+
+            if show_category_keybindings && let Some(category) = &option_category {
+                match category {
+                    acp::SessionConfigOptionCategory::Mode => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Mode",
+                                KeyBinding::for_action(&ToggleProfileSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Through Modes",
+                                KeyBinding::for_action(&CycleModeSelector, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::Model => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Model",
+                                KeyBinding::for_action(&ToggleModelSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Favorite Models",
+                                KeyBinding::for_action(&CycleFavoriteModels, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::ThoughtLevel => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Thinking Effort",
+                                KeyBinding::for_action(&ToggleThinkingEffortMenu, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Thinking Effort",
+                                KeyBinding::for_action(&CycleThinkingEffort, cx),
+                            ));
+                    }
+                    _ => {}
+                }
             }
             content.into_any()
         });
@@ -412,7 +488,7 @@ struct ConfigOptionPickerDelegate {
     filtered_entries: Vec<ConfigOptionPickerEntry>,
     all_options: Vec<ConfigOptionValue>,
     selected_index: usize,
-    selected_description: Option<(usize, SharedString, bool)>,
+    selected_description: Option<(usize, SharedString)>,
     favorites: HashSet<acp::SessionConfigValueId>,
     _settings_subscription: Subscription,
 }
@@ -544,28 +620,16 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(ConfigOptionPickerEntry::Option(option)) =
             self.filtered_entries.get(self.selected_index)
         {
-            if window.modifiers().secondary() {
-                let default_value = self
-                    .agent_server
-                    .default_config_option(self.config_id.0.as_ref(), cx);
-                let is_default = default_value.as_deref() == Some(&*option.value.0);
-
-                self.agent_server.set_default_config_option(
-                    self.config_id.0.as_ref(),
-                    if is_default {
-                        None
-                    } else {
-                        Some(option.value.0.as_ref())
-                    },
-                    self.fs.clone(),
-                    cx,
-                );
-            }
-
+            self.agent_server.set_default_config_option(
+                self.config_id.0.as_ref(),
+                Some(option.value.0.as_ref()),
+                self.fs.clone(),
+                cx,
+            );
             let task = self.config_options.set_config_option(
                 self.config_id.clone(),
                 option.value.clone(),
@@ -614,11 +678,6 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                 let current_value = self.current_value();
                 let is_selected = current_value.as_ref() == Some(&option.value);
 
-                let default_value = self
-                    .agent_server
-                    .default_config_option(self.config_id.0.as_ref(), cx);
-                let is_default = default_value.as_deref() == Some(&*option.value.0);
-
                 let is_favorite = self.favorites.contains(&option.value);
 
                 let option_name = option.name.clone();
@@ -631,9 +690,8 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                             let desc: SharedString = desc.into();
                             this.on_hover(cx.listener(move |menu, hovered, _, cx| {
                                 if *hovered {
-                                    menu.delegate.selected_description =
-                                        Some((ix, desc.clone(), is_default));
-                                } else if matches!(menu.delegate.selected_description, Some((id, _, _)) if id == ix)
+                                    menu.delegate.selected_description = Some((ix, desc.clone()));
+                                } else if matches!(menu.delegate.selected_description, Some((id, _)) if id == ix)
                                 {
                                     menu.delegate.selected_description = None;
                                 }
@@ -688,29 +746,20 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<ui::DocumentationAside> {
-        self.selected_description
-            .as_ref()
-            .map(|(_, description, is_default)| {
-                let description = description.clone();
-                let is_default = *is_default;
+        self.selected_description.as_ref().map(|(_, description)| {
+            let description = description.clone();
 
-                let side = documentation_aside_side(cx);
+            let side = documentation_aside_side(cx);
 
-                ui::DocumentationAside::new(
-                    side,
-                    Rc::new(move |_| {
-                        v_flex()
-                            .gap_1()
-                            .child(Label::new(description.clone()))
-                            .child(HoldForDefault::new(is_default))
-                            .into_any_element()
-                    }),
-                )
-            })
+            ui::DocumentationAside::new(
+                side,
+                Rc::new(move |_| Label::new(description.clone()).into_any_element()),
+            )
+        })
     }
 
     fn documentation_aside_index(&self) -> Option<usize> {
-        self.selected_description.as_ref().map(|(ix, _, _)| *ix)
+        self.selected_description.as_ref().map(|(ix, _)| *ix)
     }
 }
 
@@ -876,5 +925,145 @@ fn count_config_options(option: &acp::SessionConfigOption) -> usize {
             _ => 0,
         },
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acp_thread::AgentConnection;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use parking_lot::Mutex;
+    use project::{AgentId, Project};
+    use std::{any::Any, cell::RefCell};
+
+    #[gpui::test]
+    fn cycling_config_option_saves_selected_value_as_default(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::select(
+                "mode",
+                "Mode",
+                "auto",
+                vec![
+                    acp::SessionConfigSelectOption::new("auto", "Auto"),
+                    acp::SessionConfigSelectOption::new("manual", "Manual"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::Mode),
+        ]));
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            let config_options: Rc<dyn AgentSessionConfigOptions> = config_options.clone();
+            let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+            let fs = fs.clone();
+            let view = cx.new(|_| ConfigOptionsView {
+                config_option_ids: ConfigOptionsView::config_option_ids(&config_options),
+                config_options,
+                selectors: Vec::new(),
+                agent_server,
+                fs,
+                _refresh_task: Task::ready(()),
+            });
+
+            assert!(view.update(cx, |view, cx| {
+                view.cycle_category_option(acp::SessionConfigOptionCategory::Mode, false, cx)
+            }));
+        });
+
+        assert_eq!(
+            agent_server.saved_defaults.lock().as_slice(),
+            &[("mode".to_string(), Some("manual".to_string()))]
+        );
+        assert_eq!(
+            config_options.set_values.borrow().as_slice(),
+            &[("mode".to_string(), "manual".to_string())]
+        );
+    }
+
+    #[derive(Default)]
+    struct TestAgentServer {
+        saved_defaults: Arc<Mutex<Vec<(String, Option<String>)>>>,
+    }
+
+    impl AgentServer for TestAgentServer {
+        fn logo(&self) -> IconName {
+            IconName::ZedAssistant
+        }
+
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("test-agent")
+        }
+
+        fn connect(
+            &self,
+            _delegate: agent_servers::AgentServerDelegate,
+            _project: Entity<Project>,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<Rc<dyn AgentConnection>>> {
+            Task::ready(Err(anyhow::anyhow!("test agent server cannot connect")))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+
+        fn set_default_config_option(
+            &self,
+            config_id: &str,
+            value_id: Option<&str>,
+            _fs: Arc<dyn Fs>,
+            _cx: &mut App,
+        ) {
+            self.saved_defaults.lock().push((
+                config_id.to_string(),
+                value_id.map(|value| value.to_string()),
+            ));
+        }
+    }
+
+    struct TestSessionConfigOptions {
+        options: RefCell<Vec<acp::SessionConfigOption>>,
+        set_values: RefCell<Vec<(String, String)>>,
+    }
+
+    impl TestSessionConfigOptions {
+        fn new(options: Vec<acp::SessionConfigOption>) -> Self {
+            Self {
+                options: RefCell::new(options),
+                set_values: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AgentSessionConfigOptions for TestSessionConfigOptions {
+        fn config_options(&self) -> Vec<acp::SessionConfigOption> {
+            self.options.borrow().clone()
+        }
+
+        fn set_config_option(
+            &self,
+            config_id: acp::SessionConfigId,
+            value: acp::SessionConfigValueId,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<Vec<acp::SessionConfigOption>>> {
+            self.set_values
+                .borrow_mut()
+                .push((config_id.0.to_string(), value.0.to_string()));
+
+            let options = {
+                let mut options = self.options.borrow_mut();
+                if let Some(option) = options.iter_mut().find(|option| option.id == config_id)
+                    && let acp::SessionConfigKind::Select(select) = &mut option.kind
+                {
+                    select.current_value = value;
+                }
+                options.clone()
+            };
+
+            Task::ready(Ok(options))
+        }
     }
 }

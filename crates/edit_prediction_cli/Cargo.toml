@@ -62,7 +62,7 @@ util.workspace = true
 watch.workspace = true
 edit_prediction = { workspace = true, features = ["cli-support"] }
 edit_prediction_context.workspace = true
-edit_prediction_metrics.workspace = true
+edit_prediction_metrics = { workspace = true, features = ["tree-sitter"] }
 telemetry_events.workspace = true
 wasmtime.workspace = true
 zeta_prompt.workspace = true
@@ -91,4 +91,3 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
-
