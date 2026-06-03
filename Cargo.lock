@@ -271,6 +271,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proptest",
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
@@ -3194,6 +3195,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "parking_lot",
+ "serde",
  "serde_json",
  "thiserror 2.0.17",
  "yawc",
@@ -5379,8 +5381,8 @@ dependencies = [
 
 [[package]]
 name = "dugong"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.1",
@@ -5390,8 +5392,8 @@ dependencies = [
 
 [[package]]
 name = "dugong-graphlib"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "hashbrown 0.16.1",
  "rustc-hash 2.1.1",
@@ -5523,6 +5525,7 @@ dependencies = [
  "debug_adapter_extension",
  "dirs",
  "edit_prediction",
+ "edit_prediction_context",
  "edit_prediction_metrics",
  "extension",
  "flate2",
@@ -9733,6 +9736,7 @@ dependencies = [
  "clock",
  "cloud_api_client",
  "cloud_api_types",
+ "cloud_llm_client",
  "collections",
  "component",
  "convert_case 0.11.0",
@@ -10550,8 +10554,8 @@ dependencies = [
 
 [[package]]
 name = "manatee"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "indexmap 2.11.4",
  "nalgebra",
@@ -10845,8 +10849,8 @@ dependencies = [
 
 [[package]]
 name = "merman"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "merman-core",
  "merman-render",
@@ -10855,8 +10859,8 @@ dependencies = [
 
 [[package]]
 name = "merman-core"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "chrono",
  "euclid",
@@ -10881,8 +10885,8 @@ dependencies = [
 
 [[package]]
 name = "merman-render"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -15364,7 +15368,7 @@ dependencies = [
 [[package]]
 name = "roughr-merman"
 version = "0.12.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "derive_builder",
  "euclid",
@@ -16696,6 +16700,7 @@ dependencies = [
  "log",
  "menu",
  "node_runtime",
+ "notifications",
  "platform_title_bar",
  "pretty_assertions",
  "project",
@@ -22796,7 +22801,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
