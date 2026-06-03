@@ -611,11 +611,17 @@ impl Markdown {
         }
     }
 
-    fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
-        self.code_block_scroll_handles
-            .entry(id)
-            .or_insert_with(ScrollHandle::new)
-            .clone()
+    fn code_block_scroll_handle(&mut self, id: usize) -> Option<ScrollHandle> {
+        if self.is_code_block_wrapped(id) {
+            return None;
+        }
+
+        Some(
+            self.code_block_scroll_handles
+                .entry(id)
+                .or_insert_with(ScrollHandle::new)
+                .clone(),
+        )
     }
 
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
@@ -2138,16 +2144,16 @@ impl Element for MarkdownElement {
                             };
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
-                            let is_wrapped =
-                                self.markdown.read(cx).is_code_block_wrapped(range.start);
-                            let scroll_handle = if self.style.code_block_overflow_x_scroll && !is_wrapped {
-                                code_block_ids.insert(range.start);
-                                Some(self.markdown.update(cx, |markdown, _| {
+                            let scroll_handle = if self.style.code_block_overflow_x_scroll {
+                                self.markdown.update(cx, |markdown, _| {
                                     markdown.code_block_scroll_handle(range.start)
-                                }))
+                                })
                             } else {
                                 None
                             };
+                            if scroll_handle.is_some() {
+                                code_block_ids.insert(range.start);
+                            }
 
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
@@ -2186,6 +2192,9 @@ impl Element for MarkdownElement {
 
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
+
+                                    let is_wrapped =
+                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
 
                                     let code_block = div()
                                         .id(("code-block", range.start))
