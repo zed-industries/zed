@@ -780,6 +780,9 @@ pub struct Sidebar {
     /// buttons. This field tracks whether we were using verbose labels so they
     /// can stay stable after dismissing one of the banners.
     import_banners_use_verbose_labels: Option<bool>,
+    /// Display names of other release channels that have threads available to
+    /// import.
+    cross_channel_import_channels: Vec<SharedString>,
 }
 
 impl Sidebar {
@@ -858,6 +861,17 @@ impl Sidebar {
         )
         .detach();
 
+        let channels_with_threads = channels_with_threads(cx);
+        cx.spawn(async move |this, cx| {
+            let channels = channels_with_threads.await;
+            this.update(cx, |this, cx| {
+                this.cross_channel_import_channels = channels;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
         let deferred_multi_workspace = multi_workspace.downgrade();
         cx.defer_in(window, move |this, window, cx| {
             if let Some(multi_workspace) = deferred_multi_workspace.upgrade() {
@@ -898,6 +912,7 @@ impl Sidebar {
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
+            cross_channel_import_channels: Vec::new(),
         }
     }
 
@@ -7199,7 +7214,8 @@ impl Sidebar {
     }
 
     fn should_render_cross_channel_import_onboarding(&self, cx: &App) -> bool {
-        !CrossChannelImportOnboarding::dismissed(cx) && !channels_with_threads(cx).is_empty()
+        !CrossChannelImportOnboarding::dismissed(cx)
+            && !self.cross_channel_import_channels.is_empty()
     }
 
     fn render_cross_channel_import_onboarding(
@@ -7207,11 +7223,10 @@ impl Sidebar {
         verbose_labels: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let channels = channels_with_threads(cx);
-        let channel_names = channels
+        let channel_names = self
+            .cross_channel_import_channels
             .iter()
-            .map(|channel| channel.display_name())
-            .collect::<Vec<_>>()
+            .map(SharedString::as_str)
             .join(" and ");
 
         let description = format!(

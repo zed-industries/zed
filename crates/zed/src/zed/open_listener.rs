@@ -2198,6 +2198,7 @@ mod tests {
             .await;
 
         assert!(!errored);
+        cx.run_until_parked();
 
         let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
         multi_workspace
