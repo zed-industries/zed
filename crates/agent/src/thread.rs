@@ -828,7 +828,8 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
-    ContextCompaction,
+    ContextCompaction(acp_thread::ContextCompaction),
+    ContextCompactionUpdate(acp_thread::ContextCompactionUpdate),
     Stop(acp::StopReason),
 }
 
@@ -1349,7 +1350,7 @@ impl Thread {
     ) -> mpsc::UnboundedReceiver<Result<ThreadEvent>> {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream(tx);
-        for message in &self.messages {
+        for (message_ix, message) in self.messages.iter().enumerate() {
             match &**message {
                 Message::User(user_message) => stream.send_user_message(user_message),
                 Message::Agent(assistant_message) => {
@@ -1372,7 +1373,20 @@ impl Thread {
                     }
                 }
                 Message::Resume => {}
-                Message::Compaction(_) => stream.send_context_compaction(),
+                Message::Compaction(info) => {
+                    let compaction_id = acp_thread::ContextCompactionId(
+                        format!("replay-compaction-{message_ix}").into(),
+                    );
+                    match info {
+                        CompactionInfo::Summary(summary) => {
+                            stream.send_context_compaction(compaction_id.clone());
+                            stream.send_context_compaction_update(compaction_id.clone(), summary);
+                        }
+                        CompactionInfo::ProviderNative { .. } => {
+                            stream.send_context_compaction(compaction_id);
+                        }
+                    }
+                }
             }
         }
         rx
@@ -2525,6 +2539,8 @@ impl Thread {
         };
 
         log::debug!("Running compaction");
+        let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
+        event_stream.send_context_compaction(compaction_id.clone());
         let stream = futures::select! {
             result = model.stream_completion(request, cx).fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
@@ -2555,7 +2571,10 @@ impl Thread {
             };
 
             match event? {
-                LanguageModelCompletionEvent::Text(text) => summary.push_str(&text),
+                LanguageModelCompletionEvent::Text(text) => {
+                    summary.push_str(&text);
+                    event_stream.send_context_compaction_update(compaction_id.clone(), &text);
+                }
                 LanguageModelCompletionEvent::Stop(_)
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::Queued { .. }
@@ -2589,7 +2608,6 @@ impl Thread {
             } else {
                 this.messages.push(compaction);
             }
-            event_stream.send_context_compaction();
             cx.notify();
         })?;
 
@@ -4380,9 +4398,26 @@ impl ThreadEventStream {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
     }
 
-    fn send_context_compaction(&self) {
+    fn send_context_compaction(&self, id: acp_thread::ContextCompactionId) {
         self.0
-            .unbounded_send(Ok(ThreadEvent::ContextCompaction))
+            .unbounded_send(Ok(ThreadEvent::ContextCompaction(
+                acp_thread::ContextCompaction { id, summary: None },
+            )))
+            .ok();
+    }
+
+    fn send_context_compaction_update(
+        &self,
+        id: acp_thread::ContextCompactionId,
+        summary_delta: &str,
+    ) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompactionUpdate(
+                acp_thread::ContextCompactionUpdate {
+                    id,
+                    summary_delta: summary_delta.to_string(),
+                },
+            )))
             .ok();
     }
 
@@ -5561,9 +5596,19 @@ mod tests {
         );
 
         let event = replay_events.next().await;
+        let compaction_id = match &event {
+            Some(Ok(ThreadEvent::ContextCompaction(compaction))) => compaction.id.clone(),
+            _ => panic!("expected context compaction event, got {event:?}"),
+        };
+
+        let event = replay_events.next().await;
         assert!(
-            matches!(&event, Some(Ok(ThreadEvent::ContextCompaction))),
-            "expected context compaction event, got {event:?}"
+            matches!(
+                &event,
+                Some(Ok(ThreadEvent::ContextCompactionUpdate(update)))
+                    if update.id == compaction_id && update.summary_delta == "summary"
+            ),
+            "expected context compaction summary event, got {event:?}"
         );
 
         let event = replay_events.next().await;

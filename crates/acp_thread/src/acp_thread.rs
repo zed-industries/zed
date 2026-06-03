@@ -246,7 +246,27 @@ pub enum AgentThreadEntry {
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
     CompletedPlan(Vec<PlanEntry>),
-    ContextCompaction,
+    ContextCompaction(ContextCompaction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextCompactionId(pub Arc<str>);
+
+/// A point in the thread where the conversation history was compacted to free
+/// up room in the model's context window. The summary can be expanded to inspect
+/// what the model retained.
+#[derive(Debug)]
+pub struct ContextCompaction {
+    pub id: ContextCompactionId,
+    /// The compaction summary, streamed in as the model produces it. This is
+    /// `None` for provider-native compaction, which produces no summary to show.
+    pub summary: Option<Entity<Markdown>>,
+}
+
+#[derive(Debug)]
+pub struct ContextCompactionUpdate {
+    pub id: ContextCompactionId,
+    pub summary_delta: String,
 }
 
 impl AgentThreadEntry {
@@ -256,7 +276,7 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
             Self::CompletedPlan(_) => false,
-            Self::ContextCompaction => false,
+            Self::ContextCompaction(_) => false,
         }
     }
 
@@ -273,7 +293,7 @@ impl AgentThreadEntry {
                 }
                 md
             }
-            Self::ContextCompaction => "--- Context Compacted ---\n\n".to_string(),
+            Self::ContextCompaction(_) => "--- Context Compacted ---\n\n".to_string(),
         }
     }
 
@@ -1543,7 +1563,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
         false
@@ -1572,7 +1592,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
@@ -1592,7 +1612,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
@@ -1605,7 +1625,7 @@ impl AcpThread {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
                 | AgentThreadEntry::CompletedPlan(..)
-                | AgentThreadEntry::ContextCompaction => continue,
+                | AgentThreadEntry::ContextCompaction(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
             }
         }
@@ -1949,8 +1969,63 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
-    pub fn push_context_compaction(&mut self, cx: &mut Context<Self>) {
-        self.push_entry(AgentThreadEntry::ContextCompaction, cx);
+    pub fn push_context_compaction(
+        &mut self,
+        compaction: ContextCompaction,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ix) =
+            self.entries
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(c) if &c.id == &compaction.id => Some(ix),
+                    _ => None,
+                })
+        {
+            self.entries[ix] = AgentThreadEntry::ContextCompaction(compaction);
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        } else {
+            self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
+        }
+    }
+
+    pub fn update_context_compaction(
+        &mut self,
+        update: ContextCompactionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let language_registry = self.project.read(cx).languages().clone();
+        let Some((ix, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(c) if &c.id == &update.id => Some((ix, c)),
+                    _ => None,
+                })
+        else {
+            return;
+        };
+
+        if compaction.summary.is_none() {
+            compaction.summary = Some(cx.new(|cx| {
+                Markdown::new(
+                    update.summary_delta.into(),
+                    Some(language_registry),
+                    None,
+                    cx,
+                )
+            }));
+        } else if let Some(summary) = compaction.summary.clone() {
+            summary.update(cx, |markdown, cx| {
+                markdown.append(&update.summary_delta, cx)
+            });
+        }
+
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
