@@ -5895,7 +5895,11 @@ impl Sidebar {
         ))
         .then(|| {
             let focus_handle = self.focus_handle.clone();
-            let label = if is_draft { "Open Draft" } else { "Open Thread" };
+            let label = if is_draft {
+                "Open Draft"
+            } else {
+                "Open Thread"
+            };
             move |_window: &mut Window, cx: &mut App| {
                 Tooltip::for_action_in(label, &Confirm, &focus_handle, cx)
             }
