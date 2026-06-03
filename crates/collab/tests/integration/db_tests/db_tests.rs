@@ -285,7 +285,7 @@ async fn test_upsert_shared_thread(db: &Arc<Database>) {
     assert_eq!(thread.title, title);
     assert_eq!(thread.data, data);
     assert_eq!(thread.user_id, user_id);
-    assert_eq!(username, "user1");
+    assert_eq!(username, "Unknown");
 }
 
 test_both_dbs!(

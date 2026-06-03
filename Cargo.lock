@@ -271,6 +271,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proptest",
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
@@ -22800,7 +22801,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

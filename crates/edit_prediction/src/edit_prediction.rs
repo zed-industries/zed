@@ -1275,6 +1275,7 @@ impl EditPredictionStore {
                     file_context.git_changed_file_sets = result
                         .context("failed to receive git changed file sets")
                         .flatten()
+                        .log_with_level(log::Level::Trace)
                         .map(|mut file_sets| file_sets.pop().unwrap_or_default())
                         .context("failed to load git changed file sets")
                         .map(Arc::new)
