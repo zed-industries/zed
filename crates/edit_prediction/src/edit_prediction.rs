@@ -55,7 +55,9 @@ use std::env;
 use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
-use zeta_prompt::{ContextSource, ZetaFormat, ZetaPromptInput};
+#[cfg(feature = "cli-support")]
+use zeta_prompt::ContextSource;
+use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
 use std::mem;
 use std::ops::Range;
