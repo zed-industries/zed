@@ -345,8 +345,8 @@
     "object" "range" "set" "slice" "str" "tuple")
 ]
 
-((identifier) @type.builtin
-  (#any-of? @type.builtin
+((identifier) @type.class.builtin
+  (#any-of? @type.class.builtin
     ; Exceptions
     "BaseException" "Exception" "ArithmeticError" "BufferError" "LookupError" "AssertionError"
     "AttributeError" "EOFError" "FloatingPointError" "GeneratorExit" "ImportError"
@@ -361,6 +361,6 @@
     "NotADirectoryError" "PermissionError" "ProcessLookupError" "TimeoutError" "ExceptionGroup"
     "BaseExceptionGroup"
     ; Warnings
-    "Warning" "UserWarning" "DeprecationWarning" "PendingDeprecationWarning"
-    "SyntaxWarning" "RuntimeWarning" "FutureWarning" "ImportWarning" "UnicodeWarning"
-    "EncodingWarning" "BytesWarning" "ResourceWarning"))
+    "Warning" "UserWarning" "DeprecationWarning" "PendingDeprecationWarning" "SyntaxWarning"
+    "RuntimeWarning" "FutureWarning" "ImportWarning" "UnicodeWarning" "EncodingWarning"
+    "BytesWarning" "ResourceWarning"))
