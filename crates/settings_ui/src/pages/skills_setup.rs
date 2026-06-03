@@ -99,9 +99,9 @@ pub(crate) fn render_skills_setup_page(
 
                         if i + 1 < skills.len() {
                             elements.push(
-                                Divider::horizontal()
-                                    .mx_8()
-                                    .flex_grow_1()
+                                div()
+                                    .px_8()
+                                    .child(Divider::horizontal().flex_grow_1())
                                     .into_any_element(),
                             );
                         }
@@ -183,7 +183,7 @@ fn render_skill_row(
         .group(group)
         .w_full()
         .justify_between()
-        .py_2p5()
+        .py_3()
         .px_8()
         .gap_4()
         .child(
