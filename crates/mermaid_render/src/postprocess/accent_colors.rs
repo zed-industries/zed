@@ -146,8 +146,48 @@ pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<By
     Ok(new_elem)
 }
 
-pub(crate) fn current_stack_accent(stack: &[Option<usize>]) -> Option<usize> {
-    stack.iter().rev().find_map(|entry| *entry)
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AccentStackEntry {
+    /// The accent inherited by nested text, even when the group has no layout geometry.
+    accent_idx: Option<usize>,
+    /// Whether this group called `NodeTracker::start_node` and must be finished later.
+    tracks_node: bool,
+}
+
+impl AccentStackEntry {
+    pub fn none() -> Self {
+        Self {
+            accent_idx: None,
+            tracks_node: false,
+        }
+    }
+
+    pub fn accent(accent_idx: usize, tracks_node: bool) -> Self {
+        Self {
+            accent_idx: Some(accent_idx),
+            tracks_node,
+        }
+    }
+
+    pub fn tracks_node(self) -> bool {
+        self.tracks_node
+    }
+
+    fn accent_idx(self) -> Option<usize> {
+        self.accent_idx
+    }
+}
+
+pub(crate) fn current_stack_accent(stack: &[AccentStackEntry]) -> Option<usize> {
+    stack.iter().rev().find_map(|entry| entry.accent_idx())
+}
+
+// merman's fallback overlay groups intentionally preserve source classes such
+// as `node` and `section-*` so host CSS can style fallback text. They are not
+// layout nodes though, so accent tracking must not count them as new nodes.
+pub(crate) fn is_foreign_object_fallback_group(e: &BytesStart<'_>) -> Result<bool> {
+    Ok(e.try_get_attribute("data-merman-foreignobject")?
+        .is_some_and(|attr| attr.value.as_ref() == b"fallback"))
 }
 
 pub(crate) fn lookup_position_accent(node_rects: &[NodeRect], e: &BytesStart<'_>) -> Option<usize> {
