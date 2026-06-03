@@ -170,20 +170,17 @@ impl Render for ZedPromptRenderer {
                 .right(inset_for_edge(tiling.right))
                 .bottom(inset_for_edge(tiling.bottom))
                 .left(inset_for_edge(tiling.left))
-                .map(|mut div| {
-                    if !tiling.top && !tiling.left {
-                        div = div.rounded_tl(rounding);
-                    }
-                    if !tiling.top && !tiling.right {
-                        div = div.rounded_tr(rounding);
-                    }
-                    if !tiling.bottom && !tiling.left {
-                        div = div.rounded_bl(rounding);
-                    }
-                    if !tiling.bottom && !tiling.right {
-                        div = div.rounded_br(rounding);
-                    }
-                    div
+                .when(!tiling.top && !tiling.left, |this| {
+                    this.rounded_tl(rounding)
+                })
+                .when(!tiling.top && !tiling.right, |this| {
+                    this.rounded_tr(rounding)
+                })
+                .when(!tiling.bottom && !tiling.left, |this| {
+                    this.rounded_bl(rounding)
+                })
+                .when(!tiling.bottom && !tiling.right, |this| {
+                    this.rounded_br(rounding)
                 })
                 .items_center()
                 .justify_center()
