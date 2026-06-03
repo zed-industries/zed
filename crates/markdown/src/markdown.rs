@@ -108,6 +108,7 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
+    pub heading_border_color: Option<Hsla>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
@@ -131,6 +132,7 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             heading_level_styles: None,
+            heading_border_color: None,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
@@ -188,8 +190,6 @@ impl MarkdownStyle {
             theme_settings.buffer_font.family.clone()
         };
 
-        let text_color = colors.text;
-
         let mut text_style = window.text_style();
         let line_height = buffer_font_size * 1.75;
 
@@ -199,11 +199,11 @@ impl MarkdownStyle {
             font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(ui_font_size.into()),
             line_height: Some(line_height.into()),
-            color: Some(text_color),
+            color: Some(colors.text),
             ..Default::default()
         });
 
-        MarkdownStyle {
+        let style = MarkdownStyle {
             base_text_style: text_style.clone(),
             syntax: syntax.clone(),
             selection_background_color: colors.element_selection_background,
@@ -300,7 +300,54 @@ impl MarkdownStyle {
                 },
             ),
             ..Default::default()
+        };
+
+        if is_preview {
+            style.with_preview_overrides(ui_font_size, colors)
+        } else {
+            style
         }
+    }
+
+    fn with_preview_overrides(mut self, ui_font_size: Pixels, colors: &theme::ThemeColors) -> Self {
+        let body_font_size = ui_font_size * 0.92;
+        self.base_text_style.font_size = body_font_size.into();
+        self.container_style.text.font_size = Some(body_font_size.into());
+
+        self.base_text_style.color = colors.text_muted.blend(colors.text.opacity(0.25));
+        self.inline_code.color = Some(colors.text);
+        self.heading.text.color = Some(colors.text);
+
+        self.heading_level_styles = Some(HeadingLevelStyles {
+            h1: Some(TextStyleRefinement {
+                font_size: Some(rems(1.45).into()),
+                ..Default::default()
+            }),
+            h2: Some(TextStyleRefinement {
+                font_size: Some(rems(1.3).into()),
+                ..Default::default()
+            }),
+            h3: Some(TextStyleRefinement {
+                font_size: Some(rems(1.1).into()),
+                ..Default::default()
+            }),
+            h4: Some(TextStyleRefinement {
+                font_size: Some(rems(1.01).into()),
+                ..Default::default()
+            }),
+            h5: Some(TextStyleRefinement {
+                font_size: Some(rems(0.95).into()),
+                ..Default::default()
+            }),
+            h6: Some(TextStyleRefinement {
+                font_size: Some(rems(0.85).into()),
+                ..Default::default()
+            }),
+        });
+
+        self.heading_border_color = Some(colors.border_variant);
+
+        self
     }
 
     pub fn with_buffer_font(mut self, cx: &App) -> Self {
@@ -1334,7 +1381,12 @@ impl MarkdownElement {
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut heading = div().mt_4().mb_2();
-        heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
+        heading = apply_heading_style(
+            heading,
+            level,
+            self.style.heading_level_styles.as_ref(),
+            self.style.heading_border_color,
+        );
 
         heading = match align {
             TextAlign::Center => heading.text_center(),
@@ -2695,6 +2747,7 @@ fn apply_heading_style(
     mut heading: Div,
     level: pulldown_cmark::HeadingLevel,
     custom_styles: Option<&HeadingLevelStyles>,
+    border_color: Option<Hsla>,
 ) -> Div {
     heading = match level {
         pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
@@ -2704,6 +2757,17 @@ fn apply_heading_style(
         pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
         pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
     };
+
+    if let Some(border_color) = border_color
+        && matches!(
+            level,
+            pulldown_cmark::HeadingLevel::H1
+                | pulldown_cmark::HeadingLevel::H2
+                | pulldown_cmark::HeadingLevel::H3
+        )
+    {
+        heading = heading.pb_1().border_b_1().border_color(border_color);
+    }
 
     if let Some(styles) = custom_styles {
         let style_opt = match level {
