@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
@@ -8,8 +10,9 @@ use db::sqlez;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
-    Render, SharedString, Task, TaskExt, WeakEntity, Window,
+    Animation, AnimationExt as _, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, MouseDownEvent, Render, SharedString, Task, TaskExt, WeakEntity, Window,
+    pulsating_between,
 };
 use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
@@ -17,8 +20,8 @@ use project::{AgentId, AgentRegistryStore, AgentServerStore};
 use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use ui::{
-    Checkbox, KeyBinding, ListItem, ListItemSpacing, Modal, ModalFooter, ModalHeader, Section,
-    SpinnerLabel, Tooltip, prelude::*,
+    Checkbox, CommonAnimationExt, KeyBinding, ListItem, ListItemSpacing, Modal, ModalFooter,
+    ModalHeader, Section, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::{ModalView, MultiWorkspace, Workspace};
@@ -110,7 +113,7 @@ enum AgentImportStatus {
 
 impl AgentImportStatus {
     fn is_selectable(&self) -> bool {
-        matches!(self, Self::Ready { .. })
+        matches!(self, Self::Ready { importable_count } if *importable_count > 0)
     }
 
     fn importable_count(&self) -> Option<usize> {
@@ -461,9 +464,11 @@ impl Render for ThreadImportModal {
                     ToggleState::Unselected
                 };
                 let end_slot = match &status {
-                    AgentImportStatus::Loading => SpinnerLabel::new()
-                        .size(LabelSize::Small)
-                        .into_any_element(),
+                    AgentImportStatus::Loading => {
+                        Checkbox::new(("thread-import-agent-checkbox", ix), checkbox_state)
+                            .disabled(true)
+                            .into_any_element()
+                    }
                     AgentImportStatus::Ready { .. } => {
                         Checkbox::new(("thread-import-agent-checkbox", ix), checkbox_state)
                             .disabled(row_disabled)
@@ -479,6 +484,44 @@ impl Render for ThreadImportModal {
                         .into_any_element(),
                 };
 
+                let is_loading = matches!(status, AgentImportStatus::Loading);
+
+                let item = h_flex()
+                    .w_full()
+                    .gap_2()
+                    .when(!is_checked, |this| this.opacity(0.6))
+                    .child(if let Some(icon_path) = entry.icon_path.clone() {
+                        Icon::from_external_svg(icon_path)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                    } else {
+                        Icon::new(IconName::Sparkle)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                    })
+                    .child(Label::new(entry.display_name.clone()))
+                    .when_some(status.importable_count(), |this, count| {
+                        let label: SharedString = if count == 0 {
+                            "No threads".into()
+                        } else {
+                            format!("{} threads", count).into()
+                        };
+                        this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                    });
+
+                let item = if is_loading {
+                    item.with_animation(
+                        "pulsating-icon",
+                        Animation::new(Duration::from_secs(1))
+                            .repeat()
+                            .with_easing(pulsating_between(0.2, 0.6)),
+                        |icon, delta| icon.opacity(delta),
+                    )
+                    .into_any_element()
+                } else {
+                    item.into_any_element()
+                };
+
                 ListItem::new(("thread-import-agent", ix))
                     .rounded()
                     .spacing(ListItemSpacing::Sparse)
@@ -487,32 +530,7 @@ impl Render for ThreadImportModal {
                     .when_some(status.tooltip_text(), |this, tooltip| {
                         this.tooltip(Tooltip::text(tooltip))
                     })
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .when(!is_checked, |this| this.opacity(0.6))
-                            .child(if let Some(icon_path) = entry.icon_path.clone() {
-                                Icon::from_external_svg(icon_path)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small)
-                            } else {
-                                Icon::new(IconName::Sparkle)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small)
-                            })
-                            .child(Label::new(entry.display_name.clone()))
-                            .when_some(status.importable_count(), |this, count| {
-                                let label: SharedString = if count > 99 {
-                                    "99+ threads".into()
-                                } else {
-                                    format!("{} threads", count).into()
-                                };
-                                this.child(
-                                    Label::new(label).size(LabelSize::Small).color(Color::Muted),
-                                )
-                            }),
-                    )
+                    .child(item)
                     .end_slot(end_slot)
                     .on_click({
                         let agent_id = entry.agent_id.clone();
@@ -571,9 +589,18 @@ impl Render for ThreadImportModal {
                         ModalFooter::new()
                             .when(self.is_fetching_sessions, |this| {
                                 this.start_slot(
-                                    Label::new("Fetching agent threads…")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::LoadCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted)
+                                                .with_rotate_animation(3),
+                                        )
+                                        .child(Label::new("Fetching Agent Threads…")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted))
+
                                 )
                             })
                             .when_some(self.last_error.clone(), |this, error| {
