@@ -11,17 +11,18 @@ impl Editor {
             let all_lines_quoted = lines.iter().all(|line| line.starts_with('>'));
 
             for line in lines.iter_mut() {
-                let content = match line.strip_prefix("> ").or_else(|| line.strip_prefix('>')) {
+                let stripped_line = match line.strip_prefix("> ").or_else(|| line.strip_prefix('>'))
+                {
                     Some(rest) => rest.to_string(),
                     None => line.to_string(),
                 };
 
                 *line = if all_lines_quoted {
-                    Cow::Owned(content)
-                } else if content.trim().is_empty() {
+                    Cow::Owned(stripped_line)
+                } else if stripped_line.trim().is_empty() {
                     Cow::Borrowed(">")
                 } else {
-                    Cow::Owned(format!("> {content}"))
+                    Cow::Owned(format!("> {stripped_line}"))
                 };
             }
         });
