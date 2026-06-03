@@ -2,6 +2,7 @@ mod apply_code_action_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
+mod create_thread_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_file_tool;
@@ -14,6 +15,7 @@ mod find_references_tool;
 mod get_code_actions_tool;
 mod go_to_definition_tool;
 mod grep_tool;
+mod list_agents_and_models_tool;
 mod list_directory_tool;
 mod move_path_tool;
 mod read_file_tool;
@@ -62,6 +64,7 @@ pub use apply_code_action_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
+pub use create_thread_tool::*;
 pub use delete_path_tool::*;
 pub use diagnostics_tool::*;
 pub use edit_file_tool::*;
@@ -71,6 +74,7 @@ pub use find_references_tool::*;
 pub use get_code_actions_tool::*;
 pub use go_to_definition_tool::*;
 pub use grep_tool::*;
+pub use list_agents_and_models_tool::*;
 pub use list_directory_tool::*;
 pub use move_path_tool::*;
 pub use read_file_tool::*;
@@ -153,10 +157,23 @@ macro_rules! tools {
     };
 }
 
+// Adding a tool here (and constructing it in `Thread::add_default_tools`) is
+// not enough to make the model actually receive it. Two further gates will
+// silently drop the tool rather than fail to compile:
+//
+// 1. `assets/settings/default.json`: the `write` and `ask` agent profiles each
+//    carry an explicit `tools` allowlist. `Thread::enabled_tools` filters out
+//    any tool not present there with value `true`, so it never reaches the
+//    model.
+// 2. `test_all_tools_are_in_tool_info_or_excluded` in
+//    `crates/settings_ui/src/pages/tool_permissions_setup.rs`: every tool must
+//    be in the permission-UI `TOOLS` list (if it calls
+//    `decide_permission_from_settings`) or in `EXCLUDED_TOOLS`.
 tools! {
     ApplyCodeActionTool,
     CopyPathTool,
     CreateDirectoryTool,
+    CreateThreadTool,
     DeletePathTool,
     DiagnosticsTool,
     EditFileTool,
@@ -166,6 +183,7 @@ tools! {
     GetCodeActionsTool,
     GoToDefinitionTool,
     GrepTool,
+    ListAgentsAndModelsTool,
     ListDirectoryTool,
     MovePathTool,
     ReadFileTool,

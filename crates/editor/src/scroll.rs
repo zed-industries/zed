@@ -217,6 +217,7 @@ pub struct ScrollManager {
     visible_line_count: Option<f64>,
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
+    notified_top_overscroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
     _save_scroll_position_task: Task<()>,
 }
@@ -240,6 +241,7 @@ impl ScrollManager {
             visible_line_count: None,
             visible_column_count: None,
             forbid_vertical_scroll: false,
+            notified_top_overscroll: false,
             minimap_thumb_state: None,
             _save_scroll_position_task: Task::ready(()),
         }
@@ -344,6 +346,21 @@ impl ScrollManager {
         self.ongoing.axis = axis;
     }
 
+    pub fn should_notify_top_overscroll(&mut self, axis: Option<Axis>) -> bool {
+        let now = Instant::now();
+        let new_scroll = now.duration_since(self.ongoing.last_event) > SCROLL_EVENT_SEPARATION;
+        let axis_changed = self.ongoing.axis != axis;
+        let should_notify = !self.notified_top_overscroll || new_scroll || axis_changed;
+        self.ongoing.last_event = now;
+        self.ongoing.axis = axis;
+        self.notified_top_overscroll = true;
+        should_notify
+    }
+
+    pub fn reset_top_overscroll_notification(&mut self) {
+        self.notified_top_overscroll = false;
+    }
+
     pub fn scroll_position(
         &self,
         snapshot: &DisplaySnapshot,
@@ -445,6 +462,7 @@ impl ScrollManager {
             return WasScrolled(false);
         }
 
+        self.notified_top_overscroll = false;
         self.anchor.update(cx, |shared, _| {
             shared.scroll_anchor = adjusted_anchor;
             shared.display_map_id = Some(display_map.display_map_id);

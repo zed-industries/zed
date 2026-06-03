@@ -173,7 +173,7 @@ impl State {
     }
 
     fn is_signed_out(&self, cx: &App) -> bool {
-        self.user_store.read(cx).current_user().is_none()
+        self.status.is_signed_out() || self.user_store.read(cx).current_user().is_none()
     }
 
     fn sign_in(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -229,6 +229,12 @@ impl CloudLanguageModelProvider {
                     _ = this.update(cx, |this, cx| {
                         if this.status != status {
                             this.status = status;
+                            if status.is_signed_out() {
+                                this.provider.update(cx, |provider, cx| {
+                                    provider.clear_models();
+                                    cx.notify();
+                                });
+                            }
                             cx.notify();
                         }
                     });
@@ -705,6 +711,76 @@ mod tests {
             .await
             .expect_err("provider authentication should fail when sign-in fails");
         assert!(error.to_string().contains("AuthenticationError"));
+    }
+
+    #[gpui::test]
+    async fn sign_out_hides_cached_cloud_models(cx: &mut TestAppContext) {
+        let (client, _user_store, provider) = cx.update(init_test);
+        let (authenticate_tx, authenticate_rx) = futures::channel::oneshot::channel();
+        let (authenticated_user_tx, authenticated_user_rx) = futures::channel::oneshot::channel();
+        override_authenticate(&client, authenticate_rx);
+        respond_to_authenticated_user_after(&client, authenticated_user_rx);
+
+        let sign_in_task = sign_in_until_authenticating(client.clone(), cx).await;
+        authenticate_tx
+            .send(Ok(Credentials {
+                user_id: TEST_USER_ID,
+                access_token: "token".to_string(),
+            }))
+            .expect("authenticate receiver dropped");
+        authenticated_user_tx
+            .send(())
+            .expect("authenticated user receiver dropped");
+        sign_in_task.await.expect("sign-in should complete");
+        cx.executor().run_until_parked();
+
+        let model_id = cloud_llm_client::LanguageModelId(Arc::from("test-model"));
+        cx.update(|cx| {
+            let cloud_model_provider = provider.state.read(cx).provider.clone();
+            cloud_model_provider.update(cx, |cloud_model_provider, cx| {
+                cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
+                    models: vec![cloud_llm_client::LanguageModel {
+                        provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+                        id: model_id.clone(),
+                        display_name: "Test Model".to_string(),
+                        is_latest: true,
+                        max_token_count: 200_000,
+                        max_token_count_in_max_mode: None,
+                        max_output_tokens: 8_192,
+                        supports_tools: true,
+                        supports_images: false,
+                        supports_thinking: false,
+                        supports_fast_mode: false,
+                        supported_effort_levels: Vec::new(),
+                        supports_streaming_tools: false,
+                        supports_parallel_tool_calls: false,
+                    }],
+                    default_model: Some(model_id.clone()),
+                    default_fast_model: None,
+                    recommended_models: vec![model_id],
+                });
+                cx.notify();
+            });
+        });
+
+        assert!(cx.read(|cx| provider.is_authenticated(cx)));
+        assert_eq!(cx.read(|cx| provider.provided_models(cx).len()), 1);
+        assert!(cx.read(|cx| provider.default_model(cx).is_some()));
+        assert_eq!(cx.read(|cx| provider.recommended_models(cx).len()), 1);
+
+        cx.update(|cx| {
+            cx.spawn({
+                let client = client.clone();
+                async move |cx| client.sign_out(cx).await
+            })
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        assert!(!cx.read(|cx| provider.is_authenticated(cx)));
+        assert!(cx.read(|cx| provider.provided_models(cx).is_empty()));
+        assert!(cx.read(|cx| provider.default_model(cx).is_none()));
+        assert!(cx.read(|cx| provider.recommended_models(cx).is_empty()));
     }
 }
 

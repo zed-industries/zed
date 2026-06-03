@@ -1,3 +1,8 @@
+use crate::{
+    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
+    commit_view::CommitView,
+    git_status_icon,
+};
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use git::{
@@ -9,11 +14,6 @@ use git::{
         SearchCommitArgs,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
-};
-use git_ui::{
-    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
-    commit_view::CommitView,
-    git_status_icon,
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
@@ -33,7 +33,6 @@ use project::{
         RepositoryEvent, RepositoryId,
     },
 };
-use project_panel::ProjectPanel;
 use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
@@ -340,24 +339,24 @@ struct SearchState {
     case_sensitive: bool,
     editor: Entity<Editor>,
     state: QueryState,
-    pub matches: IndexSet<Oid>,
-    pub selected_index: Option<usize>,
+    matches: IndexSet<Oid>,
+    selected_index: Option<usize>,
 }
 
-pub struct SplitState {
+struct SplitState {
     left_ratio: f32,
     visible_left_ratio: f32,
 }
 
 impl SplitState {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             left_ratio: 1.0,
             visible_left_ratio: 1.0,
         }
     }
 
-    pub fn right_ratio(&self) -> f32 {
+    fn right_ratio(&self) -> f32 {
         1.0 - self.visible_left_ratio
     }
 
@@ -391,6 +390,8 @@ impl SplitState {
 actions!(
     git_graph,
     [
+        /// Opens the Git Graph Tab.
+        Open,
         /// Copies the SHA of the selected commit to the clipboard.
         CopyCommitSha,
         /// Copies a tag from the selected commit to the clipboard.
@@ -409,6 +410,13 @@ actions!(
         ScrollDown,
     ]
 );
+
+/// Opens the Git Graph Tab at a specific commit.
+#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
+#[action(namespace = git_graph)]
+pub struct OpenAtCommit {
+    pub sha: String,
+}
 
 fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
     static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
@@ -893,7 +901,7 @@ pub fn init(cx: &mut App) {
 
                     div.on_action({
                         let workspace = workspace.clone();
-                        move |_: &git_ui::git_panel::Open, window, cx| {
+                        move |_: &Open, window, cx| {
                             workspace
                                 .update(cx, |workspace, cx| {
                                     let Some(repo) =
@@ -918,33 +926,29 @@ pub fn init(cx: &mut App) {
                                 .ok();
                         }
                     })
-                    .on_action(
-                        move |action: &git_ui::git_panel::OpenAtCommit, window, cx| {
-                            let sha = action.sha.clone();
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    let Some(repo) =
-                                        workspace.project().read(cx).active_repository(cx)
-                                    else {
-                                        return;
-                                    };
-                                    let selected_repo_id = repo.read(cx).id;
+                    .on_action(move |action: &OpenAtCommit, window, cx| {
+                        let sha = action.sha.clone();
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                let Some(repo) = workspace.project().read(cx).active_repository(cx)
+                                else {
+                                    return;
+                                };
+                                let selected_repo_id = repo.read(cx).id;
 
-                                    let git_store =
-                                        workspace.project().read(cx).git_store().clone();
-                                    open_or_reuse_graph(
-                                        workspace,
-                                        selected_repo_id,
-                                        git_store,
-                                        LogSource::All,
-                                        Some(sha),
-                                        window,
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        },
-                    )
+                                let git_store = workspace.project().read(cx).git_store().clone();
+                                open_or_reuse_graph(
+                                    workspace,
+                                    selected_repo_id,
+                                    git_store,
+                                    LogSource::All,
+                                    Some(sha),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    })
                 },
             )
         });
@@ -952,28 +956,32 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+/// Resolves a `git::FileHistory` target from a known project path (used by
+/// callers like `project_panel` that own a focused selection but cannot be
+/// referenced from this module due to dependency direction).
+pub fn resolve_file_history_target_from_project_path(
+    workspace: &Workspace,
+    project_path: &ProjectPath,
+    cx: &App,
+) -> Option<(RepositoryId, LogSource)> {
+    let git_store = workspace.project().read(cx).git_store();
+    let (repo, repo_path) = git_store
+        .read(cx)
+        .repository_and_path_for_project_path(project_path, cx)?;
+    let log_source = if repo_path.is_empty() {
+        LogSource::All
+    } else {
+        LogSource::Path(repo_path)
+    };
+    Some((repo.read(cx).id, log_source))
+}
+
 fn resolve_file_history_target(
     workspace: &Workspace,
     window: &Window,
     cx: &App,
 ) -> Option<(RepositoryId, LogSource)> {
-    if let Some(panel) = workspace.panel::<ProjectPanel>(cx)
-        && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
-        && let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
-    {
-        let git_store = workspace.project().read(cx).git_store();
-        let (repo, repo_path) = git_store
-            .read(cx)
-            .repository_and_path_for_project_path(&project_path, cx)?;
-        let log_source = if repo_path.is_empty() {
-            LogSource::All
-        } else {
-            LogSource::Path(repo_path)
-        };
-        return Some((repo.read(cx).id, log_source));
-    }
-
-    if let Some(panel) = workspace.panel::<git_ui::git_panel::GitPanel>(cx)
+    if let Some(panel) = workspace.panel::<crate::git_panel::GitPanel>(cx)
         && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
         && let Some((repository, repo_path)) = panel.read(cx).selected_file_history_target()
     {
@@ -997,7 +1005,7 @@ fn resolve_file_history_target(
     Some((repo.read(cx).id, LogSource::Path(repo_path)))
 }
 
-fn open_or_reuse_graph(
+pub fn open_or_reuse_graph(
     workspace: &mut Workspace,
     repo_id: RepositoryId,
     git_store: Entity<GitStore>,
@@ -2314,22 +2322,6 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn get_remote(
-        &self,
-        repository: &Repository,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> Option<GitRemote> {
-        let remote_url = repository.default_remote_url()?;
-        let provider_registry = GitHostingProviderRegistry::default_global(cx);
-        let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
-        Some(GitRemote {
-            host: provider,
-            owner: parsed.owner.into(),
-            repo: parsed.repo.into(),
-        })
-    }
-
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
         let query_focus_handle = self
@@ -2536,7 +2528,16 @@ impl GitGraph {
             })
             .unwrap_or_default();
 
-        let remote = repository.update(cx, |repo, cx| self.get_remote(repo, window, cx));
+        let remote = repository.update(cx, |repo, cx| {
+            let remote_url = repo.default_remote_url()?;
+            let provider_registry = GitHostingProviderRegistry::default_global(cx);
+            let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
+            Some(GitRemote {
+                host: provider,
+                owner: parsed.owner.into(),
+                repo: parsed.repo.into(),
+            })
+        });
 
         let avatar = {
             let author_email_for_avatar = if author_email.is_empty() {
@@ -2733,7 +2734,7 @@ impl GitGraph {
                             })
                             .when_some(remote.clone(), |this, remote| {
                                 let provider_name = remote.host.name();
-                                let icon = git_ui::get_provider_icon(provider_name.as_str());
+                                let icon = crate::get_provider_icon(provider_name.as_str());
                                 let parsed_remote = ParsedGitRemote {
                                     owner: remote.owner.as_ref().into(),
                                     repo: remote.repo.as_ref().into(),
@@ -4084,6 +4085,11 @@ impl GitGraph {
             .map(|commit| commit.data.clone())
             .collect()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn log_source_for_test(&self) -> &LogSource {
+        &self.log_source
+    }
 }
 
 /// Generates a random commit DAG suitable for testing git graph rendering.
@@ -4219,9 +4225,7 @@ mod tests {
             cx.set_global(settings_store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             language_model::init(cx);
-            git_ui::init(cx);
-            project_panel::init(cx);
-            init(cx);
+            crate::init(cx);
         });
     }
 
@@ -4794,24 +4798,14 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                crate::LogSource::default(),
-                crate::LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            );
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
         });
         cx.run_until_parked();
 
         let graph_commits: Vec<Arc<InitialGraphCommitData>> = repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                crate::LogSource::default(),
-                crate::LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            )
-            .commits
-            .to_vec()
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx)
+                .commits
+                .to_vec()
         });
 
         let mut graph_data = GraphData::new(8);
@@ -4865,12 +4859,7 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                crate::LogSource::default(),
-                crate::LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            );
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
         });
 
         project
@@ -4888,7 +4877,7 @@ mod tests {
             "initial repository scan should emit HeadChanged"
         );
         let commit_count_after = repository.read_with(cx, |repo, _| {
-            repo.get_graph_data(crate::LogSource::default(), crate::LogOrder::default())
+            repo.get_graph_data(LogSource::default(), LogOrder::default())
                 .map(|data| data.commit_data.len())
                 .unwrap()
         });
@@ -4927,18 +4916,13 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                crate::LogSource::default(),
-                crate::LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            );
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
         });
 
         cx.run_until_parked();
 
         let error = repository.read_with(cx, |repo, _| {
-            repo.get_graph_data(crate::LogSource::default(), crate::LogOrder::default())
+            repo.get_graph_data(LogSource::default(), LogOrder::default())
                 .and_then(|data| data.error.clone())
         });
 
@@ -5070,14 +5054,12 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_file_history_action_uses_focused_source_and_reuses_matching_graph(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_file_history_action_uses_git_panel_and_editor_sources(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            Path::new("/project"),
+            Path::new(util::path!("/project")),
             json!({
                 ".git": {},
                 "tracked1.txt": "tracked 1",
@@ -5085,15 +5067,22 @@ mod tests {
             }),
         )
         .await;
+        fs.set_status_for_repo(
+            Path::new(util::path!("/project/.git")),
+            &[
+                ("tracked1.txt", StatusCode::Modified.worktree()),
+                ("tracked2.txt", StatusCode::Modified.worktree()),
+            ],
+        );
 
         let commits = vec![Arc::new(InitialGraphCommitData {
             sha: Oid::from_bytes(&[1; 20]).unwrap(),
             parents: smallvec![],
             ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
         })];
-        fs.set_graph_commits(Path::new("/project/.git"), commits);
+        fs.set_graph_commits(Path::new(util::path!("/project/.git")), commits);
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
         cx.run_until_parked();
 
         let repository = project.read_with(cx, |project, cx| {
@@ -5127,18 +5116,10 @@ mod tests {
             })
             .expect("window should be available");
         cx.background_executor.allow_parking();
-        let project_panel = cx
-            .foreground_executor()
-            .clone()
-            .block_test(ProjectPanel::load(
-                weak_workspace.clone(),
-                async_window_cx.clone(),
-            ))
-            .expect("project panel should load");
         let git_panel = cx
             .foreground_executor()
             .clone()
-            .block_test(git_ui::git_panel::GitPanel::load(
+            .block_test(crate::git_panel::GitPanel::load(
                 weak_workspace,
                 async_window_cx,
             ))
@@ -5149,21 +5130,20 @@ mod tests {
             .update(cx, |multi, window, cx| {
                 let workspace = multi.workspace();
                 workspace.update(cx, |workspace, cx| {
-                    workspace.add_panel(project_panel.clone(), window, cx);
                     workspace.add_panel(git_panel.clone(), window, cx);
                 });
             })
             .expect("workspace window should be available");
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
 
         workspace_window
-            .update(cx, |multi, window, cx| {
-                let workspace = multi.workspace();
-                project_panel.update(cx, |panel, cx| {
-                    panel.select_path_for_test(tracked1.clone(), cx)
+            .update(cx, |_, window, cx| {
+                git_panel.update(cx, |panel, cx| {
+                    panel.select_entry_by_path(tracked1.clone(), window, cx);
                 });
-                workspace.update(cx, |workspace, cx| {
-                    workspace.focus_panel::<ProjectPanel>(window, cx);
+                git_panel.update(cx, |panel, cx| {
+                    panel.focus_handle(cx).focus(window, cx);
                 });
             })
             .expect("workspace window should be available");
@@ -5185,13 +5165,12 @@ mod tests {
         });
 
         workspace_window
-            .update(cx, |multi, window, cx| {
-                let workspace = multi.workspace();
+            .update(cx, |_, window, cx| {
                 git_panel.update(cx, |panel, cx| {
                     panel.select_entry_by_path(tracked1.clone(), window, cx);
                 });
-                workspace.update(cx, |workspace, cx| {
-                    workspace.focus_panel::<git_ui::git_panel::GitPanel>(window, cx);
+                git_panel.update(cx, |panel, cx| {
+                    panel.focus_handle(cx).focus(window, cx);
                 });
             })
             .expect("workspace window should be available");

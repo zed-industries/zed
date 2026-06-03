@@ -3,7 +3,7 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt, Window};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
@@ -31,6 +31,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct XAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct XAiLanguageModelProvider {
@@ -230,9 +231,12 @@ impl XAiLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = XAiLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = XAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -246,6 +250,7 @@ impl XAiLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                &extra_headers,
             );
             let response = request.await?;
             Ok(response)

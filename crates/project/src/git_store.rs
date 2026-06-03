@@ -35,10 +35,10 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions, GitCommitTemplate,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
+        CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions, FileHistoryChangedFileSets,
+        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
+        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -5269,6 +5269,29 @@ impl Repository {
                 }
             }
         })
+    }
+
+    pub fn file_history_changed_files(
+        &mut self,
+        paths: Vec<RepoPath>,
+        commit_limit: usize,
+    ) -> oneshot::Receiver<Result<Vec<FileHistoryChangedFileSets>>> {
+        self.send_job(
+            "file_history_changed_files",
+            None,
+            move |git_repo, _cx| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend
+                            .file_history_changed_files(paths, commit_limit)
+                            .await
+                    }
+                    RepositoryState::Remote(_) => {
+                        anyhow::bail!("file history changed files is only supported locally")
+                    }
+                }
+            },
+        )
     }
 
     pub fn get_graph_data(

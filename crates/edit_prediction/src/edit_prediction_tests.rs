@@ -48,6 +48,7 @@ use zeta_prompt::ZetaPromptInput;
 use crate::{
     BufferEditPrediction, EDIT_PREDICTION_SETTLED_QUIESCENCE, EditPredictionId,
     EditPredictionJumpsFeatureFlag, EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
+    REQUEST_TIMEOUT_BACKOFF,
 };
 
 #[gpui::test]
@@ -2067,6 +2068,63 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx.send(request_timeout_response()).unwrap();
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    cx.background_executor
+        .advance_clock(EditPredictionStore::THROTTLE_TIMEOUT);
+    cx.background_executor.run_until_parked();
+    cx.run_until_parked();
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    cx.background_executor
+        .advance_clock(REQUEST_TIMEOUT_BACKOFF);
+    cx.background_executor.run_until_parked();
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx.send(empty_response()).unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui::test]
 async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -2546,6 +2604,18 @@ fn empty_response() -> PredictEditsV3Response {
     }
 }
 
+const REQUEST_TIMEOUT_RESPONSE_ID: &str = "__request_timeout__";
+
+fn request_timeout_response() -> PredictEditsV3Response {
+    PredictEditsV3Response {
+        request_id: REQUEST_TIMEOUT_RESPONSE_ID.to_string(),
+        editable_range: 0..0,
+        output: String::new(),
+        cursor_offset: None,
+        model_version: None,
+    }
+}
+
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
     zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
         .expect("default zeta prompt formatting should succeed in edit prediction tests")
@@ -2659,9 +2729,20 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                             let decompressed = zstd::decode_all(&buf[..]).unwrap();
                             let req = serde_json::from_slice(&decompressed).unwrap();
 
-                            let (res_tx, res_rx) = oneshot::channel();
+                            let (res_tx, res_rx) = oneshot::channel::<PredictEditsV3Response>();
                             predict_req_tx.unbounded_send((req, res_tx)).unwrap();
-                            serde_json::to_string(&res_rx.await?).unwrap()
+                            let response = res_rx.await?;
+                            if response.request_id == REQUEST_TIMEOUT_RESPONSE_ID {
+                                return Ok(Response::builder()
+                                    .status(http_client::http::StatusCode::REQUEST_TIMEOUT)
+                                    .body(
+                                        http_client::http::StatusCode::REQUEST_TIMEOUT
+                                            .as_str()
+                                            .into(),
+                                    )
+                                    .unwrap());
+                            }
+                            serde_json::to_string(&response).unwrap()
                         }
                         "/predict_edits/reject" => {
                             let mut buf = Vec::new();

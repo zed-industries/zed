@@ -134,6 +134,14 @@ struct ThemeSelectorDelegate {
     original_theme_settings: ThemeSettings,
     /// The current system appearance.
     original_system_appearance: Appearance,
+    /// The id of the original theme in the list of themes.
+    /// Using `Option<usize>` instead of `usize` because it's possible that the
+    /// original theme is not present in the list of themes when it is first
+    /// built, depending on the provided `themes_filter`. For example, when a
+    /// theme is installed, the `themes_filter` is set to the new theme names
+    /// and, if we used `unwrap_or(0)` as a fallback, the first theme in the
+    /// list would be shown as "active".
+    original_theme_id: Option<usize>,
     /// The currently selected new theme.
     new_theme: Arc<Theme>,
     selection_completed: bool,
@@ -174,10 +182,15 @@ impl ThemeSelectorDelegate {
                 .then(a.name.cmp(&b.name))
         });
 
+        let original_theme_id = themes
+            .iter()
+            .position(|meta| meta.name == original_theme.name);
+
         let matches: Vec<StringMatch> = themes
             .iter()
-            .map(|meta| StringMatch {
-                candidate_id: 0,
+            .enumerate()
+            .map(|(id, meta)| StringMatch {
+                candidate_id: id,
                 score: 0.0,
                 positions: Default::default(),
                 string: meta.name.to_string(),
@@ -196,12 +209,20 @@ impl ThemeSelectorDelegate {
             matches,
             original_theme_settings,
             original_system_appearance,
+            original_theme_id,
             new_theme: original_theme, // Start with the original theme.
             selected_index,
             selection_completed: false,
             selected_theme: None,
             selector,
         }
+    }
+
+    fn is_original_theme(&self, index: usize) -> bool {
+        self.matches
+            .get(index)
+            .zip(self.original_theme_id)
+            .is_some_and(|(mat, original_theme_id)| mat.candidate_id == original_theme_id)
     }
 
     fn show_selected_theme(
@@ -487,6 +508,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let theme_match = &self.matches.get(ix)?;
+        let is_original_theme = self.is_original_theme(ix);
 
         Some(
             ListItem::new(ix)
@@ -496,7 +518,10 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .child(HighlightedLabel::new(
                     theme_match.string.clone(),
                     theme_match.positions.clone(),
-                )),
+                ))
+                .when(is_original_theme, |this| {
+                    this.end_slot(Icon::new(IconName::Check).color(Color::Muted))
+                }),
         )
     }
 

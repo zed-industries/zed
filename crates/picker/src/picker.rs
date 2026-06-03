@@ -803,7 +803,8 @@ impl<D: PickerDelegate> Picker<D> {
         ix: usize,
     ) -> impl IntoElement + use<D> {
         let item_bounds = self.item_bounds.clone();
-        let selectable = self.delegate.can_select(ix, window, cx);
+        let selectable =
+            ix < self.delegate.match_count() && self.delegate.can_select(ix, window, cx);
 
         div()
             .id(("item", ix))

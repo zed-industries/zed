@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
@@ -642,6 +644,7 @@ pub async fn stream_generate_content(
     api_url: &str,
     api_key: &str,
     request: google_ai::GenerateContentRequest,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<google_ai::GenerateContentResponse>>> {
     let api_key = api_key.trim();
 
@@ -649,13 +652,13 @@ pub async fn stream_generate_content(
 
     let uri = format!("{api_url}/v1/models/{model_id}:streamGenerateContent?alt=sse");
 
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {api_key}"));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .header("Authorization", format!("Bearer {api_key}"))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
