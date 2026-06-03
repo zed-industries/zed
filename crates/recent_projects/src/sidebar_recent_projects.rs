@@ -203,7 +203,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -368,8 +368,10 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .child(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
                         .gap_3()
-                        .flex_grow()
+                        .flex_grow_1()
                         .when(self.has_any_non_local_projects, |this| {
                             this.child(Icon::new(icon).color(Color::Muted))
                         })

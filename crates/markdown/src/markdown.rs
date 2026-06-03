@@ -17,6 +17,7 @@ use mermaid::{
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
+use util::maybe;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -107,6 +108,7 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
+    pub heading_border_color: Option<Hsla>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
@@ -130,6 +132,7 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             heading_level_styles: None,
+            heading_border_color: None,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
@@ -187,8 +190,6 @@ impl MarkdownStyle {
             theme_settings.buffer_font.family.clone()
         };
 
-        let text_color = colors.text;
-
         let mut text_style = window.text_style();
         let line_height = buffer_font_size * 1.75;
 
@@ -198,11 +199,11 @@ impl MarkdownStyle {
             font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(ui_font_size.into()),
             line_height: Some(line_height.into()),
-            color: Some(text_color),
+            color: Some(colors.text),
             ..Default::default()
         });
 
-        MarkdownStyle {
+        let style = MarkdownStyle {
             base_text_style: text_style.clone(),
             syntax: syntax.clone(),
             selection_background_color: colors.element_selection_background,
@@ -299,7 +300,54 @@ impl MarkdownStyle {
                 },
             ),
             ..Default::default()
+        };
+
+        if is_preview {
+            style.with_preview_overrides(ui_font_size, colors)
+        } else {
+            style
         }
+    }
+
+    fn with_preview_overrides(mut self, ui_font_size: Pixels, colors: &theme::ThemeColors) -> Self {
+        let body_font_size = ui_font_size * 0.92;
+        self.base_text_style.font_size = body_font_size.into();
+        self.container_style.text.font_size = Some(body_font_size.into());
+
+        self.base_text_style.color = colors.text_muted.blend(colors.text.opacity(0.25));
+        self.inline_code.color = Some(colors.text);
+        self.heading.text.color = Some(colors.text);
+
+        self.heading_level_styles = Some(HeadingLevelStyles {
+            h1: Some(TextStyleRefinement {
+                font_size: Some(rems(1.45).into()),
+                ..Default::default()
+            }),
+            h2: Some(TextStyleRefinement {
+                font_size: Some(rems(1.3).into()),
+                ..Default::default()
+            }),
+            h3: Some(TextStyleRefinement {
+                font_size: Some(rems(1.1).into()),
+                ..Default::default()
+            }),
+            h4: Some(TextStyleRefinement {
+                font_size: Some(rems(1.01).into()),
+                ..Default::default()
+            }),
+            h5: Some(TextStyleRefinement {
+                font_size: Some(rems(0.95).into()),
+                ..Default::default()
+            }),
+            h6: Some(TextStyleRefinement {
+                font_size: Some(rems(0.85).into()),
+                ..Default::default()
+            }),
+        });
+
+        self.heading_border_color = Some(colors.border_variant);
+
+        self
     }
 
     pub fn with_buffer_font(mut self, cx: &App) -> Self {
@@ -1333,7 +1381,12 @@ impl MarkdownElement {
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut heading = div().mt_4().mb_2();
-        heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
+        heading = apply_heading_style(
+            heading,
+            level,
+            self.style.heading_level_styles.as_ref(),
+            self.style.heading_border_color,
+        );
 
         heading = match align {
             TextAlign::Center => heading.text_center(),
@@ -2220,6 +2273,7 @@ impl Element for MarkdownElement {
                         }),
                         MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
                             font_weight: Some(FontWeight::BOLD),
+                            color: Some(cx.theme().colors().text),
                             ..Default::default()
                         }),
                         MarkdownTag::Strikethrough => {
@@ -2694,6 +2748,7 @@ fn apply_heading_style(
     mut heading: Div,
     level: pulldown_cmark::HeadingLevel,
     custom_styles: Option<&HeadingLevelStyles>,
+    border_color: Option<Hsla>,
 ) -> Div {
     heading = match level {
         pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
@@ -2703,6 +2758,17 @@ fn apply_heading_style(
         pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
         pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
     };
+
+    if let Some(border_color) = border_color
+        && matches!(
+            level,
+            pulldown_cmark::HeadingLevel::H1
+                | pulldown_cmark::HeadingLevel::H2
+                | pulldown_cmark::HeadingLevel::H3
+        )
+    {
+        heading = heading.pb_1().border_b_1().border_color(border_color);
+    }
 
     if let Some(styles) = custom_styles {
         let style_opt = match level {
@@ -3237,6 +3303,7 @@ impl MarkdownElementBuilder {
             }],
             source_end: source_range.end,
             language: None,
+            text_align: TextAlign::Left,
         });
         div()
             .absolute()
@@ -3248,6 +3315,7 @@ impl MarkdownElementBuilder {
     }
 
     fn flush_text(&mut self) {
+        let text_align = self.text_style().text_align;
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
@@ -3259,6 +3327,7 @@ impl MarkdownElementBuilder {
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
+            text_align,
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
@@ -3282,6 +3351,7 @@ struct RenderedLine {
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
     language: Option<Arc<Language>>,
+    text_align: TextAlign,
 }
 
 impl RenderedLine {
@@ -3349,10 +3419,69 @@ impl RenderedLine {
         self.source_mappings[ix].source_index
     }
 
+    fn alignment_offset_for_segment(
+        &self,
+        available_width: Pixels,
+        segment_start_x: Pixels,
+        segment_end_x: Pixels,
+    ) -> Pixels {
+        let segment_width = segment_end_x - segment_start_x;
+        match self.text_align {
+            TextAlign::Left => px(0.),
+            TextAlign::Center => ((available_width - segment_width) / 2.).max(px(0.)),
+            TextAlign::Right => (available_width - segment_width).max(px(0.)),
+        }
+    }
+
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let adjusted_position = maybe!({
+            if self.text_align == TextAlign::Left {
+                return None;
+            }
+
+            let Some(wrapped_line) = self.layout.line_layout_for_index(0) else {
+                return None;
+            };
+
+            let bounds = self.layout.bounds();
+            let line_height = self.layout.line_height();
+            let relative_y = (position.y - bounds.top()).max(px(0.));
+            let wrapped_row_ix = (relative_y / line_height) as usize;
+            let boundaries = wrapped_line.wrap_boundaries();
+
+            let segment_start_x = if wrapped_row_ix == 0 {
+                px(0.)
+            } else {
+                boundaries
+                    .get(wrapped_row_ix - 1)
+                    .map(|b| {
+                        wrapped_line.unwrapped_layout.runs[b.run_ix].glyphs[b.glyph_ix]
+                            .position
+                            .x
+                    })
+                    .unwrap_or(px(0.))
+            };
+            let segment_end_x = boundaries
+                .get(wrapped_row_ix)
+                .map(|b| {
+                    wrapped_line.unwrapped_layout.runs[b.run_ix].glyphs[b.glyph_ix]
+                        .position
+                        .x
+                })
+                .unwrap_or(wrapped_line.unwrapped_layout.width);
+
+            let alignment_offset = self.alignment_offset_for_segment(
+                bounds.size.width,
+                segment_start_x,
+                segment_end_x,
+            );
+            Some(point(position.x - alignment_offset, position.y))
+        })
+        .unwrap_or(position);
+
         let line_rendered_index;
         let out_of_bounds;
-        match self.layout.index_for_position(position) {
+        match self.layout.index_for_position(adjusted_position) {
             Ok(ix) => {
                 line_rendered_index = ix;
                 out_of_bounds = false;
@@ -3475,8 +3604,14 @@ impl RenderedText {
                     let selection_end = rendered_end.min(row_end);
 
                     if selection_start < selection_end {
+                        let alignment_offset = line.alignment_offset_for_segment(
+                            line_bounds.size.width,
+                            row_start_x,
+                            row_end_x,
+                        );
                         let x_for_index = |index| {
                             line_bounds.left()
+                                + alignment_offset
                                 + unwrapped_layout.x_for_index(index - wrapped_line_start)
                                 - row_start_x
                         };

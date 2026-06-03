@@ -8,11 +8,13 @@
 //! alongside the storage so the sidebar's preview rendering can't drift from
 //! the format we persist.
 
+use agent::ZED_AGENT_ID;
 use agent_client_protocol::schema as acp;
 use anyhow::Context as _;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Entity, Task};
 use itertools::Itertools;
+use project::AgentId;
 use ui::SharedString;
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -162,6 +164,23 @@ pub fn display_label_for_draft(
         })
         .join(" ");
     truncate_draft_label(&raw)
+}
+
+pub fn empty_draft_placeholder_label(
+    workspace: Option<&Entity<Workspace>>,
+    agent_id: &AgentId,
+    cx: &App,
+) -> SharedString {
+    let agent_name = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
+        SharedString::from(ZED_AGENT_ID.to_string())
+    } else {
+        workspace
+            .map(|ws| ws.read(cx).project().read(cx).agent_server_store().clone())
+            .and_then(|store| store.read(cx).agent_display_name(agent_id))
+            .unwrap_or_else(|| SharedString::from(agent_id.to_string()))
+    };
+
+    format!("New {} Thread", agent_name).into()
 }
 
 #[cfg(test)]

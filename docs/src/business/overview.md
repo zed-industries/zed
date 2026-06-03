@@ -1,11 +1,11 @@
 ---
 title: Zed Business
-description: Zed Business gives every team member full Zed Pro access, with org-wide admin controls and enforced data settings for the whole organization.
+description: Zed Business gives paid Business seats hosted AI access, with org-wide admin controls and enforced data settings for the whole organization.
 ---
 
 # Zed Business
 
-Zed Business is Zed for your whole team. Every member gets access to Zed's hosted AI models and unlimited Edit Predictions, and administrators get controls to manage how Zed is used across the organization: which AI features are available, what data leaves your environment, and how AI spend is tracked.
+Zed Business is Zed for your team. Members with a paid Business seat get access to Zed's hosted AI models and unlimited Edit Predictions. Administrators control which AI features are available, what data leaves your environment, and how AI spend is tracked.
 
 It's for teams that want modern AI tooling without security trade-offs, and for companies with procurement or compliance requirements that have blocked Zed deployment.
 
@@ -24,12 +24,14 @@ For the organization:
   can't override these settings individually.
 - **Private by default:** Zed doesn't store your prompts or train on them
   without explicit opt-in.
-  [AI feedback and training data sharing](../ai/ai-improvement.md) is opt-in on
-  Free and Pro. On Business, data sharing is off by default and controlled by
-  administrators.
-- **[Roles and permissions](../roles.md):** Owners, admins, and members have
-  different access levels. Billing and org settings are only visible to the
-  roles that need them.
+  [Data sharing for AI improvement](../ai/ai-improvement.md) is opt-in: members
+  can choose to share but are never enrolled automatically. Administrators can
+  [enforce this org-wide](./admin-controls.md#data-sharing), blocking members
+  from opting in at all.
+- **[Roles and permissions](../roles.md):** Owners, admins, Billing Managers,
+  and members have different access levels. Billing Managers can manage billing
+  without counting toward paid Business seats or receiving Business
+  subscription AI access.
 - **Consolidated billing:** Your team's licenses and AI usage appear on
   [one invoice](../account/billing.md#organization), with no separate bills per member.
 

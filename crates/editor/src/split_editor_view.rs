@@ -210,7 +210,7 @@ impl RenderOnce for SplitEditorView {
                     .child(
                         div()
                             .id("split-editor-left")
-                            .flex_shrink()
+                            .flex_shrink_1()
                             .min_w_0()
                             .h_full()
                             .flex_basis(DefiniteLength::Fraction(left_ratio))
@@ -221,7 +221,7 @@ impl RenderOnce for SplitEditorView {
                     .child(
                         div()
                             .id("split-editor-right")
-                            .flex_shrink()
+                            .flex_shrink_1()
                             .min_w_0()
                             .h_full()
                             .flex_basis(DefiniteLength::Fraction(right_ratio))

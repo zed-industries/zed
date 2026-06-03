@@ -53,6 +53,29 @@ Zed also reads provider-specific environment variables. Non-empty environment va
 
 OpenAI-compatible provider environment variables are generated from the configured provider ID as upper snake case plus `_API_KEY`. For example, provider ID `my-gateway` uses `MY_GATEWAY_API_KEY`.
 
+## Custom Headers {#custom-headers}
+
+You can attach extra HTTP headers to every request Zed makes to supported HTTP-based providers. This is useful in corporate environments or for observability tooling.
+
+Configure them with `language_models.<provider>.custom_headers`:
+
+```json [settings]
+{
+  "language_models": {
+    "openai": {
+      "custom_headers": {
+        "Fancy-Auth": "Bearer <your-fancy-key>",
+        "X-My-Tag": "zed"
+      }
+    }
+  }
+}
+```
+
+`custom_headers` is supported by Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI-compatible providers, OpenCode, OpenRouter, Vercel AI Gateway, and xAI.
+
+Headers managed by Zed for each provider, such as `Authorization`, `Content-Type`, `Accept`, and provider-specific authentication headers, are ignored with a warning if you try to override them.
+
 ## Remote Projects {#remote-projects}
 
 Zed LLM providers for Zed AI features are initialized in the local Zed app. In SSH, dev container, and other remote projects, API keys saved in Zed are read from the local system keychain, and provider environment variables are read from the local Zed process environment.

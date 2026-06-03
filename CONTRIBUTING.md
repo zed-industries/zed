@@ -52,7 +52,17 @@ submitted. If you'd like your PR to have the best chance of being merged:
 - Keep AI assistance under your judgement and responsibility: it's unlikely
   we'll merge a vibe-coded PR that the author doesn't understand.
 
-The internal advice for reviewers is as follows:
+### AI Policy
+
+We welcome the use of LLMs for coding, but we hold a high bar for all contributions, and **we expect a human in the loop who genuinely understands the work an LLM produces** on their behalf. For that reason, we **don't accept contributions from autonomous agents**. Pull requests that appear to violate this may be closed, sometimes without notice.
+
+**Don't rely on LLMs to write the whole thing for you when communicating with the maintainers** (meaning replies to comments, PR descriptions, and alike). The readers are humans, and we'd like to hear from you, not from a model (we have models at home). If you're a non-native English speaker using an LLM to thoroughly edit or translate your messages to the maintainers, we'd encourage you to **put the machine translation in a quote block and include the original text in your native language after it**.
+
+If you think it's helpful/necessary to **share context from a chat with an LLM**, please put the **relevant part of it** in a quote block (e.g., using `>`), **disclose it as AI-generated**, and add your own commentary explaining **why it's relevant and what you take from it**.
+
+This policy was adapted from [ripgrep's AI policy](https://github.com/BurntSushi/ripgrep/blob/f0cec341ab95c25c691ad3d5754d4bd9eedde21f/AI_POLICY.md).
+
+### Internal advice for reviewers
 
 - If the fix/feature is obviously great, and the code is great. Hit merge.
 - If the fix/feature is obviously great, and the code is nearly great. Send PR comments, or offer to pair to get things perfect.

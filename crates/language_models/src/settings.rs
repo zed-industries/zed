@@ -4,11 +4,12 @@ use collections::HashMap;
 use settings::RegisterSetting;
 
 use crate::provider::{
-    anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
-    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    opencode::OpenCodeSettings, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    anthropic, anthropic::AnthropicSettings, bedrock, bedrock::AmazonBedrockSettings,
+    cloud::ZedDotDevSettings, deepseek::DeepSeekSettings, google::GoogleSettings,
+    lmstudio::LmStudioSettings, mistral, mistral::MistralSettings, ollama::OllamaSettings,
+    open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings, open_router,
+    open_router::OpenRouterSettings, opencode, opencode::OpenCodeSettings, resolve_custom_headers,
+    vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -27,6 +28,17 @@ pub struct AllLanguageModelSettings {
     pub vercel_ai_gateway: VercelAiGatewaySettings,
     pub x_ai: XAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
+}
+
+fn custom_headers_from(
+    provider_name: &str,
+    raw: Option<HashMap<String, String>>,
+    reserved: &[&str],
+) -> http_client::CustomHeaders {
+    raw.as_ref()
+        .filter(|map| !map.is_empty())
+        .map(|map| resolve_custom_headers(provider_name, map, reserved))
+        .unwrap_or_default()
 }
 
 impl settings::Settings for AllLanguageModelSettings {
@@ -52,9 +64,19 @@ impl settings::Settings for AllLanguageModelSettings {
             anthropic: AnthropicSettings {
                 api_url: anthropic.api_url.unwrap(),
                 available_models: anthropic.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "Anthropic",
+                    anthropic.custom_headers,
+                    anthropic::RESERVED_HEADER_NAMES,
+                ),
             },
             bedrock: AmazonBedrockSettings {
                 available_models: bedrock.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "Amazon Bedrock",
+                    bedrock.custom_headers,
+                    bedrock::RESERVED_HEADER_NAMES,
+                ),
                 region: bedrock.region,
                 endpoint: bedrock.endpoint_url, // todo(should be api_url)
                 profile_name: bedrock.profile,
@@ -67,28 +89,42 @@ impl settings::Settings for AllLanguageModelSettings {
             deepseek: DeepSeekSettings {
                 api_url: deepseek.api_url.unwrap(),
                 available_models: deepseek.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("DeepSeek", deepseek.custom_headers, &[]),
             },
             google: GoogleSettings {
                 api_url: google.api_url.unwrap(),
                 available_models: google.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("Google AI", google.custom_headers, &[]),
             },
             lmstudio: LmStudioSettings {
                 api_url: lmstudio.api_url.unwrap(),
                 available_models: lmstudio.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("LM Studio", lmstudio.custom_headers, &[]),
             },
             mistral: MistralSettings {
                 api_url: mistral.api_url.unwrap(),
                 available_models: mistral.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "Mistral",
+                    mistral.custom_headers,
+                    mistral::RESERVED_HEADER_NAMES,
+                ),
             },
             ollama: OllamaSettings {
                 api_url: ollama.api_url.unwrap(),
                 auto_discover: ollama.auto_discover.unwrap_or(true),
                 available_models: ollama.available_models.unwrap_or_default(),
                 context_window: ollama.context_window,
+                custom_headers: custom_headers_from("Ollama", ollama.custom_headers, &[]),
             },
             opencode: OpenCodeSettings {
                 api_url: opencode.api_url.unwrap(),
                 available_models: opencode.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "OpenCode",
+                    opencode.custom_headers,
+                    opencode::RESERVED_HEADER_NAMES,
+                ),
                 show_zen_models: opencode.show_zen_models.unwrap_or(true),
                 show_go_models: opencode.show_go_models.unwrap_or(true),
                 show_free_models: opencode.show_free_models.unwrap_or(true),
@@ -96,19 +132,31 @@ impl settings::Settings for AllLanguageModelSettings {
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),
                 available_models: open_router.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "OpenRouter",
+                    open_router.custom_headers,
+                    open_router::RESERVED_HEADER_NAMES,
+                ),
             },
             openai: OpenAiSettings {
                 api_url: openai.api_url.unwrap(),
                 available_models: openai.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("OpenAI", openai.custom_headers, &[]),
             },
             openai_compatible: openai_compatible
                 .into_iter()
                 .map(|(key, value)| {
+                    let provider_label = format!("OpenAI Compatible ({key})");
                     (
                         key,
                         OpenAiCompatibleSettings {
                             api_url: value.api_url,
                             available_models: value.available_models,
+                            custom_headers: custom_headers_from(
+                                &provider_label,
+                                value.custom_headers,
+                                &[],
+                            ),
                         },
                     )
                 })
@@ -116,10 +164,16 @@ impl settings::Settings for AllLanguageModelSettings {
             vercel_ai_gateway: VercelAiGatewaySettings {
                 api_url: vercel_ai_gateway.api_url.unwrap(),
                 available_models: vercel_ai_gateway.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "Vercel AI Gateway",
+                    vercel_ai_gateway.custom_headers,
+                    &[],
+                ),
             },
             x_ai: XAiSettings {
                 api_url: x_ai.api_url.unwrap(),
                 available_models: x_ai.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("xAI", x_ai.custom_headers, &[]),
             },
             zed_dot_dev: ZedDotDevSettings {
                 available_models: zed_dot_dev.available_models.unwrap_or_default(),

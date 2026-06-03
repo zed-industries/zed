@@ -1,4 +1,4 @@
-//! Post-processing of [`merman`]-produced SVGs for rasterization with `usvg`/`resvg`.
+//! Zed-specific post-processing of [`merman`]-produced SVGs.
 //!
 //! Each submodule is a specific pass that tweaks the SVG event iterator in a particular way.
 //!
@@ -13,11 +13,8 @@
 
 mod accent_colors;
 mod element_fixup;
-mod fallback_fixup;
-mod foreignobject_wrap;
 mod inject_css;
 mod strip_foreignobject;
-mod strip_invalid_css;
 pub(crate) mod util;
 
 use anyhow::{Context as _, Result};
@@ -27,27 +24,21 @@ use quick_xml::events::Event;
 use crate::MermaidTheme;
 
 pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
-    // Pass 1: foreignObject preparation (\n fix + word wrapping)
-    let svg = foreignobject_wrap::process(svg)?;
+    // merman 0.6 already applies the generic resvg-safe cleanup before this point.
+    // The remaining passes are Zed-specific theme and accent adjustments.
+    let svg_id = extract_svg_id(svg);
 
-    // Add <text> fallbacks alongside <foreignObject> elements
-    let svg = merman::render::foreign_object_label_fallback_svg_text(&svg);
-
-    // Extract SVG id for CSS scoping (quick scan of the first element)
-    let svg_id = extract_svg_id(&svg);
-
-    // Pass 2: themed post-processing pipeline.
-    // Each adapter takes an iterator of events and returns an iterator of events.
-    // Events borrow from the `svg` string — no .into_owned() per event.
-    let mut reader = Reader::from_str(&svg);
+    let mut reader = Reader::from_str(svg);
     reader.config_mut().check_end_names = false;
     let events = ReaderIter::new(reader);
-    let events = strip_foreignobject::process(events);
-    let events = fallback_fixup::process(events, theme);
+    // merman's resvg-safe pipeline already removes foreignObject elements and
+    // replaces their labels with native <text> fallback groups. This pass keeps
+    // those fallback labels, but drops any that merely duplicate a native
+    // <text> (e.g. user journey renders some labels both ways).
+    let events = strip_foreignobject::process(events, svg);
     let events = element_fixup::process(events, theme);
 
     let events = accent_colors::process(events, theme);
-    let events = strip_invalid_css::process(events);
     let events = inject_css::process(events, theme, &svg_id);
 
     let mut writer = quick_xml::Writer::new(Vec::with_capacity(svg.len()));
@@ -109,28 +100,5 @@ impl<'a> Iterator for ReaderIter<'a> {
                 Some(Err(e.into()))
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn default_theme() -> MermaidTheme {
-        MermaidTheme::default()
-    }
-
-    #[test]
-    fn strip_css_handles_style_element_with_attributes() {
-        let svg = r#"<svg id="test" xmlns="http://www.w3.org/2000/svg"><style type="text/css">@keyframes bounce { 0% { transform: scale(1); } 100% { transform: scale(1.1); } } .node rect { fill: red; }</style><rect width="10" height="10"/></svg>"#;
-        let result = postprocess(svg, &default_theme()).unwrap();
-        assert!(
-            !result.contains("@keyframes"),
-            "Unsupported @keyframes should be stripped from <style type=\"text/css\">, got: {result}"
-        );
-        assert!(
-            result.contains(".node rect"),
-            "Regular CSS rules should survive stripping, got: {result}"
-        );
     }
 }

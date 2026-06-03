@@ -46,7 +46,7 @@ use anyhow::{Context as _, Result};
 use db::kvp::GlobalKeyValueStore;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, AsyncApp, Entity, TaskExt as _};
+use gpui::{App, AsyncApp, Entity, Task, TaskExt as _};
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
@@ -153,6 +153,7 @@ static MIGRATION_TASK_SPAWNED: AtomicBool = AtomicBool::new(false);
 /// has already started it.
 pub fn migrate_rules_to_skills_if_needed(fs: Arc<dyn Fs>, cx: &mut App) {
     if migration_done() {
+        log::info!("Rules-to-skills migration already marked done; skipping startup migration");
         return;
     }
     // Atomically claim the right to spawn the migration task. If another
@@ -163,63 +164,99 @@ pub fn migrate_rules_to_skills_if_needed(fs: Arc<dyn Fs>, cx: &mut App) {
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
+        log::info!("Rules-to-skills migration already running; skipping duplicate startup request");
         return;
     }
 
+    spawn_rules_to_skills_migration(fs, cx).detach_and_log_err(cx);
+}
+
+pub fn rerun_rules_to_skills_migration(
+    fs: Arc<dyn Fs>,
+    cx: &mut App,
+) -> Task<Result<MigrationResult>> {
+    log::info!("Forcing rules-to-skills migration rerun from command");
+    spawn_rules_to_skills_migration(fs, cx)
+}
+
+fn spawn_rules_to_skills_migration(fs: Arc<dyn Fs>, cx: &mut App) -> Task<Result<MigrationResult>> {
     let prompt_store = PromptStore::global(cx);
     cx.spawn(async move |cx| {
         let prompt_store = prompt_store.await.context("loading prompt store")?;
-
-        // Snapshot the (id, title) pairs for every user rule, split by
-        // whether it's a Default rule or not. BuiltIn prompts (e.g. the
-        // commit-message prompt) are excluded — they're not user-facing
-        // "Rules" in the agent sense.
-        let (default_rules, non_default_rules) = prompt_store.read_with(cx, |store, _| {
-            let mut default = Vec::new();
-            let mut non_default = Vec::new();
-            for metadata in store.all_prompt_metadata() {
-                if metadata.id.as_user().is_none() {
-                    continue;
-                }
-                let Some(title) = metadata.title.as_ref().map(|t| t.to_string()) else {
-                    continue;
-                };
-                if metadata.default {
-                    default.push((metadata.id, title));
-                } else {
-                    non_default.push((metadata.id, title));
-                }
-            }
-            (default, non_default)
-        });
-
-        let mut result = MigrationResult::default();
-
-        result.skill_names =
-            migrate_non_default_rules_to_skills(fs.as_ref(), &prompt_store, cx, non_default_rules)
-                .await;
-
-        let (agents_md_names, customized_builtins) = migrate_default_rules_to_agents_md(
-            fs.as_ref(),
-            paths::agents_file(),
-            &prompt_store,
-            cx,
-            default_rules,
-        )
-        .await;
-        result.agents_md_names = agents_md_names;
-        result.customized_builtins = customized_builtins;
-
-        // Persist the result BEFORE the done flag: if we crash between
-        // these two writes the next launch will see `done == false` and
-        // re-run, picking up the same (deterministic) result — worst
-        // case is the AGENTS.md append happens twice, which is a
-        // pre-existing limitation of the AGENTS.md migration.
-        write_migration_result(&result).await;
-        mark_migration_done().await;
-        anyhow::Ok(())
+        run_rules_to_skills_migration(fs.as_ref(), &prompt_store, cx).await
     })
-    .detach_and_log_err(cx);
+}
+
+async fn run_rules_to_skills_migration(
+    fs: &dyn Fs,
+    prompt_store: &Entity<PromptStore>,
+    cx: &mut AsyncApp,
+) -> Result<MigrationResult> {
+    log::info!(
+        "Starting rules-to-skills migration; skills_dir={}, agents_md={}, prompts_dir={}",
+        global_skills_dir().display(),
+        paths::agents_file().display(),
+        paths::prompts_dir().display()
+    );
+
+    // Snapshot the (id, title) pairs for every user rule, split by
+    // whether it's a Default rule or not. BuiltIn prompts (e.g. the
+    // commit-message prompt) are excluded — they're not user-facing
+    // "Rules" in the agent sense.
+    let (default_rules, non_default_rules) = prompt_store.read_with(cx, |store, _| {
+        let mut default = Vec::new();
+        let mut non_default = Vec::new();
+        for metadata in store.all_prompt_metadata() {
+            if metadata.id.as_user().is_none() {
+                continue;
+            }
+            let Some(title) = metadata.title.as_ref().map(|t| t.to_string()) else {
+                continue;
+            };
+            if metadata.default {
+                default.push((metadata.id, title));
+            } else {
+                non_default.push((metadata.id, title));
+            }
+        }
+        (default, non_default)
+    });
+    log::info!(
+        "Rules-to-skills migration found {} non-default rules and {} default rules",
+        non_default_rules.len(),
+        default_rules.len()
+    );
+
+    let mut result = MigrationResult::default();
+
+    result.skill_names =
+        migrate_non_default_rules_to_skills(fs, prompt_store, cx, non_default_rules).await;
+
+    let (agents_md_names, customized_builtins) = migrate_default_rules_to_agents_md(
+        fs,
+        paths::agents_file(),
+        prompt_store,
+        cx,
+        default_rules,
+    )
+    .await;
+    result.agents_md_names = agents_md_names;
+    result.customized_builtins = customized_builtins;
+
+    // Persist the result BEFORE the done flag: if we crash between
+    // these two writes the next launch will see `done == false` and
+    // re-run, picking up the same (deterministic) result. The AGENTS.md
+    // append path is idempotent, so a retry won't duplicate entries that
+    // were already written before the crash.
+    write_migration_result(&result).await;
+    mark_migration_done().await;
+    log::info!(
+        "Finished rules-to-skills migration; skill_names={}, agents_md_names={}, customized_builtins={}",
+        result.skill_names.len(),
+        result.agents_md_names.len(),
+        result.customized_builtins.len()
+    );
+    Ok(result)
 }
 
 /// Returns `true` if `body` (the result of `PromptStore::load` for the
@@ -271,6 +308,12 @@ async fn migrate_non_default_rules_to_skills(
     migrated
 }
 
+#[derive(Clone, Copy)]
+enum AgentsMdMigrationEntryKind {
+    CustomizedBuiltin,
+    DefaultUserRule,
+}
+
 /// Append all auto-included Rules to the global `AGENTS.md`, creating it
 /// if necessary. Each rule lands under an `## H2` heading containing its
 /// title, with the rule body underneath.
@@ -291,9 +334,7 @@ async fn migrate_default_rules_to_agents_md(
     cx: &mut AsyncApp,
     default_user_rules: Vec<(PromptId, String)>,
 ) -> (Vec<String>, Vec<String>) {
-    let mut entries: Vec<(String, String)> = Vec::new();
-    let mut customized_builtin_titles: Vec<String> = Vec::new();
-    let mut default_user_titles: Vec<String> = Vec::new();
+    let mut entries: Vec<(String, String, AgentsMdMigrationEntryKind)> = Vec::new();
 
     // Customized built-ins come first.
     for builtin in BuiltInPrompt::iter() {
@@ -305,8 +346,7 @@ async fn migrate_default_rules_to_agents_md(
         if !is_customized_builtin_body(builtin, &body) {
             continue;
         }
-        customized_builtin_titles.push(title.clone());
-        entries.push((title, body));
+        entries.push((title, body, AgentsMdMigrationEntryKind::CustomizedBuiltin));
     }
 
     // Then user Default Rules.
@@ -314,19 +354,42 @@ async fn migrate_default_rules_to_agents_md(
         let Some(body) = load_rule_body(prompt_store, cx, id, &title).await else {
             continue;
         };
-        default_user_titles.push(title.clone());
-        entries.push((title, body));
+        entries.push((title, body, AgentsMdMigrationEntryKind::DefaultUserRule));
     }
 
     if entries.is_empty() {
-        return (default_user_titles, customized_builtin_titles);
-    }
-    if let Err(err) = append_default_rules_to_agents_md(fs, agents_md_path, &entries).await {
-        log::warn!("Failed to append default rules to AGENTS.md: {err:#}");
-        // Treat a write failure as "nothing was actually migrated" so the
-        // announcement modal doesn't lie about what's in AGENTS.md.
         return (Vec::new(), Vec::new());
     }
+
+    let entries_for_append = entries
+        .iter()
+        .map(|(title, body, _)| (title.clone(), body.clone()))
+        .collect::<Vec<_>>();
+    let appended_indices =
+        match append_default_rules_to_agents_md(fs, agents_md_path, &entries_for_append).await {
+            Ok(appended_indices) => appended_indices,
+            Err(err) => {
+                log::warn!("Failed to append default rules to AGENTS.md: {err:#}");
+                // Treat a write failure as "nothing was actually migrated" so the
+                // announcement modal doesn't lie about what's in AGENTS.md.
+                return (Vec::new(), Vec::new());
+            }
+        };
+
+    let mut default_user_titles = Vec::new();
+    let mut customized_builtin_titles = Vec::new();
+    for index in appended_indices {
+        let (title, _, kind) = &entries[index];
+        match kind {
+            AgentsMdMigrationEntryKind::CustomizedBuiltin => {
+                customized_builtin_titles.push(title.clone());
+            }
+            AgentsMdMigrationEntryKind::DefaultUserRule => {
+                default_user_titles.push(title.clone());
+            }
+        }
+    }
+
     (default_user_titles, customized_builtin_titles)
 }
 
@@ -348,16 +411,16 @@ async fn load_rule_body(
 
 /// Build the markdown text to append for the given (title, body) rules
 /// and write it to `agents_md_path`, preserving any existing AGENTS.md
-/// content above the appended block.
+/// content above the appended block. Returns the indices of rules that
+/// were actually appended; entries already present verbatim are skipped.
 async fn append_default_rules_to_agents_md(
     fs: &dyn Fs,
     agents_md_path: &Path,
     rules: &[(String, String)],
-) -> Result<()> {
+) -> Result<Vec<usize>> {
     if rules.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    let appended = format_default_rules_section(rules);
 
     // `fs.load` errors when the file is missing OR unreadable; treat both
     // as "no existing content" so the file gets (re-)created from the
@@ -368,13 +431,38 @@ async fn append_default_rules_to_agents_md(
         .ok()
         .map(|s| s.trim().to_string());
 
+    let mut appended = String::new();
+    let mut appended_indices = Vec::new();
+    for (index, rule) in rules.iter().enumerate() {
+        let section = format_default_rules_section(std::slice::from_ref(rule));
+        if existing_trimmed
+            .as_deref()
+            .is_some_and(|existing| existing.contains(section.trim()))
+        {
+            log::info!(
+                "Skipping AGENTS.md migration entry {:?}: matching section already exists",
+                rule.0
+            );
+            continue;
+        }
+        if !appended.is_empty() {
+            appended.push_str("\n\n");
+        }
+        appended.push_str(&section);
+        appended_indices.push(index);
+    }
+
+    if appended_indices.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let final_contents = match existing_trimmed.as_deref() {
         Some(existing) if !existing.is_empty() => format!("{existing}\n\n{appended}\n"),
         _ => format!("{appended}\n"),
     };
 
     fs.write(agents_md_path, final_contents.as_bytes()).await?;
-    Ok(())
+    Ok(appended_indices)
 }
 
 /// Build the markdown text representing the migrated Default Rules block.
@@ -865,6 +953,55 @@ mod tests {
         assert!(contents.starts_with("# Top-level Agents Doc\n\nPre-existing user content."));
         assert!(contents.contains("\n\n## Rule One\n\nBody one."));
         assert!(contents.contains("\n\n## Rule Two\n\nBody two.\n"));
+    }
+
+    #[gpui::test]
+    async fn append_default_rules_skips_sections_already_in_agents_md(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let agents_md = PathBuf::from("/config/AGENTS.md");
+        fs.create_dir(agents_md.parent().unwrap()).await.unwrap();
+        fs.insert_file(
+            &agents_md,
+            b"## Rule One\n\nBody one.\n\nPre-existing footer.\n".to_vec(),
+        )
+        .await;
+
+        let rules = vec![
+            ("Rule One".to_string(), "Body one.".to_string()),
+            ("Rule Two".to_string(), "Body two.".to_string()),
+        ];
+        let appended_indices = append_default_rules_to_agents_md(fs.as_ref(), &agents_md, &rules)
+            .await
+            .unwrap();
+        assert_eq!(appended_indices, vec![1]);
+
+        let contents = fs.load(&agents_md).await.unwrap();
+        assert_eq!(contents.matches("## Rule One").count(), 1);
+        assert_eq!(contents.matches("## Rule Two").count(), 1);
+    }
+
+    #[gpui::test]
+    async fn append_default_rules_is_idempotent(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let agents_md = PathBuf::from("/config/AGENTS.md");
+        let rules = vec![
+            ("Rule One".to_string(), "Body one.".to_string()),
+            ("Rule Two".to_string(), "Body two.".to_string()),
+        ];
+
+        let first_append = append_default_rules_to_agents_md(fs.as_ref(), &agents_md, &rules)
+            .await
+            .unwrap();
+        let second_append = append_default_rules_to_agents_md(fs.as_ref(), &agents_md, &rules)
+            .await
+            .unwrap();
+
+        assert_eq!(first_append, vec![0, 1]);
+        assert!(second_append.is_empty());
+
+        let contents = fs.load(&agents_md).await.unwrap();
+        assert_eq!(contents.matches("## Rule One").count(), 1);
+        assert_eq!(contents.matches("## Rule Two").count(), 1);
     }
 
     #[gpui::test]

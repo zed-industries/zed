@@ -620,21 +620,14 @@ impl EditPipeline {
 
                 log::debug!("new_text_chunk: done=true, final_text='{}'", final_text);
 
-                if !final_text.is_empty() {
-                    let char_ops = streaming_diff.push_new(&final_text);
-                    apply_char_operations(
-                        &char_ops,
-                        buffer,
-                        &original_snapshot,
-                        &mut edit_cursor,
-                        &context.action_log,
-                        cx,
-                    );
-                }
-
-                let remaining_ops = streaming_diff.finish();
+                let mut char_ops = if final_text.is_empty() {
+                    Vec::new()
+                } else {
+                    streaming_diff.push_new(&final_text)
+                };
+                char_ops.extend(streaming_diff.finish());
                 apply_char_operations(
-                    &remaining_ops,
+                    &char_ops,
                     buffer,
                     &original_snapshot,
                     &mut edit_cursor,
@@ -902,22 +895,26 @@ fn apply_char_operations(
     action_log: &Entity<ActionLog>,
     cx: &mut AsyncApp,
 ) {
+    let mut edits: Vec<_> = Vec::new();
     for op in ops {
         match op {
             CharOperation::Insert { text } => {
                 let anchor = snapshot.anchor_after(*edit_cursor);
-                agent_edit_buffer(&buffer, [(anchor..anchor, text.as_str())], action_log, cx);
+                edits.push((anchor..anchor, text.as_str().into()));
             }
             CharOperation::Delete { bytes } => {
                 let delete_end = *edit_cursor + bytes;
                 let anchor_range = snapshot.anchor_range_inside(*edit_cursor..delete_end);
-                agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
+                edits.push((anchor_range, Arc::<str>::from("")));
                 *edit_cursor = delete_end;
             }
             CharOperation::Keep { bytes } => {
                 *edit_cursor += bytes;
             }
         }
+    }
+    if !edits.is_empty() {
+        agent_edit_buffer(buffer, edits, action_log, cx);
     }
 }
 

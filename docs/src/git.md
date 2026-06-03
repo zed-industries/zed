@@ -293,9 +293,17 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 
 To add custom commit instructions for the model, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
-<!-- Add media -->
+To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
 
-Any specific instructions for commit messages added to [instruction files](./ai/instructions.md) are also picked up by the model tasked with writing your commit message.
+```json [settings]
+{
+  "agent": {
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
 > See [the "Migrating to Skills" docs](./ai/rules.md#migrating-to-skills) in the Rules page for more information.
@@ -337,8 +345,8 @@ You can configure multiple custom providers if you work with several self-hosted
 
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
-Trigger this action via the [Command Palette](./command-palette.md) (search for `permalink`),
-by creating a [custom key binding](./key-bindings.md#user-keymaps) to the
+Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
+by creating [custom key bindings](./key-bindings.md#custom-key-bindings) for the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 

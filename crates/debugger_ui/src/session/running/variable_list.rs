@@ -1574,7 +1574,7 @@ impl Render for VariableList {
                 .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
                 .gap_1_5()
                 .size_full()
-                .flex_grow(),
+                .flex_grow_1(),
             )
             .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
