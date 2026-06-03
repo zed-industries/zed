@@ -232,7 +232,7 @@ impl EntryViewState {
                     self.set_entry(index, Entry::CompletedPlan);
                 }
             }
-            AgentThreadEntry::ContextCompaction => {
+            AgentThreadEntry::ContextCompaction(_) => {
                 if !matches!(self.entries.get(index), Some(Entry::ContextCompaction)) {
                     self.set_entry(index, Entry::ContextCompaction);
                 }
