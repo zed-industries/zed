@@ -15,19 +15,8 @@ test_both_dbs!(
 
 async fn test_add_contacts(db: &Arc<Database>) {
     let mut user_ids = Vec::new();
-    for i in 0..3 {
-        user_ids.push(
-            db.create_user(
-                false,
-                NewUserParams {
-                    github_login: format!("user{i}"),
-                    github_user_id: i,
-                },
-            )
-            .await
-            .unwrap()
-            .user_id,
-        );
+    for _ in 0..3 {
+        user_ids.push(db.create_user(false).await.unwrap().user_id);
     }
 
     let user_1 = user_ids[0];
@@ -174,26 +163,8 @@ test_both_dbs!(
 async fn test_project_count(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
-    let user1 = db
-        .create_user(
-            true,
-            NewUserParams {
-                github_login: "admin".into(),
-                github_user_id: 0,
-            },
-        )
-        .await
-        .unwrap();
-    let user2 = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 1,
-            },
-        )
-        .await
-        .unwrap();
+    let user1 = db.create_user(true).await.unwrap();
+    let user2 = db.create_user(false).await.unwrap();
 
     let room_id = RoomId::from_proto(
         db.create_room(user1.user_id, ConnectionId { owner_id, id: 0 }, "")

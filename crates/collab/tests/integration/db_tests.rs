@@ -5,7 +5,6 @@ mod extension_tests;
 mod migrations;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering::SeqCst};
 use std::time::Duration;
 
 use collections::HashSet;
@@ -70,7 +69,7 @@ impl TestDb {
         let _guard = LOCK.lock();
         let mut rng = StdRng::from_os_rng();
         let url = format!(
-            "postgres://postgres@localhost/zed-test-{}",
+            "postgres://postgres@localhost:54320/zed-test-{}",
             rng.random::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -205,17 +204,6 @@ fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str)]) -> Vec<Cha
     result
 }
 
-static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
-
-async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
-    db.create_user(
-        false,
-        NewUserParams {
-            github_login: email[0..email.find('@').unwrap()].to_string(),
-            github_user_id: GITHUB_USER_ID.fetch_add(1, SeqCst),
-        },
-    )
-    .await
-    .unwrap()
-    .user_id
+async fn new_test_user(db: &Arc<Database>, _email: &str) -> UserId {
+    db.create_user(false).await.unwrap().user_id
 }

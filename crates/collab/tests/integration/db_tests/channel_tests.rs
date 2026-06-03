@@ -1,6 +1,6 @@
 use super::{assert_channel_tree_matches, channel_tree, new_test_user};
 use crate::test_both_dbs;
-use collab::db::{Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId};
+use collab::db::{Channel, ChannelId, ChannelRole, Database, RoomId};
 use rpc::{
     ConnectionId,
     proto::{self, reorder_channel},
@@ -261,29 +261,9 @@ test_both_dbs!(
 async fn test_channel_renames(db: &Arc<Database>) {
     db.create_server("test").await.unwrap();
 
-    let user_1 = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_1 = db.create_user(false).await.unwrap().user_id;
 
-    let user_2 = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user2".into(),
-                github_user_id: 6,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_2 = db.create_user(false).await.unwrap().user_id;
 
     let zed_id = db.create_root_channel("zed", user_1).await.unwrap();
 
@@ -308,17 +288,7 @@ test_both_dbs!(
 );
 
 async fn test_db_channel_moving(db: &Arc<Database>) {
-    let a_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let a_id = db.create_user(false).await.unwrap().user_id;
 
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
@@ -396,29 +366,9 @@ test_both_dbs!(
 );
 
 async fn test_channel_reordering(db: &Arc<Database>) {
-    let admin_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "admin".into(),
-                github_user_id: 1,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let admin_id = db.create_user(false).await.unwrap().user_id;
 
-    let user_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 2,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_id = db.create_user(false).await.unwrap().user_id;
 
     // Create a root channel with some sub-channels
     let root_id = db.create_root_channel("root", admin_id).await.unwrap();
@@ -587,17 +537,7 @@ test_both_dbs!(
 );
 
 async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
-    let user_id = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_id = db.create_user(false).await.unwrap().user_id;
 
     let zed_id = db.create_root_channel("zed", user_id).await.unwrap();
 

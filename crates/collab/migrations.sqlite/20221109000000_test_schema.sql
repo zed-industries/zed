@@ -10,7 +10,7 @@ CREATE TABLE "users" (
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
-    "github_user_id" INTEGER NOT NULL,
+    "github_user_id" INTEGER,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
     "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE,
     "custom_llm_monthly_allowance_in_cents" INTEGER
