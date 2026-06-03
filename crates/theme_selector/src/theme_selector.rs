@@ -134,7 +134,7 @@ struct ThemeSelectorDelegate {
     original_theme_settings: ThemeSettings,
     /// The current system appearance.
     original_system_appearance: Appearance,
-    /// The index of the original theme in the list of themes.
+    /// The id of the original theme in the list of themes.
     /// Using `Option<usize>` instead of `usize` because it's possible that the
     /// original theme is not present in the list of themes when it is first
     /// built, depending on the provided `themes_filter`. For example, when a
