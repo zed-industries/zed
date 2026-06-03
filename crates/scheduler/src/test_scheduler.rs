@@ -1,6 +1,6 @@
 use crate::{
-    BackgroundExecutor, Clock, ForegroundExecutor, Instant, Priority, RunnableMeta, Scheduler,
-    SessionId, TestClock, Timer,
+    BackgroundExecutor, Clock, Instant, LocalExecutor, Priority, RunnableMeta, Scheduler,
+    SessionId, Task, TestClock, Timer,
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
@@ -10,6 +10,7 @@ use rand::{
     distr::{StandardUniform, uniform::SampleRange, uniform::SampleUniform},
     prelude::*,
 };
+use std::any::Any;
 use std::{
     any::type_name_of_val,
     collections::{BTreeMap, HashSet, VecDeque},
@@ -57,10 +58,14 @@ impl TestScheduler {
             .map(|seed| seed.parse().unwrap())
             .unwrap_or(0);
 
+        let interactive = !std::env::var("SCHEDULER_NONINTERACTIVE").is_ok();
+
         (seed..seed + num_iterations as u64)
             .map(|seed| {
                 let mut unwind_safe_f = AssertUnwindSafe(&mut f);
-                eprintln!("Running seed: {seed}");
+                if interactive {
+                    eprintln!("Running seed: {seed}");
+                }
                 match panic::catch_unwind(move || Self::with_seed(seed, &mut *unwind_safe_f)) {
                     Ok(result) => result,
                     Err(error) => {
@@ -108,7 +113,12 @@ impl TestScheduler {
     pub fn end_test(&self) {
         let mut state = self.state.lock();
         if let Some((message, backtrace)) = &state.non_determinism_error {
-            panic!("{}\n{:?}", message, backtrace)
+            if cfg!(miri) {
+                // miri cannot debug print backtraces with `miri-disable-isolation` enabled
+                panic!("{}", message)
+            } else {
+                panic!("{}\n{:?}", message, backtrace)
+            }
         }
         state.finished = true;
     }
@@ -143,18 +153,21 @@ impl TestScheduler {
         self.state.lock().is_main_thread
     }
 
-    /// Allocate a new session ID for foreground task scheduling.
-    /// This is used by GPUI's TestDispatcher to map dispatcher instances to sessions.
     pub fn allocate_session_id(&self) -> SessionId {
         let mut state = self.state.lock();
         state.next_session_id.0 += 1;
         state.next_session_id
     }
 
-    /// Create a foreground executor for this scheduler
-    pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
+    /// Create a local executor for this scheduler.
+    pub fn foreground(self: &Arc<Self>) -> LocalExecutor {
         let session_id = self.allocate_session_id();
-        ForegroundExecutor::new(session_id, self.clone())
+        let scheduler = Arc::downgrade(self);
+        LocalExecutor::new(session_id, self.clone(), move |runnable| {
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler.schedule_local(session_id, runnable);
+            }
+        })
     }
 
     /// Create a background executor for this scheduler
@@ -458,6 +471,9 @@ impl TestScheduler {
             }
         } else if deadline.is_some() {
             false
+        } else if cfg!(miri) {
+            // miri cannot debug print backtraces with `miri-disable-isolation` enabled
+            panic!("Parking forbidden.");
         } else if self.state.lock().capture_pending_traces {
             let mut pending_traces = String::new();
             for (_, trace) in mem::take(&mut self.state.lock().pending_traces) {
@@ -573,7 +589,7 @@ impl Scheduler for TestScheduler {
         completed
     }
 
-    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
+    fn schedule_local(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
         assert_correct_thread(&self.thread, &self.state);
         let mut state = self.state.lock();
         let ix = if state.randomize_order {
@@ -646,6 +662,31 @@ impl Scheduler for TestScheduler {
 
     fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    /// In the test world, dedicated work is just a fresh local session driven
+    /// by the test scheduler's run loop alongside everything else. No real
+    /// thread is spawned, so determinism under `TestScheduler::many` is
+    /// preserved.
+    fn spawn_dedicated(
+        self: Arc<Self>,
+        f: Box<
+            dyn FnOnce(
+                    LocalExecutor,
+                )
+                    -> Pin<Box<dyn Future<Output = Box<dyn Any + Send + Sync>> + 'static>>
+                + Send
+                + 'static,
+        >,
+    ) -> Task<Box<dyn Any + Send + Sync>> {
+        let session_id = self.allocate_session_id();
+        let scheduler = Arc::downgrade(&self);
+        let executor = LocalExecutor::new(session_id, self, move |runnable| {
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler.schedule_local(session_id, runnable);
+            }
+        });
+        executor.spawn(f(executor.clone()))
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {

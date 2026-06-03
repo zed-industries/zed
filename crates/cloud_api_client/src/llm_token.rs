@@ -9,7 +9,11 @@ use crate::{ClientApiError, CloudApiClient};
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
 impl LlmApiToken {
-    pub async fn acquire(
+    /// Returns the cached LLM token, fetching a fresh one only if none has
+    /// been cached yet. The returned token is not validated; callers must
+    /// be prepared to refresh it (via [`LlmApiToken::refresh`]) if the
+    /// server rejects it.
+    pub async fn cached(
         &self,
         client: &CloudApiClient,
         system_id: Option<String>,
@@ -36,6 +40,10 @@ impl LlmApiToken {
         organization_id: Option<OrganizationId>,
     ) -> Result<String, ClientApiError> {
         Self::fetch(self.0.write().await, client, system_id, organization_id).await
+    }
+
+    pub async fn clear(&self) {
+        *self.0.write().await = None;
     }
 
     /// Clears the existing token before attempting to fetch a new one.

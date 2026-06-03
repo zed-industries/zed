@@ -23,6 +23,8 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use bench_context::{BenchAppContext, BenchWindowContext};
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
@@ -56,6 +58,8 @@ use crate::{
 };
 
 mod async_context;
+#[cfg(any(test, feature = "test-support"))]
+mod bench_context;
 mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
@@ -68,7 +72,7 @@ mod test_context;
 mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
-pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
@@ -149,6 +153,21 @@ impl Application {
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
+    }
+
+    /// Builds an app with accessibility (AccessKit) integration forcibly
+    /// disabled.
+    ///
+    /// In this mode, accessibility APIs (e.g.
+    /// [`div().role()`][crate::StatefulInteractiveElement::role]) silently
+    /// no-op.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview of
+    /// the features this disables.
+    pub fn new_inaccessible(platform: Rc<dyn Platform>) -> Self {
+        let this = Self::with_platform(platform);
+        this.0.borrow_mut().accessibility_force_disabled = true;
+        this
     }
 
     /// Assigns the source of assets for the application.
@@ -255,6 +274,22 @@ pub enum QuitMode {
     LastWindowClosed,
     /// Quit only when requested via [`App::quit`].
     Explicit,
+}
+
+/// Controls when GPUI hides the mouse cursor in response to keyboard input.
+///
+/// Restoration on mouse motion is handled by the platform layer; this enum
+/// only describes the policy for *triggering* a hide.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CursorHideMode {
+    /// Never hide the cursor automatically.
+    Never,
+    /// Hide on character-producing key presses (typing).
+    OnTyping,
+    /// Hide on character-producing key presses, *and* when a key binding
+    /// resolves to an action that consumes the keystroke.
+    #[default]
+    OnTypingAndAction,
 }
 
 #[doc(hidden)]
@@ -649,6 +684,10 @@ pub struct App {
 
     pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) mode: GpuiMode,
+    pub(crate) cursor_hide_mode: CursorHideMode,
+    /// Whether the app was created by [`Application::new_inaccessible`]. No
+    /// accesskit APIs will be called when this flag is set.
+    pub(crate) accessibility_force_disabled: bool,
     flushing_effects: bool,
     pending_updates: usize,
     quit_mode: QuitMode,
@@ -737,6 +776,8 @@ impl App {
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
                 quitting: false,
+                cursor_hide_mode: CursorHideMode::default(),
+                accessibility_force_disabled: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -821,7 +862,7 @@ impl App {
     }
 
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
-    /// will be given 100ms to complete before exiting.
+    /// will be given `SHUTDOWN_TIMEOUT` to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
 
@@ -875,6 +916,27 @@ impl App {
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&self) {
         self.platform.quit();
+    }
+
+    /// Returns the current policy for hiding the cursor in response to
+    /// keyboard input.
+    pub fn cursor_hide_mode(&self) -> CursorHideMode {
+        self.cursor_hide_mode
+    }
+
+    /// Sets the policy controlling when GPUI hides the cursor in response
+    /// to keyboard input.
+    pub fn set_cursor_hide_mode(&mut self, mode: CursorHideMode) {
+        self.cursor_hide_mode = mode;
+    }
+
+    /// Returns whether the cursor is currently visible according to the
+    /// platform. This will report `false` after a keyboard input has hidden
+    /// the cursor and the user has not yet moved the mouse to restore it.
+    ///
+    /// See [`App::set_cursor_hide_mode`].
+    pub fn is_cursor_visible(&self) -> bool {
+        self.platform.is_cursor_visible()
     }
 
     /// Schedules all windows in the application to be redrawn. This can be called

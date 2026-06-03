@@ -43,18 +43,17 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 
 ## Supported Tools
 
-| Tool                     | Input Matched Against        |
-| ------------------------ | ---------------------------- |
-| `terminal`               | The shell command string     |
-| `edit_file`              | The file path                |
-| `delete_path`            | The path being deleted       |
-| `move_path`              | Source and destination paths |
-| `copy_path`              | Source and destination paths |
-| `create_directory`       | The directory path           |
-| `restore_file_from_disk` | The file paths               |
-| `save_file`              | The file paths               |
-| `fetch`                  | The URL                      |
-| `search_web`             | The search query             |
+| Tool               | Input Matched Against        |
+| ------------------ | ---------------------------- |
+| `terminal`         | The shell command string     |
+| `edit_file`        | The file path                |
+| `write_file`       | The file path                |
+| `delete_path`      | The path being deleted       |
+| `move_path`        | Source and destination paths |
+| `copy_path`        | Source and destination paths |
+| `create_directory` | The directory path           |
+| `fetch`            | The URL                      |
+| `search_web`       | The search query             |
 
 For MCP tools, use the format `mcp:<server>:<tool_name>`.
 For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.

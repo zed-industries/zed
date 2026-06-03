@@ -122,12 +122,12 @@ impl PickerDelegate for ContactFinderDelegate {
             match user_store.contact_request_status(user) {
                 ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
                     self.user_store
-                        .update(cx, |store, cx| store.request_contact(user.id, cx))
+                        .update(cx, |store, cx| store.request_contact(user.legacy_id, cx))
                         .detach();
                 }
                 ContactRequestStatus::RequestSent => {
                     self.user_store
-                        .update(cx, |store, cx| store.remove_contact(user.id, cx))
+                        .update(cx, |store, cx| store.remove_contact(user.legacy_id, cx))
                         .detach();
                 }
                 _ => {}

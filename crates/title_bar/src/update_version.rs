@@ -66,9 +66,9 @@ impl UpdateVersion {
     }
 
     fn version_tooltip_message(version: &VersionCheckType) -> String {
-        format!("Version: {}", {
+        format!("Update to Version: {}", {
             match version {
-                VersionCheckType::Sha(sha) => format!("{}…", sha.short()),
+                VersionCheckType::Sha(sha) => sha.full(),
                 VersionCheckType::Semantic(semantic_version) => semantic_version.to_string(),
             }
         })
@@ -85,16 +85,16 @@ impl Render for UpdateVersion {
                 UpdateButton::checking().into_any_element()
             }
             AutoUpdateStatus::Downloading { version } => {
-                let tooltip = Self::version_tooltip_message(&version);
-                UpdateButton::downloading(tooltip).into_any_element()
+                let version = Self::version_tooltip_message(&version);
+                UpdateButton::downloading(version).into_any_element()
             }
             AutoUpdateStatus::Installing { version } => {
-                let tooltip = Self::version_tooltip_message(&version);
-                UpdateButton::installing(tooltip).into_any_element()
+                let version = Self::version_tooltip_message(&version);
+                UpdateButton::installing(version).into_any_element()
             }
             AutoUpdateStatus::Updated { version } => {
-                let tooltip = Self::version_tooltip_message(&version);
-                UpdateButton::updated(tooltip)
+                let version = Self::version_tooltip_message(&version);
+                UpdateButton::updated(version)
                     .on_click(|_, _, cx| {
                         workspace::reload(cx);
                     })
@@ -134,12 +134,15 @@ mod tests {
             Version::new(1, 0, 0),
         ));
 
-        assert_eq!(message, "Version: 1.0.0");
+        assert_eq!(message, "Update to Version: 1.0.0");
 
         let message = UpdateVersion::version_tooltip_message(&VersionCheckType::Sha(
             AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
         ));
 
-        assert_eq!(message, "Version: 14d9a41…");
+        assert_eq!(
+            message,
+            "Update to Version: 14d9a4189f058d8736339b06ff2340101eaea5af"
+        );
     }
 }

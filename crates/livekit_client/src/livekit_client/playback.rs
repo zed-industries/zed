@@ -49,8 +49,27 @@ pub(crate) struct AudioStack {
 
 impl AudioStack {
     pub(crate) fn new(executor: BackgroundExecutor) -> Self {
+        // AGC2's `adaptive_digital` is what actually levels speech toward a target;
+        // the `gain_controller2.enabled` master switch alone leaves it off, which
+        // historically meant capture was effectively unleveled. Defaults match
+        // what Chrome/Meet ship with -- in particular `max_gain_db = 50` paired
+        // with `max_output_noise_level_dbfs = -50`, which lets the AGC reach
+        // very quiet talkers while the noise-level estimator backs off before
+        // boosting amplifies the noise floor.
         let apm = Arc::new(Mutex::new(apm::AudioProcessingModule::new(
-            true, true, true, true,
+            apm::AudioProcessingConfig {
+                echo_canceller_enabled: true,
+                gain_controller2: apm::GainController2Config {
+                    enabled: true,
+                    adaptive_digital: apm::AdaptiveDigitalConfig {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                high_pass_filter_enabled: true,
+                noise_suppression_enabled: true,
+            },
         )));
         let mixer = Arc::new(Mutex::new(audio_mixer::AudioMixer::new()));
         Self {

@@ -30,7 +30,7 @@ use futures::{
     channel::mpsc::{self, UnboundedSender},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
