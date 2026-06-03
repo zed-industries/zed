@@ -180,3 +180,24 @@ pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
     let svg = postprocess::postprocess(&svg, theme)?;
     Ok(svg)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A flowchart with mutually nested subgraphs (`A` contains `B` and `B`
+    /// contains `A`) is an invalid containment cycle. Rendering it must return
+    /// gracefully rather than overflowing the stack and aborting the process.
+    #[test]
+    fn cyclic_subgraphs_do_not_crash() {
+        let source = "flowchart TD\n  subgraph A\n    B\n  end\n  subgraph B\n    A\n  end";
+        let result = render_to_svg(source, &MermaidTheme::default());
+        if let Err(err) = result {
+            let message = format!("{err:#}");
+            assert!(
+                message.contains("cycle"),
+                "expected a cycle-related error, got: {message}"
+            );
+        }
+    }
+}
