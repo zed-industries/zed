@@ -377,7 +377,7 @@ impl SyntaxTreeView {
         row.child(if node.is_named() {
             Label::new(node.kind()).color(Color::Default)
         } else {
-            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+            Label::new(format!("\"{}\"", node.kind().escape_debug())).color(Color::Created)
         })
         .child(
             div()
