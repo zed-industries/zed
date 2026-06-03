@@ -87,7 +87,7 @@ if (modifiedSchemaFiles.length > 0) {
     fail(
       [
         `This PR modifies database schema files (${modifiedSchemaFilesStr}), which requires creating a schema migration in the Cloud repository.`,
-        "Once the schema migraation has been created and applied, please add the following attestation to your PR description: ",
+        "Once the schema migration has been created and applied, please add the following attestation to your PR description: ",
         `"${SCHEMA_CHANGE_ATTESTATION}"`,
       ].join("\n\n"),
     );
