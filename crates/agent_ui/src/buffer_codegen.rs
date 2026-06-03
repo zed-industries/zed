@@ -508,6 +508,7 @@ impl CodegenAlternative {
                 content: vec![system_prompt.into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }];
 
             let mut user_message = LanguageModelRequestMessage {
@@ -515,6 +516,7 @@ impl CodegenAlternative {
                 content: Vec::new(),
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             };
 
             if let Some(context) = context_task.await {
@@ -611,6 +613,7 @@ impl CodegenAlternative {
                 content: Vec::new(),
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             };
 
             if let Some(context) = context_task.await {

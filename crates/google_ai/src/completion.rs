@@ -476,6 +476,7 @@ mod tests {
                 content: vec![MessageContent::Text("Hello".to_string())],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
             ..Default::default()
         }
@@ -551,6 +552,7 @@ mod tests {
                 }],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
             ..Default::default()
         };

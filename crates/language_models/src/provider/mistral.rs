@@ -962,12 +962,14 @@ mod tests {
                     content: vec![MessageContent::Text("System prompt".into())],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text("Hello".into())],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
                 // should skip empty assistant messages
                 LanguageModelRequestMessage {
@@ -975,6 +977,7 @@ mod tests {
                     content: vec![MessageContent::Text("".into())],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
             ],
             temperature: Some(0.5),
@@ -1012,6 +1015,7 @@ mod tests {
                 ],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
             tools: vec![],
             tool_choice: None,

@@ -5,9 +5,10 @@ use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    Role, StopReason, TokenUsage,
+    OPEN_AI_PROVIDER_ID, Role, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
+use serde_json::Value;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -218,6 +219,10 @@ pub fn into_open_ai_response(
     let mut input_items = Vec::new();
     let mut replayed_reasoning_item_indexes = HashMap::default();
     for (index, message) in messages.into_iter().enumerate() {
+        append_compaction_details_to_response_items(
+            message.compaction_details.as_deref(),
+            &mut input_items,
+        );
         append_message_to_response_items(
             message,
             index,
@@ -262,9 +267,7 @@ pub fn into_open_ai_response(
     let include = if reasoning
         .as_ref()
         .is_some_and(|reasoning| reasoning.effort != ReasoningEffort::None)
-        || input_items
-            .iter()
-            .any(|item| matches!(item, ResponseInputItem::Reasoning(_)))
+        || input_items.iter().any(is_reasoning_input_item)
     {
         vec![ResponseIncludable::ReasoningEncryptedContent]
     } else {
@@ -302,11 +305,62 @@ pub fn into_open_ai_response(
     }
 }
 
+fn append_compaction_details_to_response_items(
+    compaction_details: Option<&serde_json::Value>,
+    input_items: &mut Vec<Value>,
+) {
+    let Some(compaction_details) = compaction_details else {
+        return;
+    };
+
+    match compaction_details {
+        Value::Array(items) => input_items.extend(items.iter().cloned()),
+        Value::Object(details) => {
+            let provider = details.get("provider").and_then(Value::as_str);
+            if provider != Some(OPEN_AI_PROVIDER_ID.0.as_ref()) {
+                return;
+            }
+
+            let Some(items) = details.get("items").and_then(Value::as_array) else {
+                log::warn!("OpenAI native compaction details did not contain an items array");
+                return;
+            };
+            input_items.extend(items.iter().cloned());
+        }
+        _ => {
+            log::warn!("OpenAI native compaction details had an unexpected shape");
+        }
+    }
+}
+
+fn is_reasoning_input_item(item: &Value) -> bool {
+    item.get("type").and_then(Value::as_str) == Some("reasoning")
+}
+
+fn push_response_input_item(input_items: &mut Vec<Value>, item: ResponseInputItem) {
+    match serde_json::to_value(item) {
+        Ok(item) => input_items.push(item),
+        Err(error) => log::error!("failed to serialize OpenAI response input item: {error}"),
+    }
+}
+
+fn replace_response_input_item(input_items: &mut [Value], index: usize, item: ResponseInputItem) {
+    let Some(existing_item) = input_items.get_mut(index) else {
+        log::error!("failed to replace OpenAI response input item at missing index {index}");
+        return;
+    };
+
+    match serde_json::to_value(item) {
+        Ok(item) => *existing_item = item,
+        Err(error) => log::error!("failed to serialize OpenAI response input item: {error}"),
+    }
+}
+
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
-    input_items: &mut Vec<ResponseInputItem>,
+    input_items: &mut Vec<Value>,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
@@ -314,6 +368,7 @@ fn append_message_to_response_items(
         role,
         content,
         reasoning_details,
+        compaction_details: _,
         ..
     } = message;
     let phase = if role == Role::Assistant {
@@ -348,11 +403,14 @@ fn append_message_to_response_items(
                     input_items,
                 );
                 let call_id = tool_use.id.to_string();
-                input_items.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
-                    call_id,
-                    name: tool_use.name.to_string(),
-                    arguments: tool_use.raw_input,
-                }));
+                push_response_input_item(
+                    input_items,
+                    ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
+                        call_id,
+                        name: tool_use.name.to_string(),
+                        arguments: tool_use.raw_input,
+                    }),
+                );
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(
@@ -386,12 +444,13 @@ fn append_message_to_response_items(
                         ResponseFunctionCallOutputContent::List(parts)
                     }
                 };
-                input_items.push(ResponseInputItem::FunctionCallOutput(
-                    ResponseFunctionCallOutputItem {
+                push_response_input_item(
+                    input_items,
+                    ResponseInputItem::FunctionCallOutput(ResponseFunctionCallOutputItem {
                         call_id: tool_result.tool_use_id.to_string(),
                         output,
-                    },
-                ));
+                    }),
+                );
             }
         }
     }
@@ -408,7 +467,7 @@ fn append_message_to_response_items(
 fn append_reasoning_details_to_response_items(
     reasoning_details: Option<&serde_json::Value>,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
-    input_items: &mut Vec<ResponseInputItem>,
+    input_items: &mut Vec<Value>,
 ) {
     let Some(reasoning_details) = reasoning_details else {
         return;
@@ -426,18 +485,22 @@ fn append_reasoning_details_to_response_items(
 fn push_replayed_reasoning_item(
     reasoning_item: ResponseReasoningInputItem,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
-    input_items: &mut Vec<ResponseInputItem>,
+    input_items: &mut Vec<Value>,
 ) {
     if let Some(id) = reasoning_item.id.as_ref() {
         if let Some(index) = replayed_reasoning_item_indexes.get(id) {
-            input_items[*index] = ResponseInputItem::Reasoning(reasoning_item);
+            replace_response_input_item(
+                input_items,
+                *index,
+                ResponseInputItem::Reasoning(reasoning_item),
+            );
             return;
         }
 
         replayed_reasoning_item_indexes.insert(id.clone(), input_items.len());
     }
 
-    input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+    push_response_input_item(input_items, ResponseInputItem::Reasoning(reasoning_item));
 }
 
 fn push_response_text_part(
@@ -480,7 +543,7 @@ fn flush_response_parts(
     _index: usize,
     phase: Option<&str>,
     parts: &mut Vec<ResponseInputContent>,
-    input_items: &mut Vec<ResponseInputItem>,
+    input_items: &mut Vec<Value>,
 ) {
     if parts.is_empty() {
         return;
@@ -499,7 +562,7 @@ fn flush_response_parts(
         },
     });
 
-    input_items.push(item);
+    push_response_input_item(input_items, item);
     parts.clear();
 }
 
@@ -1212,6 +1275,46 @@ mod tests {
         })
     }
 
+    #[test]
+    fn into_open_ai_response_prepends_native_compaction_items() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: Vec::new(),
+                    cache: false,
+                    reasoning_details: None,
+                    compaction_details: Some(Arc::new(json!({
+                        "provider": "openai",
+                        "items": [{"type": "compaction", "encrypted_content": "encrypted"}],
+                    }))),
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("after compaction".into())],
+                    cache: false,
+                    reasoning_details: None,
+                    compaction_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5", true, true, None, None, true);
+
+        assert_eq!(
+            response.input,
+            vec![
+                json!({"type": "compaction", "encrypted_content": "encrypted"}),
+                json!({
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "after compaction"}],
+                }),
+            ]
+        );
+    }
+
     fn map_completion_events(
         events: Vec<ResponseStreamEvent>,
     ) -> Vec<LanguageModelCompletionEvent> {
@@ -1373,6 +1476,7 @@ mod tests {
                     content: vec![MessageContent::Text("System context".into())],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::User,
@@ -1382,6 +1486,7 @@ mod tests {
                     ],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -1391,12 +1496,14 @@ mod tests {
                     ],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
                     content: vec![MessageContent::ToolResult(tool_result)],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
             ],
             tools: vec![LanguageModelRequestTool {
@@ -1524,6 +1631,7 @@ mod tests {
                         }
                     ]
                 }))),
+                compaction_details: None,
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1606,6 +1714,7 @@ mod tests {
                         }
                     ]
                 }))),
+                compaction_details: None,
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1662,6 +1771,7 @@ mod tests {
                 content: vec![MessageContent::Text("Hello".into())],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1705,6 +1815,7 @@ mod tests {
                     content: vec![MessageContent::Text("Hello".into())],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 }],
                 tools: Vec::new(),
                 tool_choice: None,
@@ -1746,6 +1857,7 @@ mod tests {
                     content: vec![MessageContent::Text("Hello".into())],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 }],
                 tools: Vec::new(),
                 tool_choice: None,
@@ -1781,6 +1893,7 @@ mod tests {
                 content: vec![MessageContent::Text("Hello".into())],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1819,6 +1932,7 @@ mod tests {
                 content: vec![MessageContent::Text("Hello".into())],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1869,6 +1983,7 @@ mod tests {
                         }
                     ]
                 }))),
+                compaction_details: None,
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1951,12 +2066,14 @@ mod tests {
                     content: vec![MessageContent::Text("First.".into())],
                     cache: false,
                     reasoning_details: Some(Arc::new(first_reasoning_details)),
+                    compaction_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
                     content: vec![MessageContent::Text("Second.".into())],
                     cache: false,
                     reasoning_details: Some(Arc::new(second_reasoning_details)),
+                    compaction_details: None,
                 },
             ],
             tools: Vec::new(),
@@ -2045,6 +2162,7 @@ mod tests {
                         }
                     ]
                 }))),
+                compaction_details: None,
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -3081,6 +3199,7 @@ mod tests {
                     content: vec![MessageContent::Text("search for something".into())],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -3094,12 +3213,14 @@ mod tests {
                     ],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
                     content: vec![MessageContent::ToolResult(tool_result)],
                     cache: false,
                     reasoning_details: None,
+                    compaction_details: None,
                 },
             ],
             tools: vec![],

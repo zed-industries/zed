@@ -171,8 +171,18 @@ impl CompactionInfo {
                 .into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
-            Self::ProviderNative { .. } => Vec::new(),
+            Self::ProviderNative { provider, items } => vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+                reasoning_details: None,
+                compaction_details: Some(Arc::new(serde_json::json!({
+                    "provider": provider,
+                    "items": items,
+                }))),
+            }],
         }
     }
 }
@@ -201,6 +211,7 @@ impl Message {
                 content: vec!["Continue where you left off".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             }],
         }
     }
@@ -270,6 +281,7 @@ impl UserMessage {
             content: Vec::with_capacity(self.content.len()),
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         };
 
         const OPEN_CONTEXT: &str = "<context>\n\
@@ -605,6 +617,7 @@ impl AgentMessage {
             content: Vec::with_capacity(self.content.len()),
             cache: false,
             reasoning_details: self.reasoning_details.clone(),
+            compaction_details: None,
         };
         for chunk in &self.content {
             match chunk {
@@ -641,6 +654,7 @@ impl AgentMessage {
             content: Vec::new(),
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         };
 
         for tool_result in self.tool_results.values() {
@@ -3135,6 +3149,7 @@ impl Thread {
             content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         });
 
         let task = cx
@@ -3579,6 +3594,7 @@ impl Thread {
             content: vec![system_prompt.into()],
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         }];
         self.extend_request_history_until(&mut messages, end_ix);
 
@@ -3699,6 +3715,7 @@ impl Thread {
             content: vec![COMPACTION_PROMPT.into()],
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         });
 
         request
@@ -4004,6 +4021,7 @@ pub fn build_thread_title_request(
         content: vec![SUMMARIZE_THREAD_PROMPT.into()],
         cache: false,
         reasoning_details: None,
+        compaction_details: None,
     });
     request
 }
@@ -5718,9 +5736,20 @@ mod tests {
             })
         });
 
+        let compaction_message = request_messages
+            .get(1)
+            .expect("expected native compaction request message after system message");
+        assert!(compaction_message.content.is_empty());
+        assert_eq!(
+            compaction_message.compaction_details.as_deref(),
+            Some(&json!({
+                "provider": "openai",
+                "items": [{"type": "compaction"}],
+            }))
+        );
         assert_eq!(
             request_texts_after_system(&request_messages),
-            vec!["after native".to_string()]
+            vec!["".to_string(), "after native".to_string()]
         );
     }
 
@@ -5783,6 +5812,7 @@ mod tests {
             content: vec![MessageContent::Text("hello 👋 world".to_string())],
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         };
 
         let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();
@@ -5805,6 +5835,7 @@ mod tests {
             ],
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         };
 
         let truncated = truncate_user_message_to_byte_budget(message, 8).unwrap();

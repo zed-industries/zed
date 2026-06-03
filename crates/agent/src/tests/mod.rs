@@ -587,6 +587,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
             content: vec!["Message 1".into()],
             cache: true,
             reasoning_details: None,
+            compaction_details: None,
         }]
     );
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
@@ -612,18 +613,21 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
                 content: vec!["Message 1".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec!["Response to Message 1".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Message 2".into()],
                 cache: true,
                 reasoning_details: None,
+                compaction_details: None,
             }
         ]
     );
@@ -671,42 +675,49 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
                 content: vec!["Message 1".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec!["Response to Message 1".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Message 2".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec!["Response to Message 2".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec!["Use the echo tool".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::ToolResult(tool_result)],
                 cache: true,
                 reasoning_details: None,
+                compaction_details: None,
             }
         ]
     );
@@ -3551,6 +3562,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                 content: vec!["Hey!".into()],
                 cache: true,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
@@ -3560,6 +3572,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                 ],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -3572,6 +3585,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                 })],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
         ],
     );
@@ -4187,12 +4201,14 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
                 content: vec!["Call the echo tool!".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![language_model::MessageContent::ToolUse(tool_use_1.clone())],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -4207,6 +4223,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
                 )],
                 cache: true,
                 reasoning_details: None,
+                compaction_details: None,
             },
         ]
     );
@@ -4347,12 +4364,14 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                 content: vec!["Use the streaming_echo tool".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![language_model::MessageContent::ToolUse(tool_use.clone())],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -4367,6 +4386,7 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                 )],
                 cache: true,
                 reasoning_details: None,
+                compaction_details: None,
             },
         ]
     );
@@ -7680,12 +7700,14 @@ async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestA
                 content: vec!["Use the streaming_failing_echo tool".into()],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![language_model::MessageContent::ToolUse(tool_use.clone())],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -7700,6 +7722,7 @@ async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestA
                 )],
                 cache: true,
                 reasoning_details: None,
+                compaction_details: None,
             },
         ]
     );
@@ -7788,6 +7811,7 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                 ],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::Assistant,
@@ -7797,6 +7821,7 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                 ],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             },
             LanguageModelRequestMessage {
                 role: Role::User,
@@ -7818,6 +7843,7 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                 ],
                 cache: true,
                 reasoning_details: None,
+                compaction_details: None,
             },
         ]
     );

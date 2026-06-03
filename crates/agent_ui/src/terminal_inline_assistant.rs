@@ -254,6 +254,7 @@ impl TerminalInlineAssistant {
                 content: vec![],
                 cache: false,
                 reasoning_details: None,
+                compaction_details: None,
             };
 
             if let Some(context) = load_context_task.await {

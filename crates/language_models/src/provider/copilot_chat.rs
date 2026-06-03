@@ -1652,6 +1652,7 @@ mod tests {
                         }
                     ]
                 }))),
+                compaction_details: None,
             }],
             ..Default::default()
         };

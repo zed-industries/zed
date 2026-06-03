@@ -213,6 +213,7 @@ impl WriteToolTest {
             content: vec![MessageContent::Text(system_prompt)],
             cache: true,
             reasoning_details: None,
+            compaction_details: None,
         }]
         .into_iter()
         .chain(eval.conversation)
@@ -392,6 +393,7 @@ fn message(
         content: content.into_iter().collect(),
         cache: false,
         reasoning_details: None,
+        compaction_details: None,
     }
 }
 

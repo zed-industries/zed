@@ -294,6 +294,8 @@ pub struct LanguageModelRequestMessage {
     pub cache: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_details: Option<Arc<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_details: Option<Arc<serde_json::Value>>,
 }
 
 impl LanguageModelRequestMessage {
@@ -568,6 +570,7 @@ mod tests {
             ],
             cache: false,
             reasoning_details: None,
+            compaction_details: None,
         };
         assert_eq!(message.string_contents(), "prefix first second suffix");
     }

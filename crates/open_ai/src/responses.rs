@@ -14,7 +14,7 @@ pub struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub input: Vec<ResponseInputItem>,
+    pub input: Vec<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
