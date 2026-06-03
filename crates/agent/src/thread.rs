@@ -1110,8 +1110,12 @@ pub struct Thread {
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
-    #[allow(unused)]
     cumulative_token_usage: TokenUsage,
+    /// The latest usage snapshot reported for the in-flight completion
+    /// request. Providers emit cumulative-per-request snapshots, so we track
+    /// the previous one to accumulate only the delta into
+    /// `cumulative_token_usage`. Reset at the start of each request.
+    current_request_token_usage: TokenUsage,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
@@ -1244,6 +1248,7 @@ impl Thread {
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
+            current_request_token_usage: TokenUsage::default(),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project.clone(), cx);
                 cx.foreground_executor()
@@ -1597,6 +1602,7 @@ impl Thread {
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
             cumulative_token_usage: db_thread.cumulative_token_usage,
+            current_request_token_usage: TokenUsage::default(),
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
@@ -1978,6 +1984,25 @@ impl Thread {
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
+        let previous_snapshot = std::mem::replace(&mut self.current_request_token_usage, update);
+        // Saturating instead of `Sub` so a provider reporting a smaller
+        // snapshot than before can't cause an underflow panic.
+        self.cumulative_token_usage = self.cumulative_token_usage
+            + TokenUsage {
+                input_tokens: update
+                    .input_tokens
+                    .saturating_sub(previous_snapshot.input_tokens),
+                output_tokens: update
+                    .output_tokens
+                    .saturating_sub(previous_snapshot.output_tokens),
+                cache_creation_input_tokens: update
+                    .cache_creation_input_tokens
+                    .saturating_sub(previous_snapshot.cache_creation_input_tokens),
+                cache_read_input_tokens: update
+                    .cache_read_input_tokens
+                    .saturating_sub(previous_snapshot.cache_read_input_tokens),
+            };
+
         let Some(last_user_message) = self.last_user_message() else {
             return;
         };
@@ -2016,6 +2041,10 @@ impl Thread {
         let last_user_message = self.last_user_message()?;
         let tokens = self.request_token_usage.get(&last_user_message.id)?;
         Some(*tokens)
+    }
+
+    pub fn cumulative_token_usage(&self) -> language_model::TokenUsage {
+        self.cumulative_token_usage
     }
 
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
@@ -2287,6 +2316,7 @@ impl Thread {
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
+                this.current_request_token_usage = TokenUsage::default();
                 anyhow::Ok((model, request))
             })??;
 
