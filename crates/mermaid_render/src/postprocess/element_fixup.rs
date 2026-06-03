@@ -120,10 +120,11 @@ fn rewrite_background_style<'a>(style: &'a str, background_css: &str) -> Cow<'a,
         return Cow::Borrowed(style);
     }
 
+    let value_len = value_end.saturating_sub(value_start);
     let mut rewritten = String::with_capacity(
         style
             .len()
-            .saturating_sub(value_end - value_start)
+            .saturating_sub(value_len)
             .saturating_add(background_css.len()),
     );
     rewritten.push_str(&style[..value_start]);

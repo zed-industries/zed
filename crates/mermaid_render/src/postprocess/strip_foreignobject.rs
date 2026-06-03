@@ -155,7 +155,7 @@ impl<'a, I> StripForeignObject<'a, I> {
     fn buffer_fallback_event(&mut self, event: Event<'a>) {
         match &event {
             Event::Start(_) => self.fallback_depth += 1,
-            Event::End(_) => self.fallback_depth -= 1,
+            Event::End(_) => self.fallback_depth = self.fallback_depth.saturating_sub(1),
             Event::Text(t) => {
                 if let Ok(decoded) = t.decode() {
                     self.buffered_text.push_str(&decoded);
@@ -188,10 +188,16 @@ pub(super) fn process<'a>(
     inner: impl Iterator<Item = Result<Event<'a>>>,
     svg: &str,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
+    // if there's no foreignobjects,
+    let native_text_contents = if svg.contains("data-merman-foreignobject=\"fallback\"") {
+        collect_native_text_contents(svg)
+    } else {
+        HashSet::new()
+    };
     StripForeignObject {
         inner,
         foreign_depth: 0,
-        native_text_contents: collect_native_text_contents(svg),
+        native_text_contents,
         buffer: Vec::new(),
         fallback_depth: 0,
         buffered_text: String::new(),
