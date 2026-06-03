@@ -1,15 +1,14 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity, ImageSource,
-    RenderImage, StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
+    StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use ui::prelude::*;
-use ui::{CopyButton, TintColor};
+use ui::{CopyButton, TintColor, prelude::*};
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
