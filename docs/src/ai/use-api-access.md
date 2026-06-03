@@ -174,6 +174,8 @@ Zed also reads `XAI_API_KEY` from the local Zed process environment.
 
 Use OpenCode API access when you have an OpenCode API key. OpenCode Zen and Go affect which OpenCode models are available.
 
+Zed does not sign in to OpenCode with OAuth or detect your OpenCode subscription; it uses an OpenCode API key saved in the system keychain or `OPENCODE_API_KEY`.
+
 1. Visit [OpenCode Console](https://opencode.ai/auth) and create an account.
 2. Free models are available without payment. To use Zen or Go models, make sure you have enough credits or an active subscription.
 3. Generate an API key from the API Keys section in the OpenCode Console.

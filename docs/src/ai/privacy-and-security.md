@@ -44,7 +44,6 @@ provider agreements.
 | Anthropic | [Yes](https://www.anthropic.com/legal/commercial-terms) | [Yes](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) |
 | Google    | [Yes](https://cloud.google.com/terms/service-terms)     | [Yes](https://cloud.google.com/terms/service-terms), see Service Terms sections 18 and 20(h)                                                  |
 | OpenAI    | [Yes](https://openai.com/enterprise-privacy/)           | [Yes](https://platform.openai.com/docs/guides/your-data)                                                                                      |
-| xAI       | [Yes](https://x.ai/legal/faq-enterprise)                | [Yes](https://docs.x.ai/docs/resources/faq-api/security)                                                                                      |
 
 ## AI Data Retained by Zed {#ai-data-retained-by-zed}
 

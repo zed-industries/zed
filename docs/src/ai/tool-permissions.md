@@ -326,4 +326,4 @@ MCP tools only support the tool-level option.
 }
 ```
 
-To prevent the model from invoking a skill at all, set `disable-model-invocation: true` in that skill's `SKILL.md`. See [Skills](./skills.md#slash-only-skills).
+To prevent the model from invoking a skill at all, set `disable-model-invocation: true` in that skill's `SKILL.md`. See [Skills](./skills.md#disable-model-invocation).

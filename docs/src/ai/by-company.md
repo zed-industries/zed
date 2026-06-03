@@ -37,10 +37,10 @@ Claude Pro and Max subscriptions are separate from Anthropic API credits. If you
 
 ## Google / Gemini / Gemini CLI {#google-gemini}
 
-| Path          | Support level                    | What you get                                      | Account / billing     | Setup                                              |
-| ------------- | -------------------------------- | ------------------------------------------------- | --------------------- | -------------------------------------------------- |
-| Google AI API | Configured in Zed                | Gemini models through API access                  | Google AI API billing | [Use API Access](./use-api-access.md#google-ai)    |
-| Gemini CLI    | Hosted in Zed or run in terminal | Gemini CLI as an External Agent or native CLI/TUI | Owned by Gemini CLI   | [External Agents](./external-agents.md#gemini-cli) |
+| Path          | Support level                    | What you get                                      | Account / billing     | Setup                                                                                         |
+| ------------- | -------------------------------- | ------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| Google AI API | Configured in Zed                | Gemini models through API access                  | Google AI API billing | [Use API Access](./use-api-access.md#google-ai)                                               |
+| Gemini CLI    | Hosted in Zed or run in terminal | Gemini CLI as an External Agent or native CLI/TUI | Owned by Gemini CLI   | [External Agents](./external-agents.md#gemini-cli), [Terminal Threads](./terminal-threads.md) |
 
 ## GitHub / Copilot {#github-copilot}
 
@@ -53,11 +53,11 @@ Claude Pro and Max subscriptions are separate from Anthropic API credits. If you
 
 ## OpenCode / Zen / Go {#opencode}
 
-| Path                    | Support level     | What you get                                          | Account / billing                                    | Setup                                                                      |
-| ----------------------- | ----------------- | ----------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------- |
-| OpenCode provider       | Configured in Zed | OpenCode models for Zed AI features                   | OpenCode API key; Zen or Go affects available models | [Use an Existing Subscription](./use-an-existing-subscription.md#opencode) |
-| OpenCode External Agent | Hosted in Zed     | OpenCode in an External Agent thread, where available | Owned by OpenCode                                    | [External Agents](./external-agents.md#opencode)                           |
-| `opencode` CLI          | Run in terminal   | Native OpenCode CLI experience                        | Owned by OpenCode                                    | [Terminal Threads](./terminal-threads.md)                                  |
+| Path                    | Support level     | What you get                                          | Account / billing                                    | Setup                                            |
+| ----------------------- | ----------------- | ----------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------ |
+| OpenCode provider       | Configured in Zed | OpenCode models for Zed AI features                   | OpenCode API key; Zen or Go affects available models | [Use API Access](./use-api-access.md#opencode)   |
+| OpenCode External Agent | Hosted in Zed     | OpenCode in an External Agent thread, where available | Owned by OpenCode                                    | [External Agents](./external-agents.md#opencode) |
+| `opencode` CLI          | Run in terminal   | Native OpenCode CLI experience                        | Owned by OpenCode                                    | [Terminal Threads](./terminal-threads.md)        |
 
 ## Cursor {#cursor}
 

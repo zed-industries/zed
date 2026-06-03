@@ -7,7 +7,7 @@ description: Transform code inline with AI in Zed. Send selections to any LLM fo
 
 ## Usage Overview
 
-Use {#kb assistant::InlineAssist} to open the Inline Assistant in editors, the rules library, channel notes, and the terminal panel.
+Use {#kb assistant::InlineAssist} to open the Inline Assistant in editors, channel notes, and the terminal panel.
 
 The Inline Assistant sends your current selection (or line) to a language model and replaces it with the response.
 
@@ -27,7 +27,7 @@ If you have already set up an LLM provider to interact with [the Agent Panel](./
 
 You can add context in the Inline Assistant the same way you can in [the Agent Panel](./agent-panel.md#adding-context):
 
-- @-mention files, directories, past threads, rules, and symbols
+- @-mention files, directories, past threads, instruction files, and symbols
 - paste images that are copied on your clipboard
 
 You can also create a thread in the Agent Panel, then reference it with `@thread` in the Inline Assistant. This lets you refine a specific change from a larger thread without re-explaining context.
