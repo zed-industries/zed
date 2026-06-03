@@ -110,7 +110,11 @@ pub(super) fn process<'a>(
 fn mindmap_section_css(theme: &MermaidTheme) -> String {
     let colors: [String; 8] = theme.git_branch_colors.map(crate::css_color);
     let fills: [String; 8] = theme.git_branch_colors.map(|c| {
-        crate::css_color(blend_over_background(c, theme.background, ACCENT_FILL_OPACITY))
+        crate::css_color(blend_over_background(
+            c,
+            theme.background,
+            ACCENT_FILL_OPACITY,
+        ))
     });
     let text = crate::css_color(theme.text_color);
     let mut css = String::with_capacity(5_400);
