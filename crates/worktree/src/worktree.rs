@@ -3995,14 +3995,13 @@ impl BackgroundScanner {
     async fn load_tracked_paths_for_repository(
         &self,
         dot_git_abs_path: &Path,
-    ) -> Option<Arc<TrackedPaths>> {
+    ) -> Result<Arc<TrackedPaths>> {
         let repository = self
             .fs
             .open_repo(dot_git_abs_path, None)
-            .with_context(|| format!("opening repository at {}", dot_git_abs_path.display()))
-            .log_err()?;
-        let tracked_paths = repository.tracked_paths().await.log_err()?;
-        Some(Arc::new(TrackedPaths::new(tracked_paths)))
+            .with_context(|| format!("opening repository at {}", dot_git_abs_path.display()))?;
+        let tracked_paths = repository.tracked_paths().await?;
+        Ok(Arc::new(TrackedPaths::new(tracked_paths)))
     }
 
     async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
@@ -4060,19 +4059,28 @@ impl BackgroundScanner {
                     )
                     .await
                     .log_err()?;
-                if let Some(tracked_paths) = self
+                let work_directory_abs_path = local_repository.work_directory_abs_path.clone();
+                match self
                     .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
                     .await
                 {
-                    self.state
-                        .lock()
-                        .await
-                        .snapshot
-                        .tracked_paths_by_work_dir_abs_path
-                        .insert(
-                            local_repository.work_directory_abs_path.clone(),
-                            tracked_paths,
-                        );
+                    Ok(tracked_paths) => {
+                        self.state
+                            .lock()
+                            .await
+                            .snapshot
+                            .tracked_paths_by_work_dir_abs_path
+                            .insert(work_directory_abs_path, tracked_paths);
+                    }
+                    Err(error) => {
+                        log::error!("failed to load tracked paths: {error:#}");
+                        self.state
+                            .lock()
+                            .await
+                            .snapshot
+                            .tracked_paths_by_work_dir_abs_path
+                            .remove(&local_repository.work_directory_abs_path);
+                    }
                 }
                 Some(ancestor_dot_git)
             })
@@ -4931,21 +4939,33 @@ impl BackgroundScanner {
                             self.watcher.as_ref(),
                         )
                         .await;
-                    if let Some(local_repository) = local_repository
-                        && let Some(tracked_paths) = self
+                    if let Some(local_repository) = local_repository {
+                        let work_directory_abs_path =
+                            local_repository.work_directory_abs_path.clone();
+                        match self
                             .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
                             .await
-                    {
-                        self.state
-                            .lock()
-                            .await
-                            .snapshot
-                            .tracked_paths_by_work_dir_abs_path
-                            .insert(
-                                local_repository.work_directory_abs_path.clone(),
-                                tracked_paths.clone(),
-                            );
-                        ignore_stack.tracked_paths = Some(tracked_paths);
+                        {
+                            Ok(tracked_paths) => {
+                                self.state
+                                    .lock()
+                                    .await
+                                    .snapshot
+                                    .tracked_paths_by_work_dir_abs_path
+                                    .insert(work_directory_abs_path.clone(), tracked_paths.clone());
+                                ignore_stack.tracked_paths = Some(tracked_paths);
+                            }
+                            Err(error) => {
+                                log::error!("failed to load tracked paths: {error:#}");
+                                self.state
+                                    .lock()
+                                    .await
+                                    .snapshot
+                                    .tracked_paths_by_work_dir_abs_path
+                                    .remove(&work_directory_abs_path);
+                                ignore_stack.tracked_paths = None;
+                            }
+                        }
                     }
                 } else if child_name == GITIGNORE {
                     match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
@@ -5298,16 +5318,29 @@ impl BackgroundScanner {
                                 )
                                 .await
                                 .log_err()
-                                && let Some(tracked_paths) = self
+                            {
+                                let work_directory_abs_path =
+                                    local_repository.work_directory_abs_path.clone();
+                                match self
                                     .load_tracked_paths_for_repository(
                                         &local_repository.dot_git_abs_path,
                                     )
                                     .await
-                            {
-                                state.snapshot.tracked_paths_by_work_dir_abs_path.insert(
-                                    local_repository.work_directory_abs_path.clone(),
-                                    tracked_paths,
-                                );
+                                {
+                                    Ok(tracked_paths) => {
+                                        state
+                                            .snapshot
+                                            .tracked_paths_by_work_dir_abs_path
+                                            .insert(work_directory_abs_path, tracked_paths);
+                                    }
+                                    Err(error) => {
+                                        log::error!("failed to load tracked paths: {error:#}");
+                                        state
+                                            .snapshot
+                                            .tracked_paths_by_work_dir_abs_path
+                                            .remove(&work_directory_abs_path);
+                                    }
+                                }
                             }
                         }
                     }
@@ -5647,6 +5680,7 @@ impl BackgroundScanner {
                         continue;
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
+
                     if let Some(local_repository) = state
                         .insert_git_repository(
                             RelPath::new(relative, PathStyle::local())
@@ -5656,14 +5690,26 @@ impl BackgroundScanner {
                             self.watcher.as_ref(),
                         )
                         .await
-                        && let Some(tracked_paths) = self
+                    {
+                        let work_directory_abs_path = local_repository.work_directory_abs_path;
+                        match self
                             .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
                             .await
-                    {
-                        state.snapshot.tracked_paths_by_work_dir_abs_path.insert(
-                            local_repository.work_directory_abs_path.clone(),
-                            tracked_paths,
-                        );
+                        {
+                            Ok(tracked_paths) => {
+                                state
+                                    .snapshot
+                                    .tracked_paths_by_work_dir_abs_path
+                                    .insert(work_directory_abs_path, tracked_paths);
+                            }
+                            Err(error) => {
+                                log::error!("failed to load tracked paths: {error:#}");
+                                state
+                                    .snapshot
+                                    .tracked_paths_by_work_dir_abs_path
+                                    .remove(&work_directory_abs_path);
+                            }
+                        }
                     }
                 }
                 Some(local_repository) => {
@@ -5674,14 +5720,24 @@ impl BackgroundScanner {
                             entry.git_dir_scan_id = scan_id;
                         },
                     );
-                    if let Some(tracked_paths) = self
+                    let work_directory_abs_path = local_repository.work_directory_abs_path;
+                    match self
                         .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
                         .await
                     {
-                        state.snapshot.tracked_paths_by_work_dir_abs_path.insert(
-                            local_repository.work_directory_abs_path.clone(),
-                            tracked_paths,
-                        );
+                        Ok(tracked_paths) => {
+                            state
+                                .snapshot
+                                .tracked_paths_by_work_dir_abs_path
+                                .insert(work_directory_abs_path, tracked_paths);
+                        }
+                        Err(error) => {
+                            log::error!("failed to load tracked paths: {error:#}");
+                            state
+                                .snapshot
+                                .tracked_paths_by_work_dir_abs_path
+                                .remove(&work_directory_abs_path);
+                        }
                     }
                 }
             };
