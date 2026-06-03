@@ -36,6 +36,7 @@ use project::{
 use rope::Point;
 use settings::Settings;
 use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use text::LineEnding;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
@@ -1718,11 +1719,15 @@ impl MessageEditor {
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
+        let append_normalized = |text: &mut String, mut segment: String| {
+            LineEnding::normalize(&mut segment);
+            text.push_str(&segment);
+        };
 
         for chunk in message {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
-                    text.push_str(&text_content.text);
+                    append_normalized(&mut text, text_content.text);
                 }
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
@@ -1733,7 +1738,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1749,7 +1754,7 @@ impl MessageEditor {
                         MentionUri::parse(&resource.uri, path_style).log_err()
                     {
                         let start = text.len();
-                        write!(&mut text, "{}", mention_uri.as_link()).ok();
+                        append_normalized(&mut text, mention_uri.as_link().to_string());
                         let end = text.len();
                         mentions.push((start..end, mention_uri, Mention::Link));
                     }
@@ -1775,7 +1780,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -5267,6 +5272,33 @@ mod tests {
         let text = message_editor.update(cx, |editor, cx| editor.text(cx));
         assert_eq!(text, "hello world");
         assert!(!message_editor.update(cx, |editor, cx| editor.is_empty(cx)));
+    }
+
+    #[gpui::test]
+    async fn test_set_message_normalizes_crlf_before_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_message(
+                vec![
+                    acp::ContentBlock::Text(acp::TextContent::new("before\r\n".to_string())),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                        "file.txt",
+                        "file:///project/file.txt",
+                    )),
+                ],
+                window,
+                cx,
+            );
+        });
+
+        let text = message_editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "before\n[@file.txt](file:///project/file.txt)");
+
+        let mention_uris =
+            message_editor.update(cx, |editor, cx| editor.mention_set.read(cx).mentions());
+        assert_eq!(mention_uris.len(), 1);
     }
 
     #[gpui::test]
