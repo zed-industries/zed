@@ -33,6 +33,7 @@ use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalVi
 pub struct LayoutState {
     hitbox: Hitbox,
     batched_text_runs: Vec<BatchedTextRun>,
+    sextant_glyphs: Vec<SextantGlyph>,
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(Range, Hsla)>,
     cursor: Option<CursorLayout>,
@@ -174,6 +175,60 @@ impl BatchedTextRun {
                 cx,
             )
             .log_err();
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SextantGlyph {
+    point: LayoutPoint,
+    packed: u8,
+    color: Hsla,
+}
+
+impl SextantGlyph {
+    fn new(point: LayoutPoint, packed: u8, color: Hsla) -> Self {
+        Self {
+            point,
+            packed,
+            color,
+        }
+    }
+
+    pub fn paint(
+        &self,
+        origin: GpuiPoint<Pixels>,
+        dimensions: &TerminalBounds,
+        window: &mut Window,
+    ) {
+        let cell_origin = point(
+            origin.x + self.point.column as f32 * dimensions.cell_width,
+            origin.y + self.point.line as f32 * dimensions.line_height,
+        );
+
+        for row in 0..3 {
+            for col in 0..2 {
+                let bit = 5 - (row * 2 + col);
+                if (self.packed & (1 << bit)) != 0 {
+                    continue;
+                }
+
+                let left = (cell_origin.x + dimensions.cell_width * (col as f32 / 2.0)).floor();
+                let right =
+                    (cell_origin.x + dimensions.cell_width * ((col + 1) as f32 / 2.0)).ceil();
+                let top = (cell_origin.y + dimensions.line_height * (row as f32 / 3.0)).floor();
+                let bottom =
+                    (cell_origin.y + dimensions.line_height * ((row + 1) as f32 / 3.0)).ceil();
+
+                window.paint_quad(fill(
+                    Bounds::new(point(left, top), size(right - left, bottom - top)),
+                    self.color,
+                ));
+            }
+        }
+    }
+
+    pub fn line(&self) -> i32 {
+        self.point.line
     }
 }
 
@@ -376,7 +431,7 @@ impl TerminalElement {
         hyperlink: Option<(HighlightStyle, &Range)>,
         minimum_contrast: f32,
         cx: &App,
-    ) -> (Vec<LayoutRect>, Vec<BatchedTextRun>) {
+    ) -> (Vec<LayoutRect>, Vec<BatchedTextRun>, Vec<SextantGlyph>) {
         let start_time = Instant::now();
         let theme = cx.theme();
 
@@ -386,6 +441,7 @@ impl TerminalElement {
         let estimated_regions = estimated_cells / 20; // Estimate ~20 cells per background region
 
         let mut batched_runs = Vec::with_capacity(estimated_runs);
+        let mut sextant_glyphs = Vec::new();
         let mut cell_count = 0;
 
         // Collect background regions for efficient merging
@@ -460,6 +516,18 @@ impl TerminalElement {
                         );
 
                         let cell_point = LayoutPoint::new(display_line, point.column as i32);
+                        if let Some(packed) = Self::sextant_char_to_packed(cell.character()) {
+                            if let Some(batch) = current_batch.take() {
+                                batched_runs.push(batch);
+                            }
+                            sextant_glyphs.push(SextantGlyph::new(
+                                cell_point,
+                                packed,
+                                cell_style.color,
+                            ));
+                            continue;
+                        }
+
                         let zero_width_chars = cell.zerowidth();
 
                         // Try to batch with existing run
@@ -532,16 +600,17 @@ impl TerminalElement {
 
         log::debug!(
             "Terminal layout_grid: {} cells processed, \
-            {} batched runs created, {} rects (from {} merged regions), \
+            {} batched runs created, {} sextant glyphs, {} rects (from {} merged regions), \
             layout took {:?}",
             cell_count,
             batched_runs.len(),
+            sextant_glyphs.len(),
             rects.len(),
             region_count,
             layout_time
         );
 
-        (rects, batched_runs)
+        (rects, batched_runs, sextant_glyphs)
     }
 
     /// Computes the cursor position based on the cursor point and terminal dimensions.
@@ -575,6 +644,7 @@ impl TerminalElement {
             0x2500..=0x257F // Box Drawing (└ ┐ ─ │ etc.)
             | 0x2580..=0x259F // Block Elements (▀ ▄ █ ░ ▒ ▓ etc.)
             | 0x25A0..=0x25FF // Geometric Shapes (■ ▶ ● etc. - includes triangular/circular separators)
+            | 0x1FB00..=0x1FB3B // Symbols for Legacy Computing sextants used by terminal QR renderers
 
             // Private Use Area - Powerline separator symbols only
             | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
@@ -596,6 +666,27 @@ impl TerminalElement {
     }
 
     /// Converts terminal cell styles to GPUI text styles and background color.
+    fn sextant_char_to_packed(ch: char) -> Option<u8> {
+        let codepoint = ch as u32;
+        if !(0x1FB00..=0x1FB3B).contains(&codepoint) {
+            return None;
+        }
+
+        let offset = codepoint - 0x1FB00;
+        let sextant = (offset + 1 + u32::from(offset >= 20) + u32::from(offset >= 40)) as u8;
+        Some(Self::reverse_lower_six_bits(sextant) ^ 0b11_1111)
+    }
+
+    fn reverse_lower_six_bits(value: u8) -> u8 {
+        ((value & 0b00_0001) << 5)
+            | ((value & 0b00_0010) << 3)
+            | ((value & 0b00_0100) << 1)
+            | ((value & 0b00_1000) >> 1)
+            | ((value & 0b01_0000) >> 3)
+            | ((value & 0b10_0000) >> 5)
+    }
+
+    /// Converts the Alacritty cell styles to GPUI text styles and background color.
     fn cell_style(
         point: Point,
         cell: &Cell,
@@ -1158,10 +1249,11 @@ impl Element for TerminalElement {
                 // This handles the case where the terminal has been scrolled past (above or
                 // below the viewport), similar to the editor fix in PR #45077 where start_row
                 // could exceed max_row when the editor was positioned above the viewport.
-                let (rects, batched_text_runs) = if intersection.size.height <= px(0.)
+                let (rects, batched_text_runs, sextant_glyphs) = if intersection.size.height
+                    <= px(0.)
                     || intersection.size.width <= px(0.)
                 {
-                    (Vec::new(), Vec::new())
+                    (Vec::new(), Vec::new(), Vec::new())
                 } else if intersection == content_bounds {
                     // Fast path: terminal fully visible, no clipping needed.
                     // Avoid grouping/allocation overhead by streaming cells directly.
@@ -1304,6 +1396,7 @@ impl Element for TerminalElement {
                 LayoutState {
                     hitbox,
                     batched_text_runs,
+                    sextant_glyphs,
                     cursor,
                     ime_cursor_bounds,
                     background_color,
@@ -1425,6 +1518,9 @@ impl Element for TerminalElement {
                     let text_paint_start = Instant::now();
                     for batch in &layout.batched_text_runs {
                         batch.paint(origin, &layout.dimensions, window, cx);
+                    }
+                    for sextant in &layout.sextant_glyphs {
+                        sextant.paint(origin, &layout.dimensions, window);
                     }
                     let text_paint_time = text_paint_start.elapsed();
 
@@ -1829,6 +1925,25 @@ mod tests {
         assert!(TerminalElement::is_decorative_character('\u{25A0}')); // First char
         assert!(TerminalElement::is_decorative_character('\u{25FF}')); // Last char
         assert!(!TerminalElement::is_decorative_character('\u{2600}')); // Just after
+
+        // Sextant range boundaries
+        assert!(TerminalElement::is_decorative_character('\u{1FB00}')); // First char
+        assert!(TerminalElement::is_decorative_character('\u{1FB3B}')); // Last char
+        assert!(!TerminalElement::is_decorative_character('\u{1FAFF}')); // Just before
+        assert!(!TerminalElement::is_decorative_character('\u{1FB3C}')); // Just after
+    }
+
+    #[test]
+    fn test_sextant_char_to_packed() {
+        assert_eq!(
+            TerminalElement::sextant_char_to_packed('\u{1FB00}'),
+            Some(0b01_1111)
+        );
+        assert_eq!(
+            TerminalElement::sextant_char_to_packed('\u{1FB3B}'),
+            Some(0b10_0000)
+        );
+        assert_eq!(TerminalElement::sextant_char_to_packed('█'), None);
     }
 
     #[test]
