@@ -129,6 +129,7 @@ const GIT_CHANGED_FILE_SETS_COMMIT_LIMIT: usize = 100;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
+const REQUEST_TIMEOUT_BACKOFF: Duration = Duration::from_secs(10);
 
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
@@ -165,6 +166,7 @@ pub struct EditPredictionStore {
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
     zeta2_raw_config: Option<Zeta2RawConfig>,
+    request_backoff_until: Option<Instant>,
     preferred_experiment: Option<String>,
     available_experiments: Vec<String>,
     pub mercury: Mercury,
@@ -925,6 +927,7 @@ impl EditPredictionStore {
             update_required: false,
             edit_prediction_model: EditPredictionModel::Zeta,
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
+            request_backoff_until: None,
             preferred_experiment: None,
             available_experiments: Vec::new(),
             mercury: Mercury::new(cx),
@@ -965,6 +968,27 @@ impl EditPredictionStore {
 
     pub fn zeta2_raw_config(&self) -> Option<&Zeta2RawConfig> {
         self.zeta2_raw_config.as_ref()
+    }
+
+    pub(crate) fn back_off_requests_after_timeout(&mut self, cx: &mut Context<Self>) {
+        self.request_backoff_until = Some(cx.background_executor().now() + REQUEST_TIMEOUT_BACKOFF);
+        log::info!(
+            "Backing off edit prediction requests for {:?} after Cloud timeout",
+            REQUEST_TIMEOUT_BACKOFF
+        );
+    }
+
+    fn request_backoff_active(&mut self, cx: &App) -> bool {
+        let Some(backoff_until) = self.request_backoff_until else {
+            return false;
+        };
+
+        if cx.background_executor().now() < backoff_until {
+            true
+        } else {
+            self.request_backoff_until = None;
+            false
+        }
     }
 
     pub fn preferred_experiment(&self) -> Option<&str> {
@@ -2655,6 +2679,13 @@ impl EditPredictionStore {
             return Task::ready(Ok(None));
         }
 
+        if is_cloud_zeta && self.request_backoff_active(cx) {
+            log::debug!(
+                "Skipping Zeta edit prediction request while backing off after Cloud timeout"
+            );
+            return Task::ready(Ok(None));
+        }
+
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);
@@ -3029,6 +3060,9 @@ impl EditPredictionStore {
             let status = response.status();
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
+            if status == http_client::http::StatusCode::REQUEST_TIMEOUT {
+                return Err(anyhow::Error::new(CloudRequestTimeoutError));
+            }
             anyhow::bail!("Request failed with status: {status:?}\nBody: {body}");
         }
     }
@@ -3357,6 +3391,10 @@ fn merge_anchor_ranges(
 pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
+
+#[derive(Error, Debug)]
+#[error("Cloud request timed out")]
+pub(crate) struct CloudRequestTimeoutError;
 
 struct ZedPredictUpsell;
 
