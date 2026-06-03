@@ -484,6 +484,11 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             1.ˇ2
             "});
+
+        // '.' is a separator, not a decimal point, so the number the cursor is
+        // on is incremented even without surrounding whitespace.
+        cx.simulate("ctrl-a", "0.8ˇ1.46").await.assert_matches();
+        cx.simulate("ctrl-x", "0.8ˇ1.46").await.assert_matches();
     }
 
     #[gpui::test]
@@ -788,30 +793,19 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_increment_negative_numbers_no_gaps(cx: &mut gpui::TestAppContext) {
+    async fn test_increment_negative_numbers(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
+        // vim folds a leading '-' into the number, so ctrl-a on the `05` here
+        // operates on `-05` and decrements the visible digits to `04`.
         cx.simulate("ctrl-a", "2025-0ˇ5-10").await.assert_matches();
-    }
 
-    #[gpui::test]
-    async fn test_increment_negative_numbers_on_hyphens(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
+        // Cursor on or just before a trailing '-' (with or without a following
+        // number) must not scan past the '-' into the earlier number.
         cx.simulate("ctrl-a", "2025-05ˇ-").await.assert_matches();
         cx.simulate("ctrl-a", "2025-05ˇ- 345")
             .await
             .assert_matches();
-    }
-
-    #[gpui::test]
-    async fn test_increment_version_string_no_gaps(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        // '.' is a separator, not a decimal point, so the number the cursor is
-        // on is incremented even without surrounding whitespace.
-        cx.simulate("ctrl-a", "0.8ˇ1.46").await.assert_matches();
-        cx.simulate("ctrl-x", "0.8ˇ1.46").await.assert_matches();
     }
 
     #[gpui::test]
