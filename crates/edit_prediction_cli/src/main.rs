@@ -619,6 +619,7 @@ impl EpArgs {
 /// This version introduced the current request schema with predicted edits in the edit
 /// history, and open source repos distinguished.
 const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::MinCaptureVersion {
+    major: 0,
     minor: 224,
     patch: 1,
 };
@@ -765,16 +766,21 @@ async fn load_examples(
     let mut settled_after_timestamps = Vec::new();
     let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
         Vec::new();
+    let mut accepted_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
         let input_string = input.to_string_lossy();
         if let Some(timestamp) = pull_examples::parse_captured_after_input(input_string.as_ref()) {
             captured_after_timestamps.push(timestamp.to_string());
-        } else if let Some(timestamp) =
+        } else if let Some((explicit, timestamp)) =
             pull_examples::parse_rejected_after_input(input_string.as_ref())
         {
-            rejected_after_timestamps.push(timestamp.to_string());
+            rejected_after_timestamps.push((explicit, timestamp.to_string()));
+        } else if let Some(timestamp) =
+            pull_examples::parse_accepted_after_input(input_string.as_ref())
+        {
+            accepted_after_timestamps.push(timestamp.to_string());
         } else if let Some(timestamp) =
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
@@ -831,6 +837,21 @@ async fn load_examples(
             )
             .await?;
             examples.append(&mut rejected_examples);
+        }
+
+        if !accepted_after_timestamps.is_empty() {
+            accepted_after_timestamps.sort();
+
+            let mut accepted_examples = pull_examples::fetch_accepted_examples_after(
+                http_client.clone(),
+                &accepted_after_timestamps,
+                max_rows_per_timestamp,
+                remaining_offset,
+                background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
+            )
+            .await?;
+            examples.append(&mut accepted_examples);
         }
 
         if !requested_after_timestamps.is_empty() {

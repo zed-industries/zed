@@ -8,7 +8,9 @@ use serde::Serialize;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: UserId,
+    #[cfg(feature = "test-support")]
     pub github_login: String,
+    #[cfg(feature = "test-support")]
     pub github_user_id: i32,
     pub admin: bool,
     pub connected_once: bool,
