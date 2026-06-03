@@ -756,6 +756,7 @@ pub struct Sidebar {
     /// start_renaming_thread must seed current title into the title editor
     /// so this prevents that BufferEdited event from being interpreted as user input.
     suppress_next_rename_edit: bool,
+
     /// Updated only in response to explicit user actions (clicking a
     /// thread, confirming in the thread switcher, etc.) — never from
     /// background data changes. Used to sort the thread switcher popup.
@@ -3540,10 +3541,6 @@ impl Sidebar {
         );
     }
 
-    fn show_thread_title_regeneration_failed_toast(workspace: Entity<Workspace>, cx: &mut App) {
-        Self::show_thread_title_toast(workspace, "Failed to regenerate thread title.", cx);
-    }
-
     fn regenerate_thread_title(
         &mut self,
         session_id: &acp::SessionId,
@@ -3624,7 +3621,11 @@ impl Sidebar {
                     }
                     Err(_) => {
                         if let Some(workspace) = this.active_workspace(cx) {
-                            Self::show_thread_title_regeneration_failed_toast(workspace, cx);
+                            Self::show_thread_title_toast(
+                                workspace,
+                                "Failed to regenerate thread title.",
+                                cx,
+                            );
                         }
                     }
                 }
@@ -6341,32 +6342,32 @@ impl Sidebar {
                             menu = menu.entry("Open Thread as Markdown", None, {
                                 let session_id = session_id.clone();
                                 let markdown_title = markdown_title.clone();
-                                let open_thread_workspace = thread_workspace.clone();
+                                let thread_workspace = thread_workspace.clone();
                                 move |window, cx| {
-                                    let Some(active_workspace) = &active_workspace else {
-                                        return;
-                                    };
-                                    if let Some(open_thread_workspace) =
-                                        open_thread_workspace.as_ref()
+                                    if let Some(thread_workspace) = thread_workspace.as_ref()
+                                        && let Some(panel) =
+                                            thread_workspace.read(cx).panel::<AgentPanel>(cx)
                                     {
-                                        if let Some(panel) =
-                                            open_thread_workspace.read(cx).panel::<AgentPanel>(cx)
-                                            && panel.update(cx, |panel, cx| {
-                                                panel.open_thread_as_markdown(
-                                                    thread_id,
-                                                    active_workspace.clone(),
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                        {
+                                        let opened = panel.update(cx, |panel, cx| {
+                                            panel.open_thread_as_markdown(
+                                                thread_id,
+                                                thread_workspace.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        });
+                                        if opened {
                                             return;
                                         }
-                                    } else if is_zed_thread {
+                                    }
+
+                                    if is_zed_thread
+                                        && let Some(active_workspace) = &active_workspace
+                                    {
                                         Self::open_closed_native_thread_as_markdown(
                                             &session_id,
                                             markdown_title.clone(),
-                                            &active_workspace,
+                                            active_workspace,
                                             window,
                                             cx,
                                         );
