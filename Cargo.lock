@@ -271,6 +271,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proptest",
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
