@@ -2,6 +2,7 @@ mod thread_switcher;
 
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
+use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
@@ -19,7 +20,7 @@ use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
     ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
     NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
-    channels_with_threads, import_threads_from_other_channels,
+    ThreadTitleRegenerationResult, channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
 use editor::Editor;
@@ -32,9 +33,11 @@ use gpui::{
     WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
+use language_model::LanguageModelRegistry;
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
+use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
@@ -53,7 +56,7 @@ use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
     HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
     Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
-    prelude::*, render_modifiers,
+    prelude::*, render_modifiers, right_click_menu,
 };
 use unicode_segmentation::UnicodeSegmentation as _;
 use util::ResultExt as _;
@@ -747,6 +750,9 @@ pub struct Sidebar {
     active_entry: Option<ActiveEntry>,
     hovered_thread_index: Option<usize>,
     renaming_thread_id: Option<ThreadId>,
+    /// Threads in the database-backed regeneration path need their own loading
+    /// state because they do not have a live `agent::Thread` to report it.
+    regenerating_titles: HashSet<ThreadId>,
     /// start_renaming_thread must seed current title into the title editor
     /// so this prevents that BufferEdited event from being interpreted as user input.
     suppress_next_rename_edit: bool,
@@ -780,6 +786,9 @@ pub struct Sidebar {
     /// buttons. This field tracks whether we were using verbose labels so they
     /// can stay stable after dismissing one of the banners.
     import_banners_use_verbose_labels: Option<bool>,
+    /// Display names of other release channels that have threads available to
+    /// import.
+    cross_channel_import_channels: Vec<SharedString>,
 }
 
 impl Sidebar {
@@ -858,6 +867,17 @@ impl Sidebar {
         )
         .detach();
 
+        let channels_with_threads = channels_with_threads(cx);
+        cx.spawn(async move |this, cx| {
+            let channels = channels_with_threads.await;
+            this.update(cx, |this, cx| {
+                this.cross_channel_import_channels = channels;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+
         let deferred_multi_workspace = multi_workspace.downgrade();
         cx.defer_in(window, move |this, window, cx| {
             if let Some(multi_workspace) = deferred_multi_workspace.upgrade() {
@@ -881,6 +901,7 @@ impl Sidebar {
             active_entry: None,
             hovered_thread_index: None,
             renaming_thread_id: None,
+            regenerating_titles: HashSet::new(),
             suppress_next_rename_edit: false,
 
             thread_last_accessed: HashMap::new(),
@@ -898,6 +919,7 @@ impl Sidebar {
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
+            cross_channel_import_channels: Vec::new(),
         }
     }
 
@@ -3472,6 +3494,171 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
+    fn open_closed_native_thread_as_markdown(
+        session_id: &acp::SessionId,
+        title: Option<SharedString>,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let thread_store = ThreadStore::global(cx);
+        let load_task =
+            thread_store.update(cx, |store, cx| store.load_thread(session_id.clone(), cx));
+
+        let thread_title = title
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.to_string());
+
+        let workspace = workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| {
+                let db_thread = load_task.await?;
+                let Some(db_thread) = db_thread else {
+                    anyhow::bail!("Thread not found in database");
+                };
+
+                let markdown = db_thread.to_markdown();
+
+                cx.update(|window, cx| {
+                    agent_ui::open_markdown_in_workspace(
+                        thread_title,
+                        markdown,
+                        workspace,
+                        window,
+                        cx,
+                    )
+                })?
+                .await
+            })
+            .detach_and_log_err(cx);
+    }
+
+    fn show_thread_title_toast(workspace: Entity<Workspace>, message: &'static str, cx: &mut App) {
+        workspace.update(cx, |workspace, cx| {
+            let toast = StatusToast::new(message, cx, |this, _cx| {
+                this.icon(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .dismiss_button(true)
+            });
+            workspace.toggle_status_toast(toast, cx);
+        });
+    }
+
+    fn show_no_thread_summary_model_toast(workspace: Entity<Workspace>, cx: &mut App) {
+        Self::show_thread_title_toast(
+            workspace,
+            "No model is configured for summarizing thread titles.",
+            cx,
+        );
+    }
+
+    fn regenerate_thread_title(
+        &mut self,
+        session_id: &acp::SessionId,
+        thread_id: ThreadId,
+        folder_paths: PathList,
+        thread_workspace: Option<Entity<Workspace>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(panel) = thread_workspace
+            .as_ref()
+            .and_then(|w| w.read(cx).panel::<AgentPanel>(cx))
+        {
+            match panel.update(cx, |panel, cx| panel.regenerate_thread_title(thread_id, cx)) {
+                ThreadTitleRegenerationResult::Started
+                | ThreadTitleRegenerationResult::AlreadyGenerating => return,
+                ThreadTitleRegenerationResult::NoModel => {
+                    if let Some(workspace) = self.active_workspace(cx) {
+                        Self::show_no_thread_summary_model_toast(workspace, cx);
+                    }
+                    return;
+                }
+                ThreadTitleRegenerationResult::NotOpen => {}
+            }
+        }
+
+        let Some(configured_model) =
+            LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
+        else {
+            if let Some(workspace) = self.active_workspace(cx) {
+                Self::show_no_thread_summary_model_toast(workspace, cx);
+            }
+            return;
+        };
+
+        if !self.regenerating_titles.insert(thread_id) {
+            return;
+        }
+
+        let model = configured_model.model;
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
+
+        let thread_store = ThreadStore::global(cx);
+        let load_task =
+            thread_store.update(cx, |store, cx| store.load_thread(session_id.clone(), cx));
+        let session_id = session_id.clone();
+
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result: anyhow::Result<SharedString> = async {
+                let Some(db_thread) = load_task.await? else {
+                    anyhow::bail!("Thread not found in database");
+                };
+
+                let request = agent::build_thread_title_request(&db_thread.messages, temperature);
+                let title =
+                    SharedString::from(agent::stream_thread_title(model, request, cx).await?);
+
+                let Some(mut db_thread) = thread_store
+                    .update(cx, |store, cx| store.load_thread(session_id.clone(), cx))
+                    .await?
+                else {
+                    anyhow::bail!("Thread not found in database");
+                };
+                db_thread.title = title.clone();
+
+                thread_store
+                    .update(cx, |store, cx| {
+                        store.save_thread(session_id, db_thread, folder_paths, cx)
+                    })
+                    .await?;
+
+                anyhow::Ok(title)
+            }
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.regenerating_titles.remove(&thread_id);
+                match &result {
+                    Ok(title) => {
+                        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                            store.set_generated_title(thread_id, title.clone(), cx);
+                        });
+                    }
+                    Err(_) => {
+                        if let Some(workspace) = this.active_workspace(cx) {
+                            Self::show_thread_title_toast(
+                                workspace,
+                                "Failed to regenerate thread title.",
+                                cx,
+                            );
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+
+            result.map(|_| ())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn activate_thread_locally(
         &mut self,
         metadata: &ThreadMetadata,
@@ -5916,7 +6103,12 @@ impl Sidebar {
             (thread.icon, thread.icon_from_external_svg.clone())
         };
 
-        ThreadItem::new(id, title.clone())
+        let title_generating = thread.is_title_generating
+            || self
+                .regenerating_titles
+                .contains(&thread.metadata.thread_id);
+
+        let thread_item = ThreadItem::new(id, title.clone())
             .base_bg(sidebar_bg)
             .icon(icon)
             .when(is_draft, |this| {
@@ -5930,7 +6122,7 @@ impl Sidebar {
             .worktrees(worktrees)
             .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
-            .title_generating(thread.is_title_generating)
+            .title_generating(title_generating)
             .notified(has_notification)
             .when(thread.diff_stats.lines_added > 0, |this| {
                 this.added(thread.diff_stats.lines_added as usize)
@@ -6068,6 +6260,7 @@ impl Sidebar {
                 )
             })
             .on_click({
+                let thread_workspace = thread_workspace.clone();
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
                     match &thread_workspace {
@@ -6088,6 +6281,134 @@ impl Sidebar {
                         }
                     }
                 })
+            });
+
+        if is_draft || thread.metadata.session_id.is_none() {
+            return thread_item.into_any_element();
+        }
+
+        let Some(session_id) = thread.metadata.session_id.clone() else {
+            return thread_item.into_any_element();
+        };
+
+        let context_menu_id = SharedString::from(format!("thread-context-menu-{}", ix));
+        let sidebar = cx.weak_entity();
+
+        let active_workspace = self.active_workspace(cx);
+        let thread_workspace = match &thread_workspace {
+            ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
+            ThreadEntryWorkspace::Closed { .. } => None,
+        };
+
+        let is_zed_thread = thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref();
+        let can_open_as_markdown = thread.is_live || is_zed_thread;
+        let folder_paths = thread.metadata.folder_paths().clone();
+
+        right_click_menu(context_menu_id)
+            .trigger(move |_, _, _| thread_item)
+            .menu({
+                let thread_id = thread.metadata.thread_id;
+                let markdown_title = Some(thread.metadata.display_title());
+                let rename_title = title;
+                move |_window, cx| {
+                    let session_id = session_id.clone();
+                    let sidebar = sidebar.clone();
+                    let active_workspace = active_workspace.clone();
+                    let thread_workspace = thread_workspace.clone();
+                    let markdown_title = markdown_title.clone();
+                    let rename_title = rename_title.clone();
+                    let folder_paths = folder_paths.clone();
+                    ContextMenu::build(_window, cx, move |mut menu, _window, _cx| {
+                        menu = menu.entry("Rename Title", None, {
+                            let sidebar = sidebar.clone();
+                            let rename_title = rename_title.clone();
+                            move |window, cx| {
+                                sidebar
+                                    .update(cx, |sidebar, cx| {
+                                        sidebar.start_renaming_thread(
+                                            ix,
+                                            thread_id,
+                                            rename_title.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        });
+
+                        if is_zed_thread {
+                            menu = menu.entry("Regenerate Thread Title", None, {
+                                let session_id = session_id.clone();
+                                let sidebar = sidebar.clone();
+                                let thread_workspace = thread_workspace.clone();
+                                let folder_paths = folder_paths.clone();
+                                move |_window, cx| {
+                                    sidebar
+                                        .update(cx, |sidebar, cx| {
+                                            sidebar.regenerate_thread_title(
+                                                &session_id,
+                                                thread_id,
+                                                folder_paths.clone(),
+                                                thread_workspace.clone(),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            });
+                        }
+
+                        if can_open_as_markdown {
+                            menu = menu.entry("Open Thread as Markdown", None, {
+                                let session_id = session_id.clone();
+                                let markdown_title = markdown_title.clone();
+                                let thread_workspace = thread_workspace.clone();
+                                move |window, cx| {
+                                    if let Some(thread_workspace) = thread_workspace.as_ref()
+                                        && let Some(panel) =
+                                            thread_workspace.read(cx).panel::<AgentPanel>(cx)
+                                    {
+                                        let opened = panel.update(cx, |panel, cx| {
+                                            panel.open_thread_as_markdown(
+                                                thread_id,
+                                                thread_workspace.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        });
+                                        if opened {
+                                            return;
+                                        }
+                                    }
+
+                                    if is_zed_thread
+                                        && let Some(active_workspace) = &active_workspace
+                                    {
+                                        Self::open_closed_native_thread_as_markdown(
+                                            &session_id,
+                                            markdown_title.clone(),
+                                            active_workspace,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }
+                            });
+                        }
+
+                        menu.separator().entry("Archive Thread", None, {
+                            let session_id = session_id.clone();
+                            move |window, cx| {
+                                sidebar
+                                    .update(cx, |sidebar, cx| {
+                                        sidebar.archive_thread(&session_id, window, cx);
+                                    })
+                                    .ok();
+                            }
+                        })
+                    })
+                }
             })
             .into_any_element()
     }
@@ -7199,7 +7520,8 @@ impl Sidebar {
     }
 
     fn should_render_cross_channel_import_onboarding(&self, cx: &App) -> bool {
-        !CrossChannelImportOnboarding::dismissed(cx) && !channels_with_threads(cx).is_empty()
+        !CrossChannelImportOnboarding::dismissed(cx)
+            && !self.cross_channel_import_channels.is_empty()
     }
 
     fn render_cross_channel_import_onboarding(
@@ -7207,11 +7529,10 @@ impl Sidebar {
         verbose_labels: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let channels = channels_with_threads(cx);
-        let channel_names = channels
+        let channel_names = self
+            .cross_channel_import_channels
             .iter()
-            .map(|channel| channel.display_name())
-            .collect::<Vec<_>>()
+            .map(SharedString::as_str)
             .join(" and ");
 
         let description = format!(
