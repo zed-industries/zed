@@ -1974,7 +1974,18 @@ impl AcpThread {
         compaction: ContextCompaction,
         cx: &mut Context<Self>,
     ) {
-        if let Some(ix) = self.index_for_context_compaction(&compaction.id) {
+        if let Some(ix) =
+            self.entries
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction) if &compaction.id == id => {
+                        Some(ix)
+                    }
+                    _ => None,
+                })
+        {
             self.entries[ix] = AgentThreadEntry::ContextCompaction(compaction);
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
@@ -1988,7 +1999,18 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
-        let Some((ix, compaction)) = self.context_compaction_mut(&update.id) else {
+        let Some((ix, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(compaction) if &compaction.id == id => {
+                        Some((ix, compaction))
+                    }
+                    _ => None,
+                })
+        else {
             return;
         };
 
@@ -2008,33 +2030,6 @@ impl AcpThread {
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
-    }
-
-    fn index_for_context_compaction(&self, id: &ContextCompactionId) -> Option<usize> {
-        self.entries
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(ix, entry)| match entry {
-                AgentThreadEntry::ContextCompaction(compaction) if &compaction.id == id => Some(ix),
-                _ => None,
-            })
-    }
-
-    fn context_compaction_mut(
-        &mut self,
-        id: &ContextCompactionId,
-    ) -> Option<(usize, &mut ContextCompaction)> {
-        self.entries
-            .iter_mut()
-            .enumerate()
-            .rev()
-            .find_map(|(ix, entry)| match entry {
-                AgentThreadEntry::ContextCompaction(compaction) if &compaction.id == id => {
-                    Some((ix, compaction))
-                }
-                _ => None,
-            })
     }
 
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
