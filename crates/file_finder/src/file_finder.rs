@@ -186,7 +186,13 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let file_finder_settings = FileFinderSettings::get_global(cx);
+        let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, window);
+
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .width(Rems::from_pixels(modal_max_width, window))
+        });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
@@ -372,12 +378,8 @@ impl Render for FileFinder {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let key_context = self.picker.read(cx).delegate.key_context(window, cx);
 
-        let file_finder_settings = FileFinderSettings::get_global(cx);
-        let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, window);
-
         v_flex()
             .key_context(key_context)
-            .w(modal_max_width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
             .on_action(cx.listener(Self::handle_filter_toggle_menu))

@@ -20,7 +20,7 @@ use crate::{
         state::{LayoutMode, StackedLayout, TelescopeLayout},
     },
     // render::window_controls::ResizeDrag,
-    render::window_controls::{DragPreview, ResizeSide},
+    render::window_controls::{DragPreview, ReHeightSide, ResizeSide},
 };
 
 pub mod window_controls;
@@ -63,11 +63,15 @@ impl<D: PickerDelegate> Picker<D> {
         let menu = v_flex()
             .key_context("Picker")
             .relative()
-            .size_full()
-            // .when_some(self.shape.base_width, |el, width| el.w(width)) // TODO!(yara) pickers without preview auto width?
-            .overflow_hidden()
-            .child(self.render_horizontal_resize(ResizeSide::Left, window, cx))
-            .child(self.render_horizontal_resize(ResizeSide::Right, window, cx))
+            .h_full()
+            .map(|this| match self.shape.base_width {
+                Some(width) => this.w(width),
+                None => this.w_full(),
+            })
+            .map(|this| match self.shape.base_height {
+                Some(height) => this.h(height),
+                None => this.h_full(),
+            })
             .child(
                 canvas(
                     move |bounds, _window, _cx| {
@@ -112,7 +116,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .id("element-container")
                         .relative()
                         .flex_grow()
-                        .when_some(self.max_height, |div, max_h| div.max_h(max_h))
+                        .when_some(self.shape.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))
@@ -158,7 +162,11 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                 }
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
-            });
+            })
+            .child(self.render_width_resize(ResizeSide::Left, window, cx))
+            .child(self.render_width_resize(ResizeSide::Right, window, cx))
+            .child(self.render_height_resize(ReHeightSide::Top, window, cx))
+            .child(self.render_height_resize(ReHeightSide::Bottom, window, cx));
 
         let Some(aside) = aside else {
             return menu;

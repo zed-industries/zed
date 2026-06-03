@@ -7,8 +7,8 @@ use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
+    div, rems,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
@@ -179,7 +179,10 @@ impl OutlineView {
         let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
-                .max_height(Some(vh(0.75, window)))
+                .max_height(Some(Rems::from_pixels(
+                    window.viewport_size().height * 0.75,
+                    window,
+                )))
                 .show_scrollbar(true)
         });
         OutlineView { picker }

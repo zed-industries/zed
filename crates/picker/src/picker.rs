@@ -71,15 +71,21 @@ struct PendingUpdateMatches {
 /// The picker starts centered however the left and right can be extended by
 /// dragging. The sizes are in Rems so the picker scales up and down with the font size.
 pub struct Shape {
-    base_width: Rems,
+    /// The picker's width. When `None`, the picker fills the width given by its
+    /// parent. Once the user drags a resize handle this becomes `Some`, and the
+    /// picker controls its own width from then on.
+    base_width: Option<Rems>,
+    min_width: Rems,
     left_extend: Rems,
     right_extend: Rems,
     // TODO!(yara) something screen size based?
-    min_width: Rems,
     // TODO!(yara) vertical resize done later
-    // base_height: Pixels,
-    // top_extend: Pixels,
-    // bottom_extend: Pixels,
+    base_height: Option<Rems>,
+    min_height: Rems,
+    /// Height will be limited to min(this, window_size * 0.8)
+    max_height: Option<Rems>,
+    top_extend: Rems,
+    bottom_extend: Rems,
 }
 
 impl Shape {
@@ -89,24 +95,43 @@ impl Shape {
     fn max_width(&self, window: &Window) -> Pixels {
         window.viewport_size().width * 0.9
     }
-    fn base_width(&self, window: &Window) -> Pixels {
-        self.base_width.to_pixels(window.rem_size())
-    }
     fn left_extend(&self, window: &Window) -> Pixels {
         self.left_extend.to_pixels(window.rem_size())
     }
     fn right_extend(&self, window: &Window) -> Pixels {
         self.right_extend.to_pixels(window.rem_size())
     }
+    fn top_extend(&self, window: &Window) -> Pixels {
+        self.top_extend.to_pixels(window.rem_size())
+    }
+    fn bottom_extend(&self, window: &Window) -> Pixels {
+        self.bottom_extend.to_pixels(window.rem_size())
+    }
+    fn min_height(&self, window: &mut Window) -> Pixels {
+        self.min_height.to_pixels(window.rem_size())
+    }
+    fn max_height(&self, window: &mut Window) -> Pixels {
+        let max_based_on_viewport = window.viewport_size().height * 0.8;
+        self.max_height
+            .map(|h| h.to_pixels(window.rem_size()))
+            .unwrap_or(max_based_on_viewport)
+            .min(max_based_on_viewport)
+    }
 }
 
 impl Default for Shape {
     fn default() -> Self {
         Self {
+            base_width: None,
             min_width: Rems(10.0),
-            base_width: Rems(30.0), // TODO!(yara) look up old default width for picker
             left_extend: Rems::ZERO,
             right_extend: Rems::ZERO,
+
+            base_height: None,
+            min_height: Rems(10.0),
+            max_height: Some(rems(24.)),
+            top_extend: Rems::ZERO,
+            bottom_extend: Rems::ZERO,
         }
     }
 }
@@ -120,7 +145,6 @@ pub struct Picker<D: PickerDelegate> {
     confirm_on_update: Option<bool>,
     shape: Shape,
     widest_item: Option<usize>,
-    max_height: Option<Length>,
     /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
     /// Whether the `Picker` is rendered as a self-contained modal.
@@ -428,7 +452,6 @@ impl<D: PickerDelegate> Picker<D> {
             // height: rems(42.0).to_pixels(window.rem_size()),
             shape: Shape::default(),
             widest_item: None,
-            max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
@@ -453,8 +476,30 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn width(mut self, width: impl Into<gpui::Rems>) -> Self {
-        self.shape.base_width = width.into();
+        self.shape.base_width = Some(width.into());
         self
+    }
+
+    fn current_width(&self, window: &Window) -> Pixels {
+        // TODO!(yara) this probably makes no sense. Get some context on
+        // what picker_bounds are for
+        self.picker_bounds
+            .get()
+            .map(|bounds| bounds.size.width)
+            .or_else(|| {
+                self.shape
+                    .base_width
+                    .map(|w| w.to_pixels(window.rem_size()))
+            })
+            // TODO!(yara) get widest item width here
+            .unwrap_or_else(|| self.shape.min_width(window))
+    }
+
+    fn current_height(&self, window: &Window) -> Pixels {
+        self.shape
+            .base_height
+            .map(|h| h.to_pixels(window.rem_size()))
+            .unwrap_or(px(300.0)) // TODO!(yara) placeholder gotta get the actual height...
     }
 
     pub fn widest_item(mut self, ix: Option<usize>) -> Self {
@@ -462,8 +507,8 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn max_height(mut self, max_height: Option<gpui::Length>) -> Self {
-        self.max_height = max_height;
+    pub fn max_height(mut self, max_height: Option<Rems>) -> Self {
+        self.shape.max_height = max_height;
         self
     }
 
@@ -931,7 +976,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let sizing_behavior = if self.max_height.is_some() {
+        let sizing_behavior = if self.shape.max_height.is_some() {
             ListSizingBehavior::Infer
         } else {
             ListSizingBehavior::Auto

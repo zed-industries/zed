@@ -40,7 +40,14 @@ impl Preview {
     pub fn width(&self) -> ui::Pixels {
          match self.content.layout_mode {
             LayoutMode::Stacked(_) => ui::Pixels::ZERO,
-            LayoutMode::Telescope(telescope_layout) => telescope_layout.preview_width,
+            LayoutMode::Telescope(layout) => layout.preview_width,
+        }
+    }
+
+    pub fn height(&self) -> ui::Pixels {
+         match self.content.layout_mode {
+            LayoutMode::Stacked(layout) => layout.preview_height,
+            LayoutMode::Telescope(_) => ui::Pixels::ZERO,
         }
     }
 
