@@ -188,7 +188,7 @@ pub(super) fn process<'a>(
     inner: impl Iterator<Item = Result<Event<'a>>>,
     svg: &str,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
-    // if there's no foreignobjects, 
+    // if there's no foreignobjects,
     let native_text_contents = if svg.contains("data-merman-foreignobject=\"fallback\"") {
         collect_native_text_contents(svg)
     } else {

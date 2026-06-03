@@ -111,9 +111,7 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
     });
 
     if let Some(map) = theme_vars.as_object_mut() {
-        for (((i, color), label), pie_number) in
-            git.iter().enumerate().zip(&git_lbl).zip(1..)
-        {
+        for (((i, color), label), pie_number) in git.iter().enumerate().zip(&git_lbl).zip(1..) {
             map.insert(format!("cScale{i}"), color.clone().into());
             map.insert(format!("cScaleLabel{i}"), label.clone().into());
             map.insert(format!("pie{pie_number}"), color.clone().into());
