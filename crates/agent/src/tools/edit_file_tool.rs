@@ -2608,7 +2608,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        let changed =
+            action_log.read_with(cx, |log, cx| log.changed_buffers(cx).collect::<Vec<_>>());
         assert!(
             !changed.is_empty(),
             "action_log.changed_buffers() should be non-empty after streaming edit,

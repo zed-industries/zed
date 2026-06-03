@@ -338,7 +338,7 @@
       "ctrl-x": "vim::Decrement",
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
-      "a": "vim::InsertAfter",
+      "a": "vim::HelixAppend",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",

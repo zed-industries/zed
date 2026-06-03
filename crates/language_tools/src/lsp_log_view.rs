@@ -1363,6 +1363,7 @@ impl ServerInfo {
             capabilities: server.capabilities(),
             status: LanguageServerStatus {
                 name: server.name(),
+                language_name: None,
                 server_version: server.version(),
                 server_readable_version: server.readable_version(),
                 pending_work: Default::default(),

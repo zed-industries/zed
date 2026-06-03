@@ -271,15 +271,13 @@ impl Component for LabelLike {
         "LabelLike"
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A flexible, customizable label-like component that serves as a base for other label types.",
-        )
+    fn description() -> &'static str {
+        "A flexible, customizable label-like component \
+        that serves as a base for other label types."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group_with_title(
@@ -326,6 +324,5 @@ impl Component for LabelLike {
                     ),
                 ])
                 .into_any_element()
-        )
     }
 }

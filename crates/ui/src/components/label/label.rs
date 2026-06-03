@@ -352,13 +352,13 @@ impl Component for Label {
         ComponentScope::Typography
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A text label component that supports various styles, sizes, and formatting options.")
+    fn description() -> &'static str {
+        "A text label component that supports various styles, \
+        sizes, and formatting options."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .children(vec![
                     example_group_with_title(
@@ -405,6 +405,5 @@ impl Component for Label {
                     ),
                 ])
                 .into_any_element()
-        )
     }
 }

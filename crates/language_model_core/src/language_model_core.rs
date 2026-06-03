@@ -371,7 +371,7 @@ pub struct LanguageModelId(pub SharedString);
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelName(pub SharedString);
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct LanguageModelProviderId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]

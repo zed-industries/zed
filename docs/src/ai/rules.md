@@ -72,9 +72,10 @@ You can set any rule as the default by clicking the paper clip icon button in th
 
 ## Migrating to Skills {#migrating-to-skills}
 
-When you update to Zed v1.4.0, your existing Rules are migrated to Skills automatically:
+As of Zed v1.4.0, your existing Rules are migrated to Skills automatically:
 
 - **Non-default Rules** become global skills in `~/.agents/skills/`, each with `disable-model-invocation: true`. They remain user-invocable via `/skill-name` or `@`-mention.
 - **Default Rules** are appended to your global `AGENTS.md` file (`~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows), preserving their behavior of being included in every conversation.
+- **Git Commit** prompt customizations are also appended to the global `AGENTS.md` file.
 
-A banner in the title bar announces the migration when it runs. Your original Rule data is not deleted, so downgrading to an earlier version of Zed leaves your Rules intact.
+Lastly, note that all of the content you had available in the Rules Library hasn't been deleted, so downgrading to an earlier version of Zed leaves your Rules intact.

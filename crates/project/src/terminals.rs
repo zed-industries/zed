@@ -115,19 +115,23 @@ impl Project {
         let env_task =
             self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
 
-        let project_path_contexts = self
-            .active_entry()
-            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+        // Scope the toolchain lookup to the worktree the terminal is being
+        // spawned in. Previously this iterated the active editor's worktree
+        // and then every visible worktree, so a Python toolchain persisted
+        // for worktree A would leak into a terminal opened in worktree B and
+        // inject (e.g.) `conda activate base` into a shell that has no
+        // business with conda.
+        let project_path_contexts: Vec<ProjectPath> = path
+            .as_ref()
+            .and_then(|p| self.find_worktree(p, cx))
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path,
+            })
             .into_iter()
-            .chain(
-                self.visible_worktrees(cx)
-                    .map(|wt| wt.read(cx).id())
-                    .map(|worktree_id| ProjectPath {
-                        worktree_id,
-                        path: Arc::from(RelPath::empty()),
-                    }),
-            );
+            .collect();
         let toolchains = project_path_contexts
+            .into_iter()
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
@@ -333,19 +337,20 @@ impl Project {
         let detect_venv = settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        let project_path_contexts = self
-            .active_entry()
-            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+        // See create_terminal_task: scope the toolchain lookup to the
+        // worktree the terminal is opened in, not the active editor's
+        // worktree or other visible worktrees.
+        let project_path_contexts: Vec<ProjectPath> = path
+            .as_ref()
+            .and_then(|p| self.find_worktree(p, cx))
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path,
+            })
             .into_iter()
-            .chain(
-                self.visible_worktrees(cx)
-                    .map(|wt| wt.read(cx).id())
-                    .map(|worktree_id| ProjectPath {
-                        worktree_id,
-                        path: RelPath::empty().into(),
-                    }),
-            );
+            .collect();
         let toolchains = project_path_contexts
+            .into_iter()
             .filter(|_| detect_venv)
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();

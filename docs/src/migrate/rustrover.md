@@ -339,7 +339,7 @@ Here's what RustRover offers that Zed doesn't have:
 
 On licensing and telemetry:
 
-- **Zed is open source** (MIT licensed for the editor, AGPL for collaboration services)
+- **Zed is open source** (primarily GPL-licensed, with Apache-licensed components)
 - **Telemetry is optional** and can be disabled during onboarding or in settings
 
 ## Collaboration in Zed vs. RustRover

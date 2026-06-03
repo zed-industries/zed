@@ -2083,7 +2083,7 @@ mod tests {
     use gpui::TestAppContext;
     use std::str::FromStr;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }

@@ -560,13 +560,7 @@ async fn run_agent(
 
     let agent = cx.update(|cx| {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        NativeAgent::new(
-            thread_store,
-            Templates::new(),
-            None,
-            app_state.fs.clone(),
-            cx,
-        )
+        NativeAgent::new(thread_store, Templates::new(), app_state.fs.clone(), cx)
     });
 
     let connection = Rc::new(NativeAgentConnection(agent.clone()));

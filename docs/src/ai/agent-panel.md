@@ -121,15 +121,7 @@ To see which files specifically have been edited, expand the accordion bar that 
 You can accept or reject each individual change hunk, or the whole set of changes made by the agent.
 
 Edit diffs can also appear inline in individual files with the same
-keep/reject hunk controls as the multi-buffer review pane. This temporarily overrides the buffer's git diff while review is active. Enable it by setting `agent.single_file_review` to `true` in your settings:
-
-```json
-{
-  "agent": {
-    "single_file_review": true
-  }
-}
-```
+keep/reject hunk controls as the multi-buffer review pane. This temporarily overrides the buffer's git diff while review is active. Enable it by setting `agent.single_file_review` to `true` in your settings.
 
 ## Terminal Threads {#terminal-threads}
 
@@ -263,7 +255,7 @@ Copying an image and pasting it is also supported.
 Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor.
 
 Once you approach the model's context window, a banner appears above the message editor suggesting to start a new thread with the current one summarized and added as context.
-You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right, where you'll see a "New from Summary" button, as well as simply @-mentioning a past thread in a new one..
+You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right, where you'll see a "New from Summary" button, as well as simply @-mentioning a past thread in a new one.
 
 ## Changing Models {#changing-models}
 
