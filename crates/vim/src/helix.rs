@@ -16,7 +16,7 @@ use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
-use text::{Bias, SelectionGoal};
+use text::{Bias, LineEnding, SelectionGoal};
 use theme::ActiveTheme as _;
 use ui::px;
 use workspace::searchable::{self, Direction, FilteredSearchRange};
@@ -750,13 +750,16 @@ impl Vim {
                     let snapshot = display_map.buffer_snapshot();
                     let grapheme_count = snapshot.grapheme_count_for_range(&byte_range);
                     let anchor = snapshot.anchor_before(byte_range.start);
-
-                    selection_info.push((anchor, grapheme_count, was_empty, was_reversed));
+                    let mut replacement_len = 0;
 
                     if !byte_range.is_empty() {
-                        let replacement_text = text.repeat(grapheme_count);
+                        let mut replacement_text = text.repeat(grapheme_count);
+                        LineEnding::normalize(&mut replacement_text);
+                        replacement_len = replacement_text.len();
                         edits.push((byte_range, replacement_text));
                     }
+
+                    selection_info.push((anchor, replacement_len, was_empty, was_reversed));
                 }
 
                 editor.edit(edits, cx);
@@ -765,12 +768,11 @@ impl Vim {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let ranges: Vec<_> = selection_info
                     .into_iter()
-                    .map(|(start_anchor, grapheme_count, was_empty, was_reversed)| {
+                    .map(|(start_anchor, replacement_len, was_empty, was_reversed)| {
                         let start_point = start_anchor.to_point(&snapshot);
                         if was_empty {
                             start_point..start_point
                         } else {
-                            let replacement_len = text.len() * grapheme_count;
                             let end_offset = start_anchor.to_offset(&snapshot) + replacement_len;
                             let end_point = snapshot.offset_to_point(end_offset);
                             if was_reversed {
@@ -2488,6 +2490,23 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_crlf(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("«xˇ»z", Mode::HelixNormal);
+
+        let vim =
+            cx.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
+        cx.update(|window, cx| {
+            vim.entity.update(cx, |vim, cx| {
+                vim.helix_replace("a\r\nb", window, cx);
+            });
+        });
+
+        cx.assert_state("«a\nbˇ»z", Mode::HelixNormal);
     }
 
     #[gpui::test]
