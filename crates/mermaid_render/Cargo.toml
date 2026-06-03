@@ -18,7 +18,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-merman = { git = "https://github.com/zed-industries/merman", rev = "1c765dcca2ef5092fcde7bebe8374819563623ef", features = ["render"] }
+merman = { git = "https://github.com/zed-industries/merman", tag = "v0.6.2-with-patches", features = ["render"] }
 quick-xml.workspace = true
 serde_json.workspace = true
 
