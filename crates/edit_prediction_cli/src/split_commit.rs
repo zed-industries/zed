@@ -179,6 +179,26 @@ fn edit_starts_on_service_file(patch: &Patch, split_pos: usize) -> bool {
         .is_some_and(|edit_location| is_service_file(&edit_location.filename))
 }
 
+fn has_submodule_gitlink_hunk(commit: &str) -> bool {
+    commit.lines().any(line_indicates_submodule_gitlink)
+}
+
+fn line_indicates_submodule_gitlink(line: &str) -> bool {
+    let line = line.trim();
+
+    matches!(
+        line,
+        "new file mode 160000" | "deleted file mode 160000" | "old mode 160000" | "new mode 160000"
+    ) || line
+        .strip_prefix("index ")
+        .and_then(|line| line.split_whitespace().last())
+        .is_some_and(|mode| mode == "160000")
+        || line
+            .strip_prefix('+')
+            .or_else(|| line.strip_prefix('-'))
+            .is_some_and(|line| line.starts_with("Subproject commit "))
+}
+
 fn sample_split_point(patch: &Patch, rng: &mut dyn rand::RngCore) -> usize {
     let stats = patch.stats();
     let num_edits = stats.added + stats.removed;
@@ -375,6 +395,11 @@ pub fn generate_evaluation_example_from_ordered_commit(
     seed: Option<u64>,
     sample_num: Option<usize>,
 ) -> Result<ExampleSpec> {
+    anyhow::ensure!(
+        !has_submodule_gitlink_hunk(commit),
+        "commit contains submodule/gitlink hunk"
+    );
+
     let mut rng: Box<dyn rand::RngCore> = match seed {
         Some(seed) => Box::new(rand::rngs::StdRng::seed_from_u64(seed)),
         None => Box::new(rand::rngs::ThreadRng::default()),
@@ -1763,6 +1788,72 @@ index 123..456 789
 
         assert!(edit_starts_on_service_file(&patch, 1));
         assert!(!edit_starts_on_service_file(&patch, 2));
+    }
+
+    #[test]
+    fn test_submodule_gitlink_hunk_detection() {
+        assert!(has_submodule_gitlink_hunk(
+            r#"diff --git a/controllers/llguidance b/controllers/llguidance
+index 21e68b9..cadabda 160000
+--- a/controllers/llguidance
++++ b/controllers/llguidance
+@@ -1 +1 @@
+-Subproject commit 21e68b916d4705107e1c45ea7bc927e829136258
++Subproject commit cadabdad21f3b81ff58b1918f8c23116b4ff7af3
+"#
+        ));
+        assert!(has_submodule_gitlink_hunk(
+            r#"--- a/controllers/derivre
++++ b/controllers/derivre
+@@ -1 +1 @@
+-Subproject commit e83d8fb3cd92d2c6dd0437e98bfa9b64d8d8284b
++Subproject commit fb0ba7b6307782e0d43a0ca598b237836cb6d304
+"#
+        ));
+        assert!(has_submodule_gitlink_hunk(
+            r#"diff --git a/vendor/dependency b/vendor/dependency
+new file mode 160000
+index 0000000..1234567
+--- /dev/null
++++ b/vendor/dependency
+"#
+        ));
+        assert!(!has_submodule_gitlink_hunk(
+            r#"diff --git a/src/lib.rs b/src/lib.rs
+index 1234567..89abcde 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1,2 @@
+ fn lib() {}
++fn helper() {}
+"#
+        ));
+    }
+
+    #[test]
+    fn test_generate_evaluation_example_rejects_submodule_gitlink_hunk() {
+        let commit = r#"diff --git a/controllers/llguidance b/controllers/llguidance
+index 21e68b9..cadabda 160000
+--- a/controllers/llguidance
++++ b/controllers/llguidance
+@@ -1 +1 @@
+-Subproject commit 21e68b916d4705107e1c45ea7bc927e829136258
++Subproject commit cadabdad21f3b81ff58b1918f8c23116b4ff7af3
+"#;
+
+        let result = generate_evaluation_example_from_ordered_commit(
+            commit,
+            "https://github.com/microsoft/aici",
+            "cadabdad21f3b81ff58b1918f8c23116b4ff7af3",
+            None,
+            Some(0),
+            None,
+        );
+
+        let Err(error) = result else {
+            panic!("expected submodule/gitlink commit to be rejected");
+        };
+        assert!(error.to_string().contains("submodule/gitlink"));
     }
 
     #[test]
