@@ -3219,6 +3219,7 @@ impl Thread {
                 }
             });
         }));
+        cx.notify();
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
