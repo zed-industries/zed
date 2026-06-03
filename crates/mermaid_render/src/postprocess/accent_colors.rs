@@ -271,18 +271,21 @@ impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> AccentColors<'theme, I> 
     fn process_chart_colors(&mut self, event: Event<'a>) -> Result<Event<'a>> {
         match &event {
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"g" => {
+                let is_start = matches!(event, Event::Start(_));
                 // Only a real opening tag increases nesting depth. Self-closing `<g/>`
                 // elements have no matching `</g>`, so counting them would leave
                 // `plot_depth` permanently inflated and `in_plot` stuck on.
-                if self.in_plot && matches!(event, Event::Start(_)) {
+                if self.in_plot && is_start {
                     self.plot_depth += 1;
                 }
                 if let Some(class_attr) = e.try_get_attribute("class")? {
                     let class = class_attr.unescape_value()?;
                     if class.as_ref() == "plot" {
-                        self.in_plot = true;
-                        self.plot_depth = 1;
-                        self.plot_path_done = false;
+                        if is_start && !self.in_plot {
+                            self.in_plot = true;
+                            self.plot_depth = 1;
+                            self.plot_path_done = false;
+                        }
                     } else if class.as_ref() == "legend" {
                         self.in_legend = true;
                     } else if class.as_ref() == "data-point" {
@@ -299,7 +302,7 @@ impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> AccentColors<'theme, I> 
 
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if self.in_plot {
-                    self.plot_depth -= 1;
+                    self.plot_depth = self.plot_depth.saturating_sub(1);
                     if self.plot_depth == 0 {
                         self.in_plot = false;
                     }
