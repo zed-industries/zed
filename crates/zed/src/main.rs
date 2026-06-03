@@ -503,11 +503,13 @@ fn main() {
             std::env::consts::OS,
             std::env::consts::ARCH
         );
-        let proxy_url = ProxySettings::get_global(cx).proxy_url();
+        let proxy_settings = ProxySettings::get_global(cx);
+        let proxy_url = proxy_settings.proxy_url();
+        let no_proxy = proxy_settings.no_proxy();
         let http = {
             let _guard = Tokio::handle(cx).enter();
 
-            ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+            ReqwestClient::proxy_and_user_agent(proxy_url, no_proxy, &user_agent)
                 .expect("could not start HTTP client")
         };
         cx.set_http_client(Arc::new(http));
