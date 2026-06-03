@@ -116,18 +116,11 @@ impl AgentImportStatus {
         matches!(self, Self::Ready { importable_count } if *importable_count > 0)
     }
 
-    fn importable_count(&self) -> Option<usize> {
-        match self {
-            Self::Ready { importable_count } => Some(*importable_count),
-            Self::Loading | Self::Unsupported | Self::Error(_) => None,
-        }
-    }
-
     fn tooltip_text(&self) -> Option<SharedString> {
         match self {
-            Self::Loading => Some("Fetching sessions…".into()),
+            Self::Loading => Some("Fetching Sessions…".into()),
             Self::Ready { .. } => None,
-            Self::Unsupported => Some("This agent does not support session/list.".into()),
+            Self::Unsupported => Some("Importing threads from this agent is not possible as it doesn't support ACP's session/list capability.".into()),
             Self::Error(error) => Some(format!("Failed to fetch sessions: {error}").into()),
         }
     }
@@ -464,7 +457,9 @@ impl Render for ThreadImportModal {
                     ToggleState::Unselected
                 };
                 let end_slot = match &status {
-                    AgentImportStatus::Loading => {
+                    AgentImportStatus::Loading
+                    | AgentImportStatus::Unsupported
+                    | AgentImportStatus::Error(_) => {
                         Checkbox::new(("thread-import-agent-checkbox", ix), checkbox_state)
                             .disabled(true)
                             .into_any_element()
@@ -474,39 +469,54 @@ impl Render for ThreadImportModal {
                             .disabled(row_disabled)
                             .into_any_element()
                     }
-                    AgentImportStatus::Unsupported => Icon::new(IconName::Warning)
-                        .color(Color::Warning)
-                        .size(IconSize::Small)
-                        .into_any_element(),
-                    AgentImportStatus::Error(_) => Icon::new(IconName::XCircle)
-                        .color(Color::Error)
-                        .size(IconSize::Small)
-                        .into_any_element(),
                 };
 
                 let is_loading = matches!(status, AgentImportStatus::Loading);
 
+                let icon_color = if is_checked {
+                    Color::Muted
+                } else {
+                    Color::Disabled
+                };
+
                 let item = h_flex()
                     .w_full()
                     .gap_2()
-                    .when(!is_checked, |this| this.opacity(0.6))
                     .child(if let Some(icon_path) = entry.icon_path.clone() {
                         Icon::from_external_svg(icon_path)
-                            .color(Color::Muted)
+                            .color(icon_color)
                             .size(IconSize::Small)
                     } else {
                         Icon::new(IconName::Sparkle)
-                            .color(Color::Muted)
+                            .color(icon_color)
                             .size(IconSize::Small)
                     })
-                    .child(Label::new(entry.display_name.clone()))
-                    .when_some(status.importable_count(), |this, count| {
-                        let label: SharedString = if count == 0 {
-                            "No threads".into()
-                        } else {
-                            format!("{} threads", count).into()
-                        };
-                        this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                    .child(
+                        Label::new(entry.display_name.clone())
+                            .when(!is_checked, |s| s.color(Color::Disabled)),
+                    )
+                    .map(|this| match status {
+                        AgentImportStatus::Loading => this,
+                        AgentImportStatus::Ready {
+                            importable_count: count,
+                        } => {
+                            let label: SharedString = if count == 0 {
+                                "No threads".into()
+                            } else {
+                                format!("{} threads", count).into()
+                            };
+                            this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                        }
+                        AgentImportStatus::Unsupported => this.child(
+                            Icon::new(IconName::Warning)
+                                .color(Color::Warning)
+                                .size(IconSize::Small),
+                        ),
+                        AgentImportStatus::Error(_) => this.child(
+                            Icon::new(IconName::XCircle)
+                                .color(Color::Error)
+                                .size(IconSize::Small),
+                        ),
                     });
 
                 let item = if is_loading {
@@ -527,11 +537,11 @@ impl Render for ThreadImportModal {
                     .spacing(ListItemSpacing::Sparse)
                     .focused(is_focused)
                     .disabled(row_disabled)
+                    .child(item)
+                    .end_slot(end_slot)
                     .when_some(status.tooltip_text(), |this, tooltip| {
                         this.tooltip(Tooltip::text(tooltip))
                     })
-                    .child(item)
-                    .end_slot(end_slot)
                     .on_click({
                         let agent_id = entry.agent_id.clone();
                         cx.listener(move |this, _event, _window, cx| {
