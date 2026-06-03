@@ -1783,23 +1783,23 @@ impl GitRepository for RealGitRepository {
     }
 
     fn tracked_paths(&self) -> Task<Result<Vec<RepoPath>>> {
-        let repository = self.repository.clone();
+        let git = self.git_binary_in_worktree();
         self.executor.spawn(async move {
-            fn logic(repository: &git2::Repository) -> Result<Vec<RepoPath>> {
-                let mut index = repository.index()?;
-                index.read(false)?;
+            let git = git?;
+            let output = git.build_command(&["ls-files", "-z"]).output().await?;
 
-                index
-                    .iter()
-                    .map(|entry| {
-                        let path = std::str::from_utf8(&entry.path)?;
-                        RepoPath::new(path)
-                    })
-                    .collect()
+            if output.status.success() {
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                stdout
+                    .split('\0')
+                    .filter(|path| !path.is_empty())
+                    .map(|path| RepoPath::new(path))
+                    .collect::<Result<Vec<RepoPath>>>()
+                    .context("loading tracked paths")
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("git ls-files failed: {stderr}")
             }
-
-            let repository = repository.lock();
-            logic(&repository).context("loading tracked paths")
         })
     }
 
