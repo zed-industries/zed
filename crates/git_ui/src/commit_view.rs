@@ -2,9 +2,10 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor,
+    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor, ToggleSplitDiff,
     hover_markdown_style, multibuffer_context_lines,
 };
+use fs::Fs;
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
@@ -25,7 +26,7 @@ use language::{
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath, WorktreeId, git_store::Repository};
-use settings::{DiffViewStyle, Settings};
+use settings::{DiffViewStyle, Settings, update_settings_file};
 use std::{
     any::{Any, TypeId},
     collections::HashSet,
@@ -33,7 +34,10 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
+use ui::{
+    ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*,
+    vertical_divider,
+};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -1253,6 +1257,43 @@ impl CommitViewToolbar {
     pub fn new() -> Self {
         Self { commit_view: None }
     }
+
+    fn set_diff_view_style(
+        &mut self,
+        diff_view_style: DiffViewStyle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit_view) = self.commit_view.as_ref().and_then(|w| w.upgrade()) else {
+            return;
+        };
+        let workspace = commit_view.read(cx).workspace.clone();
+
+        update_settings_file(<dyn Fs>::global(cx), cx, move |settings, _| {
+            settings.editor.diff_view_style = Some(diff_view_style);
+        });
+
+        if let Some(workspace) = workspace.upgrade() {
+            let splittable_editors = {
+                workspace
+                    .read(cx)
+                    .items(cx)
+                    .filter_map(|item| item.act_as_type(TypeId::of::<SplittableEditor>(), cx))
+                    .filter_map(|item| item.downcast::<SplittableEditor>().ok())
+                    .collect::<Vec<_>>()
+            };
+
+            for editor in splittable_editors {
+                editor.update(cx, |editor, cx| {
+                    if editor.diff_view_style() != diff_view_style {
+                        editor.toggle_split(&ToggleSplitDiff, window, cx);
+                    }
+                });
+            }
+        }
+
+        cx.notify();
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for CommitViewToolbar {}
@@ -1285,9 +1326,36 @@ impl Render for CommitViewToolbar {
         });
 
         let sha_for_graph = commit_sha.to_string();
+        let editor = commit_view_ref.editor.read(cx);
+        let diff_view_style = editor.diff_view_style();
+        let is_split_set = diff_view_style == DiffViewStyle::Split;
+        let split_icon = if is_split_set && !editor.is_split() {
+            IconName::DiffSplitAuto
+        } else {
+            IconName::DiffSplit
+        };
 
         h_flex()
             .gap_1()
+            .child(
+                IconButton::new("commit-view-unified", IconName::DiffUnified)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(diff_view_style == DiffViewStyle::Unified)
+                    .tooltip(Tooltip::text("Unified"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_diff_view_style(DiffViewStyle::Unified, window, cx);
+                    })),
+            )
+            .child(
+                IconButton::new("commit-view-split", split_icon)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(diff_view_style == DiffViewStyle::Split)
+                    .tooltip(Tooltip::text("Split"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_diff_view_style(DiffViewStyle::Split, window, cx);
+                    })),
+            )
+            .child(vertical_divider())
             .when(additions > 0 || deletions > 0, |this| {
                 this.child(
                     h_flex()
