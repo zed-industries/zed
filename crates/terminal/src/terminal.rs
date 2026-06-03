@@ -3830,8 +3830,8 @@ mod tests {
 
         impl<T: AsRef<str>> From<(T, RangeInclusive<(i32, usize)>, usize)> for HoveredWord {
             fn from(value: (T, RangeInclusive<(i32, usize)>, usize)) -> Self {
-                let match_start = Point::new(value.1.start().0.into(), value.1.start().1.into());
-                let match_end = Point::new(value.1.end().0.into(), value.1.end().1.into());
+                let match_start = Point::new(value.1.start().0, value.1.start().1);
+                let match_end = Point::new(value.1.end().0, value.1.end().1);
                 Self {
                     word: value.0.as_ref().to_string(),
                     word_match: Range::new(match_start, match_end),
@@ -3858,7 +3858,7 @@ mod tests {
             fn with_id(&self, id: usize) -> Self {
                 Self {
                     word: self.word.clone(),
-                    word_match: self.word_match.clone(),
+                    word_match: self.word_match,
                     id,
                 }
             }

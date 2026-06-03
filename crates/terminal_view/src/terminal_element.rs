@@ -1093,7 +1093,7 @@ impl Element for TerminalElement {
                         {
                             (
                                 Some(registered_hover.tooltip.clone()),
-                                Some(last_hovered_word.word_match.clone()),
+                                Some(last_hovered_word.word_match),
                             )
                         } else {
                             (None, None)
