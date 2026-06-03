@@ -12945,6 +12945,7 @@ dependencies = [
  "log",
  "menu",
  "multi_buffer",
+ "project",
  "rope",
  "schemars 1.0.4",
  "serde",

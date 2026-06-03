@@ -1,6 +1,7 @@
 mod head;
 mod preview;
 pub use preview::Preview;
+pub use preview::Update as PreviewUpdate;
 
 pub mod highlighted_match_with_paths;
 pub mod popover_menu;
@@ -8,12 +9,13 @@ pub mod popover_menu;
 use anyhow::Result;
 
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
-    uniform_list,
+    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent,
+    Pixels, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list,
+    prelude::*, uniform_list,
 };
 use head::Head;
+use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -298,7 +300,7 @@ pub trait PickerDelegate: Sized + 'static {
             )
     }
 
-    fn try_get_match(&self) -> Option<Box<dyn std::any::Any>> {
+    fn try_get_match(&self, _cx: &App) -> Option<Box<dyn std::any::Any>> {
         None
     }
 
@@ -376,6 +378,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// preview window where it shows extra information.
     pub fn uniform_list_with_preview(
         delegate: D,
+        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -386,7 +389,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new_editor(window, cx);
+        let preview = Preview::new_editor(project, window, cx);
         Self::new(
             delegate,
             ContainerKind::UniformList,
@@ -597,6 +600,11 @@ impl<D: PickerDelegate> Picker<D> {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
             }
+            if let Some(update) = self.delegate.try_get_match(cx)
+                && let Some(preview) = &mut self.preview
+            {
+                preview.update(update, window, cx);
+            }
             if scroll_to_index {
                 self.scroll_to_item_index(ix);
             }
@@ -616,12 +624,6 @@ impl<D: PickerDelegate> Picker<D> {
         //     });
         //     return;
         // };
-
-        if let Some(preview) = &mut self.preview
-            && let Some(update) = self.delegate.try_get_match()
-        {
-            preview.update(update, window, cx);
-        }
     }
 
     pub fn select_next(
@@ -877,6 +879,11 @@ impl<D: PickerDelegate> Picker<D> {
         let index = self.delegate.selected_index();
         self.scroll_to_item_index(index);
         self.pending_update_matches = None;
+        if let Some(update) = self.delegate.try_get_match(cx)
+            && let Some(preview) = &mut self.preview
+        {
+            preview.update(update, window, cx);
+        }
         if let Some(secondary) = self.confirm_on_update.take() {
             self.do_confirm(secondary, window, cx);
         }

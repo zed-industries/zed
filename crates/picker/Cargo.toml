@@ -22,6 +22,7 @@ language.workspace = true
 rope.workspace = true
 gpui.workspace = true
 menu.workspace = true
+project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true

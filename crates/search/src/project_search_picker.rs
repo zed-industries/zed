@@ -100,7 +100,8 @@ impl TextPicker {
     }
 
     fn new(delegate: TextPickerDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, window, cx));
+        let project = delegate.project.clone();
+        let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();

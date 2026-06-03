@@ -123,7 +123,6 @@ impl<D: PickerDelegate> Picker<D> {
             .block_mouse_except_scroll()
             .on_mouse_down(MouseButton::Left, do_nothing)
             .on_drag(
-                // TODO keep adding logic conditional on preview being Some or None. Work trough all the resize controls like that.
                 HorizontalResizeDrag {
                     side,
                     mouse_start: window.mouse_position().x,

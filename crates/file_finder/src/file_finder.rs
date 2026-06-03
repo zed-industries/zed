@@ -189,8 +189,9 @@ impl FileFinder {
         let file_finder_settings = FileFinderSettings::get_global(cx);
         let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, window);
 
+        let project = delegate.project.clone();
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
+            Picker::uniform_list_with_preview(delegate, project, window, cx)
                 .width(Rems::from_pixels(modal_max_width, window))
         });
         let picker_focus_handle = picker.focus_handle(cx);
@@ -1696,6 +1697,13 @@ impl PickerDelegate for FileFinderDelegate {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
+    }
+
+    fn try_get_match(&self, cx: &App) -> Option<Box<dyn std::any::Any>> {
+        let m = self.matches.get(self.selected_index)?;
+        Some(Box::new(picker::PreviewUpdate {
+            abs_path: m.abs_path(&self.project, cx)?,
+        }) as Box<dyn std::any::Any>)
     }
 
     fn render_match(
