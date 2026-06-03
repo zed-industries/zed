@@ -57,10 +57,20 @@ pub fn uncommitted_diffs_for_events(
                 .await
                 .context("failed to open buffer for uncommitted diff capture")
                 .map_err(Arc::new)?;
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
             let file_context = stored_event.file_context.clone();
-            let cached_diff = file_context.as_ref().and_then(|file_context| {
-                file_context.read_with(cx, |file_context, _| file_context.uncommitted_diff.clone())
-            });
+            let cached_diff = file_context
+                .as_ref()
+                .and_then(|file_context| {
+                    file_context
+                        .read_with(cx, |file_context, _| file_context.uncommitted_diff.clone())
+                })
+                // The cached diff is keyed by path, but its hunk anchors are pinned to a
+                // specific buffer. If that buffer was closed and reopened, `open_buffer`
+                // hands back a buffer with a new `BufferId`; reusing the stale diff against
+                // it would mix anchors from different buffers and panic. Drop the cache in
+                // that case so the diff is recomputed for the current buffer.
+                .filter(|diff| diff.read_with(cx, |diff, _| diff.buffer_id) == buffer_id);
             let diff = match cached_diff {
                 Some(diff) => diff,
                 None => {
