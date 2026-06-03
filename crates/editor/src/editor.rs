@@ -1793,8 +1793,10 @@ impl Editor {
         self.sticky_headers_task = cx.spawn(async move |this, cx| {
             let sticky_headers = background_task.await;
             this.update(cx, |this, cx| {
-                this.sticky_headers = Some(sticky_headers);
-                cx.notify();
+                if this.sticky_headers.as_ref() != Some(&sticky_headers) {
+                    this.sticky_headers = Some(sticky_headers);
+                    cx.notify();
+                }
             })
             .ok();
         });
@@ -3079,6 +3081,8 @@ impl Editor {
         self.use_modal_editing
     }
 
+    /// Inserted text is normalized to LF line endings before being applied.
+    /// Normalize before measuring inserted text for post-edit offsets.
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
     where
         I: IntoIterator<Item = (Range<S>, T)>,

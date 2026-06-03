@@ -348,11 +348,7 @@ impl AgentSettingsContent {
             .get_or_insert_default()
             .0;
 
-        if write_paths.iter().any(|granted| path.starts_with(granted)) {
-            return;
-        }
-        write_paths.retain(|granted| !granted.starts_with(&path));
-        write_paths.push(path);
+        util::paths::insert_subtree(write_paths, path);
     }
 }
 
@@ -536,19 +532,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -578,19 +561,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.

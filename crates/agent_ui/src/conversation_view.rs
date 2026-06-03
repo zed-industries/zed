@@ -459,9 +459,9 @@ fn permission_option_for_action(
 ) -> Option<&acp::PermissionOption> {
     if kind == acp::PermissionOptionKind::AllowAlways
         && let PermissionOptions::Flat(options) = options
-        && let Some(option) = options
-            .iter()
-            .find(|option| option.option_id.0.as_ref() == "allow_always")
+        && let Some(option) = options.iter().find(|option| {
+            option.option_id.0.as_ref() == acp_thread::SandboxPermission::AllowAlways.as_id()
+        })
     {
         return Some(option);
     }
@@ -1172,16 +1172,12 @@ impl ConversationView {
             model_selector = None;
             mode_selector = None;
         } else {
-            // Fall back to legacy mode/model selectors
+            // Fall back to dedicated mode/model selectors
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
-                let agent_server = self.agent.clone();
-                let fs = self.project.read(cx).fs().clone();
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
                         selector,
-                        agent_server,
-                        fs,
                         PopoverMenuHandle::default(),
                         self.focus_handle(cx),
                         window,
