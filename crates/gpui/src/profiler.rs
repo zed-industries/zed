@@ -23,8 +23,7 @@ use crate::{SharedString, TasksIncluded};
 
 #[doc(hidden)]
 pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
-    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
-    ThreadTaskTimings::collect(&global_thread_timings, included)
+    ThreadTaskTimings::collect(snapshot_live_timings(), included)
 }
 
 #[doc(hidden)]
@@ -34,8 +33,7 @@ pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTi
 
 #[doc(hidden)]
 pub fn take_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
-    let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-    ThreadTaskStatistics::collect_and_reset(&global_timings, included)
+    ThreadTaskStatistics::collect_and_reset(snapshot_live_timings(), included)
 }
 
 #[doc(hidden)]
@@ -105,14 +103,10 @@ pub struct ThreadTaskTimings {
 
 impl ThreadTaskTimings {
     /// Convert global thread timings into their structured format.
-    pub fn collect(timings: &[GlobalThreadTimings], included: TasksIncluded) -> Vec<Self> {
+    pub fn collect(timings: Vec<Arc<GuardedTaskTimings>>, included: TasksIncluded) -> Vec<Self> {
         timings
-            .iter()
-            .filter_map(|t| match t.timings.upgrade() {
-                Some(timings) => Some((t.thread_id, timings)),
-                _ => None,
-            })
-            .map(|(thread_id, timings)| {
+            .into_iter()
+            .map(|timings| {
                 let timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
                 let total_pushed = timings.total_pushed;
@@ -135,7 +129,7 @@ impl ThreadTaskTimings {
 
                 ThreadTaskTimings {
                     thread_name,
-                    thread_id,
+                    thread_id: timings.thread_id,
                     timings: vec,
                     stats: timings.stats.clone(),
                     total_pushed,
@@ -155,18 +149,15 @@ pub struct ThreadTaskStatistics {
 
 impl ThreadTaskStatistics {
     pub fn collect_and_reset(
-        timings: &[GlobalThreadTimings],
+        timings: Vec<Arc<GuardedTaskTimings>>,
         include_running: TasksIncluded,
     ) -> Vec<Self> {
         timings
-            .iter()
-            .filter_map(|t| match t.timings.upgrade() {
-                Some(timings) => Some((t.thread_id, timings)),
-                _ => None,
-            })
-            .map(|(thread_id, timings)| {
+            .into_iter()
+            .map(|timings| {
                 let mut timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
+                let thread_id = timings.thread_id;
 
                 let mut stats = std::mem::take(&mut timings.stats);
                 if let TasksIncluded::CompletedAndRunning = include_running
@@ -486,6 +477,14 @@ impl TaskStatistics {
 pub static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
     spin::Mutex::new(Vec::new());
 
+fn snapshot_live_timings() -> Vec<Arc<GuardedTaskTimings>> {
+    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
+    global_thread_timings
+        .iter()
+        .filter_map(|t| t.timings.upgrade())
+        .collect()
+}
+
 thread_local! {
     #[doc(hidden)]
     pub static THREAD_TIMINGS: LazyCell<Arc<GuardedTaskTimings>> = LazyCell::new(|| {
@@ -601,7 +600,9 @@ impl ThreadTimings {
 
 impl Drop for ThreadTimings {
     fn drop(&mut self) {
-        let mut thread_timings = GLOBAL_THREAD_TIMINGS.lock();
+        let Some(mut thread_timings) = GLOBAL_THREAD_TIMINGS.try_lock() else {
+            return;
+        };
 
         let Some((index, _)) = thread_timings
             .iter()
@@ -648,13 +649,11 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
     }
 
     if !enabled {
-        for global in GLOBAL_THREAD_TIMINGS.lock().iter() {
-            if let Some(timings) = global.timings.upgrade() {
-                let mut timings = timings.lock();
-                timings.timings.clear();
-                timings.timings.shrink_to_fit();
-                timings.total_pushed = 0;
-            }
+        for timings in snapshot_live_timings() {
+            let mut timings = timings.lock();
+            timings.timings.clear();
+            timings.timings.shrink_to_fit();
+            timings.total_pushed = 0;
         }
     }
     true
@@ -663,4 +662,95 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
 /// Returns whether task timing tracing is enabled.
 pub fn trace_enabled() -> bool {
     PROFILER_ENABLED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+        thread,
+        time::Duration,
+    };
+
+    /// Regression test for a lock-order deadlock between the two profiler
+    /// spinlocks: the global registry (`GLOBAL_THREAD_TIMINGS`) and the
+    /// per-thread `Arc<spin::Mutex<ThreadTimings>>`.
+    #[test]
+    fn concurrent_registration_and_collection_does_not_deadlock() {
+        const WORKER_THREADS: usize = 16;
+        const COLLECTOR_THREADS: usize = 4;
+        const ITERATIONS: usize = 200;
+        const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(30);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+
+        let workload_stop = stop;
+        let workload = thread::spawn(move || {
+            let mut handles = Vec::new();
+
+            for _ in 0..COLLECTOR_THREADS {
+                let stop = workload_stop.clone();
+                handles.push(thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = get_all_timings(TasksIncluded::CompletedAndRunning);
+                        let _ = take_all_stats(TasksIncluded::CompletedAndRunning);
+                    }
+                }));
+            }
+
+            {
+                let stop = workload_stop.clone();
+                handles.push(thread::spawn(move || {
+                    let mut on = false;
+                    while !stop.load(Ordering::Relaxed) {
+                        on = !on;
+                        set_trace_enabled(on);
+                    }
+                    set_trace_enabled(false);
+                }));
+            }
+
+            for _ in 0..ITERATIONS {
+                let mut workers = Vec::with_capacity(WORKER_THREADS);
+                for _ in 0..WORKER_THREADS {
+                    workers.push(thread::spawn(|| {
+                        let _ = get_current_thread_task_timings(TasksIncluded::CompletedAndRunning);
+                    }));
+                }
+                for worker in workers {
+                    worker.join().expect("worker thread panicked");
+                }
+            }
+
+            workload_stop.store(true, Ordering::Relaxed);
+            for handle in handles {
+                handle.join().expect("profiler thread panicked");
+            }
+
+            done_tx.send(()).ok();
+        });
+
+        match done_rx.recv_timeout(WATCHDOG_TIMEOUT) {
+            Ok(()) => {
+                workload.join().expect("workload thread panicked");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!(
+                    "profiler workload did not finish within {WATCHDOG_TIMEOUT:?}; \
+                     likely a lock-order deadlock between GLOBAL_THREAD_TIMINGS and \
+                     the per-thread timing mutex"
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                workload.join().expect("workload thread panicked");
+                panic!("profiler workload disconnected without completing");
+            }
+        }
+    }
 }
