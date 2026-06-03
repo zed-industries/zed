@@ -106,10 +106,9 @@ impl MindmapAccents {
             None => return Ok(None),
         };
         let class = class_attr.unescape_value()?;
-        let tokens: Vec<&str> = class.split_whitespace().collect();
-        let is_root = tokens.contains(&"section-root");
+        let is_root = class.split_whitespace().any(|t| t == "section-root");
 
-        for token in &tokens {
+        for token in class.split_whitespace() {
             if let Some(rest) = token.strip_prefix("section-") {
                 if rest == "-1" || rest.parse::<u32>().is_ok() {
                     let class_name = if is_root {

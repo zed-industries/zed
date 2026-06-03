@@ -69,15 +69,14 @@ pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
     let attr = e.try_get_attribute("d").ok()??;
     let d = attr.unescape_value().ok()?;
     let rest = d.strip_prefix('M')?.trim_start();
-    let mut chars = rest.chars().peekable();
-    while chars.peek().is_some_and(|c| *c != ' ' && *c != ',') {
-        chars.next();
-    }
-    while chars.peek().is_some_and(|c| *c == ' ' || *c == ',') {
-        chars.next();
-    }
-    let y_str: String = chars.take_while(|c| *c != ' ' && *c != ',').collect();
-    let y: f64 = y_str.parse().ok()?;
+    // The path data starts with `M x,y ...`; the y coordinate is the second
+    // whitespace/comma-separated token.
+    let y: f64 = rest
+        .split([' ', ','])
+        .filter(|token| !token.is_empty())
+        .nth(1)?
+        .parse()
+        .ok()?;
     Some(y.abs())
 }
 
@@ -255,9 +254,9 @@ enum Handler {
     Sequence(sequence_diagram::SequenceDiagramAccents),
 }
 
-struct AccentColors<I> {
+struct AccentColors<'theme, I> {
     inner: I,
-    theme: MermaidTheme,
+    theme: &'theme MermaidTheme,
     handler: Handler,
     in_legend: bool,
     legend_color_idx: usize,
@@ -268,11 +267,14 @@ struct AccentColors<I> {
     quadrant_point_idx: usize,
 }
 
-impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
+impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> AccentColors<'theme, I> {
     fn process_chart_colors(&mut self, event: Event<'a>) -> Result<Event<'a>> {
         match &event {
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"g" => {
-                if self.in_plot {
+                // Only a real opening tag increases nesting depth. Self-closing `<g/>`
+                // elements have no matching `</g>`, so counting them would leave
+                // `plot_depth` permanently inflated and `in_plot` stuck on.
+                if self.in_plot && matches!(event, Event::Start(_)) {
                     self.plot_depth += 1;
                 }
                 if let Some(class_attr) = e.try_get_attribute("class")? {
@@ -344,7 +346,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
     }
 }
 
-impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
+impl<'a, 'theme, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<'theme, I> {
     type Item = Result<Event<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -394,13 +396,13 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
     }
 }
 
-pub(super) fn process<'a>(
+pub(super) fn process<'a, 'theme>(
     events: impl Iterator<Item = Result<Event<'a>>>,
-    theme: &MermaidTheme,
+    theme: &'theme MermaidTheme,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
     AccentColors {
         inner: events,
-        theme: theme.clone(),
+        theme,
         handler: Handler::Pending,
         in_legend: false,
         legend_color_idx: 0,

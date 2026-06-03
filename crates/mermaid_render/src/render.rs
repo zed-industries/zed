@@ -110,11 +110,14 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
         "quadrantInternalBorderStrokeFill": primary_border,
     });
 
-    let map = theme_vars.as_object_mut().expect("just created as object");
-    for i in 0..8 {
-        map.insert(format!("cScale{i}"), git[i].clone().into());
-        map.insert(format!("cScaleLabel{i}"), git_lbl[i].clone().into());
-        map.insert(format!("pie{}", i + 1), git[i].clone().into());
+    if let Some(map) = theme_vars.as_object_mut() {
+        for (((i, color), label), pie_number) in
+            git.iter().enumerate().zip(&git_lbl).zip(1..)
+        {
+            map.insert(format!("cScale{i}"), color.clone().into());
+            map.insert(format!("cScaleLabel{i}"), label.clone().into());
+            map.insert(format!("pie{pie_number}"), color.clone().into());
+        }
     }
 
     merman::MermaidConfig::from_value(serde_json::json!({
