@@ -3194,6 +3194,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "parking_lot",
+ "serde",
  "serde_json",
  "thiserror 2.0.17",
  "yawc",
