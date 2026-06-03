@@ -1,3 +1,4 @@
+mod bench;
 mod derive_action;
 mod derive_app_context;
 mod derive_into_element;
@@ -187,6 +188,12 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
+}
+
+/// `#[gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
+#[proc_macro_attribute]
+pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
+    bench::bench(args, function)
 }
 
 /// A variant of `#[gpui::test]` that supports property-based testing.

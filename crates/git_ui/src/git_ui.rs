@@ -36,6 +36,7 @@ pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
+pub mod git_graph;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
@@ -45,6 +46,7 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod solo_diff_view;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_names;
@@ -68,6 +70,7 @@ pub fn get_provider_icon(name: &str) -> IconName {
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
+    git_graph::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);

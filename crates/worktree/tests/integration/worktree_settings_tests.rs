@@ -18,6 +18,7 @@ fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
             PathStyle::local(),
         )
         .unwrap(),
+        scan_symlinks: Default::default(),
     }
 }
 
