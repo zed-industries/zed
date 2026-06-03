@@ -1,9 +1,7 @@
 use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow};
-use gpui_util::ResultExt;
 use hdrhistogram::Histogram;
-use scheduler::Instant;
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
@@ -18,7 +16,7 @@ const DEFAULT_FRAME_BUDGET_NANOS: u128 = 1_000_000_000 / 120;
 /// A small report produced by GPUI benchmarks.
 #[derive(Clone)]
 pub struct BenchReport {
-    measurements: Rc<RefCell<Vec<BenchMeasurementReport>>>,
+    frame_snapshot: Rc<RefCell<WindowFrameSnapshot>>,
     frame_budget_nanos: u128,
 }
 
@@ -33,13 +31,9 @@ impl BenchReport {
     /// when counting missed frames.
     pub fn with_frame_budget_nanos(frame_budget_nanos: u128) -> Self {
         Self {
-            measurements: Rc::default(),
+            frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
             frame_budget_nanos,
         }
-    }
-
-    fn record_sample(&self, name: &'static str, foreground_time: Duration) {
-        self.record_value(name, duration_to_nanos(foreground_time));
     }
 
     fn record_frame_latency_delta(
@@ -48,51 +42,22 @@ impl BenchReport {
         after: &FrameLatencySnapshot,
     ) {
         let mut dirty_to_draw = after.dirty_to_draw_histogram.clone();
-        if dirty_to_draw
+        dirty_to_draw
             .subtract(&before.dirty_to_draw_histogram)
-            .log_err()
-            .is_some()
-        {
-            self.record_histogram("window dirty-to-draw", &dirty_to_draw);
-        }
+            .unwrap();
 
         let mut draw = after.draw_histogram.clone();
-        if draw.subtract(&before.draw_histogram).log_err().is_some() {
-            self.record_histogram("window draw", &draw);
-        }
+        draw.subtract(&before.draw_histogram).unwrap();
+
+        self.frame_snapshot
+            .borrow_mut()
+            .record(WindowFrameSnapshot {
+                dirty_to_draw,
+                draw,
+            });
     }
 
-    fn record_value(&self, name: &'static str, value: u64) {
-        let mut measurements = self.measurements.borrow_mut();
-        match measurements
-            .iter_mut()
-            .find(|measurement| measurement.name == name)
-        {
-            Some(measurement) => measurement.record_value(value),
-            None => {
-                if let Some(measurement) = BenchMeasurementReport::with_value(name, value) {
-                    measurements.push(measurement);
-                }
-            }
-        }
-    }
-
-    fn record_histogram(&self, name: &'static str, histogram: &Histogram<u64>) {
-        if histogram.is_empty() {
-            return;
-        }
-
-        let mut measurements = self.measurements.borrow_mut();
-        match measurements
-            .iter_mut()
-            .find(|measurement| measurement.name == name)
-        {
-            Some(measurement) => measurement.record_histogram(histogram),
-            None => measurements.push(BenchMeasurementReport::new(name, histogram.clone())),
-        }
-    }
-
-    fn total_missed_frames(&self, histogram: &hdrhistogram::Histogram<u64>) -> u64 {
+    fn total_missed_frames(&self, histogram: &Histogram<u64>) -> u64 {
         histogram
             .iter_recorded()
             .map(|value| {
@@ -114,94 +79,79 @@ impl BenchReport {
 
     /// Prints this report to stderr.
     pub fn print(&self, benchmark_name: Option<&'static str>) {
-        let measurements = self.measurements.borrow();
-        if measurements.is_empty() {
+        let frame_snapshot = self.frame_snapshot.borrow();
+        if frame_snapshot.is_empty() {
             return;
         }
 
         let benchmark_name = benchmark_name.unwrap_or("unknown benchmark");
         eprintln!("GPUI bench report (all observed iterations): {benchmark_name}");
         eprintln!("  note: includes Criterion warmup/calibration");
-        for measurement in measurements.iter() {
-            let max_foreground_time = measurement.max_foreground_time();
-            eprintln!("  {}:", measurement.name);
-            eprintln!("    samples: {}", measurement.samples());
-            eprintln!(
-                "    mean: {}",
-                format_duration(measurement.mean_foreground_time())
-            );
-            eprintln!(
-                "    p50: {}",
-                format_duration(measurement.percentile_foreground_time(0.50))
-            );
-            eprintln!(
-                "    p90: {}",
-                format_duration(measurement.percentile_foreground_time(0.90))
-            );
-            eprintln!(
-                "    p95: {}",
-                format_duration(measurement.percentile_foreground_time(0.95))
-            );
-            eprintln!(
-                "    p99: {}",
-                format_duration(measurement.percentile_foreground_time(0.99))
-            );
-            eprintln!("    max: {}", format_duration(max_foreground_time));
-            eprintln!(
-                "    missed frames total: {}",
-                self.total_missed_frames(&measurement.histogram)
-            );
-            eprintln!(
-                "    missed frames max: {}",
-                self.missed_frames(max_foreground_time)
-            );
+        self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
+        self.print_histogram("window draw", &frame_snapshot.draw);
+    }
+
+    fn print_histogram(&self, name: &str, histogram: &Histogram<u64>) {
+        if histogram.is_empty() {
+            return;
+        }
+
+        let max_foreground_time = Duration::from_nanos(histogram.max());
+        eprintln!("  {name}:");
+        eprintln!("    samples: {}", histogram.len());
+        eprintln!(
+            "    mean: {}",
+            format_duration(Duration::from_nanos(histogram.mean() as u64))
+        );
+        eprintln!(
+            "    p50: {}",
+            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.50)))
+        );
+        eprintln!(
+            "    p90: {}",
+            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.90)))
+        );
+        eprintln!(
+            "    p95: {}",
+            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.95)))
+        );
+        eprintln!(
+            "    p99: {}",
+            format_duration(Duration::from_nanos(histogram.value_at_quantile(0.99)))
+        );
+        eprintln!("    max: {}", format_duration(max_foreground_time));
+        eprintln!(
+            "    missed frames total: {}",
+            self.total_missed_frames(histogram)
+        );
+        eprintln!(
+            "    missed frames max: {}",
+            self.missed_frames(max_foreground_time)
+        );
+    }
+}
+
+struct WindowFrameSnapshot {
+    dirty_to_draw: Histogram<u64>,
+    draw: Histogram<u64>,
+}
+
+impl WindowFrameSnapshot {
+    fn new() -> Self {
+        Self {
+            dirty_to_draw: Histogram::new(3).unwrap(),
+            draw: Histogram::new(3).unwrap(),
         }
     }
-}
 
-struct BenchMeasurementReport {
-    name: &'static str,
-    histogram: Histogram<u64>,
-}
-
-impl BenchMeasurementReport {
-    fn new(name: &'static str, histogram: Histogram<u64>) -> Self {
-        Self { name, histogram }
+    fn record(&mut self, snapshot: WindowFrameSnapshot) {
+        self.dirty_to_draw.add(snapshot.dirty_to_draw).unwrap();
+        self.draw.add(snapshot.draw).unwrap();
     }
 
-    fn with_value(name: &'static str, value: u64) -> Option<Self> {
-        let mut histogram = Histogram::new(3).log_err()?;
-        histogram.record(value).log_err()?;
-        Some(Self { name, histogram })
+    fn is_empty(&self) -> bool {
+        self.dirty_to_draw.is_empty() && self.draw.is_empty()
     }
-
-    fn record_value(&mut self, value: u64) {
-        self.histogram.record(value).log_err();
-    }
-
-    fn record_histogram(&mut self, histogram: &Histogram<u64>) {
-        self.histogram.add(histogram).log_err();
-    }
-
-    fn samples(&self) -> u64 {
-        self.histogram.len()
-    }
-
-    fn mean_foreground_time(&self) -> Duration {
-        Duration::from_nanos(self.histogram.mean() as u64)
-    }
-
-    fn percentile_foreground_time(&self, quantile: f64) -> Duration {
-        Duration::from_nanos(self.histogram.value_at_quantile(quantile))
-    }
-
-    fn max_foreground_time(&self) -> Duration {
-        Duration::from_nanos(self.histogram.max())
-    }
-}
-
-fn duration_to_nanos(duration: Duration) -> u64 {
-    duration.as_nanos().min(u128::from(u64::MAX)) as u64
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -300,12 +250,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// benchmark app context so it can update GPUI state.
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
-        let mut benchmark = || {
-            let started_at = Instant::now();
-            benchmark(self);
-            self.report
-                .record_sample("bench_iter", started_at.elapsed());
-        };
+        let mut benchmark = || benchmark(self);
         bencher.iter(&mut benchmark);
         self.replace_bencher(bencher);
     }
