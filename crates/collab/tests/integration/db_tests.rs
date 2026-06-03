@@ -69,7 +69,7 @@ impl TestDb {
         let _guard = LOCK.lock();
         let mut rng = StdRng::from_os_rng();
         let url = format!(
-            "postgres://postgres@localhost:54320/zed-test-{}",
+            "postgres://postgres@localhost/zed-test-{}",
             rng.random::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -204,6 +204,6 @@ fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str)]) -> Vec<Cha
     result
 }
 
-async fn new_test_user(db: &Arc<Database>, _email: &str) -> UserId {
+async fn new_test_user(db: &Arc<Database>) -> UserId {
     db.create_user(false).await.unwrap().user_id
 }

@@ -239,7 +239,7 @@ async fn test_upsert_shared_thread(db: &Arc<Database>) {
     use collab::db::SharedThreadId;
     use uuid::Uuid;
 
-    let user_id = new_test_user(db, "user1@example.com").await;
+    let user_id = new_test_user(db).await;
 
     let thread_id = SharedThreadId(Uuid::new_v4());
     let title = "My Test Thread";
@@ -269,7 +269,7 @@ async fn test_upsert_shared_thread_updates_existing(db: &Arc<Database>) {
     use collab::db::SharedThreadId;
     use uuid::Uuid;
 
-    let user_id = new_test_user(db, "user1@example.com").await;
+    let user_id = new_test_user(db).await;
 
     let thread_id = SharedThreadId(Uuid::new_v4());
 
@@ -310,8 +310,8 @@ async fn test_cannot_update_another_users_shared_thread(db: &Arc<Database>) {
     use collab::db::SharedThreadId;
     use uuid::Uuid;
 
-    let user1_id = new_test_user(db, "user1@example.com").await;
-    let user2_id = new_test_user(db, "user2@example.com").await;
+    let user1_id = new_test_user(db).await;
+    let user2_id = new_test_user(db).await;
 
     let thread_id = SharedThreadId(Uuid::new_v4());
 

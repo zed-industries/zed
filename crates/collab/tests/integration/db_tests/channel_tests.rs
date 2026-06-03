@@ -10,8 +10,8 @@ use std::{collections::HashSet, sync::Arc};
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
 
 async fn test_channels(db: &Arc<Database>) {
-    let a_id = new_test_user(db, "user1@example.com").await;
-    let b_id = new_test_user(db, "user2@example.com").await;
+    let a_id = new_test_user(db).await;
+    let b_id = new_test_user(db).await;
 
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
@@ -118,8 +118,8 @@ test_both_dbs!(
 async fn test_joining_channels(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
-    let user_1 = new_test_user(db, "user1@example.com").await;
-    let user_2 = new_test_user(db, "user2@example.com").await;
+    let user_1 = new_test_user(db).await;
+    let user_2 = new_test_user(db).await;
 
     let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
 
@@ -149,9 +149,9 @@ test_both_dbs!(
 async fn test_channel_invites(db: &Arc<Database>) {
     db.create_server("test").await.unwrap();
 
-    let user_1 = new_test_user(db, "user1@example.com").await;
-    let user_2 = new_test_user(db, "user2@example.com").await;
-    let user_3 = new_test_user(db, "user3@example.com").await;
+    let user_1 = new_test_user(db).await;
+    let user_2 = new_test_user(db).await;
+    let user_3 = new_test_user(db).await;
 
     let channel_1_1_id = db.create_root_channel("channel_1", user_1).await.unwrap();
 
@@ -597,9 +597,9 @@ test_both_dbs!(
 );
 
 async fn test_user_is_channel_participant(db: &Arc<Database>) {
-    let admin = new_test_user(db, "admin@example.com").await;
-    let member = new_test_user(db, "member@example.com").await;
-    let guest = new_test_user(db, "guest@example.com").await;
+    let admin = new_test_user(db).await;
+    let member = new_test_user(db).await;
+    let guest = new_test_user(db).await;
 
     let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
     let internal_channel_id = db
@@ -912,8 +912,8 @@ test_both_dbs!(
 async fn test_delete_channel_with_active_call(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
-    let user_1 = new_test_user(db, "user1@example.com").await;
-    let user_2 = new_test_user(db, "user2@example.com").await;
+    let user_1 = new_test_user(db).await;
+    let user_2 = new_test_user(db).await;
 
     let parent_channel_id = db
         .create_root_channel("parent_channel", user_1)
