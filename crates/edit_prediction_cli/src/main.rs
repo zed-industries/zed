@@ -274,6 +274,9 @@ impl Display for Command {
                 if args.context_only {
                     write!(f, " --context-only")?;
                 }
+                if args.related_context_limit != score::EVAL_RELATED_CONTEXT_TOKENS_LIMIT {
+                    write!(f, " --related-context-limit={}", args.related_context_limit)?;
+                }
                 if let Some(provider) = &args.predict.provider {
                     write!(f, " --provider={}", provider)?;
                 }
@@ -334,6 +337,9 @@ struct EvalArgs {
     /// Only compute editable context coverage from expected patches and retrieved context.
     #[clap(long)]
     context_only: bool,
+    /// Maximum number of retrieved context tokens to include when scoring.
+    #[clap(long, default_value_t = score::EVAL_RELATED_CONTEXT_TOKENS_LIMIT)]
+    related_context_limit: usize,
     /// Path to write summary scores as JSON
     #[clap(long)]
     summary_json: Option<PathBuf>,
@@ -1303,7 +1309,7 @@ fn main() {
                                                 score::run_context_coverage_scoring(
                                                     example,
                                                     &example_progress,
-                                                    Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
+                                                    Some(args.related_context_limit * 3),
                                                 )?;
                                             } else {
                                                 run_scoring(
@@ -1313,7 +1319,7 @@ fn main() {
                                                     &example_progress,
                                                     cx.clone(),
                                                     true,
-                                                    Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
+                                                    Some(args.related_context_limit * 3),
                                                 )
                                                 .await?;
                                             }
@@ -1472,7 +1478,7 @@ fn main() {
                             &examples,
                             args.verbose,
                             args.context_only,
-                            Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
+                            Some(args.related_context_limit * 3),
                         );
                         if let Some(summary_path) = &args.summary_json {
                             score::write_summary_json(&examples, summary_path)?;

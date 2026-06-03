@@ -18,7 +18,7 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
 
-pub const EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT: usize = 4000;
+pub const EVAL_RELATED_CONTEXT_TOKENS_LIMIT: usize = 4000;
 
 pub async fn run_scoring(
     example: &mut Example,
