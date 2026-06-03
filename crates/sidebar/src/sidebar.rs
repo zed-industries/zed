@@ -343,22 +343,6 @@ enum DraftKind {
     Empty,
 }
 
-fn is_native_thread(agent_id: &AgentId) -> bool {
-    agent_id == &*ZED_AGENT_ID
-}
-
-fn should_render_thread_context_menu(is_draft: bool, session_id: Option<&acp::SessionId>) -> bool {
-    !is_draft && session_id.is_some()
-}
-
-fn should_show_thread_title_regeneration(agent_id: &AgentId) -> bool {
-    is_native_thread(agent_id)
-}
-
-fn should_show_open_thread_as_markdown(agent_id: &AgentId, is_live: bool) -> bool {
-    is_live || is_native_thread(agent_id)
-}
-
 #[derive(Clone)]
 struct ThreadEntry {
     metadata: ThreadMetadata,
@@ -6277,7 +6261,7 @@ impl Sidebar {
                 })
             });
 
-        if !should_render_thread_context_menu(is_draft, thread.metadata.session_id.as_ref()) {
+        if is_draft || thread.metadata.session_id.is_none() {
             return thread_item.into_any_element();
         }
 
@@ -6294,10 +6278,8 @@ impl Sidebar {
             ThreadEntryWorkspace::Closed { .. } => None,
         };
 
-        let can_load_markdown_from_database = is_native_thread(&thread.metadata.agent_id);
-        let can_regenerate_title = should_show_thread_title_regeneration(&thread.metadata.agent_id);
-        let can_open_as_markdown =
-            should_show_open_thread_as_markdown(&thread.metadata.agent_id, thread.is_live);
+        let is_zed_thread = thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref();
+        let can_open_as_markdown = thread.is_live || is_zed_thread;
         let folder_paths = thread.metadata.folder_paths().clone();
 
         right_click_menu(context_menu_id)
@@ -6333,7 +6315,7 @@ impl Sidebar {
                             }
                         });
 
-                        if can_regenerate_title {
+                        if is_zed_thread {
                             menu = menu.entry("Regenerate Thread Title", None, {
                                 let session_id = session_id.clone();
                                 let sidebar = sidebar.clone();
@@ -6380,7 +6362,7 @@ impl Sidebar {
                                         {
                                             return;
                                         }
-                                    } else if can_load_markdown_from_database {
+                                    } else if is_zed_thread {
                                         Self::open_closed_native_thread_as_markdown(
                                             &session_id,
                                             markdown_title.clone(),
