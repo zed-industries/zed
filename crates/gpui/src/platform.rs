@@ -1250,17 +1250,55 @@ impl PlatformInputHandler {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
 
-    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        let selection = self.handler.selected_text_range(true, window, cx)?;
-        self.handler.bounds_for_range(
-            if selection.reversed {
-                selection.range.start..selection.range.start
+    pub fn compute_ime_candidate_bounds(
+        marked_range: Option<Range<usize>>,
+        selection: &UTF16Selection,
+        mut bounds_for_range: impl FnMut(Range<usize>) -> Option<Bounds<Pixels>>,
+    ) -> Option<Bounds<Pixels>> {
+        if let Some(marked_range) = marked_range {
+            // Default to the start of the marked (composing) range.
+            let mut line_start = marked_range.start;
+
+            // Walk backward from the caret looking for a line break. A change in
+            // the Y coordinate means we crossed into the previous visual line, so
+            // the line start is one position after the break point.
+            let caret = selection.range.end;
+            if let Some(caret_bounds) = bounds_for_range(caret..caret) {
+                for i in (marked_range.start..caret).rev() {
+                    if let Some(b) = bounds_for_range(i..i) {
+                        if (b.origin.y - caret_bounds.origin.y).abs() > px(0.1) {
+                            line_start = i + 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            bounds_for_range(line_start..line_start)
+        } else {
+            // No active composition — use the selection endpoint.
+            let offset = if selection.reversed {
+                selection.range.start
             } else {
-                selection.range.end..selection.range.end
-            },
-            window,
-            cx,
-        )
+                selection.range.end
+            };
+            bounds_for_range(offset..offset)
+        }
+    }
+
+    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
+        let marked_range = self.handler.marked_text_range(window, cx);
+        let selection = self.handler.selected_text_range(true, window, cx)?;
+        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+            self.handler.bounds_for_range(range, window, cx)
+        })
+    }
+
+    pub fn ime_candidate_bounds(&mut self) -> Option<Bounds<Pixels>> {
+        let marked_range = self.marked_text_range();
+        let selection = self.selected_text_range(true)?;
+        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+            self.bounds_for_range(range)
+        })
     }
 
     #[allow(unused)]
