@@ -1,4 +1,6 @@
+mod jumps;
 mod kept_rate;
+mod patch;
 mod patch_metrics;
 mod prediction_score;
 mod reversal;
@@ -7,6 +9,7 @@ mod tokenize;
 #[cfg(feature = "tree-sitter")]
 mod tree_sitter;
 
+pub use jumps::{EditableContextCoverage, Excerpt, editable_context_coverage};
 pub use kept_rate::AnnotatedToken;
 pub use kept_rate::KeptRateResult;
 pub use kept_rate::TokenAnnotation;

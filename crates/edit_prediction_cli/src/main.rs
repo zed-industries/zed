@@ -59,7 +59,7 @@ use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::pull_examples::{fetch_settled_examples_after, parse_settled_after_input};
-use crate::retrieve_context::run_context_retrieval;
+use crate::retrieve_context::{ContextRetrievalType, run_context_retrieval};
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
 use crate::split_dataset::SplitArgs;
@@ -100,7 +100,7 @@ struct EpArgs {
     output: Option<PathBuf>,
     #[arg(long, short, global = true)]
     in_place: bool,
-    #[arg(long, short, global = true)]
+    #[arg(long, global = true)]
     failfast: bool,
     /// How to handle failed examples in output: keep them or skip them.
     /// Failed examples are always logged to the run's failed directory.
@@ -123,6 +123,16 @@ pub enum FailedHandling {
     Skip,
     /// Skip writing files
     SkipNoFiles,
+}
+
+#[derive(Args, Debug, Clone)]
+struct ContextArgs {
+    /// Which context collector to run.
+    #[arg(long = "type", value_enum, default_value_t = ContextRetrievalType::Lsp)]
+    context_type: ContextRetrievalType,
+    /// Recompute context even if the example already has related files.
+    #[arg(long, short = 'f', default_value_t = false)]
+    force: bool,
 }
 
 const INPUTS_HELP: &str = r#"
@@ -197,7 +207,7 @@ enum Command {
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
-    Context,
+    Context(ContextArgs),
     /// Generate a prompt string for a specific model
     FormatPrompt(FormatPromptArgs),
     /// Runs edit prediction
@@ -239,7 +249,13 @@ impl Display for Command {
         match self {
             Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
-            Command::Context => write!(f, "context"),
+            Command::Context(args) => {
+                write!(f, "context --type={}", args.context_type)?;
+                if args.force {
+                    write!(f, " --force")?;
+                }
+                Ok(())
+            }
             Command::FormatPrompt(args) => {
                 write!(f, "format-prompt --provider={}", args.provider)
             }
@@ -253,10 +269,16 @@ impl Display for Command {
                 None => write!(f, "score"),
             },
             Command::Distill => write!(f, "distill"),
-            Command::Eval(args) => match &args.predict.provider {
-                Some(provider) => write!(f, "eval --provider={}", provider),
-                None => write!(f, "eval"),
-            },
+            Command::Eval(args) => {
+                write!(f, "eval")?;
+                if args.context_only {
+                    write!(f, " --context-only")?;
+                }
+                if let Some(provider) = &args.predict.provider {
+                    write!(f, " --provider={}", provider)?;
+                }
+                Ok(())
+            }
             Command::Synthesize(args) => {
                 write!(f, "synthesize --repos {}", args.repos.join(" "))
             }
@@ -309,6 +331,9 @@ struct PredictArgs {
 struct EvalArgs {
     #[clap(flatten)]
     predict: PredictArgs,
+    /// Only compute editable context coverage from expected patches and retrieved context.
+    #[clap(long)]
+    context_only: bool,
     /// Path to write summary scores as JSON
     #[clap(long)]
     summary_json: Option<PathBuf>,
@@ -1133,7 +1158,9 @@ fn main() {
                         predict::sync_batches(args.provider.as_ref()).await?;
                     }
                     Command::Eval(args) => {
-                        predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        if !args.context_only {
+                            predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        }
                     }
                     Command::Qa(args) => {
                         qa::sync_batches(args).await?;
@@ -1222,11 +1249,13 @@ fn main() {
                                             )
                                             .await?;
                                         }
-                                        Command::Context => {
+                                        Command::Context(args) => {
                                             run_context_retrieval(
                                                 example,
                                                 app_state.clone(),
                                                 &example_progress,
+                                                args.context_type,
+                                                args.force,
                                                 cx.clone(),
                                             )
                                             .await?;
@@ -1264,18 +1293,30 @@ fn main() {
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
+                                                false,
+                                                None,
                                             )
                                             .await?;
                                         }
                                         Command::Eval(args) => {
-                                            run_scoring(
-                                                example,
-                                                &args.predict,
-                                                app_state.clone(),
-                                                &example_progress,
-                                                cx.clone(),
-                                            )
-                                            .await?;
+                                            if args.context_only {
+                                                score::run_context_coverage_scoring(
+                                                    example,
+                                                    &example_progress,
+                                                    Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
+                                                )?;
+                                            } else {
+                                                run_scoring(
+                                                    example,
+                                                    &args.predict,
+                                                    app_state.clone(),
+                                                    &example_progress,
+                                                    cx.clone(),
+                                                    true,
+                                                    Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
+                                                )
+                                                .await?;
+                                            }
                                         }
                                         Command::Qa(args) => {
                                             qa::run_qa(example, args, &example_progress).await?;
@@ -1394,15 +1435,17 @@ fn main() {
                         }
                     }
                     Command::Eval(args) => {
-                        predict::sync_batches(args.predict.provider.as_ref()).await?;
-                        if args.predict.wait {
-                            predict::wait_for_batches(args.predict.provider.as_ref()).await?;
-                            let mut examples =
-                                std::mem::take(&mut *finished_examples.lock().unwrap());
-                            predict::reprocess_after_batch_wait(&mut examples, &args.predict)
-                                .await?;
-                            rewrite_output(&examples, write_path, is_markdown)?;
-                            *finished_examples.lock().unwrap() = examples;
+                        if !args.context_only {
+                            predict::sync_batches(args.predict.provider.as_ref()).await?;
+                            if args.predict.wait {
+                                predict::wait_for_batches(args.predict.provider.as_ref()).await?;
+                                let mut examples =
+                                    std::mem::take(&mut *finished_examples.lock().unwrap());
+                                predict::reprocess_after_batch_wait(&mut examples, &args.predict)
+                                    .await?;
+                                rewrite_output(&examples, write_path, is_markdown)?;
+                                *finished_examples.lock().unwrap() = examples;
+                            }
                         }
                     }
                     Command::Qa(args) => {
@@ -1425,7 +1468,12 @@ fn main() {
                 match &command {
                     Command::Eval(args) => {
                         let examples = finished_examples.lock().unwrap();
-                        score::print_report(&examples, args.verbose);
+                        score::print_report(
+                            &examples,
+                            args.verbose,
+                            args.context_only,
+                            Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
+                        );
                         if let Some(summary_path) = &args.summary_json {
                             score::write_summary_json(&examples, summary_path)?;
                         }
