@@ -1489,7 +1489,7 @@ impl App {
                     }
                 }
             } else {
-                #[cfg(any(test, feature = "test-support"))]
+                #[cfg(any(test, feature = "test-support", feature = "bench"))]
                 for window in self
                     .windows
                     .values()
