@@ -373,6 +373,7 @@ impl EditToolTest {
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 user_agents_md: None,
                 sandboxing: false,
+                sandbox_reads_restricted: false,
             };
             let templates = Templates::new();
             template.render(&templates)?

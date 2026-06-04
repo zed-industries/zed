@@ -118,6 +118,17 @@ pub struct SandboxedTerminalToolInput {
     /// paths triggers a user approval prompt.
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
+    /// Paths the command needs to read outside the default-readable
+    /// locations.
+    ///
+    /// Only needed when the sandbox restricts reads (see the Terminal
+    /// sandbox section of your instructions); when reads are unrestricted
+    /// this is a no-op. Provide absolute or worktree-relative paths; each
+    /// directory grants read access to its whole subtree. Write grants
+    /// already include read access, so don't list paths that are already in
+    /// `fs_write_paths`. Requesting paths triggers a user approval prompt.
+    #[serde(default)]
+    pub fs_read_paths: Vec<String>,
     /// Set to `true` only when the command needs to write outside the
     /// default-writable locations but the specific paths cannot be
     /// enumerated up front.
@@ -141,6 +152,7 @@ pub struct SandboxedTerminalToolInput {
 struct TerminalSandboxInput {
     allow_network: Option<bool>,
     fs_write_paths: Vec<String>,
+    fs_read_paths: Vec<String>,
     allow_fs_write_all: Option<bool>,
     unsandboxed: Option<bool>,
 }
@@ -181,6 +193,7 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
             sandbox: Some(TerminalSandboxInput {
                 allow_network: input.allow_network,
                 fs_write_paths: input.fs_write_paths,
+                fs_read_paths: input.fs_read_paths,
                 allow_fs_write_all: input.allow_fs_write_all,
                 unsandboxed: input.unsandboxed,
             }),
@@ -326,17 +339,26 @@ async fn run_terminal_tool(
     let want_fs_write_all = sandboxing && sandbox_input.allow_fs_write_all == Some(true);
     let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
 
-    let write_paths: Vec<PathBuf> = if sandboxing && !want_unsandboxed {
+    let (write_paths, read_paths): (Vec<PathBuf>, Vec<PathBuf>) = if sandboxing && !want_unsandboxed
+    {
         cx.update(|cx| {
-            resolve_write_paths(
-                &sandbox_input.fs_write_paths,
-                working_dir.as_deref(),
-                &project,
-                cx,
+            (
+                resolve_sandbox_paths(
+                    &sandbox_input.fs_write_paths,
+                    working_dir.as_deref(),
+                    &project,
+                    cx,
+                ),
+                resolve_sandbox_paths(
+                    &sandbox_input.fs_read_paths,
+                    working_dir.as_deref(),
+                    &project,
+                    cx,
+                ),
             )
         })
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
 
     let request = crate::sandboxing::SandboxRequest {
@@ -344,6 +366,7 @@ async fn run_terminal_tool(
         allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
         unsandboxed: want_unsandboxed,
         write_paths,
+        read_paths,
     };
 
     if request.needs_escalation() {
@@ -380,6 +403,7 @@ async fn run_terminal_tool(
         Some(acp_thread::SandboxWrap {
             writable_paths,
             extra_write_paths: effective.write_paths,
+            readable_paths: effective.read_paths,
             allow_network: effective.network,
             allow_fs_write: effective.allow_fs_write_all,
             // Filled in by `NativeThreadEnvironment::create_terminal`, which
@@ -464,14 +488,15 @@ async fn run_terminal_tool(
     ))
 }
 
-/// Resolve model-requested write paths into absolute paths.
+/// Resolve model-requested sandbox escalation paths (write or read grants)
+/// into absolute paths.
 ///
 /// Relative paths are resolved against the command's working directory when
 /// known, otherwise against the project's first worktree root. Paths that
 /// can't be made absolute (relative paths with no base) are dropped. The
 /// resulting paths are shown to the user for approval, so resolving against
 /// model-controlled inputs is safe — nothing is granted without that prompt.
-fn resolve_write_paths(
+fn resolve_sandbox_paths(
     raw_paths: &[String],
     working_dir: Option<&Path>,
     project: &Entity<Project>,
@@ -490,8 +515,8 @@ fn resolve_write_paths(
     join_write_paths(raw_paths, base.as_deref())
 }
 
-/// Pure path-joining step of [`resolve_write_paths`], split out so it can be
-/// unit-tested without a `Project`/`App`.
+/// Pure path-joining step of [`resolve_sandbox_paths`], split out so it can
+/// be unit-tested without a `Project`/`App`.
 ///
 /// Each path is lexically normalized (resolving `.`/`..`) so that later
 /// subtree-containment checks and the user-facing approval prompt operate on
@@ -530,6 +555,12 @@ fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String
         parts.push(format!(
             "write access to {}",
             write_path_summary(&request.write_paths)
+        ));
+    }
+    if !request.read_paths.is_empty() && !request.allow_fs_write_all {
+        parts.push(format!(
+            "read access to {}",
+            write_path_summary(&request.read_paths)
         ));
     }
     match parts.as_slice() {
@@ -2263,6 +2294,7 @@ mod tests {
             allow_fs_write_all: all,
             unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
+            read_paths: Vec::new(),
         }
     }
 

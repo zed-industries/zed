@@ -49,6 +49,11 @@ pub struct SystemPromptTemplate<'a> {
     /// per-command flags the model can request to relax them. When
     /// `false`, the prompt omits the sandbox section entirely.
     pub sandboxing: bool,
+    /// Whether the sandbox also restricts *reads* to an explicit allowlist
+    /// (Windows AppContainer). When `false` (macOS Seatbelt), the whole
+    /// filesystem is readable and the `fs_read_paths` escalation is not
+    /// offered. Only meaningful when `sandboxing` is `true`.
+    pub sandbox_reads_restricted: bool,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -94,6 +99,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            sandbox_reads_restricted: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -127,6 +133,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
             sandboxing: false,
+            sandbox_reads_restricted: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -154,6 +161,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            sandbox_reads_restricted: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -185,6 +193,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
+            sandbox_reads_restricted: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -197,6 +206,30 @@ mod tests {
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));
         assert!(rendered.contains("for the rest of the thread"));
+        // Reads are unrestricted unless `sandbox_reads_restricted` is set.
+        assert!(rendered.contains("any path on the filesystem is readable"));
+        assert!(!rendered.contains("fs_read_paths"));
+    }
+
+    #[test]
+    fn test_system_prompt_renders_read_restrictions_when_reads_restricted() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            sandboxing: true,
+            sandbox_reads_restricted: true,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(rendered.contains("## Terminal sandbox"));
+        assert!(rendered.contains("fs_read_paths"));
+        assert!(rendered.contains("fail with access denied"));
+        assert!(!rendered.contains("any path on the filesystem is readable"));
     }
 
     #[test]
@@ -209,6 +242,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
+            sandbox_reads_restricted: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -227,6 +261,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            sandbox_reads_restricted: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -243,6 +278,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            sandbox_reads_restricted: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

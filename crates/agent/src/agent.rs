@@ -2941,6 +2941,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 .writable_paths
                 .iter()
                 .chain(sandbox_wrap.extra_write_paths.iter())
+                .chain(sandbox_wrap.readable_paths.iter())
                 .cloned()
                 .collect();
             let profile_name = self.thread.update(cx, |thread, cx| {

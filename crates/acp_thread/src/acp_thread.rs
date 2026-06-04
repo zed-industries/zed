@@ -127,6 +127,8 @@ pub struct SandboxAuthorizationDetails {
     pub unsandboxed: bool,
     #[serde(default)]
     pub write_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub read_paths: Vec<PathBuf>,
 }
 
 pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {

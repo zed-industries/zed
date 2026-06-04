@@ -41,6 +41,12 @@ pub struct SandboxWrap {
     /// model-requested paths that passed a user-approval prompt. They are
     /// merged with `writable_paths` when generating the sandbox policy.
     pub extra_write_paths: Vec<PathBuf>,
+    /// Directory subtrees the user approved for read-only access, beyond
+    /// the platform's default-readable locations. Only enforced on Windows,
+    /// where the AppContainer sandbox denies reads outside the OS
+    /// directories and granted roots; on macOS reads are always allowed and
+    /// this list is ignored.
+    pub readable_paths: Vec<PathBuf>,
     /// Allow outbound network access for this command.
     pub allow_network: bool,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
@@ -113,6 +119,11 @@ pub(crate) fn apply_sandbox_wrap(
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
+        let readable: Vec<&std::path::Path> = sandbox_wrap
+            .readable_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
         let permissions = sandbox::windows_appcontainer::SandboxPermissions {
             allow_network: sandbox_wrap.allow_network,
             allow_fs_write: sandbox_wrap.allow_fs_write,
@@ -122,6 +133,7 @@ pub(crate) fn apply_sandbox_wrap(
                 &program,
                 &args,
                 &writable,
+                &readable,
                 permissions,
                 profile_name,
             )?;

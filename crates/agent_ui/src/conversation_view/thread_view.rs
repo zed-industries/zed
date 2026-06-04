@@ -7523,14 +7523,52 @@ impl ThreadView {
         details: &SandboxAuthorizationDetails,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if details.write_paths.is_empty() {
+        let sections: Vec<(&'static str, &Vec<PathBuf>)> = [
+            ("Write access", &details.write_paths),
+            ("Read access", &details.read_paths),
+        ]
+        .into_iter()
+        .filter(|(_, paths)| !paths.is_empty())
+        .collect();
+
+        if sections.is_empty() {
             return Empty.into_any_element();
         }
 
+        v_flex()
+            .children(
+                sections
+                    .into_iter()
+                    .enumerate()
+                    .map(|(section_ix, (label, paths))| {
+                        self.render_sandbox_authorization_section(
+                            entry_ix,
+                            section_ix,
+                            tool_call_id,
+                            label,
+                            paths,
+                            cx,
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_sandbox_authorization_section(
+        &self,
+        entry_ix: usize,
+        section_ix: usize,
+        tool_call_id: &acp::ToolCallId,
+        label: &'static str,
+        paths: &[PathBuf],
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        // The disclosure state is shared by all sections of a tool call:
+        // both write- and read-path lists expand and collapse together.
         let is_open = !self
             .collapsed_sandbox_authorization_details
             .contains(tool_call_id);
-        let mut paths = details.write_paths.clone();
+        let mut paths = paths.to_vec();
         paths.sort();
 
         v_flex()
@@ -7538,7 +7576,9 @@ impl ThreadView {
             .border_color(self.tool_card_border_color(cx))
             .child(
                 h_flex()
-                    .id(("sandbox-authorization-details-header", entry_ix))
+                    .id(SharedString::from(format!(
+                        "sandbox-authorization-details-header-{entry_ix}-{section_ix}"
+                    )))
                     .p_1()
                     .justify_between()
                     .cursor_pointer()
@@ -7546,11 +7586,7 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(
-                                Label::new("Write access")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
+                            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
                             .child(
                                 Label::new("•")
                                     .size(LabelSize::XSmall)
@@ -7567,9 +7603,14 @@ impl ThreadView {
                             ),
                     )
                     .child(
-                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown),
+                        Disclosure::new(
+                            SharedString::from(format!(
+                                "sandbox-authorization-details-{entry_ix}-{section_ix}"
+                            )),
+                            is_open,
+                        )
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown),
                     )
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
@@ -7591,12 +7632,15 @@ impl ThreadView {
             .when(is_open, |this| {
                 this.child(
                     v_flex()
-                        .id(("sandbox-authorization-paths-list", entry_ix))
+                        .id(SharedString::from(format!(
+                            "sandbox-authorization-paths-list-{entry_ix}-{section_ix}"
+                        )))
                         .max_h_40()
                         .overflow_y_scroll()
                         .children(paths.iter().enumerate().map(|(path_ix, path)| {
                             self.render_sandbox_authorization_path_row(
                                 entry_ix,
+                                section_ix,
                                 path_ix,
                                 path,
                                 path_ix < paths.len() - 1,
@@ -7611,6 +7655,7 @@ impl ThreadView {
     fn render_sandbox_authorization_path_row(
         &self,
         entry_ix: usize,
+        section_ix: usize,
         path_ix: usize,
         path: &Path,
         show_border: bool,
@@ -7636,7 +7681,7 @@ impl ThreadView {
 
         h_flex()
             .id(SharedString::from(format!(
-                "sandbox-authorization-path-{entry_ix}-{path_ix}"
+                "sandbox-authorization-path-{entry_ix}-{section_ix}-{path_ix}"
             )))
             .min_w_0()
             .p_1p5()
@@ -7648,7 +7693,7 @@ impl ThreadView {
             .child(
                 h_flex()
                     .id(SharedString::from(format!(
-                        "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
+                        "sandbox-authorization-path-name-{entry_ix}-{section_ix}-{path_ix}"
                     )))
                     .min_w_0()
                     .gap_0p5()
@@ -7667,7 +7712,7 @@ impl ThreadView {
                         )
                     })
                     .tooltip(move |_window, cx| {
-                        Tooltip::with_meta("Requested write path", None, display_path.clone(), cx)
+                        Tooltip::with_meta("Requested path", None, display_path.clone(), cx)
                     }),
             )
     }

@@ -3699,6 +3699,9 @@ impl Thread {
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
             sandboxing: crate::sandboxing::sandboxing_enabled(cx),
+            // Only the Windows AppContainer sandbox restricts reads; macOS
+            // Seatbelt allows reads everywhere.
+            sandbox_reads_restricted: cfg!(target_os = "windows"),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -4876,6 +4879,7 @@ impl ToolCallEventStream {
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
+            read_paths: request.read_paths.clone(),
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
@@ -5046,6 +5050,9 @@ impl ToolCallEventStream {
                 }
                 for path in request.write_paths {
                     agent.add_sandbox_write_path(path);
+                }
+                for path in request.read_paths {
+                    agent.add_sandbox_read_path(path);
                 }
             });
         });
@@ -6111,6 +6118,7 @@ mod tests {
                 PathBuf::from("/tmp/logs"),
                 PathBuf::from("/tmp/secret"),
             ],
+            read_paths: vec![PathBuf::from("/opt/toolchain")],
         };
 
         let authorize = cx.update(|cx| {
@@ -6124,6 +6132,7 @@ mod tests {
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
+        assert_eq!(details.read_paths, request.read_paths);
         assert!(authorization.tool_call.fields.content.is_none());
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
@@ -6179,6 +6188,7 @@ mod tests {
                 PathBuf::from("/tmp/secret"),
             ]
         );
+        assert_eq!(effective.read_paths, vec![PathBuf::from("/opt/toolchain")]);
     }
 
     #[gpui::test]

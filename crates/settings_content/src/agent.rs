@@ -350,6 +350,17 @@ impl AgentSettingsContent {
 
         util::paths::insert_subtree(write_paths, path);
     }
+
+    pub fn add_sandbox_read_path(&mut self, path: PathBuf) {
+        let read_paths = &mut self
+            .sandbox_permissions
+            .get_or_insert_default()
+            .read_paths
+            .get_or_insert_default()
+            .0;
+
+        util::paths::insert_subtree(read_paths, path);
+    }
 }
 
 #[with_fallible_options]
@@ -600,6 +611,13 @@ pub struct SandboxPermissionsContent {
     /// to without prompting. Paths written by Zed are absolute.
     /// Default: []
     pub write_paths: Option<ExtendingVec<PathBuf>>,
+
+    /// Directory subtrees that sandboxed terminal commands may always read
+    /// without prompting. Only meaningful on platforms whose sandbox
+    /// restricts reads (Windows); on macOS reads are always allowed. Paths
+    /// written by Zed are absolute.
+    /// Default: []
+    pub read_paths: Option<ExtendingVec<PathBuf>>,
 }
 
 #[with_fallible_options]

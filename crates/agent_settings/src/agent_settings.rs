@@ -351,6 +351,9 @@ pub struct SandboxPermissions {
     pub allow_fs_write_all: bool,
     pub allow_unsandboxed: bool,
     pub write_paths: Vec<PathBuf>,
+    /// Read-only grants. Only meaningful on platforms whose sandbox
+    /// restricts reads (Windows); reads are always allowed on macOS.
+    pub read_paths: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -713,11 +716,19 @@ fn compile_sandbox_permissions(
         }
     }
 
+    let mut read_paths = Vec::new();
+    for path in content.read_paths.map(|paths| paths.0).unwrap_or_default() {
+        if let Ok(normalized) = util::paths::normalize_lexically(&path) {
+            util::paths::insert_subtree(&mut read_paths, normalized);
+        }
+    }
+
     SandboxPermissions {
         allow_network: content.allow_network.unwrap_or(false),
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
+        read_paths,
     }
 }
 

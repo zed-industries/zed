@@ -44,13 +44,23 @@ pub(crate) struct SandboxRequest {
     /// Concrete paths the command needs to write to. Each grants its whole
     /// subtree. These are never globs — write access is always a concrete path subtree
     pub write_paths: Vec<PathBuf>,
+    /// Concrete paths the command needs to read. Each grants its whole
+    /// subtree. Only meaningful on platforms whose sandbox restricts reads
+    /// (Windows — reads outside the OS directories and granted roots are
+    /// denied by default there); on macOS reads are always allowed and these
+    /// grants are inert.
+    pub read_paths: Vec<PathBuf>,
 }
 
 impl SandboxRequest {
     /// Whether this request asks for anything beyond the default sandbox
     /// scope, and therefore needs user approval.
     pub fn needs_escalation(&self) -> bool {
-        self.network || self.allow_fs_write_all || self.unsandboxed || !self.write_paths.is_empty()
+        self.network
+            || self.allow_fs_write_all
+            || self.unsandboxed
+            || !self.write_paths.is_empty()
+            || !self.read_paths.is_empty()
     }
 }
 
@@ -69,6 +79,9 @@ pub(crate) struct ThreadSandboxGrants {
     /// Canonicalized paths granted write access for the thread. Each covers its
     /// whole subtree; redundant children are pruned on insert.
     write_paths: Vec<PathBuf>,
+    /// Canonicalized paths granted read access for the thread. Each covers
+    /// its whole subtree; redundant children are pruned on insert.
+    read_paths: Vec<PathBuf>,
 }
 
 impl ThreadSandboxGrants {
@@ -98,11 +111,26 @@ impl ThreadSandboxGrants {
         if self.allow_fs_write_all || persistent.allow_fs_write_all {
             return true;
         }
-        request.write_paths.iter().all(|requested| {
+        if !request.write_paths.iter().all(|requested| {
             util::paths::path_within_subtree(
                 requested,
                 self.write_paths
                     .iter()
+                    .chain(persistent.write_paths.iter())
+                    .map(PathBuf::as_path),
+            )
+        }) {
+            return false;
+        }
+        // Write grants imply read access (the enforced grant is read+write),
+        // so a read request is covered by either kind of granted path.
+        request.read_paths.iter().all(|requested| {
+            util::paths::path_within_subtree(
+                requested,
+                self.read_paths
+                    .iter()
+                    .chain(persistent.read_paths.iter())
+                    .chain(self.write_paths.iter())
                     .chain(persistent.write_paths.iter())
                     .map(PathBuf::as_path),
             )
@@ -117,6 +145,9 @@ impl ThreadSandboxGrants {
         self.unsandboxed |= request.unsandboxed;
         for path in &request.write_paths {
             util::paths::insert_subtree(&mut self.write_paths, path.clone());
+        }
+        for path in &request.read_paths {
+            util::paths::insert_subtree(&mut self.read_paths, path.clone());
         }
     }
 
@@ -138,6 +169,10 @@ impl ThreadSandboxGrants {
         for path in self.write_paths.iter().chain(request.write_paths.iter()) {
             util::paths::insert_subtree(&mut write_paths, path.clone());
         }
+        let mut read_paths = persistent.read_paths.clone();
+        for path in self.read_paths.iter().chain(request.read_paths.iter()) {
+            util::paths::insert_subtree(&mut read_paths, path.clone());
+        }
         SandboxRequest {
             network: persistent.allow_network || self.network || request.network,
             allow_fs_write_all: persistent.allow_fs_write_all
@@ -145,6 +180,7 @@ impl ThreadSandboxGrants {
                 || request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths,
+            read_paths,
         }
     }
 }
@@ -159,6 +195,17 @@ mod tests {
             allow_fs_write_all: all,
             unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
+            read_paths: Vec::new(),
+        }
+    }
+
+    fn read_request(paths: &[&str]) -> SandboxRequest {
+        SandboxRequest {
+            network: false,
+            allow_fs_write_all: false,
+            unsandboxed: false,
+            write_paths: Vec::new(),
+            read_paths: paths.iter().map(PathBuf::from).collect(),
         }
     }
 
@@ -168,6 +215,7 @@ mod tests {
             allow_fs_write_all: false,
             unsandboxed: true,
             write_paths: Vec::new(),
+            read_paths: Vec::new(),
         }
     }
 
@@ -186,6 +234,43 @@ mod tests {
         assert!(!covers(&grants, &request(false, true, &[])));
         assert!(!covers(&grants, &unsandboxed_request()));
         assert!(!covers(&grants, &request(false, false, &["/tmp/build"])));
+        assert!(!covers(&grants, &read_request(&["/tmp/build"])));
+    }
+
+    #[test]
+    fn read_grants_cover_read_requests_by_subtree() {
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&read_request(&["/opt/toolchain"]));
+
+        assert!(covers(&grants, &read_request(&["/opt/toolchain"])));
+        assert!(covers(&grants, &read_request(&["/opt/toolchain/bin"])));
+        assert!(!covers(&grants, &read_request(&["/opt/other"])));
+        // A read grant never covers a write request.
+        assert!(!covers(
+            &grants,
+            &request(false, false, &["/opt/toolchain"])
+        ));
+    }
+
+    #[test]
+    fn write_grants_cover_read_requests() {
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&request(false, false, &["/tmp/build"]));
+
+        assert!(covers(&grants, &read_request(&["/tmp/build/cache"])));
+        assert!(!covers(&grants, &read_request(&["/tmp/other"])));
+    }
+
+    #[test]
+    fn effective_unions_read_paths() {
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&read_request(&["/opt/toolchain"]));
+
+        let effective = effective(&grants, &read_request(&["/opt/once"]));
+        assert_eq!(
+            effective.read_paths,
+            vec![PathBuf::from("/opt/toolchain"), PathBuf::from("/opt/once")]
+        );
     }
 
     #[test]
@@ -258,6 +343,7 @@ mod tests {
             allow_fs_write_all: false,
             allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/build")],
+            read_paths: Vec::new(),
         };
 
         assert!(
@@ -277,6 +363,7 @@ mod tests {
             allow_fs_write_all: true,
             allow_unsandboxed: false,
             write_paths: Vec::new(),
+            read_paths: Vec::new(),
         };
 
         assert!(grants.covers_with_persistent(&request(false, false, &["/anywhere"]), &persistent));
@@ -292,6 +379,7 @@ mod tests {
             allow_fs_write_all: false,
             allow_unsandboxed: true,
             write_paths: Vec::new(),
+            read_paths: Vec::new(),
         };
 
         assert!(grants.covers_with_persistent(&unsandboxed_request(), &persistent));
@@ -333,6 +421,7 @@ mod tests {
             allow_fs_write_all: false,
             allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/always")],
+            read_paths: Vec::new(),
         };
 
         let effective = grants.effective_with_persistent(&request(false, false, &[]), &persistent);
