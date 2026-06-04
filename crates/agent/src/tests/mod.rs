@@ -3207,6 +3207,146 @@ async fn test_latest_token_usage_counts_cached_input_tokens(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_cumulative_token_usage(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(EchoTool);
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The first request emits two cumulative snapshots; only the final values
+    // must be counted, exactly once.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 10,
+            ..Default::default()
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: EchoTool::NAME.into(),
+            raw_input: json!({"text": "hello"}).to_string(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The second request (after the tool call) is counted in addition to the first.
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 200,
+            output_tokens: 30,
+            ..Default::default()
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let expected = TokenUsage {
+        input_tokens: 300,
+        output_tokens: 80,
+        ..Default::default()
+    };
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.cumulative_token_usage(), expected);
+    });
+
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(db_thread.cumulative_token_usage, expected);
+
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    let restored = cx.update(|cx| {
+        let thread = thread.read(cx);
+        let project = thread.project.clone();
+        let context_server_registry = thread.context_server_registry.clone();
+        let templates = thread.templates.clone();
+        cx.new(|cx| {
+            Thread::from_db(
+                acp::SessionId::new("restored"),
+                db_thread,
+                project,
+                project_context.clone(),
+                context_server_registry,
+                templates,
+                cx,
+            )
+        })
+    });
+    restored.read_with(cx, |thread, _| {
+        assert_eq!(thread.cumulative_token_usage(), expected);
+    });
+}
+
+#[gpui::test]
+async fn test_cumulative_token_usage_keeps_accounted_usage_monotonic(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 10,
+            ..Default::default()
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage::default(),
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.cumulative_token_usage(),
+            TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                ..Default::default()
+            }
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_truncate_second_message(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -3369,6 +3509,72 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), Some("Hello world".into()))
     });
+}
+
+#[gpui::test]
+async fn test_stream_thread_title_keeps_only_first_line(cx: &mut TestAppContext) {
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = LanguageModelRequest::default();
+
+    let title_task = cx.spawn({
+        let model = model.clone();
+        async move |cx| crate::stream_thread_title(model, request, &cx).await
+    });
+
+    cx.run_until_parked();
+
+    model.send_last_completion_stream_text_chunk("Hello world\nGoodnight Moon");
+    model.end_last_completion_stream();
+
+    let title = title_task.await.unwrap();
+    assert_eq!(title, "Hello world");
+}
+
+#[gpui::test]
+async fn test_stream_thread_title_stops_when_newline_ends_chunk(cx: &mut TestAppContext) {
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = LanguageModelRequest::default();
+
+    let title_task = cx.spawn({
+        let model = model.clone();
+        async move |cx| crate::stream_thread_title(model, request, &cx).await
+    });
+
+    cx.run_until_parked();
+
+    model.send_last_completion_stream_text_chunk("Hello world\n");
+    model.send_last_completion_stream_text_chunk("Goodnight Moon");
+    model.end_last_completion_stream();
+
+    let title = title_task.await.unwrap();
+    assert_eq!(title, "Hello world");
+}
+
+// `Thread::to_markdown` (live native) and `DbThread::to_markdown` (persisted
+// native) must stay byte-for-byte identical for the same messages, since both
+// back the sidebar's native "Open Thread as Markdown" action. This pins that
+// they share a single rendering path.
+#[gpui::test]
+async fn test_db_thread_markdown_matches_live_thread(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey there!");
+    fake_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx)).await;
+    let live_markdown = thread.read_with(cx, |thread, _| thread.to_markdown());
+
+    assert!(!live_markdown.is_empty());
+    assert_eq!(db_thread.to_markdown(), live_markdown);
 }
 
 #[gpui::test]

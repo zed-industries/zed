@@ -2147,7 +2147,7 @@
       },
     },
     "CSharp": {
-      "language_servers": ["roslyn", "!omnisharp", "..."],
+      "language_servers": ["roslyn", "!csharp-ls", "!omnisharp", "..."],
     },
     "CSS": {
       "prettier": {
