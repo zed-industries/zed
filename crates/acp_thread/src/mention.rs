@@ -36,6 +36,13 @@ pub enum MentionUri {
         id: acp::SessionId,
         name: String,
     },
+    /// Deprecated: rules were removed in favor of skills, but this variant is
+    /// retained so that threads saved before the removal can still be
+    /// deserialized. Older payloads also contain an `id` field, which serde
+    /// ignores when deserializing into this variant.
+    Rule {
+        name: String,
+    },
     Diagnostics {
         #[serde(default = "default_include_errors")]
         include_errors: bool,
@@ -200,6 +207,10 @@ impl MentionUri {
                         id: acp::SessionId::new(thread_id),
                         name,
                     })
+                } else if path.starts_with("/agent/rule/") {
+                    // Deprecated: retained so legacy rule mentions still parse.
+                    let name = single_query_param(&url, "name")?.context("Missing rule name")?;
+                    Ok(Self::Rule { name })
                 } else if path == "/agent/diagnostics" {
                     let mut include_errors = default_include_errors();
                     let mut include_warnings = false;
@@ -330,6 +341,7 @@ impl MentionUri {
             MentionUri::PastedImage { name } => name.clone(),
             MentionUri::Symbol { name, .. } => name.clone(),
             MentionUri::Thread { name, .. } => name.clone(),
+            MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
             MentionUri::TerminalSelection { line_count } => {
                 if *line_count == 1 {
@@ -430,6 +442,7 @@ impl MentionUri {
                 .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
+            MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
@@ -509,6 +522,14 @@ impl MentionUri {
             MentionUri::Thread { name, id } => {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path(&format!("/agent/thread/{id}"));
+                url.query_pairs_mut().append_pair("name", name);
+                url
+            }
+            MentionUri::Rule { name } => {
+                // Deprecated: the original `id` is no longer retained, so the
+                // legacy URI is reconstructed without it.
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/rule/");
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
@@ -801,6 +822,31 @@ mod tests {
             _ => panic!("Expected Thread variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), thread_uri);
+    }
+
+    #[test]
+    fn test_parse_legacy_rule_uri() {
+        // Rules were removed, but legacy threads still reference them by URI.
+        let rule_uri = "zed:///agent/rule/d8694ff2-90d5-4b6f-be33-33c1763acd52?name=Some+rule";
+        let parsed = MentionUri::parse(rule_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Rule { name } => assert_eq!(name, "Some rule"),
+            _ => panic!("Expected Rule variant"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_legacy_rule_mention() {
+        // Threads saved before rules were removed serialized the now-deleted
+        // `id` field; it must be ignored rather than causing a hard failure.
+        let json = r#"{"Rule":{"id":{"User":{"uuid":"d8694ff2-90d5-4b6f-be33-33c1763acd52"}},"name":"Some rule"}}"#;
+        let parsed: MentionUri = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::Rule {
+                name: "Some rule".to_string()
+            }
+        );
     }
 
     #[test]

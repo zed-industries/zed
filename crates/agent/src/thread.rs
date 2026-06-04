@@ -365,6 +365,19 @@ impl UserMessage {
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
+                        MentionUri::Rule { .. } => {
+                            // Deprecated: retained so legacy rule mentions in
+                            // older threads are still included as context.
+                            write!(
+                                &mut rules_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
                         }
