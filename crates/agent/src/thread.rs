@@ -1111,10 +1111,9 @@ pub struct Thread {
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
     cumulative_token_usage: TokenUsage,
-    /// The latest usage snapshot reported for the in-flight completion
-    /// request. Providers emit cumulative-per-request snapshots, so we track
-    /// the previous one to accumulate only the delta into
-    /// `cumulative_token_usage`. Reset at the start of each request.
+    /// The per-field maximum usage snapshot already added to
+    /// `cumulative_token_usage` for the in-flight completion request. Reset at
+    /// the start of each request.
     current_request_token_usage: TokenUsage,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
@@ -1984,23 +1983,36 @@ impl Thread {
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
-        let previous_snapshot = std::mem::replace(&mut self.current_request_token_usage, update);
-        // Saturating instead of `Sub` so a provider reporting a smaller
-        // snapshot than before can't cause an underflow panic.
+        let previous_accounted_usage = self.current_request_token_usage;
+        let current_accounted_usage = TokenUsage {
+            input_tokens: previous_accounted_usage
+                .input_tokens
+                .max(update.input_tokens),
+            output_tokens: previous_accounted_usage
+                .output_tokens
+                .max(update.output_tokens),
+            cache_creation_input_tokens: previous_accounted_usage
+                .cache_creation_input_tokens
+                .max(update.cache_creation_input_tokens),
+            cache_read_input_tokens: previous_accounted_usage
+                .cache_read_input_tokens
+                .max(update.cache_read_input_tokens),
+        };
+        self.current_request_token_usage = current_accounted_usage;
         self.cumulative_token_usage = self.cumulative_token_usage
             + TokenUsage {
-                input_tokens: update
+                input_tokens: current_accounted_usage
                     .input_tokens
-                    .saturating_sub(previous_snapshot.input_tokens),
-                output_tokens: update
+                    .saturating_sub(previous_accounted_usage.input_tokens),
+                output_tokens: current_accounted_usage
                     .output_tokens
-                    .saturating_sub(previous_snapshot.output_tokens),
-                cache_creation_input_tokens: update
+                    .saturating_sub(previous_accounted_usage.output_tokens),
+                cache_creation_input_tokens: current_accounted_usage
                     .cache_creation_input_tokens
-                    .saturating_sub(previous_snapshot.cache_creation_input_tokens),
-                cache_read_input_tokens: update
+                    .saturating_sub(previous_accounted_usage.cache_creation_input_tokens),
+                cache_read_input_tokens: current_accounted_usage
                     .cache_read_input_tokens
-                    .saturating_sub(previous_snapshot.cache_read_input_tokens),
+                    .saturating_sub(previous_accounted_usage.cache_read_input_tokens),
             };
     }
 
