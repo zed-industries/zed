@@ -1,13 +1,14 @@
 use crate::{EditPredictionStore, StoredEvent};
 
-use anyhow::{Context as _, Result};
+use anyhow::Context as _;
 use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
 use gpui::{Context, Entity, Task};
 use language::BufferSnapshot;
-use project::{Project, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId};
 use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc};
 use text::{OffsetRangeExt, Point};
+use util::rel_path::RelPath;
 
 pub type UncommittedDiffSnapshot = Vec<(Arc<Path>, BufferSnapshot, BufferDiffSnapshot)>;
 pub type UncommittedDiffResult = std::result::Result<UncommittedDiffSnapshot, Arc<anyhow::Error>>;
@@ -23,25 +24,34 @@ pub fn uncommitted_diffs_for_events(
     let git_store = project.read_with(cx, |project, _| project.git_store().clone());
 
     cx.spawn(async move |_store, cx| {
+        let (worktree_root_name, worktree_abs_path, path_style) = project
+            .read_with(cx, |project, cx| {
+                let worktree = project.worktree_for_id(worktree_id, cx)?;
+                let worktree = worktree.read(cx);
+                let path_style = worktree.path_style();
+                let root_name = RelPath::new(Path::new(worktree.root_name_str()), path_style)
+                    .ok()?
+                    .into_owned();
+                Some((root_name, worktree.abs_path(), path_style))
+            })
+            .context("failed to find worktree for uncommitted diff capture")
+            .map_err(Arc::new)?;
+
         let events_with_paths = events
             .into_iter()
-            .map(|stored_event| {
+            .filter_map(|stored_event| {
                 let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-                project
-                    .read_with(cx, |project, cx| {
-                        let project_path = project
-                            .find_project_path(path, cx)
-                            .filter(|path| path.worktree_id == worktree_id)?;
-                        let relative_path: Arc<Path> = project_path.path.as_std_path().into();
-                        Some((project_path, relative_path))
-                    })
-                    .map(|(project_path, relative_path)| {
-                        (stored_event, project_path, relative_path)
-                    })
-                    .context("failed to find project path for uncommitted diff capture")
+                let path = if let Ok(path) = RelPath::new(path, path_style) {
+                    path.strip_prefix(&worktree_root_name).ok()?.into_arc()
+                } else {
+                    let path = path.strip_prefix(worktree_abs_path.as_ref()).ok()?;
+                    RelPath::new(path, path_style).ok()?.into_arc()
+                };
+                let project_path = ProjectPath { worktree_id, path };
+                let relative_path: Arc<Path> = project_path.path.as_std_path().into();
+                Some((stored_event, project_path, relative_path))
             })
-            .collect::<Result<Vec<_>>>()
-            .map_err(Arc::new)?;
+            .collect::<Vec<_>>();
 
         let mut snapshots_by_path: HashMap<Arc<Path>, (BufferSnapshot, BufferDiffSnapshot)> =
             HashMap::default();
@@ -57,10 +67,20 @@ pub fn uncommitted_diffs_for_events(
                 .await
                 .context("failed to open buffer for uncommitted diff capture")
                 .map_err(Arc::new)?;
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
             let file_context = stored_event.file_context.clone();
-            let cached_diff = file_context.as_ref().and_then(|file_context| {
-                file_context.read_with(cx, |file_context, _| file_context.uncommitted_diff.clone())
-            });
+            let cached_diff = file_context
+                .as_ref()
+                .and_then(|file_context| {
+                    file_context
+                        .read_with(cx, |file_context, _| file_context.uncommitted_diff.clone())
+                })
+                // The cached diff is keyed by path, but its hunk anchors are pinned to a
+                // specific buffer. If that buffer was closed and reopened, `open_buffer`
+                // hands back a buffer with a new `BufferId`; reusing the stale diff against
+                // it would mix anchors from different buffers and panic. Drop the cache in
+                // that case so the diff is recomputed for the current buffer.
+                .filter(|diff| diff.read_with(cx, |diff, _| diff.buffer_id) == buffer_id);
             let diff = match cached_diff {
                 Some(diff) => diff,
                 None => {
