@@ -10,10 +10,9 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    time::Instant,
 };
 use text::Anchor;
-use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
 const BM25_CONTEXT_QUERY_LINE_COUNT: u32 = 20;
 const BM25_CONTEXT_EDIT_HISTORY_QUERY_ENTRY_COUNT: usize = 8;
@@ -25,6 +24,12 @@ const BM25_CONTEXT_MAX_FILE_BYTES: u64 = 1_000_000;
 const BM25_K1: f64 = 1.2;
 const BM25_B: f64 = 0.75;
 
+pub(super) struct Bm25ContextCandidate {
+    pub path: PathBuf,
+    pub row_range: Range<u32>,
+    pub order: usize,
+}
+
 pub async fn collect_bm25_context(
     project: Entity<Project>,
     active_buffer: Entity<Buffer>,
@@ -32,7 +37,7 @@ pub async fn collect_bm25_context(
     edit_history: &[EditHistoryContextEntry],
     next_order: usize,
     cx: &mut AsyncApp,
-) -> Vec<RelatedFile> {
+) -> Vec<Bm25ContextCandidate> {
     let Some(query) = build_query(&project, &active_buffer, cursor_position, edit_history, cx)
     else {
         return Vec::new();
@@ -131,14 +136,27 @@ fn expanded_anchor_range(
 fn collect_bm25_context_from_disk(
     query: Bm25ContextQuery,
     next_order: usize,
-) -> Result<Vec<RelatedFile>> {
+) -> Result<Vec<Bm25ContextCandidate>> {
     let query_terms = query_terms(&query);
     if query_terms.is_empty() {
         return Ok(Vec::new());
     }
 
+    let started_at = Instant::now();
     let index = Bm25Index::build(&query.worktree_abs_path)?;
-    Ok(index.search(&query_terms, &query.worktree_root_name, next_order))
+    let elapsed = started_at.elapsed();
+    log::debug!(
+        "built BM25 context index: candidate_files:{}, indexed_files:{}, indexed_bytes:{}, chunks:{}, terms:{}, latency:{elapsed:?}",
+        index.stats.candidate_file_count,
+        index.stats.indexed_file_count,
+        index.stats.indexed_bytes,
+        index.stats.document_count,
+        index.stats.term_count,
+    );
+
+    let candidates = index.search(&query_terms, &query.worktree_root_name, next_order);
+    log::debug!("selected {} BM25 context chunks", candidates.len());
+    Ok(candidates)
 }
 
 fn query_terms(query: &Bm25ContextQuery) -> HashMap<String, f64> {
@@ -161,13 +179,21 @@ struct Bm25Index {
     documents: Vec<Document>,
     document_frequencies: HashMap<String, usize>,
     average_document_len: f64,
+    stats: Bm25IndexStats,
+}
+
+#[derive(Default)]
+struct Bm25IndexStats {
+    candidate_file_count: usize,
+    indexed_file_count: usize,
+    indexed_bytes: u64,
+    document_count: usize,
+    term_count: usize,
 }
 
 struct Document {
     relative_path: PathBuf,
     row_range: Range<u32>,
-    file_text: Arc<str>,
-    max_row: u32,
     term_frequencies: HashMap<String, usize>,
     len: usize,
 }
@@ -177,24 +203,28 @@ struct ScoredDocument {
     score: f64,
 }
 
-struct SelectedDocument {
-    relative_path: PathBuf,
-    row_range: Range<u32>,
-    file_text: Arc<str>,
-    max_row: u32,
-    order: usize,
-}
-
-struct SelectedRange {
-    row_range: Range<u32>,
-    order: usize,
+struct DocumentsForFile {
+    documents: Vec<Document>,
+    byte_len: u64,
 }
 
 impl Bm25Index {
     fn build(worktree_abs_path: &Path) -> Result<Self> {
+        let relative_paths = git_ls_files(worktree_abs_path)?;
+        let mut stats = Bm25IndexStats {
+            candidate_file_count: relative_paths.len(),
+            ..Default::default()
+        };
         let mut documents = Vec::new();
-        for relative_path in git_ls_files(worktree_abs_path)? {
-            documents.extend(documents_for_file(worktree_abs_path, relative_path));
+        for relative_path in relative_paths {
+            let Some(documents_for_file) = documents_for_file(worktree_abs_path, relative_path)
+            else {
+                continue;
+            };
+
+            stats.indexed_file_count += 1;
+            stats.indexed_bytes += documents_for_file.byte_len;
+            documents.extend(documents_for_file.documents);
         }
 
         let mut document_frequencies = HashMap::new();
@@ -214,11 +244,14 @@ impl Bm25Index {
         } else {
             total_document_len as f64 / documents.len() as f64
         };
+        stats.document_count = documents.len();
+        stats.term_count = document_frequencies.len();
 
         Ok(Self {
             documents,
             document_frequencies,
             average_document_len,
+            stats,
         })
     }
 
@@ -227,7 +260,7 @@ impl Bm25Index {
         query_terms: &HashMap<String, f64>,
         worktree_root_name: &str,
         next_order: usize,
-    ) -> Vec<RelatedFile> {
+    ) -> Vec<Bm25ContextCandidate> {
         if self.documents.is_empty() || self.average_document_len == 0.0 {
             return Vec::new();
         }
@@ -275,11 +308,14 @@ impl Bm25Index {
             }
 
             *chunk_count += 1;
-            selected_documents.push(SelectedDocument {
-                relative_path: document.relative_path.clone(),
+            selected_documents.push(Bm25ContextCandidate {
+                path: Path::new(&format!(
+                    "{}/{}",
+                    worktree_root_name,
+                    document.relative_path.to_string_lossy()
+                ))
+                .into(),
                 row_range: document.row_range.clone(),
-                file_text: document.file_text.clone(),
-                max_row: document.max_row,
                 order: next_order + selected_documents.len(),
             });
 
@@ -288,7 +324,7 @@ impl Bm25Index {
             }
         }
 
-        related_files_from_selected_documents(selected_documents, worktree_root_name)
+        selected_documents
     }
 
     fn score_document(&self, document: &Document, query_terms: &HashMap<String, f64>) -> f64 {
@@ -327,8 +363,6 @@ impl Bm25Index {
 fn git_ls_files(worktree_abs_path: &Path) -> Result<Vec<PathBuf>> {
     let output = Command::new("git")
         .arg("ls-files")
-        .arg("-co")
-        .arg("--exclude-standard")
         .arg("-z")
         .current_dir(worktree_abs_path)
         .output()
@@ -358,37 +392,38 @@ fn git_ls_files(worktree_abs_path: &Path) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-fn documents_for_file(worktree_abs_path: &Path, relative_path: PathBuf) -> Vec<Document> {
+fn documents_for_file(
+    worktree_abs_path: &Path,
+    relative_path: PathBuf,
+) -> Option<DocumentsForFile> {
     let absolute_path = worktree_abs_path.join(&relative_path);
-    let Ok(metadata) = fs::metadata(&absolute_path) else {
-        return Vec::new();
-    };
-    if !metadata.is_file() || metadata.len() > BM25_CONTEXT_MAX_FILE_BYTES {
-        return Vec::new();
+    let metadata = fs::symlink_metadata(&absolute_path).ok()?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() > BM25_CONTEXT_MAX_FILE_BYTES
+    {
+        return None;
     }
 
-    let Ok(text) = fs::read_to_string(&absolute_path) else {
-        return Vec::new();
-    };
+    let text = fs::read_to_string(&absolute_path).ok()?;
     if text.is_empty() {
-        return Vec::new();
+        return None;
     }
 
-    let file_text: Arc<str> = text.into();
-    let lines = lines(&file_text);
-    let max_row = lines.len() as u32;
+    let byte_len = metadata.len();
+    let lines = lines(&text);
     let path_tokens = tokenize(&relative_path.to_string_lossy());
 
-    chunk_line_ranges(
+    let documents = chunk_line_ranges(
         &lines,
         BM25_CONTEXT_CHUNK_LINE_COUNT,
         BM25_CONTEXT_CHUNK_OVERLAP_LINE_COUNT,
     )
     .into_iter()
     .filter_map(|row_range| {
-        let text = text_for_line_range(&file_text, row_range.clone());
+        let chunk_text = text_for_line_range(&text, row_range.clone());
         let mut term_frequencies = HashMap::new();
-        add_term_frequencies(&mut term_frequencies, tokenize(&text), 1);
+        add_term_frequencies(&mut term_frequencies, tokenize(&chunk_text), 1);
         add_term_frequencies(&mut term_frequencies, path_tokens.clone(), 2);
         let len = term_frequencies.values().sum();
         if len == 0 {
@@ -398,13 +433,16 @@ fn documents_for_file(worktree_abs_path: &Path, relative_path: PathBuf) -> Vec<D
         Some(Document {
             relative_path: relative_path.clone(),
             row_range: row_range.start as u32..row_range.end as u32,
-            file_text: file_text.clone(),
-            max_row,
             term_frequencies,
             len,
         })
     })
-    .collect()
+    .collect::<Vec<_>>();
+
+    (!documents.is_empty()).then_some(DocumentsForFile {
+        documents,
+        byte_len,
+    })
 }
 
 fn add_term_frequencies(
@@ -415,100 +453,6 @@ fn add_term_frequencies(
     for token in tokens {
         *term_frequencies.entry(token).or_default() += weight;
     }
-}
-
-fn related_files_from_selected_documents(
-    selected_documents: Vec<SelectedDocument>,
-    worktree_root_name: &str,
-) -> Vec<RelatedFile> {
-    struct SelectedFile {
-        relative_path: PathBuf,
-        file_text: Arc<str>,
-        max_row: u32,
-        ranges: Vec<SelectedRange>,
-        first_order: usize,
-    }
-
-    let mut selected_files = Vec::<SelectedFile>::new();
-    for selected_document in selected_documents {
-        if let Some(selected_file) = selected_files
-            .iter_mut()
-            .find(|file| file.relative_path == selected_document.relative_path)
-        {
-            selected_file.first_order = selected_file.first_order.min(selected_document.order);
-            selected_file.ranges.push(SelectedRange {
-                row_range: selected_document.row_range,
-                order: selected_document.order,
-            });
-        } else {
-            selected_files.push(SelectedFile {
-                relative_path: selected_document.relative_path,
-                file_text: selected_document.file_text,
-                max_row: selected_document.max_row,
-                ranges: vec![SelectedRange {
-                    row_range: selected_document.row_range,
-                    order: selected_document.order,
-                }],
-                first_order: selected_document.order,
-            });
-        }
-    }
-
-    selected_files.sort_by_key(|file| file.first_order);
-    selected_files
-        .into_iter()
-        .filter_map(|mut file| {
-            file.ranges
-                .sort_by_key(|range| (range.row_range.start, range.row_range.end, range.order));
-            let merged_ranges = merge_selected_ranges(file.ranges);
-            let mut excerpts = merged_ranges
-                .into_iter()
-                .map(|range| RelatedExcerpt {
-                    row_range: range.row_range.clone(),
-                    text: text_for_line_range(
-                        &file.file_text,
-                        range.row_range.start as usize..range.row_range.end as usize,
-                    )
-                    .into(),
-                    order: range.order,
-                    context_source: ContextSource::Bm25,
-                })
-                .collect::<Vec<_>>();
-            excerpts.sort_by_key(|excerpt| excerpt.order);
-            if excerpts.is_empty() {
-                return None;
-            }
-
-            let path = Path::new(&format!(
-                "{}/{}",
-                worktree_root_name,
-                file.relative_path.to_string_lossy()
-            ))
-            .into();
-
-            Some(RelatedFile {
-                path,
-                max_row: file.max_row,
-                excerpts,
-                in_open_source_repo: false,
-            })
-        })
-        .collect()
-}
-
-fn merge_selected_ranges(mut ranges: Vec<SelectedRange>) -> Vec<SelectedRange> {
-    let mut merged_ranges = Vec::<SelectedRange>::new();
-    for range in ranges.drain(..) {
-        if let Some(last_range) = merged_ranges.last_mut()
-            && range.row_range.start <= last_range.row_range.end
-        {
-            last_range.row_range.end = last_range.row_range.end.max(range.row_range.end);
-            last_range.order = last_range.order.min(range.order);
-            continue;
-        }
-        merged_ranges.push(range);
-    }
-    merged_ranges
 }
 
 fn chunk_line_ranges(
@@ -687,14 +631,10 @@ mod tests {
 
     #[test]
     fn test_bm25_ranks_matching_chunk() {
-        let first_text: Arc<str> = "fn unrelated() {}\n".into();
-        let second_text: Arc<str> = "fn update_private_network_request_policy() {}\n".into();
         let documents = vec![
             Document {
                 relative_path: PathBuf::from("src/unrelated.rs"),
                 row_range: 0..1,
-                file_text: first_text,
-                max_row: 1,
                 term_frequencies: {
                     let mut terms = HashMap::new();
                     add_term_frequencies(&mut terms, tokenize("fn unrelated"), 1);
@@ -705,8 +645,6 @@ mod tests {
             Document {
                 relative_path: PathBuf::from("src/network.rs"),
                 row_range: 0..1,
-                file_text: second_text,
-                max_row: 1,
                 term_frequencies: {
                     let mut terms = HashMap::new();
                     add_term_frequencies(
@@ -729,19 +667,15 @@ mod tests {
             documents,
             document_frequencies,
             average_document_len: 4.0,
+            stats: Bm25IndexStats::default(),
         };
         let mut query = HashMap::new();
         add_query_terms(&mut query, "PrivateNetworkRequestPolicy", 1.0);
 
-        let related_files = index.search(&query, "repo", 0);
+        let candidates = index.search(&query, "repo", 0);
 
-        assert_eq!(
-            related_files[0].path.as_ref(),
-            Path::new("repo/src/network.rs")
-        );
-        assert_eq!(
-            related_files[0].excerpts[0].context_source,
-            ContextSource::Bm25
-        );
+        assert_eq!(candidates[0].path, Path::new("repo/src/network.rs"));
+        assert_eq!(candidates[0].row_range, 0..1);
+        assert_eq!(candidates[0].order, 0);
     }
 }

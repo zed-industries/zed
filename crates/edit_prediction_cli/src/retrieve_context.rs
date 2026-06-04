@@ -64,6 +64,7 @@ impl ContextRetrievalType {
                 ContextSource::EditHistory,
                 ContextSource::EditHistoryFile,
                 ContextSource::GitLog,
+                ContextSource::Bm25,
                 ContextSource::OracleFile,
             ]),
             ContextRetrievalType::CurrentFile => Some(vec![ContextSource::CurrentFile]),
