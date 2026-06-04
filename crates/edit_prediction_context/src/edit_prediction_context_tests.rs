@@ -308,6 +308,7 @@ async fn test_assemble_excerpts(cx: &mut TestAppContext) {
                         row_range,
                         text: buffer.text_for_range(start..end).collect::<String>().into(),
                         order,
+                        context_source: ContextSource::Lsp,
                     }
                 })
                 .collect();

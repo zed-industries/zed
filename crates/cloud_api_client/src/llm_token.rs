@@ -42,6 +42,10 @@ impl LlmApiToken {
         Self::fetch(self.0.write().await, client, system_id, organization_id).await
     }
 
+    pub async fn clear(&self) {
+        *self.0.write().await = None;
+    }
+
     /// Clears the existing token before attempting to fetch a new one.
     ///
     /// Used when switching organizations so that a failed refresh doesn't
