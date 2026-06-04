@@ -802,10 +802,10 @@ impl Fs for RealFs {
         // We must make the path absolute or trash will make a weird abomination
         // of the zed working directory (not usually the worktree) and whatever
         // the path variable holds.
-        let path = self
-            .canonicalize(path)
-            .await
-            .context("Could not canonicalize the path of the file")?;
+        // We deliberately use `std::path::absolute` instead of `canonicalize`
+        // to avoid resolving symlinks. Otherwise trashing a symlink would trash
+        // its target and leave the link behind.
+        let path = std::path::absolute(path).context("Could not make the path absolute")?;
 
         let (tx, rx) = futures::channel::oneshot::channel();
         std::thread::Builder::new()

@@ -22,7 +22,6 @@ use language_model::{LanguageModelImage, LanguageModelImageExt};
 use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
-use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use std::{
     cell::RefCell,
@@ -61,21 +60,15 @@ pub struct MentionImage {
 pub struct MentionSet {
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
     crease_entities: HashMap<CreaseId, Entity<LoadingContext>>,
 }
 
 impl MentionSet {
-    pub fn new(
-        project: WeakEntity<Project>,
-        thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
-    ) -> Self {
+    pub fn new(project: WeakEntity<Project>, thread_store: Option<Entity<ThreadStore>>) -> Self {
         Self {
             project,
             thread_store,
-            prompt_store,
             mentions: HashMap::default(),
             crease_entities: HashMap::default(),
         }
@@ -153,7 +146,6 @@ impl MentionSet {
                 line_range,
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
-            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::Skill {
                 skill_file_path, ..
             } => self.confirm_mention_for_skill(skill_file_path, cx),
@@ -327,7 +319,6 @@ impl MentionSet {
                 line_range,
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
-            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
             MentionUri::Skill {
                 skill_file_path, ..
             } => self.confirm_mention_for_skill(skill_file_path, cx),
@@ -515,24 +506,6 @@ impl MentionSet {
         })
     }
 
-    fn confirm_mention_for_rule(
-        &mut self,
-        id: PromptId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Mention>> {
-        let Some(prompt_store) = self.prompt_store.as_ref() else {
-            return Task::ready(Err(anyhow!("Missing prompt store")));
-        };
-        let prompt = prompt_store.read(cx).load(id, cx);
-        cx.spawn(async move |_, _| {
-            let prompt = prompt.await?;
-            Ok(Mention::Text {
-                content: prompt,
-                tracked_buffers: Vec::new(),
-            })
-        })
-    }
-
     pub fn confirm_mention_for_selection(
         &mut self,
         source_range: Range<text::Anchor>,
@@ -634,7 +607,7 @@ impl MentionSet {
             thread_store,
         ));
         let delegate =
-            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
+            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None, None);
         let connection = server.connect(delegate, project.clone(), cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
@@ -773,7 +746,7 @@ mod tests {
         fs.insert_tree("/project", json!({"file": ""})).await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
         let thread_store = None;
-        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store, None));
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), thread_store));
 
         let task = mention_set.update(cx, |mention_set, cx| {
             mention_set.confirm_mention_for_thread(acp::SessionId::new("thread-1"), cx)
@@ -799,7 +772,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
-        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None));
 
         let mention_task = mention_set.update(cx, |mention_set, cx| {
             let http_client = project.read(cx).client().http_client();

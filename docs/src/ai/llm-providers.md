@@ -37,6 +37,27 @@ Zed supports these providers with your own API keys:
 - [Vercel AI Gateway](#vercel-ai-gateway)
 - [xAI](#xai)
 
+### Custom Headers {#custom-headers}
+
+You can attach extra HTTP headers to every request Zed makes to supported HTTP-based providers. This is useful in corporate environments, or for observability tooling.
+
+Configure them via the `language_models.<provider>.custom_headers` settings key:
+
+```json [settings]
+{
+  "language_models": {
+    "openai": {
+      "custom_headers": {
+        "Fancy-Auth": "Bearer <your-fancy-key>",
+        "X-My-Tag": "zed"
+      }
+    }
+  }
+}
+```
+
+`custom_headers` is supported by Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI API Compatible providers, OpenCode, OpenRouter, Vercel AI Gateway, and xAI. Headers managed by Zed for each provider, such as `Authorization`, `Content-Type`, `Accept`, and provider-specific authentication headers, are ignored with a warning if you try to override them.
+
 ### Amazon Bedrock {#amazon-bedrock}
 
 > Supports tool use with models that support streaming tool use.
@@ -515,7 +536,7 @@ One such service is [Ollama Turbo](https://ollama.com/turbo). To configure Zed t
 4. Paste your API key and press enter.
 5. For the API URL enter `https://ollama.com`
 
-Zed will also use the `OLLAMA_API_KEY` environment variables if defined.
+Zed will also use the `OLLAMA_API_KEY` environment variable if defined.
 
 ### OpenAI {#openai}
 

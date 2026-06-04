@@ -1980,6 +1980,7 @@ impl Editor {
                         offset: point(px(1.), px(1.)),
                         blur_radius: px(2.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                     .border(BORDER_WIDTH)

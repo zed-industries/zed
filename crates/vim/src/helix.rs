@@ -16,7 +16,7 @@ use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
-use text::{Bias, SelectionGoal};
+use text::{Bias, LineEnding, SelectionGoal};
 use theme::ActiveTheme as _;
 use ui::px;
 use workspace::searchable::{self, Direction, FilteredSearchRange};
@@ -750,13 +750,16 @@ impl Vim {
                     let snapshot = display_map.buffer_snapshot();
                     let grapheme_count = snapshot.grapheme_count_for_range(&byte_range);
                     let anchor = snapshot.anchor_before(byte_range.start);
-
-                    selection_info.push((anchor, grapheme_count, was_empty, was_reversed));
+                    let mut replacement_len = 0;
 
                     if !byte_range.is_empty() {
-                        let replacement_text = text.repeat(grapheme_count);
+                        let mut replacement_text = text.repeat(grapheme_count);
+                        LineEnding::normalize(&mut replacement_text);
+                        replacement_len = replacement_text.len();
                         edits.push((byte_range, replacement_text));
                     }
+
+                    selection_info.push((anchor, replacement_len, was_empty, was_reversed));
                 }
 
                 editor.edit(edits, cx);
@@ -765,12 +768,11 @@ impl Vim {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let ranges: Vec<_> = selection_info
                     .into_iter()
-                    .map(|(start_anchor, grapheme_count, was_empty, was_reversed)| {
+                    .map(|(start_anchor, replacement_len, was_empty, was_reversed)| {
                         let start_point = start_anchor.to_point(&snapshot);
                         if was_empty {
                             start_point..start_point
                         } else {
-                            let replacement_len = text.len() * grapheme_count;
                             let end_offset = start_anchor.to_offset(&snapshot) + replacement_len;
                             let end_point = snapshot.offset_to_point(end_offset);
                             if was_reversed {
@@ -1004,8 +1006,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_visual = self.mode.is_visual();
-        let Some(data) = self.collect_helix_jump_data(is_visual, window, cx) else {
+        let allow_targets_in_selection = self.mode.has_selection();
+        let Some(data) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx)
+        else {
             return;
         };
 
@@ -1031,7 +1034,7 @@ impl Vim {
 
     fn collect_helix_jump_data(
         &mut self,
-        is_visual: bool,
+        allow_targets_in_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<HelixJumpUiData> {
@@ -1044,7 +1047,11 @@ impl Vim {
             let end_offset = buffer_snapshot.point_to_offset(visible_range.end);
 
             let selections = editor.selections.all::<Point>(&display_snapshot);
-            let skip_data = Self::selection_skip_offsets(buffer_snapshot, &selections, is_visual);
+            let skip_data = Self::selection_skip_offsets(
+                buffer_snapshot,
+                &selections,
+                allow_targets_in_selection,
+            );
 
             // Get the primary cursor position for alternating forward/backward labeling
             let cursor_offset = selections
@@ -1254,7 +1261,7 @@ impl Vim {
     fn selection_skip_offsets(
         buffer: &MultiBufferSnapshot,
         selections: &[Selection<Point>],
-        is_visual: bool,
+        allow_targets_in_selection: bool,
     ) -> HelixJumpSkipData {
         let mut skip_points = Vec::with_capacity(selections.len());
         let mut skip_ranges = Vec::new();
@@ -1263,8 +1270,7 @@ impl Vim {
             let head_offset = buffer.point_to_offset(selection.head());
             skip_points.push(head_offset);
 
-            // In visual mode, don't skip ranges so we can shrink the selection
-            if !is_visual && selection.start != selection.end {
+            if !allow_targets_in_selection && selection.start != selection.end {
                 let mut start = buffer.point_to_offset(selection.start);
                 let mut end = buffer.point_to_offset(selection.end);
                 if start > end {
@@ -2478,6 +2484,29 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+
+        cx.set_state("«aaˇ»", Mode::HelixSelect);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("«xxˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_crlf(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("«xˇ»z", Mode::HelixNormal);
+
+        let vim =
+            cx.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
+        cx.update(|window, cx| {
+            vim.entity.update(cx, |vim, cx| {
+                vim.helix_replace("a\r\nb", window, cx);
+            });
+        });
+
+        cx.assert_state("«a\nbˇ»z", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -2560,6 +2589,16 @@ mod test {
         assert_eq!(cx.mode(), Mode::Insert);
         cx.simulate_keystrokes("escape");
         assert_eq!(cx.mode(), Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_append(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("aˇbcd", Mode::HelixNormal);
+        cx.simulate_keystrokes("v a");
+        cx.assert_state("abˇcd", Mode::Insert);
     }
 
     #[gpui::test]
@@ -3486,6 +3525,19 @@ mod test {
         jump_to_word(&mut cx, "three");
 
         cx.assert_state("one two «threeˇ»", Mode::HelixNormal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_includes_line_selection_targets(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("alpha beta\nˇfoo bar baz\nqux quux", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("x");
+        jump_to_word(&mut cx, "bar");
+
+        cx.assert_state("alpha beta\nfoo «barˇ» baz\nqux quux", Mode::HelixNormal);
         assert_eq!(cx.active_operator(), None);
     }
 

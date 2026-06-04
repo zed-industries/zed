@@ -697,7 +697,26 @@ impl RenderOnce for NotificationFrame {
     }
 }
 
-impl Component for NotificationFrame {}
+impl Component for NotificationFrame {
+    fn description() -> &'static str {
+        "The standard container used by workspace notifications, \
+        providing a consistent title row, close and suppress affordances, \
+        and a slot for the notification's contents."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        single_example(
+            "Default",
+            NotificationFrame::new()
+                .with_title(Some("Notification Title"))
+                .with_content(Label::new(
+                    "This is the content of a workspace notification.",
+                ))
+                .into_any_element(),
+        )
+        .into_any_element()
+    }
+}
 
 pub mod simple_message_notification {
     use std::sync::Arc;
