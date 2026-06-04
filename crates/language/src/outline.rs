@@ -66,7 +66,15 @@ impl<T: ToPoint> OutlineItem<T> {
             {
                 break;
             }
-            cursor.goto_first_child_for_point(range.start.to_ts_point());
+            // If we can't descend further, the current node is the most specific
+            // ancestor that contains `range.start`. Bail out rather than spinning
+            // forever re-checking the same node.
+            if cursor
+                .goto_first_child_for_point(range.start.to_ts_point())
+                .is_none()
+            {
+                return None;
+            }
         }
 
         if !cursor.goto_last_child() {
@@ -248,7 +256,32 @@ impl<T> Outline<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use crate::{Buffer, rust_lang};
+    use gpui::{AppContext as _, TestAppContext};
+
+    #[gpui::test]
+    fn test_body_range_hangs_when_outline_range_is_inside_leaf_node(cx: &mut TestAppContext) {
+        let text = "fn main() { let completion = 1; }";
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
+        let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        let identifier_start = text.find("completion").unwrap() + 1;
+        let identifier_end = identifier_start + 1;
+        let range =
+            snapshot.offset_to_point(identifier_start)..snapshot.offset_to_point(identifier_end);
+
+        let item = OutlineItem {
+            depth: 0,
+            range: range.clone(),
+            source_range_for_text: range,
+            text: "completion".to_string(),
+            highlight_ranges: Vec::new(),
+            name_ranges: Vec::new(),
+            body_range: None,
+            annotation_range: None,
+        };
+
+        assert_eq!(item.body_range(&snapshot), None);
+    }
 
     #[gpui::test]
     async fn test_entries_with_no_names(cx: &mut TestAppContext) {
