@@ -229,7 +229,7 @@ Include the version number and what changed. This helps users on older versions 
 Link to other docs using relative paths:
 
 - `[Vim mode](./vim.md)`
-- `[AI configuration](./ai/configuration.md)`
+- `[AI Quick Start](./ai/quick-start.md)`
 
 ### External Links
 
