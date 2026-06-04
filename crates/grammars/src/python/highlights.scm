@@ -45,17 +45,18 @@
 (call
   function: (identifier) @function.call)
 
-
 (decorator
-  "@" @punctuation.special
+  "@" @punctuation.decorator
   [
     (identifier) @function.decorator
     (attribute
+      object: (identifier) @function.decorator
       attribute: (identifier) @function.decorator)
     (call
       function: (identifier) @function.decorator.call)
     (call
       (attribute
+        object: (identifier) @function.decorator.call
         attribute: (identifier) @function.decorator.call))
   ])
 
@@ -325,6 +326,7 @@
 ] @keyword.definition
 
 (decorator
+  "@" @punctuation.decorator.builtin
   (identifier) @attribute.builtin
   (#any-of? @attribute.builtin "classmethod" "staticmethod" "property"))
 
