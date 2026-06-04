@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{Stream, StreamExt};
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    Request as ResponseRequest, ResponseError, ResponseFunctionCallItem,
+    Request as ResponseRequest, ResponseCompactionItem, ResponseError, ResponseFunctionCallItem,
     ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
     ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
     ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
@@ -302,6 +302,9 @@ pub fn into_open_ai_response(
         },
         reasoning,
         service_tier,
+        // Native compaction is opt-in per provider/model; callers that support it
+        // set this on the returned request.
+        context_management: Vec::new(),
     }
 }
 
@@ -754,6 +757,8 @@ pub struct OpenAiResponseEventMapper {
     reasoning_items: Vec<ResponseReasoningInputItem>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
+    compaction_items: Vec<Value>,
+    seen_compaction_keys: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -770,6 +775,8 @@ impl OpenAiResponseEventMapper {
             reasoning_items: Vec::new(),
             current_message_phase: None,
             pending_stop_reason: None,
+            compaction_items: Vec::new(),
+            seen_compaction_keys: HashSet::default(),
         }
     }
 
@@ -820,7 +827,9 @@ impl OpenAiResponseEventMapper {
                             self.function_calls_by_item.insert(item_id, entry);
                         }
                     }
-                    ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
+                    ResponseOutputItem::Reasoning(_)
+                    | ResponseOutputItem::Compaction(_)
+                    | ResponseOutputItem::Unknown => {}
                 }
                 events
             }
@@ -923,6 +932,7 @@ impl OpenAiResponseEventMapper {
 
                 let mut events = Vec::new();
                 events.extend(self.capture_reasoning_items_from_output(&response.output));
+                events.extend(self.capture_compaction_items_from_output(&response.output));
                 if response_output_contains_refusal(&response.output)
                     && !matches!(stop_reason, StopReason::MaxTokens)
                 {
@@ -968,6 +978,9 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
+                ResponseOutputItem::Compaction(compaction) => {
+                    self.capture_compaction_item(&compaction)
+                }
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
             ResponsesStreamEvent::OutputTextDone { .. }
@@ -989,6 +1002,7 @@ impl OpenAiResponseEventMapper {
         let mut events = Vec::new();
 
         events.extend(self.capture_reasoning_items_from_output(&response.output));
+        events.extend(self.capture_compaction_items_from_output(&response.output));
 
         if response_output_contains_refusal(&response.output) {
             self.pending_stop_reason = Some(StopReason::Refusal);
@@ -1068,6 +1082,58 @@ impl OpenAiResponseEventMapper {
             }
         }
         events
+    }
+
+    fn capture_compaction_items_from_output(
+        &mut self,
+        output: &[ResponseOutputItem],
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        for item in output {
+            if let ResponseOutputItem::Compaction(compaction) = item {
+                events.extend(self.capture_compaction_item(compaction));
+            }
+        }
+        events
+    }
+
+    /// Records a provider-native compaction item and, the first time a given
+    /// item is seen in this stream, emits the accumulated set as a
+    /// `CompactionDetails` event. The same item can arrive both as a streamed
+    /// `OutputItemDone` and in the final response's `output`, so we dedupe by
+    /// id (falling back to the encrypted payload). Items without
+    /// `encrypted_content` are skipped because they cannot be replayed.
+    fn capture_compaction_item(
+        &mut self,
+        compaction: &ResponseCompactionItem,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(encrypted_content) = compaction.encrypted_content.as_deref() else {
+            return Vec::new();
+        };
+
+        let dedupe_key = compaction
+            .id
+            .clone()
+            .unwrap_or_else(|| encrypted_content.to_string());
+        if !self.seen_compaction_keys.insert(dedupe_key) {
+            return Vec::new();
+        }
+
+        let mut item = serde_json::Map::new();
+        item.insert("type".to_string(), Value::from("compaction"));
+        item.insert(
+            "encrypted_content".to_string(),
+            Value::from(encrypted_content),
+        );
+        if let Some(id) = compaction.id.as_deref() {
+            item.insert("id".to_string(), Value::from(id));
+        }
+        self.compaction_items.push(Value::Object(item));
+
+        vec![Ok(LanguageModelCompletionEvent::CompactionDetails {
+            provider: OPEN_AI_PROVIDER_ID,
+            items: self.compaction_items.clone(),
+        })]
     }
 
     fn capture_message_phase(
@@ -1245,9 +1311,10 @@ fn response_reasoning_input_item_from_output(
 #[cfg(test)]
 mod tests {
     use crate::responses::{
-        ReasoningSummaryPart, ResponseError, ResponseFunctionToolCall, ResponseIncompleteDetails,
-        ResponseInputTokensDetails, ResponseOutputItem, ResponseOutputMessage,
-        ResponseReasoningItem, ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
+        ReasoningSummaryPart, ResponseCompactionItem, ResponseError, ResponseFunctionToolCall,
+        ResponseIncompleteDetails, ResponseInputTokensDetails, ResponseOutputItem,
+        ResponseOutputMessage, ResponseReasoningItem, ResponseSummary, ResponseUsage,
+        StreamEvent as ResponsesStreamEvent,
     };
     use futures::{StreamExt, executor::block_on};
     use language_model_core::{
@@ -1312,6 +1379,54 @@ mod tests {
                     "content": [{"type": "input_text", "text": "after compaction"}],
                 }),
             ]
+        );
+    }
+
+    #[test]
+    fn responses_stream_captures_native_compaction_items() {
+        let compaction = || {
+            ResponseOutputItem::Compaction(ResponseCompactionItem {
+                id: Some("cmp_1".into()),
+                encrypted_content: Some("enc-abc".into()),
+            })
+        };
+
+        let events = vec![
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: compaction(),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary {
+                    // The same compaction item also appears in the final response
+                    // output; it must only be surfaced once.
+                    output: vec![compaction()],
+                    ..Default::default()
+                },
+            },
+        ];
+
+        let compaction_events: Vec<_> = map_response_events(events)
+            .into_iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::CompactionDetails { provider, items } => {
+                    Some((provider, items))
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            compaction_events,
+            vec![(
+                OPEN_AI_PROVIDER_ID,
+                vec![json!({
+                    "type": "compaction",
+                    "encrypted_content": "enc-abc",
+                    "id": "cmp_1",
+                })],
+            )]
         );
     }
 

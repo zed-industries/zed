@@ -2270,7 +2270,17 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
-            if cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
+            // Run Zed's summary compaction only when the active model does not do
+            // provider-native (server-side) compaction; otherwise the provider
+            // compacts for us and we'd double-compact.
+            let run_summary_compaction = cx.update(|cx| {
+                cx.has_flag::<HandoffFeatureFlag>()
+                    && !this
+                        .upgrade()
+                        .and_then(|thread| thread.read(cx).model.clone())
+                        .is_some_and(|model| model.uses_native_compaction())
+            });
+            if run_summary_compaction {
                 match Self::perform_compaction_if_needed(
                     this,
                     event_stream,
@@ -2596,6 +2606,7 @@ impl Thread {
                 | LanguageModelCompletionEvent::Thinking { .. }
                 | LanguageModelCompletionEvent::RedactedThinking { .. }
                 | LanguageModelCompletionEvent::ReasoningDetails(_)
+                | LanguageModelCompletionEvent::CompactionDetails { .. }
                 | LanguageModelCompletionEvent::ToolUse(_)
                 | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
                 | LanguageModelCompletionEvent::StartMessage { .. } => {}
@@ -2739,6 +2750,22 @@ impl Thread {
                     }
                 } else {
                     last_message.reasoning_details = Some(Arc::new(details));
+                }
+            }
+            CompactionDetails { provider, items } => {
+                if !items.is_empty() {
+                    // The model performed server-side compaction mid-turn. Record it as a
+                    // compaction boundary before the assistant message it precedes: the
+                    // pending assistant message hasn't been flushed yet, so pushing here
+                    // places the boundary directly before it. On the next request
+                    // `extend_request_history_until` drops everything before this boundary
+                    // and replays these opaque items in their place.
+                    let compaction_id =
+                        acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
+                    event_stream.send_context_compaction(compaction_id);
+                    self.messages.push(Arc::new(Message::Compaction(
+                        CompactionInfo::ProviderNative { provider, items },
+                    )));
                 }
             }
             ToolUse(tool_use) => {
@@ -5662,6 +5689,75 @@ mod tests {
                 assert!(matches!(&*thread.messages[3], Message::User(_)));
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_native_compaction_skips_summary_compaction(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        // This model compacts server-side, so Zed must not run its own summary
+        // compaction pass even when the threshold would otherwise be crossed.
+        model.set_uses_native_compaction(true);
+        let old_user_message_id = UserMessageId::new();
+        let new_user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["handoff".to_string()]);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                // Token usage far past the summary-compaction threshold; a
+                // non-native model would insert a summary here.
+                thread.request_token_usage.insert(
+                    old_user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 960_000,
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(new_user_message_id, vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The first (and only) request is the normal turn, not a summarization
+        // pass, and it still contains the full pre-compaction history.
+        let request = model.pending_completions().pop().unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec![
+                "old user".to_string(),
+                "old assistant".to_string(),
+                "new prompt".to_string(),
+            ]
+        );
+
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _cx| {
+                assert!(
+                    !thread
+                        .messages
+                        .iter()
+                        .any(|message| matches!(&**message, Message::Compaction(_))),
+                    "native compaction must not insert a summary compaction message"
+                );
+            });
+        });
+
+        model.send_completion_stream_text_chunk(&request, "answer");
+        model.end_completion_stream(&request);
+        cx.run_until_parked();
     }
 
     #[gpui::test]

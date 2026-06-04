@@ -39,6 +39,28 @@ pub struct Request {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
+    /// Server-side context management (e.g. compaction). Only honored by the
+    /// OpenAI Responses API on models that support it; sending it to other
+    /// models/endpoints returns a 400 `unsupported_parameter`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub context_management: Vec<ContextManagement>,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContextManagement {
+    Compaction {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compact_threshold: Option<u64>,
+    },
+}
+
+impl ContextManagement {
+    pub fn compaction(compact_threshold: u64) -> Self {
+        Self::Compaction {
+            compact_threshold: Some(compact_threshold),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -379,8 +401,21 @@ pub enum ResponseOutputItem {
     Message(ResponseOutputMessage),
     FunctionCall(ResponseFunctionToolCall),
     Reasoning(ResponseReasoningItem),
+    Compaction(ResponseCompactionItem),
     #[serde(other)]
     Unknown,
+}
+
+/// A provider-native compaction item emitted by the Responses API when
+/// server-side compaction (`context_management`) is enabled. Its
+/// `encrypted_content` is opaque and must be replayed verbatim as an input item
+/// on subsequent turns to preserve the compacted context.
+#[derive(Deserialize, Debug, Clone)]
+pub struct ResponseCompactionItem {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub encrypted_content: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -557,7 +592,9 @@ pub async fn stream_response(
                                     }
                                 }
                             }
-                            ResponseOutputItem::Unknown => {}
+                            // Compaction items are opaque; they are surfaced via the
+                            // `OutputItemDone` event pushed below, with no intermediate delta.
+                            ResponseOutputItem::Compaction(_) | ResponseOutputItem::Unknown => {}
                         }
 
                         all_events.push(StreamEvent::OutputItemDone {

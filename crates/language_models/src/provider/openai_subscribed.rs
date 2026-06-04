@@ -15,7 +15,10 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, RateLimiter,
 };
-use open_ai::{ReasoningEffort, responses::stream_response};
+use open_ai::{
+    ReasoningEffort,
+    responses::{ContextManagement, stream_response},
+};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -25,7 +28,9 @@ use ui::{ConfiguredApiCard, prelude::*};
 use url::form_urlencoded;
 use util::ResultExt as _;
 
-use crate::provider::open_ai::{OpenAiResponseEventMapper, into_open_ai_response};
+use crate::provider::open_ai::{
+    OpenAiResponseEventMapper, into_open_ai_response, native_compaction_threshold,
+};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -344,6 +349,12 @@ impl ChatGptModel {
         true
     }
 
+    fn supports_native_compaction(&self) -> bool {
+        // Every model the Codex backend serves is in the GPT-5 family, which
+        // supports server-side compaction.
+        true
+    }
+
     fn supports_prompt_cache_key(&self) -> bool {
         true
     }
@@ -430,6 +441,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             .collect()
     }
 
+    fn uses_native_compaction(&self) -> bool {
+        self.model.supports_native_compaction()
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai-subscribed/{}", self.model.id())
     }
@@ -475,6 +490,17 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 .contains(&ReasoningEffort::None),
         );
         responses_request.store = Some(false);
+
+        // The Codex backend supports server-side compaction for every model it
+        // serves (all GPT-5 family). `store = false` above keeps this
+        // ZDR-friendly, as the compaction guide requires.
+        if self.model.supports_native_compaction() {
+            responses_request.context_management =
+                vec![ContextManagement::compaction(native_compaction_threshold(
+                    self.model.max_token_count(),
+                    self.model.max_output_tokens(),
+                ))];
+        }
 
         // The Codex backend requires system messages to be in the top-level
         // `instructions` field rather than as input items.

@@ -126,6 +126,7 @@ pub struct FakeLanguageModel {
     supports_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
+    uses_native_compaction: AtomicBool,
     max_token_count: AtomicU64,
     max_output_tokens: AtomicU64,
 }
@@ -142,6 +143,7 @@ impl Default for FakeLanguageModel {
             supports_thinking: AtomicBool::new(false),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
+            uses_native_compaction: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
             max_output_tokens: AtomicU64::new(0),
         }
@@ -182,6 +184,10 @@ impl FakeLanguageModel {
 
     pub fn set_supports_images(&self, supports: bool) {
         self.supports_images.store(supports, SeqCst);
+    }
+
+    pub fn set_uses_native_compaction(&self, uses: bool) {
+        self.uses_native_compaction.store(uses, SeqCst);
     }
 
     pub fn set_max_token_count(&self, count: u64) {
@@ -308,6 +314,10 @@ impl LanguageModel for FakeLanguageModel {
 
     fn supports_streaming_tools(&self) -> bool {
         self.supports_streaming_tools.load(SeqCst)
+    }
+
+    fn uses_native_compaction(&self) -> bool {
+        self.uses_native_compaction.load(SeqCst)
     }
 
     fn telemetry_id(&self) -> String {

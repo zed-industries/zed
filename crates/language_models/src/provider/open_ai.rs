@@ -14,7 +14,10 @@ use language_model::{
 use menu;
 use open_ai::{
     OPEN_AI_API_URL, ResponseStreamEvent,
-    responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
+    responses::{
+        ContextManagement, Request as ResponseRequest, StreamEvent as ResponsesStreamEvent,
+        stream_response,
+    },
     stream_completion,
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
@@ -228,6 +231,18 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 }
 
+/// Token threshold at which we ask OpenAI to run server-side compaction. We
+/// reserve room for a full-length response so compaction triggers before the
+/// model would otherwise run out of context. Shared by the OpenAI and
+/// ChatGPT-subscription providers.
+pub(crate) fn native_compaction_threshold(
+    max_token_count: u64,
+    max_output_tokens: Option<u64>,
+) -> u64 {
+    let reserved = max_output_tokens.unwrap_or(max_token_count / 4);
+    max_token_count.saturating_sub(reserved).max(1)
+}
+
 fn default_thinking_reasoning_effort(model: &open_ai::Model) -> Option<open_ai::ReasoningEffort> {
     use open_ai::ReasoningEffort;
 
@@ -287,6 +302,16 @@ fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModel
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_compaction_threshold_reserves_output_headroom() {
+        // Threshold leaves room for a full-length response.
+        assert_eq!(native_compaction_threshold(272_000, Some(128_000)), 144_000);
+        // Falls back to reserving a quarter of the window when max output is unknown.
+        assert_eq!(native_compaction_threshold(400_000, None), 300_000);
+        // Never underflows to zero.
+        assert_eq!(native_compaction_threshold(1_000, Some(8_000)), 1);
+    }
 
     #[test]
     fn supported_thinking_effort_levels_hide_none() {
@@ -484,6 +509,10 @@ impl LanguageModel for OpenAiLanguageModel {
         true
     }
 
+    fn uses_native_compaction(&self) -> bool {
+        self.model.supports_native_compaction()
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -514,7 +543,7 @@ impl LanguageModel for OpenAiLanguageModel {
             request.speed = None;
         }
         if self.model.uses_responses_api() {
-            let request = into_open_ai_response(
+            let mut request = into_open_ai_response(
                 request,
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
@@ -525,6 +554,13 @@ impl LanguageModel for OpenAiLanguageModel {
                     .supported_reasoning_efforts()
                     .contains(&open_ai::ReasoningEffort::None),
             );
+            if self.model.supports_native_compaction() {
+                request.context_management =
+                    vec![ContextManagement::compaction(native_compaction_threshold(
+                        self.model.max_token_count(),
+                        self.model.max_output_tokens(),
+                    ))];
+            }
             let completions = self.stream_response(request, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();

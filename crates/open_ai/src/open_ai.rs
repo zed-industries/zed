@@ -344,6 +344,32 @@ impl Model {
         true
     }
 
+    /// Whether this model supports OpenAI's server-side compaction
+    /// (`context_management` with `compact_threshold`) on the Responses API.
+    ///
+    /// OpenAI publishes no per-model capability list for this; support is only
+    /// observable at runtime (unsupported models reject the parameter with a 400
+    /// `unsupported_parameter` / "compact_threshold is not enabled"). Empirically
+    /// it is the GPT-5 family and codex models that support it, so we gate to
+    /// those and leave older models (gpt-4*, o3) and `Custom` off.
+    pub fn supports_native_compaction(&self) -> bool {
+        match self {
+            Self::Five
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointThreeCodex
+            | Self::FivePointFour
+            | Self::FivePointFourMini
+            | Self::FivePointFourNano
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => true,
+            Self::Four | Self::FourOmniMini | Self::O3 | Self::Custom { .. } => false,
+        }
+    }
+
     /// Whether OpenAI's Priority processing tier is available for this model.
     /// Sourced from <https://openai.com/api-priority-processing/>. The `*-pro`,
     /// `*-nano`, and legacy `gpt-4` variants are not eligible.
@@ -372,6 +398,50 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::{Model, ReasoningEffort};
+
+    #[test]
+    fn native_compaction_gated_to_gpt_5_family() {
+        // GPT-5 family + codex support server-side compaction.
+        for model in [
+            Model::Five,
+            Model::FiveMini,
+            Model::FiveNano,
+            Model::FivePointOne,
+            Model::FivePointTwo,
+            Model::FivePointThreeCodex,
+            Model::FivePointFour,
+            Model::FivePointFourMini,
+            Model::FivePointFourNano,
+            Model::FivePointFourPro,
+            Model::FivePointFive,
+            Model::FivePointFivePro,
+        ] {
+            assert!(
+                model.supports_native_compaction(),
+                "{} should support native compaction",
+                model.id()
+            );
+        }
+
+        // Older models (and Custom) reject `context_management`.
+        for model in [Model::Four, Model::FourOmniMini, Model::O3] {
+            assert!(
+                !model.supports_native_compaction(),
+                "{} should not support native compaction",
+                model.id()
+            );
+        }
+    }
+
+    #[test]
+    fn context_management_serializes_to_compaction_entry() {
+        let value =
+            serde_json::to_value(crate::responses::ContextManagement::compaction(200_000)).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({ "type": "compaction", "compact_threshold": 200_000 })
+        );
+    }
 
     #[test]
     fn gpt_5_1_uses_none_reasoning_by_default() {

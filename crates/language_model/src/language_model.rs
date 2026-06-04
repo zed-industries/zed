@@ -112,6 +112,14 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether this model performs provider-native (server-side) compaction
+    /// instead of Zed's summary compaction. When true, the agent must not run
+    /// its own `perform_compaction_if_needed` pass, since the provider compacts
+    /// the context for us and emits the compaction items in the response stream.
+    fn uses_native_compaction(&self) -> bool {
+        false
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
@@ -173,6 +181,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
+                                Ok(LanguageModelCompletionEvent::CompactionDetails { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
