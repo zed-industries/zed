@@ -92,7 +92,6 @@ fn editable_context_sources() -> Vec<ContextSource> {
         ContextSource::EditHistoryFile,
         ContextSource::GitLog,
         ContextSource::Bm25,
-        ContextSource::OracleFile,
     ]
 }
 
