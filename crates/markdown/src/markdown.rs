@@ -612,16 +612,12 @@ impl Markdown {
     }
 
     fn code_block_scroll_handle(&mut self, id: usize) -> Option<ScrollHandle> {
-        if self.is_code_block_wrapped(id) {
-            return None;
-        }
-
-        Some(
+        (!self.is_code_block_wrapped(id)).then(|| {
             self.code_block_scroll_handles
                 .entry(id)
                 .or_insert_with(ScrollHandle::new)
-                .clone(),
-        )
+                .clone()
+        })
     }
 
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
@@ -2193,18 +2189,11 @@ impl Element for MarkdownElement {
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
-                                    let is_wrapped =
-                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
-
                                     let code_block = div()
                                         .id(("code-block", range.start))
                                         .rounded_lg()
                                         .map(|mut code_block| {
-                                            if is_wrapped {
-                                                code_block.w_full()
-                                            } else if let Some(scroll_handle) =
-                                                scroll_handle.as_ref()
-                                            {
+                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
                                                 code_block
@@ -2485,7 +2474,7 @@ impl Element for MarkdownElement {
                                         == WrapButtonVisibility::AlwaysVisible;
                                 let use_hover = any_hover && !any_always;
 
-                                let mut button_row = h_flex()
+                                let button_row = h_flex()
                                     .gap_0p5()
                                     .absolute()
                                     .bg(cx.theme().colors().editor_background)
@@ -2495,25 +2484,32 @@ impl Element for MarkdownElement {
                                             this.top_1().right_1().visible_on_hover("code_block")
                                         },
                                         |this| this.top_1p5().right_1p5(),
+                                    )
+                                    .when(
+                                        wrap_button_visibility != WrapButtonVisibility::Hidden,
+                                        |this| {
+                                            let is_wrapped = self
+                                                .markdown
+                                                .read(cx)
+                                                .is_code_block_wrapped(range.start);
+
+                                            this.child(render_wrap_code_block_button(
+                                                range.start,
+                                                is_wrapped,
+                                                self.markdown.clone(),
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        copy_button_visibility != CopyButtonVisibility::Hidden,
+                                        |this| {
+                                            this.child(render_copy_code_block_button(
+                                                range.end,
+                                                code,
+                                                self.markdown.clone(),
+                                            ))
+                                        },
                                     );
-
-                                if wrap_button_visibility != WrapButtonVisibility::Hidden {
-                                    let is_wrapped =
-                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
-                                    button_row = button_row.child(render_wrap_code_block_button(
-                                        range.start,
-                                        is_wrapped,
-                                        self.markdown.clone(),
-                                    ));
-                                }
-
-                                if copy_button_visibility != CopyButtonVisibility::Hidden {
-                                    button_row = button_row.child(render_copy_code_block_button(
-                                        range.end,
-                                        code,
-                                        self.markdown.clone(),
-                                    ));
-                                }
 
                                 el.child(button_row)
                             });
