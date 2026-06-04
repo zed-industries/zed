@@ -382,6 +382,9 @@ async fn run_terminal_tool(
             extra_write_paths: effective.write_paths,
             allow_network: effective.network,
             allow_fs_write: effective.allow_fs_write_all,
+            // Filled in by `NativeThreadEnvironment::create_terminal`, which
+            // owns the per-thread AppContainer profile lifecycle.
+            app_container_profile: None,
         })
     } else {
         None

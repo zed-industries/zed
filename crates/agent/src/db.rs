@@ -83,6 +83,21 @@ pub struct DbThread {
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
     pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub app_container: Option<DbAppContainer>,
+}
+
+/// Windows-only sandbox state persisted with a thread: the per-thread
+/// AppContainer profile and the directory roots its package SID was granted
+/// ACEs on. Recorded so deleting the thread can revoke the ACEs and delete
+/// the profile (see `ThreadsDatabase::delete_thread`). Always `None` on
+/// other platforms.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DbAppContainer {
+    /// AppContainer profile name (`Zed.AgentSandbox.<thread-id-hash>`).
+    pub profile_name: String,
+    /// Roots granted inheritable ACEs for the profile's package SID.
+    pub granted_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -133,6 +148,7 @@ impl SharedThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            app_container: None,
         }
     }
 
@@ -317,6 +333,7 @@ impl DbThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            app_container: None,
         })
     }
 }
@@ -607,13 +624,27 @@ impl ThreadsDatabase {
         DbThread::from_json(json_data.as_bytes())
     }
 
-    fn sandboxed_terminal_temp_dir(data_type: DataType, data: Vec<u8>) -> Option<PathBuf> {
+    fn sandbox_state_to_clean_up(
+        data_type: DataType,
+        data: Vec<u8>,
+    ) -> (Option<PathBuf>, Option<DbAppContainer>) {
         match Self::deserialize_thread(data_type, data) {
-            Ok(thread) => thread.sandboxed_terminal_temp_dir,
+            Ok(thread) => (thread.sandboxed_terminal_temp_dir, thread.app_container),
             Err(error) => {
                 log::warn!("failed to deserialize thread before deleting it: {error:#}");
-                None
+                (None, None)
             }
+        }
+    }
+
+    fn clean_up_sandbox_state(
+        (temp_dir, app_container): (Option<PathBuf>, Option<DbAppContainer>),
+    ) {
+        if let Some(temp_dir) = temp_dir {
+            Self::remove_sandboxed_terminal_temp_dir(temp_dir);
+        }
+        if let Some(app_container) = app_container {
+            Self::remove_app_container(app_container);
         }
     }
 
@@ -630,11 +661,33 @@ impl ThreadsDatabase {
         }
     }
 
+    /// Revoke the ACEs granted to the thread's AppContainer package SID and
+    /// delete the profile. Best-effort: a leftover ACE for a deleted profile
+    /// SID grants access to nobody, so failures are only logged.
+    #[cfg(target_os = "windows")]
+    fn remove_app_container(app_container: DbAppContainer) {
+        if let Err(error) = sandbox::windows_appcontainer::cleanup_profile(
+            &app_container.profile_name,
+            &app_container.granted_roots,
+        ) {
+            log::warn!(
+                "failed to clean up AppContainer profile {}: {error:#}",
+                app_container.profile_name
+            );
+        }
+    }
+
+    /// AppContainer state is only ever recorded on Windows; if a thread
+    /// database somehow carries it on another platform there's nothing to
+    /// clean up here.
+    #[cfg(not(target_os = "windows"))]
+    fn remove_app_container(_app_container: DbAppContainer) {}
+
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let sandboxed_terminal_temp_dir = {
+            let sandbox_state = {
                 let connection = connection.lock();
 
                 let mut select =
@@ -642,12 +695,10 @@ impl ThreadsDatabase {
                     SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
                 "})?;
 
-                let sandboxed_terminal_temp_dir = select(id.0.clone())?
+                let sandbox_state = select(id.0.clone())?
                     .into_iter()
                     .next()
-                    .and_then(|(data_type, data)| {
-                        Self::sandboxed_terminal_temp_dir(data_type, data)
-                    });
+                    .map(|(data_type, data)| Self::sandbox_state_to_clean_up(data_type, data));
 
                 let mut delete = connection.exec_bound::<Arc<str>>(indoc! {"
                     DELETE FROM threads WHERE id = ?
@@ -655,11 +706,11 @@ impl ThreadsDatabase {
 
                 delete(id.0)?;
 
-                sandboxed_terminal_temp_dir
+                sandbox_state
             };
 
-            if let Some(temp_dir) = sandboxed_terminal_temp_dir {
-                Self::remove_sandboxed_terminal_temp_dir(temp_dir);
+            if let Some(sandbox_state) = sandbox_state {
+                Self::clean_up_sandbox_state(sandbox_state);
             }
 
             Ok(())
@@ -670,18 +721,16 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let sandboxed_terminal_temp_dirs = {
+            let sandbox_states = {
                 let connection = connection.lock();
 
                 let mut select = connection.select_bound::<(), (DataType, Vec<u8>)>(indoc! {"
                     SELECT data_type, data FROM threads
                 "})?;
 
-                let sandboxed_terminal_temp_dirs = select(())?
+                let sandbox_states = select(())?
                     .into_iter()
-                    .filter_map(|(data_type, data)| {
-                        Self::sandboxed_terminal_temp_dir(data_type, data)
-                    })
+                    .map(|(data_type, data)| Self::sandbox_state_to_clean_up(data_type, data))
                     .collect::<Vec<_>>();
 
                 let mut delete = connection.exec_bound::<()>(indoc! {"
@@ -690,11 +739,11 @@ impl ThreadsDatabase {
 
                 delete(())?;
 
-                sandboxed_terminal_temp_dirs
+                sandbox_states
             };
 
-            for temp_dir in sandboxed_terminal_temp_dirs {
-                Self::remove_sandboxed_terminal_temp_dir(temp_dir);
+            for sandbox_state in sandbox_states {
+                Self::clean_up_sandbox_state(sandbox_state);
             }
 
             Ok(())
@@ -768,6 +817,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            app_container: None,
         }
     }
 
@@ -916,6 +966,49 @@ mod tests {
             .expect("thread should exist");
         assert_eq!(loaded.sandboxed_terminal_temp_dir, Some(temp_dir.clone()));
         std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_app_container_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.app_container.is_none(),
+            "Legacy threads without app_container should default to None"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_app_container_roundtrips_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("app-container-thread");
+        let app_container = DbAppContainer {
+            profile_name: "Zed.AgentSandbox.0123456789abcdef".to_string(),
+            granted_roots: vec![PathBuf::from("C:\\projects\\zed")],
+        };
+        let mut thread = make_thread(
+            "App Container Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.app_container = Some(app_container.clone());
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(loaded.app_container, Some(app_container));
     }
 
     #[gpui::test]

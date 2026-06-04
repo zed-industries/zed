@@ -1176,6 +1176,10 @@ pub struct Thread {
     running_subagents: Vec<WeakEntity<Thread>>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Windows-only sandbox state: the per-thread AppContainer profile and
+    /// the roots its package SID was granted ACEs on, recorded so deleting
+    /// the thread can clean both up. Always `None` on other platforms.
+    app_container: Option<crate::db::DbAppContainer>,
     /// Sandbox permissions the user approved "for the rest of the thread".
     /// Shared with each tool call's event stream so repeated requests for
     /// already-granted permissions skip the approval prompt.
@@ -1309,6 +1313,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
+            app_container: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         }
     }
@@ -1375,6 +1380,43 @@ impl Thread {
         self.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
         cx.notify();
         Ok(temp_dir)
+    }
+
+    /// Return the thread's AppContainer profile name, lazily naming the
+    /// profile on first use, and record `granted_roots` (the directory roots
+    /// the sandbox will grant the profile's package SID write ACEs on) so
+    /// thread deletion can revoke them.
+    ///
+    /// The profile itself is created on demand by the sandbox integration
+    /// when the command is wrapped; this only does the bookkeeping that
+    /// must persist with the thread.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn app_container_for_command(
+        &mut self,
+        granted_roots: impl IntoIterator<Item = PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let mut changed = self.app_container.is_none();
+        let profile_name = sandbox::windows_appcontainer::profile_name_for_thread(&self.id.0);
+        let app_container = self
+            .app_container
+            .get_or_insert_with(|| crate::db::DbAppContainer {
+                profile_name,
+                granted_roots: Vec::new(),
+            });
+        // Record the exact roots ACEs are placed on (no subtree pruning):
+        // revocation must visit each ACE'd directory individually.
+        for root in granted_roots {
+            if !app_container.granted_roots.contains(&root) {
+                app_container.granted_roots.push(root);
+                changed = true;
+            }
+        }
+        let profile_name = app_container.profile_name.clone();
+        if changed {
+            cx.notify();
+        }
+        profile_name
     }
 
     /// Returns true if this thread was imported from a shared thread.
@@ -1675,6 +1717,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
+            app_container: db_thread.app_container,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
         }
     }
@@ -1707,6 +1750,7 @@ impl Thread {
                 }
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
+            app_container: self.app_container.clone(),
         };
 
         cx.background_spawn(async move {

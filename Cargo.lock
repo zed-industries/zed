@@ -277,6 +277,7 @@ dependencies = [
  "regex",
  "reqwest_client",
  "rust-embed",
+ "sandbox",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -15814,7 +15815,12 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dunce",
+ "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -22917,6 +22923,7 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
+ "sandbox",
  "search",
  "semver",
  "serde",

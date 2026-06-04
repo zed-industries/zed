@@ -2915,6 +2915,33 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             Ok(Some(Err(error))) => return Task::ready(Err(error)),
             Err(error) => return Task::ready(Err(error)),
         };
+        // On Windows the sandbox runs commands inside a per-thread
+        // AppContainer profile. Name the profile and record the roots that
+        // will receive ACE grants on the thread (so deleting the thread can
+        // clean them up), then pass the profile name along with the wrap.
+        // Like the temp dir above, this only applies to local projects:
+        // for remote projects the command runs on another host and the
+        // profile name is left unset, which disables the Windows sandbox.
+        #[cfg(target_os = "windows")]
+        if let Some(sandbox_wrap) = &mut sandbox_wrap {
+            let granted_roots: Vec<PathBuf> = sandbox_wrap
+                .writable_paths
+                .iter()
+                .chain(sandbox_wrap.extra_write_paths.iter())
+                .cloned()
+                .collect();
+            let profile_name = self.thread.update(cx, |thread, cx| {
+                thread
+                    .project()
+                    .read(cx)
+                    .is_local()
+                    .then(|| thread.app_container_for_command(granted_roots, cx))
+            });
+            match profile_name {
+                Ok(profile_name) => sandbox_wrap.app_container_profile = profile_name,
+                Err(error) => return Task::ready(Err(error)),
+            }
+        }
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,

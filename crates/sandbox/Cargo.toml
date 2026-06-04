@@ -14,3 +14,12 @@ path = "src/sandbox.rs"
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow.workspace = true
 tempfile.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+anyhow.workspace = true
+dunce.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+windows.workspace = true

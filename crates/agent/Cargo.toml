@@ -77,6 +77,9 @@ web_search.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+sandbox.workspace = true
+
 [dev-dependencies]
 assets.workspace = true
 async-io.workspace = true

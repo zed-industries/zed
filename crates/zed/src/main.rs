@@ -205,6 +205,29 @@ fn main() {
     #[cfg(unix)]
     util::prevent_root_execution();
 
+    // `zed --sandbox-helper <policy> -- <program> <args...>` relaunches a
+    // terminal command inside a Windows AppContainer sandbox. Handled before
+    // clap parsing because everything after `--` is an arbitrary command
+    // line that must not be interpreted as Zed arguments.
+    #[cfg(target_os = "windows")]
+    {
+        let mut raw_args = std::env::args().skip(1);
+        if raw_args.next().as_deref() == Some("--sandbox-helper") {
+            // Release builds use the Windows GUI subsystem and therefore
+            // don't automatically attach to the console (ConPTY) they were
+            // spawned under, which the sandboxed child needs for its stdio.
+            // Fails harmlessly when a console is already attached.
+            #[cfg(not(debug_assertions))]
+            unsafe {
+                use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+                AttachConsole(ATTACH_PARENT_PROCESS).ok();
+            }
+            process::exit(sandbox::windows_appcontainer::run_sandbox_helper(
+                raw_args.collect(),
+            ));
+        }
+    }
+
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass

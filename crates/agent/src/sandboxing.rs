@@ -5,11 +5,11 @@
 //! caller see the same answer (and so the `target_os` gate lives in one
 //! place instead of scattered across the agent crate).
 //!
-//! The current policy is: enabled iff we're on macOS *and* the user has the
-//! `sandboxing` feature flag turned on. There's deliberately no settings or
-//! env-var override yet — the flag is the only switch.
+//! The current policy is: enabled iff we're on macOS or Windows *and* the
+//! user has the `sandboxing` feature flag turned on. There's deliberately no
+//! settings or env-var override yet — the flag is the only switch.
 //!
-//! On non-macOS hosts we don't have a sandbox integration today, so this
+//! On other hosts we don't have a sandbox integration today, so this
 //! returns `false` regardless of the flag.
 //!
 //! Naming note: this module is about agent terminal sandboxing specifically.
@@ -23,7 +23,8 @@ use std::path::PathBuf;
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
-    cfg!(target_os = "macos") && cx.has_flag::<SandboxingFeatureFlag>()
+    (cfg!(target_os = "macos") || cfg!(target_os = "windows"))
+        && cx.has_flag::<SandboxingFeatureFlag>()
 }
 
 /// A request for elevated sandbox permissions for a single terminal command.

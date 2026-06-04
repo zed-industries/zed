@@ -45,6 +45,13 @@ pub struct SandboxWrap {
     pub allow_network: bool,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
     pub allow_fs_write: bool,
+    /// Windows only: the name of the per-agent-thread AppContainer profile
+    /// to run the command in (see
+    /// `sandbox::windows_appcontainer::profile_name_for_thread`). `None`
+    /// means no Windows sandbox is applied — the agent only sets it for
+    /// local projects where it manages the profile's lifecycle. Ignored on
+    /// other platforms.
+    pub app_container_profile: Option<String>,
 }
 
 /// Opaque RAII handle the sandbox implementation hands back to keep its
@@ -59,9 +66,9 @@ pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 /// duration of the spawned command — dropping it deletes any on-disk
 /// config the launcher reads at startup.
 ///
-/// On non-macOS hosts this is a no-op: the inputs pass through unchanged
-/// and the returned handle is `None`. (We don't yet have a sandbox
-/// integration for other platforms.)
+/// On hosts other than macOS and Windows this is a no-op: the inputs pass
+/// through unchanged and the returned handle is `None`. (We don't yet have
+/// a sandbox integration for other platforms.)
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
@@ -91,7 +98,40 @@ pub(crate) fn apply_sandbox_wrap(
             Some(Box::new(config_file) as SandboxConfigHandle),
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        // Without a per-thread AppContainer profile there is nothing to
+        // enforce against (e.g. the project is remote, so the command runs
+        // on another host); let the command run with the agent's ambient
+        // permissions.
+        let Some(profile_name) = &sandbox_wrap.app_container_profile else {
+            return Ok((program, args, None));
+        };
+        let writable: Vec<&std::path::Path> = sandbox_wrap
+            .writable_paths
+            .iter()
+            .chain(sandbox_wrap.extra_write_paths.iter())
+            .map(|p| p.as_path())
+            .collect();
+        let permissions = sandbox::windows_appcontainer::SandboxPermissions {
+            allow_network: sandbox_wrap.allow_network,
+            allow_fs_write: sandbox_wrap.allow_fs_write,
+        };
+        let (new_program, new_args, launch_config) =
+            sandbox::windows_appcontainer::wrap_invocation(
+                &program,
+                &args,
+                &writable,
+                permissions,
+                profile_name,
+            )?;
+        Ok((
+            new_program,
+            new_args,
+            Some(Box::new(launch_config) as SandboxConfigHandle),
+        ))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // No sandbox integration available; ignore the wrap request and
         // let the command run with the agent's ambient permissions.
