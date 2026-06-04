@@ -28,8 +28,8 @@ use language_model::{
 };
 use settings::update_settings_file;
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
-use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::notifications::NotificationId;
+use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::*;
 
@@ -8406,12 +8406,24 @@ impl ThreadView {
             .project
             .upgrade()?
             .read(cx)
-            .find_project_path(&tool_call_location.path, cx)?;
+            .find_project_path(&tool_call_location.path, cx);
 
         let open_task = self
             .workspace
             .update(cx, |workspace, cx| {
-                workspace.open_path(project_path, None, true, window, cx)
+                if let Some(project_path) = project_path {
+                    workspace.open_path(project_path, None, true, window, cx)
+                } else {
+                    workspace.open_abs_path(
+                        tool_call_location.path.clone(),
+                        OpenOptions {
+                            focus: Some(true),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                }
             })
             .log_err()?;
         window
@@ -10341,6 +10353,9 @@ pub(crate) fn open_link(
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
+            MentionUri::Rule { name, .. } => {
+                crate::ui::open_migrated_rule(workspace, &name, window, cx);
+            }
             MentionUri::Skill {
                 skill_file_path, ..
             } => {

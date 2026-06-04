@@ -466,7 +466,11 @@ impl TabSwitcherDelegate {
 
         let selected_item_id = self.selected_item_id();
         self.matches = matches;
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        self.selected_index = if query.is_empty() {
+            self.compute_selected_index(selected_item_id, window, cx)
+        } else {
+            0
+        }
     }
 
     fn update_matches(
@@ -525,7 +529,11 @@ impl TabSwitcherDelegate {
             a_score.cmp(&b_score)
         });
 
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        self.selected_index = if query.is_empty() {
+            self.compute_selected_index(selected_item_id, window, cx)
+        } else {
+            0
+        }
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -822,6 +830,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             selected: true,
             preview: tab_match.preview,
             deemphasized: false,
+            max_title_len: Some(usize::MAX),
         };
         let label = tab_match.item.tab_content(params, window, cx);
 
