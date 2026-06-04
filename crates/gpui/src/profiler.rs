@@ -22,17 +22,20 @@ use serde::{Deserialize, Serialize};
 use crate::{SharedString, TasksIncluded};
 
 #[doc(hidden)]
+#[must_use]
 pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
     let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
     ThreadTaskTimings::collect(&global_thread_timings, included)
 }
 
 #[doc(hidden)]
+#[must_use]
 pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTimings {
-    gpui::profiler::get_current_thread_task_timings(included)
+    THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings(included))
 }
 
 #[doc(hidden)]
+#[must_use]
 pub fn take_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
     let global_timings = GLOBAL_THREAD_TIMINGS.lock();
     ThreadTaskStatistics::collect_and_reset(&global_timings, included)
@@ -629,11 +632,6 @@ pub fn save_task_timing() {
     });
 }
 
-#[doc(hidden)]
-pub fn get_current_thread_task_timings(include_running: TasksIncluded) -> ThreadTaskTimings {
-    THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings(include_running))
-}
-
 static PROFILER_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Enables or disables task timing trace collection at runtime.
@@ -663,4 +661,72 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
 /// Returns whether task timing tracing is enabled.
 pub fn trace_enabled() -> bool {
     PROFILER_ENABLED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::atomic::{AtomicBool, Ordering},
+        thread,
+    };
+
+    /// This test interacts with globals in GPUI. Only one instance of it can run and not while
+    /// anything else interacts with the GPUI.
+    #[test]
+    #[ignore]
+    fn profiler_does_not_deadlock() {
+        static RUNNING: AtomicBool = AtomicBool::new(true);
+
+        let threads: Vec<_> = (0..4)
+            .into_iter()
+            .flat_map(|_| {
+                [
+                    loop_get_timings,
+                    loop_take_all_stats,
+                    loop_get_current_thread_timings,
+                ]
+            })
+            .chain([rapidly_toggle_tracing_enabled as fn()])
+            .map(thread::spawn)
+            .collect();
+
+        // give some time to deadlock
+        thread::sleep(Duration::from_millis(200));
+
+        // stop the test
+        RUNNING.store(false, Ordering::Relaxed);
+        thread::sleep(Duration::from_millis(1));
+
+        let hanging = threads.iter().all(thread::JoinHandle::is_finished);
+        assert!(!hanging);
+
+        //////////////////////////////////// 
+
+        fn rapidly_toggle_tracing_enabled() {
+            let mut on = false;
+            while RUNNING.load(Ordering::Relaxed) {
+                on = !on;
+                set_trace_enabled(on);
+            }
+        }
+
+        fn loop_get_timings() {
+            while RUNNING.load(Ordering::Relaxed) {
+                let _ = get_all_timings(TasksIncluded::CompletedAndRunning);
+            }
+        }
+
+        fn loop_take_all_stats() {
+            while RUNNING.load(Ordering::Relaxed) {
+                let _ = take_all_stats(TasksIncluded::CompletedAndRunning);
+            }
+        }
+
+        fn loop_get_current_thread_timings() {
+            while RUNNING.load(Ordering::Relaxed) {
+                let _ = get_current_thread_timings(TasksIncluded::CompletedAndRunning);
+            }
+        }
+    }
 }
