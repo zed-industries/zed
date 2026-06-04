@@ -285,10 +285,32 @@ impl CosmicTextSystemState {
                 .get_font(font_id, cosmic_text::Weight::NORMAL)
                 .context("Could not load font")?;
 
-            // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
+            // HACK: Allow fonts that lack the 'm' glyph (used as a basic
+            // "is this a usable text font" check) to still load. Segoe
+            // Fluent Icons is needed for storybook's Windows caption icons,
+            // and KaTeX_* faces are symbol fonts used for math rendering.
             let allowed_bad_font_names = [
                 "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
                 "Segoe Fluent Icons",
+                "KaTeX_AMS-Regular",
+                "KaTeX_Caligraphic-Regular",
+                "KaTeX_Fraktur-Bold",
+                "KaTeX_Fraktur-Regular",
+                "KaTeX_Main-Bold",
+                "KaTeX_Main-BoldItalic",
+                "KaTeX_Main-Italic",
+                "KaTeX_Main-Regular",
+                "KaTeX_Math-BoldItalic",
+                "KaTeX_Math-Italic",
+                "KaTeX_SansSerif-Bold",
+                "KaTeX_SansSerif-Italic",
+                "KaTeX_SansSerif-Regular",
+                "KaTeX_Script-Regular",
+                "KaTeX_Size1-Regular",
+                "KaTeX_Size2-Regular",
+                "KaTeX_Size3-Regular",
+                "KaTeX_Size4-Regular",
+                "KaTeX_Typewriter-Regular",
             ];
 
             if font.as_swash().charmap().map('m') == 0
