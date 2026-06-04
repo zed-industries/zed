@@ -15816,6 +15816,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dunce",
+ "log",
  "serde",
  "serde_json",
  "sha2",

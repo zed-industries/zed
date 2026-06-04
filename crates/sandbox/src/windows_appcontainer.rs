@@ -55,7 +55,22 @@
 //!   subtrees. `allow_fs_write_all` maps to a read+write grant over
 //!   `%USERPROFILE%` for the shared [`PROFILE_WRITE_CAPABILITY`] SID —
 //!   one whole-profile walk, at most once per user ever, and only if that
-//!   escalation is ever approved.
+//!   escalation is ever approved. Granting metadata access to drive roots
+//!   (next paragraph) needs `WRITE_DAC`, i.e. admin, in this tier; without
+//!   it shells can't start, which is why the BFS tier is preferred.
+//!
+//! # Shell startup: drive-root metadata access
+//!
+//! Inside an AppContainer the well-known package SIDs have no rights on
+//! the system-drive root, but shells (`cmd.exe`, `powershell.exe`,
+//! `pwsh.exe`) stat `C:\` and enumerate drive roots during startup and
+//! fail with access-denied — collapsing to an unusable `C:\` working
+//! location. So every sandboxed run additionally grants **non-recursive,
+//! metadata-only** read on the system drive root and the drive roots of
+//! the granted paths (a BFS rule without `--containerinherit`, or a
+//! non-inheriting [`ROOT_METADATA_MASK`] ACE). This grants no ability to
+//! enumerate or read the root's contents — it just unblocks the startup
+//! stat — and mirrors MXC's `prepare-system-drive`.
 //!
 //! All policy mutation happens in the parent so the cleanup story
 //! (clearing BFS rules / revoking ACEs and deleting the profile when the
@@ -325,8 +340,29 @@ pub fn wrap_invocation(
 ) -> Result<(String, Vec<String>, AppContainerLaunchConfig)> {
     let profile = AppContainerProfile::create_or_open(profile_name)?;
 
-    match filesystem_tier() {
+    let tier = filesystem_tier();
+    log::info!(
+        "sandbox: configuring {} grants for {} writable + {} readable roots (profile {profile_name})",
+        match tier {
+            FilesystemTier::Bfs { .. } => "BFS",
+            FilesystemTier::Dacl => "DACL",
+        },
+        writable_directories.len(),
+        readonly_directories.len(),
+    );
+
+    // Shells stat `C:\` and enumerate drive roots during startup; without
+    // metadata access to those roots they fail with access-denied and
+    // collapse to an unusable `C:\` location. Grant minimal,
+    // non-recursive metadata access to the system drive and the drive
+    // roots of every granted path. See the module docs.
+    let drive_roots = distinct_drive_roots(writable_directories, readonly_directories);
+
+    match tier {
         FilesystemTier::Bfs { bfscfg } => {
+            for root in &drive_roots {
+                ensure_bfs_rule(bfscfg, profile_name, root, BfsAccess::ReadOnly)?;
+            }
             configure_bfs_rules(
                 bfscfg,
                 profile_name,
@@ -336,6 +372,21 @@ pub fn wrap_invocation(
             )?;
         }
         FilesystemTier::Dacl => {
+            for root in &drive_roots {
+                // Modifying a drive root's DACL usually needs `WRITE_DAC`
+                // (admin). Without it shells can't start in this tier — the
+                // BFS tier or an admin one-time grant (MXC's
+                // `prepare-system-drive`) is the fix — so log rather than
+                // failing the whole command.
+                if let Err(error) = grant_ace(profile.sid(), root, ROOT_METADATA_MASK, false) {
+                    log::warn!(
+                        "sandbox: could not grant AppContainer metadata access to drive root {} \
+                         (shells may fail to start; needs admin or the BFS tier): {error:#}",
+                        root.display()
+                    );
+                }
+            }
+
             for directory in writable_directories {
                 let directory = canonicalize_or_original(directory);
                 grant_subtree(profile.sid(), &directory, WRITE_ACCESS_MASK).with_context(|| {
@@ -789,11 +840,29 @@ fn spawn_in_container(
     }
 }
 
+/// Rights granted on drive roots so shells can start: just the metadata
+/// reads tools issue against `C:\` during startup
+/// (`FILE_READ_ATTRIBUTES | FILE_READ_EA | READ_CONTROL | SYNCHRONIZE`,
+/// `0x0012_0088`). Deliberately excludes `FILE_LIST_DIRECTORY` /
+/// `FILE_READ_DATA`, so the container still can't enumerate the drive root
+/// — same minimal grant MXC's `prepare-system-drive` applies.
+const ROOT_METADATA_MASK: u32 = 0x0012_0088;
+
 /// Add an inheritable allow-ACE for `sid` on `root`, covering the whole
 /// subtree via `OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE`. Idempotent: if
 /// an inheritable allow-ACE for the same SID already covers `access_mask`,
 /// the DACL is left untouched.
 fn grant_subtree(sid: PSID, root: &Path, access_mask: u32) -> Result<()> {
+    grant_ace(sid, root, access_mask, true)
+}
+
+/// Add an allow-ACE for `sid` on `root`. When `inheritable`, the ACE
+/// propagates to the whole subtree (`OBJECT_INHERIT_ACE |
+/// CONTAINER_INHERIT_ACE`) — which eagerly rewrites every descendant's
+/// DACL; when not, it applies to `root` itself only (O(1), used for
+/// drive-root metadata grants). Idempotent against an existing allow-ACE
+/// for the same SID with matching mask and inheritance.
+fn grant_ace(sid: PSID, root: &Path, access_mask: u32, inheritable: bool) -> Result<()> {
     let root_wide = HSTRING::from(root.as_os_str());
     unsafe {
         let mut security_descriptor = PSECURITY_DESCRIPTOR::default();
@@ -822,14 +891,19 @@ fn grant_subtree(sid: PSID, root: &Path, access_mask: u32) -> Result<()> {
             return Ok(());
         }
 
-        if acl_contains_inheritable_allow_ace(existing_acl, sid, access_mask) {
+        if acl_contains_allow_ace(existing_acl, sid, access_mask, inheritable) {
             return Ok(());
         }
 
+        let inheritance = if inheritable {
+            SUB_CONTAINERS_AND_OBJECTS_INHERIT
+        } else {
+            windows::Win32::Security::ACE_FLAGS(0)
+        };
         let explicit_access = EXPLICIT_ACCESS_W {
             grfAccessPermissions: access_mask,
             grfAccessMode: GRANT_ACCESS,
-            grfInheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+            grfInheritance: inheritance,
             Trustee: TRUSTEE_W {
                 TrusteeForm: TRUSTEE_IS_SID,
                 TrusteeType: TRUSTEE_IS_WELL_KNOWN_GROUP,
@@ -941,11 +1015,18 @@ fn revoke_subtree(sid: PSID, root: &Path) -> Result<()> {
     }
 }
 
-/// Whether `acl` already contains an inheritable allow-ACE for `sid`
-/// covering at least `access_mask`.
-unsafe fn acl_contains_inheritable_allow_ace(acl: *const ACL, sid: PSID, access_mask: u32) -> bool {
+/// Whether `acl` already contains an allow-ACE for `sid` covering at least
+/// `access_mask` with the requested inheritance (inheritable ACEs carry
+/// both `OBJECT_INHERIT_ACE` and `CONTAINER_INHERIT_ACE`; non-inheritable
+/// ones carry neither).
+unsafe fn acl_contains_allow_ace(
+    acl: *const ACL,
+    sid: PSID,
+    access_mask: u32,
+    inheritable: bool,
+) -> bool {
     unsafe {
-        let required_flags = (OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0) as u8;
+        let inherit_flags = (OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0) as u8;
         for index in 0..(*acl).AceCount as u32 {
             let mut ace_pointer: *mut c_void = std::ptr::null_mut();
             if GetAce(acl, index, &mut ace_pointer).is_err() {
@@ -955,7 +1036,8 @@ unsafe fn acl_contains_inheritable_allow_ace(acl: *const ACL, sid: PSID, access_
             if header.AceType as u32 != ACCESS_ALLOWED_ACE_TYPE {
                 continue;
             }
-            if header.AceFlags & required_flags != required_flags {
+            let has_inherit = header.AceFlags & inherit_flags == inherit_flags;
+            if has_inherit != inheritable {
                 continue;
             }
             let ace = &*(ace_pointer as *const ACCESS_ALLOWED_ACE);
@@ -1013,6 +1095,50 @@ fn derive_capability_sid(name: &str) -> Result<SidBuffer> {
         LocalFree(Some(HLOCAL(capability_sids.cast())));
 
         result
+    }
+}
+
+/// The distinct drive roots (e.g. `C:\`, `D:\`) that need metadata access
+/// for shells to start: the system drive plus the root of every granted
+/// directory. Deduplicated, case-insensitively.
+fn distinct_drive_roots(writable: &[&Path], readonly: &[&Path]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut push = |path: PathBuf| {
+        if !roots
+            .iter()
+            .any(|existing| existing.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
+        {
+            roots.push(path);
+        }
+    };
+
+    if let Some(system_drive) = system_directory().ok().and_then(|dir| drive_root(&dir)) {
+        push(system_drive);
+    }
+    for directory in writable.iter().chain(readonly.iter()) {
+        if let Some(root) = drive_root(&canonicalize_or_original(directory)) {
+            push(root);
+        }
+    }
+    roots
+}
+
+/// The drive-root prefix of `path` (e.g. `C:\Users\me` -> `C:\`). Returns
+/// `None` for paths without a drive root (UNC, relative).
+fn drive_root(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(_) | Prefix::VerbatimDisk(_) => {
+                // Reattach the root separator: `Prefix` is just `C:`.
+                let mut root = PathBuf::from(prefix.as_os_str());
+                root.push(std::path::MAIN_SEPARATOR_STR);
+                Some(root)
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -1177,6 +1303,35 @@ mod tests {
             BfsAccess::ReadWrite,
         );
         assert!(!args.contains(&OsString::from("--containerinherit")));
+    }
+
+    #[test]
+    fn test_drive_root_extraction() {
+        assert_eq!(
+            drive_root(Path::new("C:\\Users\\me\\project")),
+            Some(PathBuf::from("C:\\"))
+        );
+        assert_eq!(drive_root(Path::new("D:\\")), Some(PathBuf::from("D:\\")));
+        // UNC and relative paths have no drive root.
+        assert_eq!(drive_root(Path::new("\\\\server\\share\\x")), None);
+        assert_eq!(drive_root(Path::new("relative\\path")), None);
+    }
+
+    #[test]
+    fn test_distinct_drive_roots_dedupes_and_includes_system_drive() {
+        let writable = [Path::new("C:\\Users\\me\\a"), Path::new("D:\\src")];
+        let readonly = [Path::new("c:\\users\\me\\b")];
+        let roots = distinct_drive_roots(&writable, &readonly);
+        // C:\ (system drive + the C: paths, case-insensitively deduped)
+        // and D:\ — no duplicates.
+        assert!(
+            roots
+                .iter()
+                .filter(|r| r.as_os_str().eq_ignore_ascii_case("C:\\"))
+                .count()
+                == 1
+        );
+        assert!(roots.iter().any(|r| r == &PathBuf::from("D:\\")));
     }
 
     #[test]
