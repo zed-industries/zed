@@ -777,6 +777,7 @@ pub struct Sidebar {
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
+    project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
@@ -915,6 +916,7 @@ impl Sidebar {
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
+            project_header_new_thread_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
@@ -2180,7 +2182,12 @@ impl Sidebar {
                                 && (panel.active_view_is_new_draft(cx)
                                     || panel.active_conversation_view().is_none())
                         });
+
                 self.project_header_menu_handles.entry(ix).or_default();
+                self.project_header_new_thread_menu_handles
+                    .entry(ix)
+                    .or_default();
+
                 self.render_project_header(
                     ix,
                     false,
@@ -2463,13 +2470,23 @@ impl Sidebar {
     ) -> AnyElement {
         let focus_handle = self.focus_handle.clone();
 
+        let menu_handle = self
+            .project_header_new_thread_menu_handles
+            .get(&ix)
+            .cloned()
+            .unwrap_or_default();
+        let is_menu_open = menu_handle.is_deployed();
+
         let button = IconButton::new(
             SharedString::from(format!("{id_prefix}project-header-new-thread-{ix}")),
             IconName::Plus,
         )
+        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
         .icon_size(IconSize::Small)
         .when(has_active_draft, |this| this.icon_color(Color::Accent))
-        .when(!has_active_draft, |this| this.visible_on_hover(group_name));
+        .when(!has_active_draft && !is_menu_open, |this| {
+            this.visible_on_hover(group_name)
+        });
 
         let open_workspaces = self
             .multi_workspace
@@ -2501,15 +2518,22 @@ impl Sidebar {
         }
 
         let this = cx.weak_entity();
-
         let key = key.clone();
+
         PopoverMenu::new(SharedString::from(format!(
             "{id_prefix}project-header-new-thread-menu-{ix}"
         )))
+        .with_handle(menu_handle)
         .trigger_with_tooltip(button, move |_, cx| {
             Tooltip::for_action_in("Start New Agent Thread", &NewThread, &focus_handle, cx)
         })
         .anchor(gpui::Anchor::TopLeft)
+        .on_open(Rc::new({
+            let this = this.clone();
+            move |_window, cx| {
+                this.update(cx, |_sidebar, cx| cx.notify()).ok();
+            }
+        }))
         .menu(move |window, cx| {
             let this = this.clone();
             let key = key.clone();
