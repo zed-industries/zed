@@ -1,5 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
+use action_log::TrackedBufferStatus;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
@@ -86,6 +87,8 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
+    #[serde(default)]
+    pub tracked_buffers: Vec<SerializedTrackedBuffer>,
 }
 
 /// Serialized form of the sandbox permissions the user granted "for the rest of
@@ -119,6 +122,51 @@ pub struct DbSandboxGrants {
     /// could not be created (the fallback prompt's "for this thread" option).
     #[serde(default)]
     pub sandbox_fallback: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SerializedTrackedBufferStatus {
+    Created {
+        existing_file_content: Option<String>,
+    },
+    Modified,
+    Deleted,
+}
+
+impl From<TrackedBufferStatus> for SerializedTrackedBufferStatus {
+    fn from(status: TrackedBufferStatus) -> Self {
+        match status {
+            TrackedBufferStatus::Created {
+                existing_file_content,
+            } => SerializedTrackedBufferStatus::Created {
+                existing_file_content: existing_file_content.map(|r| r.to_string()),
+            },
+            TrackedBufferStatus::Modified => SerializedTrackedBufferStatus::Modified,
+            TrackedBufferStatus::Deleted => SerializedTrackedBufferStatus::Deleted,
+        }
+    }
+}
+
+impl From<SerializedTrackedBufferStatus> for TrackedBufferStatus {
+    fn from(status: SerializedTrackedBufferStatus) -> Self {
+        match status {
+            SerializedTrackedBufferStatus::Created {
+                existing_file_content,
+            } => TrackedBufferStatus::Created {
+                existing_file_content: existing_file_content.map(text::Rope::from),
+            },
+            SerializedTrackedBufferStatus::Modified => TrackedBufferStatus::Modified,
+            SerializedTrackedBufferStatus::Deleted => TrackedBufferStatus::Deleted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SerializedTrackedBuffer {
+    pub worktree_id: u64,
+    pub path: String,
+    pub diff_base: String,
+    pub status: SerializedTrackedBufferStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -169,6 +217,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tracked_buffers: Default::default(),
         }
     }
 
@@ -355,6 +404,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tracked_buffers: Default::default(),
         })
     }
 }
@@ -806,6 +856,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tracked_buffers: Vec::new(),
         }
     }
 
@@ -939,6 +990,22 @@ mod tests {
             db_thread.sandbox_grants,
             DbSandboxGrants::default(),
             "Legacy threads without sandbox_grants should default to empty grants"
+        );
+    }
+
+    #[test]
+    fn test_tracked_buffers_defaults_to_empty() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.tracked_buffers.is_empty(),
+            "Legacy threads without tracked_buffers field should default to empty list"
         );
     }
 
