@@ -2,16 +2,19 @@ use gpui::{
     App, Context, Empty, EventEmitter, IntoElement, ParentElement, Render, SharedString, Window,
 };
 use settings::Settings;
-use ui::{Button, Tooltip, prelude::*};
-use util::paths::PathStyle;
+use ui::{Button, Indicator, Tooltip, prelude::*};
+use util::{maybe, paths::PathStyle};
 
 use crate::{
-    HideStatusItem, StatusItemView, item::ItemHandle, workspace_settings::StatusBarSettings,
+    HideStatusItem, StatusItemView, TabBarSettings, item::ItemHandle,
+    workspace_settings::StatusBarSettings,
 };
 
 pub struct ActiveFileName {
     project_path: Option<SharedString>,
     full_path: Option<SharedString>,
+    is_dirty: bool,
+    has_conflict: bool,
 }
 
 impl ActiveFileName {
@@ -19,10 +22,22 @@ impl ActiveFileName {
         Self {
             project_path: None,
             full_path: None,
+            is_dirty: false,
+            has_conflict: false,
         }
     }
-}
+    fn render_file_indicator(&self) -> Option<Indicator> {
+        maybe!({
+            let indicator_color = match (self.has_conflict, self.is_dirty) {
+                (true, _) => Color::Warning,
+                (_, true) => Color::Accent,
+                (false, false) => return None,
+            };
 
+            Some(Indicator::dot().color(indicator_color))
+        })
+    }
+}
 impl Render for ActiveFileName {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !StatusBarSettings::get_global(cx).show_active_file {
@@ -38,7 +53,12 @@ impl Render for ActiveFileName {
             .clone()
             .unwrap_or_else(|| project_path.clone());
 
-        div()
+        h_flex()
+            .children(if !TabBarSettings::get_global(cx).show {
+                self.render_file_indicator()
+            } else {
+                None
+            })
             .child(
                 Button::new("active-file-name-button", project_path)
                     .label_size(LabelSize::Small)
@@ -62,9 +82,13 @@ impl StatusItemView for ActiveFileName {
                 .project_path(cx)
                 .map(|path| path.path.display(PathStyle::local()).into_owned().into());
             self.full_path = item.tab_tooltip_text(cx);
+            self.is_dirty = item.is_dirty(cx);
+            self.has_conflict = item.has_conflict(cx);
         } else {
             self.project_path = None;
             self.full_path = None;
+            self.is_dirty = false;
+            self.has_conflict = false;
         }
         cx.notify();
     }
