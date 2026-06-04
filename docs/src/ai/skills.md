@@ -51,19 +51,6 @@ You can hand a skill to a teammate without hosting it anywhere. In the Skills se
 
 When someone opens that link (for example by pasting it into their browser or clicking it in a chat), Zed launches the Skill Creator pre-filled with the shared skill. The recipient can review the name, description, and full body, choose a scope (global or project-local), and click **Save** to install it. Nothing is written to disk until they explicitly save, so a shared link can never silently install instructions into someone's agent.
 
-## Managing Skills {#managing-skills}
-
-Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to **AI > Skills**, or go directly to [agent.skills](zed://settings/agent.skills).
-
-The **User** tab shows your global skills. The **Project** tab shows skills for the current project.
-
-For each skill you can:
-
-- **Open** — opens the skill's `SKILL.md` file in the editor
-- **Delete** — removes the skill folder from disk
-
-If no skills are installed, the page shows a **Create a Skill** button that opens the Skill Creator.
-
 ## Using Skills {#using-skills}
 
 By default, the agent picks up skills autonomously. It sees a catalog of every installed skill (name and description) in its system prompt, and calls the `skill` tool when a task matches a skill's description.
@@ -197,6 +184,10 @@ If a global and a project-local skill share the same name, the project-local ski
 ### Editing Skill Files {#editing-skill-files}
 
 The agent cannot edit `SKILL.md` files or their bundled resources without your explicit authorization, even in a trusted project. This prevents a compromised conversation from modifying the skills that govern future conversations.
+
+## Agent Path Boundaries {#agent-path-boundaries}
+
+Zed Skills apply to the Zed Agent. External Agents and Terminal Threads may have their own native skills, prompts, or instruction systems. Configure those in the External Agent or CLI.
 
 ## Limitations {#limitations}
 
