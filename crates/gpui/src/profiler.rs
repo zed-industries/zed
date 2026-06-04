@@ -6,7 +6,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     hint::cold_path,
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicBool, Ordering},
     },
     thread::ThreadId,
@@ -20,6 +20,20 @@ pub(crate) use actions::{save_action_timing, update_running_action};
 use serde::{Deserialize, Serialize};
 
 use crate::{SharedString, TasksIncluded};
+
+/// The mutex used by the profiler internals.
+///
+/// By default this is a [`spin::Mutex`], which is optimal here because the
+/// profiler is careful to never block while a lock is held. When the
+/// `deadlock-detection` feature is enabled it instead becomes a deadlock
+/// detecting mutex from the `deloxide` crate. Both share the same
+/// guard-returning `lock()` API, so this is a drop-in replacement.
+#[cfg(not(feature = "deadlock-detection"))]
+pub(crate) type ProfilerMutex<T> = spin::Mutex<T>;
+
+/// See [`ProfilerMutex`].
+#[cfg(feature = "deadlock-detection")]
+pub(crate) type ProfilerMutex<T> = deloxide::Mutex<T>;
 
 #[doc(hidden)]
 #[must_use]
@@ -387,7 +401,7 @@ const MAX_TASK_TIMINGS: usize = (16 * 1024 * 1024) / core::mem::size_of::<TaskTi
 pub(crate) type TaskTimings = VecDeque<TaskTiming>;
 
 #[doc(hidden)]
-pub type GuardedTaskTimings = spin::Mutex<ThreadTimings>;
+pub type GuardedTaskTimings = ProfilerMutex<ThreadTimings>;
 
 #[doc(hidden)]
 pub struct GlobalThreadTimings {
@@ -486,8 +500,8 @@ impl TaskStatistics {
 }
 
 #[doc(hidden)]
-pub static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
-    spin::Mutex::new(Vec::new());
+pub static GLOBAL_THREAD_TIMINGS: LazyLock<ProfilerMutex<Vec<GlobalThreadTimings>>> =
+    LazyLock::new(|| ProfilerMutex::new(Vec::new()));
 
 thread_local! {
     #[doc(hidden)]
@@ -496,7 +510,7 @@ thread_local! {
         let thread_name = current_thread.name();
         let thread_id = current_thread.id();
         let timings = ThreadTimings::new(thread_name.map(|e| e.to_string()), thread_id);
-        let timings = Arc::new(spin::Mutex::new(timings));
+        let timings = Arc::new(ProfilerMutex::new(timings));
 
         {
             let timings = Arc::downgrade(&timings);
@@ -676,9 +690,17 @@ mod tests {
     #[test]
     #[ignore]
     fn profiler_does_not_deadlock() {
+        // When deadlock detection is enabled, start the detector so that
+        // `deloxide::Mutex` reports any lock-ordering cycles encountered below.
+        #[cfg(feature = "deadlock-detection")]
+        deloxide::Deloxide::new()
+            .callback(|info| panic!("profiler deadlock detected: {:?}", info.thread_cycle))
+            .start()
+            .expect("failed to start deadlock detector");
+
         static RUNNING: AtomicBool = AtomicBool::new(true);
 
-        let threads: Vec<_> = (0..4)
+        let threads: Vec<_> = (0..80)
             .into_iter()
             .flat_map(|_| {
                 [
@@ -692,16 +714,21 @@ mod tests {
             .collect();
 
         // give some time to deadlock
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_secs(30));
 
         // stop the test
         RUNNING.store(false, Ordering::Relaxed);
-        thread::sleep(Duration::from_millis(1));
+        // deadlock detection mutexes are slow on debug builds to break down
+        thread::sleep(Duration::from_secs(10));
 
-        let hanging = threads.iter().all(thread::JoinHandle::is_finished);
-        assert!(!hanging);
+        let not_deadlocked = threads.iter().all(thread::JoinHandle::is_finished);
+        assert!(not_deadlocked);
 
-        //////////////////////////////////// 
+        for t in threads {
+            t.join().expect("should not panic");
+        }
+
+        ////////////////////////////////////
 
         fn rapidly_toggle_tracing_enabled() {
             let mut on = false;

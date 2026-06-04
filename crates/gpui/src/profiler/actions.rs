@@ -5,7 +5,10 @@ use std::{
 
 use itertools::Itertools;
 
+use std::sync::LazyLock;
+
 use crate::action::Action;
+use crate::profiler::ProfilerMutex;
 
 #[doc(hidden)]
 #[derive(Clone)]
@@ -165,10 +168,8 @@ impl ActionTiming {
     }
 }
 
-// The profiler is careful to never block when the lock is held, therefore a
-// spinlock is optimal.
-static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
-    const { spin::Mutex::new(ActionStatistics::new()) };
+static ACTION_STATISTICS: LazyLock<ProfilerMutex<ActionStatistics>> =
+    LazyLock::new(|| ProfilerMutex::new(ActionStatistics::new()));
 
 #[doc(hidden)]
 pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
