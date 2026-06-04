@@ -49,6 +49,7 @@ pub struct LspInlayHintData {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
+    max_length: usize,
     hint_refresh_tasks: HashMap<BufferId, Vec<Task<()>>>,
     hint_chunk_fetching: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
     invalidate_hints_for_buffers: HashSet<BufferId>,
@@ -67,6 +68,7 @@ impl LspInlayHintData {
             invalidate_hints_for_buffers: HashSet::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
+            max_length: settings.max_length,
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
         }
     }
@@ -147,6 +149,8 @@ impl LspInlayHintData {
         };
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
         self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
+        let max_length_changed = self.max_length != new_hint_settings.max_length;
+        self.max_length = new_hint_settings.max_length;
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
         match (old_enabled, self.enabled) {
             (false, false) => {
@@ -154,7 +158,17 @@ impl LspInlayHintData {
                 ControlFlow::Break(None)
             }
             (true, true) => {
-                if new_allowed_hint_kinds == self.allowed_hint_kinds {
+                if max_length_changed {
+                    self.allowed_hint_kinds = new_allowed_hint_kinds;
+                    self.clear();
+                    ControlFlow::Continue(
+                        Some(InlaySplice {
+                            to_remove: visible_hints.into_iter().map(|inlay| inlay.id).collect(),
+                            to_insert: Vec::new(),
+                        })
+                        .filter(|splice| !splice.is_empty()),
+                    )
+                } else if new_allowed_hint_kinds == self.allowed_hint_kinds {
                     ControlFlow::Break(None)
                 } else {
                     self.allowed_hint_kinds = new_allowed_hint_kinds;
@@ -906,13 +920,18 @@ impl Editor {
             .sorted_by(|(_, a), (_, b)| a.position.cmp(&b.position, &buffer_snapshot))
             .collect::<Vec<_>>();
 
+        let max_length = inlay_hints.max_length;
         let hints_to_insert = multi_buffer_snapshot
             .text_anchors_to_visible_anchors(
                 new_hints.iter().map(|(_, lsp_hint)| lsp_hint.position),
             )
             .into_iter()
             .zip(&new_hints)
-            .filter_map(|(position, (hint_id, hint))| Some(Inlay::hint(*hint_id, position?, &hint)))
+            .filter_map(|(position, (hint_id, hint))| {
+                Some(Inlay::hint_with_max_length(
+                    *hint_id, position?, hint, max_length,
+                ))
+            })
             .collect();
         let invalidate_hints_for_buffers =
             std::mem::take(&mut inlay_hints.invalidate_hints_for_buffers);
@@ -1042,6 +1061,7 @@ pub mod tests {
                 ),
                 show_other_hints: Some(allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1135,6 +1155,100 @@ pub mod tests {
                     allowed_hint_kinds_for_editor(editor),
                     allowed_hint_kinds,
                     "Cache should use editor settings to get the allowed hint kinds"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_truncates_inlay_hints_to_max_length(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                max_length: Some(6),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        let (_, editor, _) = prepare_test_objects(cx, {
+            let lsp_request_count = lsp_request_count.clone();
+            move |fake_server, file_with_hints| {
+                let lsp_request_count = lsp_request_count.clone();
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, _| {
+                        let lsp_request_count = lsp_request_count.clone();
+                        async move {
+                            lsp_request_count.fetch_add(1, Ordering::Release);
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                            );
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, 1),
+                                label: lsp::InlayHintLabel::String("abcdéfghij".to_string()),
+                                kind: Some(lsp::InlayHintKind::TYPE),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        }
+                    },
+                );
+            }
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec!["abcdéfghij".to_string()],
+                    cached_hint_labels(editor, cx)
+                );
+                assert_eq!(vec!["abcdé…".to_string()], visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                max_length: Some(0),
+                toggle_on_modifiers_press: None,
+            })
+        });
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    1,
+                    "Changing the display length should reuse cached LSP hints"
+                );
+                assert_eq!(
+                    vec!["abcdéfghij".to_string()],
+                    cached_hint_labels(editor, cx)
+                );
+                assert_eq!(
+                    vec!["abcdéfghij".to_string()],
+                    visible_hint_labels(editor, cx)
                 );
             })
             .unwrap();
@@ -1236,6 +1350,7 @@ pub mod tests {
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1346,6 +1461,7 @@ pub mod tests {
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1595,6 +1711,7 @@ pub mod tests {
                 ),
                 show_other_hints: Some(allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1760,6 +1877,7 @@ pub mod tests {
                     ),
                     show_other_hints: Some(new_allowed_hint_kinds.contains(&None)),
                     show_background: Some(false),
+                    max_length: None,
                     toggle_on_modifiers_press: None,
                 })
             });
@@ -1807,6 +1925,7 @@ pub mod tests {
                 ),
                 show_other_hints: Some(another_allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1880,6 +1999,7 @@ pub mod tests {
                 ),
                 show_other_hints: Some(final_allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1954,6 +2074,7 @@ pub mod tests {
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2316,6 +2437,7 @@ pub mod tests {
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2932,6 +3054,7 @@ let c = 3;"#
                 show_parameter_hints: Some(false),
                 show_other_hints: Some(false),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3125,6 +3248,7 @@ let c = 3;"#
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3164,6 +3288,7 @@ let c = 3;"#
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3275,6 +3400,7 @@ let c = 3;"#
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3357,6 +3483,7 @@ let c = 3;"#
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3423,6 +3550,7 @@ let c = 3;"#
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3649,6 +3777,7 @@ let c = 3;"#
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });
@@ -4594,6 +4723,7 @@ let c = 3;"#
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });

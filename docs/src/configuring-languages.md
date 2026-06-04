@@ -474,7 +474,8 @@ Inlay hints provide additional information inline in your code, such as paramete
   "enabled": true,
   "show_type_hints": true,
   "show_parameter_hints": true,
-  "show_other_hints": true
+  "show_other_hints": true,
+  "max_length": 45
 }
 ```
 
