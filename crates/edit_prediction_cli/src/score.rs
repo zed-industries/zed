@@ -17,6 +17,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
+use zeta_prompt::{ContextSource, RelatedFile};
 
 pub const EVAL_RELATED_CONTEXT_TOKENS_LIMIT: usize = 4000;
 
@@ -28,6 +29,7 @@ pub async fn run_scoring(
     cx: AsyncApp,
     allow_missing_predictions: bool,
     retrieved_context_byte_limit: Option<usize>,
+    context_source_filter: Option<Vec<ContextSource>>,
 ) -> anyhow::Result<()> {
     if !(allow_missing_predictions && args.provider.is_none() && example.predictions.is_empty()) {
         run_prediction(example, args, app_state, example_progress, cx.clone()).await?;
@@ -81,6 +83,7 @@ pub async fn run_scoring(
                 &example_for_scoring,
                 prompt_inputs,
                 retrieved_context_byte_limit,
+                context_source_filter.as_deref(),
             );
 
             let mut scores = vec![];
@@ -149,6 +152,7 @@ pub fn run_context_coverage_scoring(
     example: &mut Example,
     example_progress: &ExampleProgress,
     retrieved_context_byte_limit: Option<usize>,
+    context_source_filter: Option<&[ContextSource]>,
 ) -> anyhow::Result<()> {
     let progress = example_progress.start(Step::Score);
 
@@ -157,7 +161,12 @@ pub fn run_context_coverage_scoring(
         .prompt_inputs
         .as_ref()
         .context("prompt_inputs is required for context coverage scoring")?;
-    let context = context_excerpts(example, prompt_inputs, retrieved_context_byte_limit);
+    let context = context_excerpts(
+        example,
+        prompt_inputs,
+        retrieved_context_byte_limit,
+        context_source_filter,
+    );
 
     let editable_context_coverage = example
         .spec
@@ -183,6 +192,7 @@ fn context_excerpts(
     _example: &Example,
     prompt_inputs: &zeta_prompt::ZetaPromptInput,
     retrieved_context_byte_limit: Option<usize>,
+    context_source_filter: Option<&[ContextSource]>,
 ) -> Vec<Excerpt> {
     let mut context = Vec::new();
 
@@ -197,10 +207,11 @@ fn context_excerpts(
     }
 
     if let Some(related_files) = &prompt_inputs.related_files {
+        let related_files = filtered_related_files(related_files, context_source_filter);
         let related_files = if let Some(max_bytes) = retrieved_context_byte_limit {
-            limit_retrieved_context_to_bytes(related_files, max_bytes)
+            limit_retrieved_context_to_bytes(&related_files, max_bytes)
         } else {
-            related_files.clone()
+            related_files
         };
         for related_file in &related_files {
             for excerpt in &related_file.excerpts {
@@ -224,15 +235,48 @@ fn context_excerpts(
     context
 }
 
+fn filtered_related_files(
+    related_files: &[RelatedFile],
+    context_source_filter: Option<&[ContextSource]>,
+) -> Vec<RelatedFile> {
+    let Some(context_source_filter) = context_source_filter else {
+        return related_files.to_vec();
+    };
+
+    related_files
+        .iter()
+        .filter_map(|related_file| {
+            let excerpts = related_file
+                .excerpts
+                .iter()
+                .filter(|excerpt| context_source_filter.contains(&excerpt.context_source))
+                .cloned()
+                .collect::<Vec<_>>();
+            if excerpts.is_empty() {
+                None
+            } else {
+                Some(RelatedFile {
+                    path: related_file.path.clone(),
+                    max_row: related_file.max_row,
+                    excerpts,
+                    in_open_source_repo: related_file.in_open_source_repo,
+                })
+            }
+        })
+        .collect()
+}
+
 fn retrieved_context_bytes(
     example: &Example,
     retrieved_context_byte_limit: Option<usize>,
+    context_source_filter: Option<&[ContextSource]>,
 ) -> Option<usize> {
     let related_files = example.prompt_inputs.as_ref()?.related_files.as_ref()?;
+    let related_files = filtered_related_files(related_files, context_source_filter);
     let related_files = if let Some(max_bytes) = retrieved_context_byte_limit {
-        limit_retrieved_context_to_bytes(related_files, max_bytes)
+        limit_retrieved_context_to_bytes(&related_files, max_bytes)
     } else {
-        related_files.clone()
+        related_files
     };
     Some(
         related_files
@@ -248,6 +292,7 @@ pub fn print_report(
     verbose: bool,
     context_only: bool,
     retrieved_context_byte_limit: Option<usize>,
+    context_source_filter: Option<&[ContextSource]>,
 ) {
     const MAX_EXAMPLES_DEFAULT: usize = 20;
     use crate::metrics::ClassificationMetrics;
@@ -255,7 +300,12 @@ pub fn print_report(
     const LINE_WIDTH: usize = 101;
 
     if context_only {
-        print_context_coverage_report(examples, verbose, retrieved_context_byte_limit);
+        print_context_coverage_report(
+            examples,
+            verbose,
+            retrieved_context_byte_limit,
+            context_source_filter,
+        );
         return;
     }
 
@@ -314,7 +364,9 @@ pub fn print_report(
     let mut skipped_lines: usize = 0;
 
     for example in examples {
-        if let Some(bytes) = retrieved_context_bytes(example, retrieved_context_byte_limit) {
+        if let Some(bytes) =
+            retrieved_context_bytes(example, retrieved_context_byte_limit, context_source_filter)
+        {
             retrieved_context_bytes_sum += bytes as f64;
             retrieved_context_bytes_count += 1;
         }
@@ -680,6 +732,7 @@ fn print_context_coverage_report(
     examples: &[Example],
     verbose: bool,
     retrieved_context_byte_limit: Option<usize>,
+    context_source_filter: Option<&[ContextSource]>,
 ) {
     const MAX_EXAMPLES_DEFAULT: usize = 20;
     const LINE_WIDTH: usize = 120;
@@ -721,7 +774,9 @@ fn print_context_coverage_report(
     let mut skipped_lines = 0;
 
     for example in examples {
-        if let Some(bytes) = retrieved_context_bytes(example, retrieved_context_byte_limit) {
+        if let Some(bytes) =
+            retrieved_context_bytes(example, retrieved_context_byte_limit, context_source_filter)
+        {
             retrieved_context_bytes_sum += bytes as f64;
             retrieved_context_bytes_count += 1;
         }
