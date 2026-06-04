@@ -1828,10 +1828,8 @@ mod tests {
             },
         );
         assert_eq!(
-            registry_archive_kind_for_url(
-                "https://github.com/getsigit/sigit/releases/download/v1.0.4/sigit-win-amd64.exe"
-            )
-            .unwrap(),
+            registry_archive_kind_for_url("https://x.ai/cli/grok-0.2.20-windows-x86_64.ex")
+                .unwrap(),
             RegistryArchiveKind::RawBinary {
                 file_name: "sigit-win-amd64.exe".to_string()
             },
