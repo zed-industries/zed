@@ -70,23 +70,6 @@ impl ContextRetrievalType {
             ContextRetrievalType::None => Vec::new(),
         }
     }
-
-    fn includes_lsp(self) -> bool {
-        self.context_sources().contains(&ContextSource::Lsp)
-    }
-
-    fn editable_context_sources(self) -> Option<Vec<ContextSource>> {
-        let context_sources = self
-            .context_sources()
-            .into_iter()
-            .filter(|context_source| *context_source != ContextSource::Lsp)
-            .collect::<Vec<_>>();
-        if context_sources.is_empty() {
-            None
-        } else {
-            Some(context_sources)
-        }
-    }
 }
 
 pub fn context_sources_for_types(context_types: &[ContextRetrievalType]) -> Vec<ContextSource> {
@@ -117,7 +100,7 @@ pub async fn run_context_retrieval(
     example: &mut Example,
     app_state: Arc<EpAppState>,
     example_progress: &ExampleProgress,
-    context_type: ContextRetrievalType,
+    context_types: Vec<ContextRetrievalType>,
     force: bool,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
@@ -143,8 +126,9 @@ pub async fn run_context_retrieval(
         .context("EditPredictionStore not initialized")?;
 
     let mut context_files = Vec::new();
+    let context_sources = context_sources_for_types(&context_types);
 
-    if context_type.includes_lsp() {
+    if context_sources.contains(&ContextSource::Lsp) {
         let _lsp_handle = project.update(&mut cx, |project, cx| {
             project.register_buffer_with_language_servers(&state.buffer, cx)
         });
@@ -170,8 +154,12 @@ pub async fn run_context_retrieval(
             .extend(ep_store.update(&mut cx, |store, cx| store.context_for_project(&project, cx)));
     }
 
-    if let Some(context_sources) = context_type.editable_context_sources() {
-        let oracle_paths = if context_sources.contains(&ContextSource::OracleFile) {
+    let editable_context_sources = context_sources
+        .into_iter()
+        .filter(|context_source| *context_source != ContextSource::Lsp)
+        .collect::<Vec<_>>();
+    if !editable_context_sources.is_empty() {
+        let oracle_paths = if editable_context_sources.contains(&ContextSource::OracleFile) {
             let oracle_paths = oracle_paths_from_expected_patches(example);
             refresh_paths(&project, &oracle_paths, &mut cx).await?;
             oracle_paths
@@ -186,7 +174,7 @@ pub async fn run_context_retrieval(
                     state.buffer.clone(),
                     state.cursor_position,
                     oracle_paths,
-                    context_sources,
+                    editable_context_sources,
                     cx,
                 )
             })
