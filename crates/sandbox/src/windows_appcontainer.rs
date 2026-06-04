@@ -15,9 +15,22 @@
 //!
 //! 1. **Parent side** ([`wrap_invocation`], called from Zed proper): create
 //!    (or reopen) the per-thread AppContainer profile, grant its package SID
-//!    inheritable ACEs on the writable roots and a read grant on the user
-//!    profile, write a small policy file, and rewrite the invocation to
+//!    inheritable ACEs on the writable roots, ensure the shared
+//!    capability-SID grants on the user profile, write a small policy file,
+//!    and rewrite the invocation to
 //!    `zed.exe --sandbox-helper <policy> -- <program> <args...>`.
+//!
+//! Granting an inheritable ACE is expensive: `SetNamedSecurityInfoW`
+//! eagerly rewrites the DACL of every existing descendant of the root.
+//! Per-thread package-SID ACEs are therefore only used for the (relatively
+//! small) writable roots. The user-profile-wide read grant instead targets
+//! a **custom capability SID** ([`PROFILE_READ_CAPABILITY`]) shared by
+//! every sandbox: the subtree walk happens once per user ever, and each
+//! sandboxed process opts in by listing the capability at launch. The
+//! broad-write grant ([`PROFILE_WRITE_CAPABILITY`]) works the same way and
+//! is only added to a process's capability list when the user approved
+//! `allow_fs_write_all`, which also makes that relaxation genuinely
+//! per-command.
 //! 2. **Helper side** ([`run_sandbox_helper`], invoked via the hidden
 //!    `--sandbox-helper` flag on the main Zed binary): read the policy,
 //!    derive the package SID, and spawn the real command via
@@ -50,9 +63,10 @@ use windows::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION,
-    DeleteAce, EqualSid, FreeSid, GetAce, INHERITED_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR,
-    PSID, SECURITY_CAPABILITIES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE, CopySid, DACL_SECURITY_INFORMATION,
+    DeleteAce, DeriveCapabilitySidsFromName, EqualSid, FreeSid, GetAce, GetLengthSid,
+    INHERITED_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_CAPABILITIES,
+    SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
 use windows::Win32::Storage::FileSystem::{
     DELETE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
@@ -60,7 +74,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Console::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
-use windows::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
+use windows::Win32::System::SystemServices::{ACCESS_ALLOWED_ACE_TYPE, SE_GROUP_ENABLED};
 use windows::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
     GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
@@ -84,11 +98,23 @@ pub struct SandboxPermissions {
     /// capability SIDs is a follow-up milestone.
     pub allow_network: bool,
     /// Allow broad filesystem writes. There is no "write anywhere" grant in
-    /// the AppContainer model, so this upgrades the user-profile read grant
-    /// to read+write; writes outside the user profile and the granted roots
-    /// still fail (the escape hatch for those is running unsandboxed).
+    /// the AppContainer model, so this adds the [`PROFILE_WRITE_CAPABILITY`]
+    /// to the process, making the user profile writable; writes outside the
+    /// user profile and the granted roots still fail (the escape hatch for
+    /// those is running unsandboxed).
     pub allow_fs_write: bool,
 }
+
+/// Custom capability granting read+execute over `%USERPROFILE%`. Shared by
+/// every Zed sandbox so the expensive subtree ACL propagation happens once
+/// per user instead of once per agent thread. The corresponding ACE is
+/// inert for any process that doesn't explicitly list this capability at
+/// launch — and only Zed's sandbox helper does.
+const PROFILE_READ_CAPABILITY: &str = "zedAgentSandboxProfileRead";
+
+/// Custom capability granting read+write over `%USERPROFILE%`. Only listed
+/// for commands the user approved with `allow_fs_write_all`.
+const PROFILE_WRITE_CAPABILITY: &str = "zedAgentSandboxProfileWrite";
 
 /// Rights granted on writable roots: full read/write/execute plus delete,
 /// inherited by the whole subtree.
@@ -106,6 +132,10 @@ const READ_ACCESS_MASK: u32 = FILE_GENERIC_READ.0 | FILE_GENERIC_EXECUTE.0;
 struct SandboxPolicy {
     profile_name: String,
     allow_network: bool,
+    /// Include [`PROFILE_WRITE_CAPABILITY`] in the process's capability
+    /// list, making the user profile writable for this command.
+    #[serde(default)]
+    allow_fs_write: bool,
 }
 
 /// RAII handle returned by [`wrap_invocation`]; keeps the on-disk policy
@@ -179,11 +209,15 @@ impl AppContainerProfile {
 /// AppContainer profile.
 ///
 /// Grants the profile's package SID inheritable read+write ACEs on each of
-/// `writable_directories` and a read (or read+write, when
-/// `permissions.allow_fs_write` is set) ACE on `%USERPROFILE%`, then
-/// returns the helper invocation `zed.exe --sandbox-helper <policy> --
-/// <program> <args...>` along with an [`AppContainerLaunchConfig`] that
-/// **must** be kept alive for the duration of the command.
+/// `writable_directories`, ensures the shared capability-SID grants on
+/// `%USERPROFILE%` (see [`PROFILE_READ_CAPABILITY`]), then returns the
+/// helper invocation `zed.exe --sandbox-helper <policy> -- <program>
+/// <args...>` along with an [`AppContainerLaunchConfig`] that **must** be
+/// kept alive for the duration of the command.
+///
+/// This function does blocking filesystem work that can take a long time
+/// (granting a new ACE propagates the DACL through the whole subtree), so
+/// call it from a background thread, never the UI thread.
 ///
 /// # Arguments
 /// * `program` - The program to invoke (typically a shell).
@@ -217,25 +251,37 @@ pub fn wrap_invocation(
     // `ALL APPLICATION PACKAGES` covers the OS and machine-wide installs,
     // but not the user profile; without this grant commands couldn't read
     // their own toolchains (`~\.cargo`, `%LOCALAPPDATA%` installs) or
-    // config (`~\.gitconfig`). The package SID is unique to this thread's
-    // sandbox, so the ACE grants nothing to any other process.
+    // config (`~\.gitconfig`). The grant targets the shared capability SID
+    // rather than the per-thread package SID so the subtree propagation
+    // (which walks the entire profile) happens at most once per user; the
+    // helper opts each sandboxed process into the capability at launch.
     let user_profile = user_profile_dir()?;
-    let user_profile_mask = if permissions.allow_fs_write {
-        WRITE_ACCESS_MASK
-    } else {
-        READ_ACCESS_MASK
-    };
-    grant_subtree(profile.sid(), &user_profile, user_profile_mask).with_context(|| {
-        format!(
-            "failed to grant sandbox read access to {}",
-            user_profile.display()
-        )
-    })?;
+    let read_capability = derive_capability_sid(PROFILE_READ_CAPABILITY)?;
+    grant_subtree(read_capability.as_psid(), &user_profile, READ_ACCESS_MASK).with_context(
+        || {
+            format!(
+                "failed to grant sandbox read access to {}",
+                user_profile.display()
+            )
+        },
+    )?;
+    if permissions.allow_fs_write {
+        let write_capability = derive_capability_sid(PROFILE_WRITE_CAPABILITY)?;
+        grant_subtree(write_capability.as_psid(), &user_profile, WRITE_ACCESS_MASK).with_context(
+            || {
+                format!(
+                    "failed to grant sandbox write access to {}",
+                    user_profile.display()
+                )
+            },
+        )?;
+    }
 
     let mut policy_file = NamedTempFile::new().context("failed to create sandbox policy file")?;
     let policy = SandboxPolicy {
         profile_name: profile.name,
         allow_network: permissions.allow_network,
+        allow_fs_write: permissions.allow_fs_write,
     };
     serde_json::to_writer(&mut policy_file, &policy)
         .context("failed to write sandbox policy file")?;
@@ -283,8 +329,10 @@ pub fn wrap_invocation(
 }
 
 /// Best-effort cleanup when an agent thread is deleted: revoke the ACEs
-/// granted to the thread's package SID on every recorded root (plus the
-/// user profile, which is always granted), then delete the profile.
+/// granted to the thread's package SID on every recorded root, then delete
+/// the profile. The user-profile grants are left alone: they target the
+/// shared capability SIDs, which are deliberately persistent and grant
+/// nothing to processes that don't list the capability.
 ///
 /// This is a hygiene concern, not a security one — an ACE for a deleted
 /// profile's SID grants access to nobody — so failures are aggregated
@@ -297,8 +345,7 @@ pub fn cleanup_profile(profile_name: &str, granted_roots: &[PathBuf]) -> Result<
     let mut errors = Vec::new();
     let roots = granted_roots
         .iter()
-        .map(|root| canonicalize_or_original(root))
-        .chain(user_profile_dir().ok());
+        .map(|root| canonicalize_or_original(root));
     for root in roots {
         if let Err(error) = revoke_subtree(sid.0, &root) {
             errors.push(format!("{}: {error:#}", root.display()));
@@ -354,17 +401,36 @@ fn run_helper(args: Vec<String>) -> Result<i32> {
     // is idempotent and recovers the package SID either way.
     let profile = AppContainerProfile::create_or_open(&policy.profile_name)?;
 
-    // File-I/O-only milestone: no capability SIDs are granted, so network
-    // access stays default-denied even when the policy requested it.
-    spawn_in_container(&profile, &command)
+    // The capability list controls which of the persistent capability-SID
+    // ACEs apply to this process. File-I/O-only milestone: the network
+    // capabilities are never included, so network access stays
+    // default-denied even when the policy requested it.
+    let mut capabilities = vec![derive_capability_sid(PROFILE_READ_CAPABILITY)?];
+    if policy.allow_fs_write {
+        capabilities.push(derive_capability_sid(PROFILE_WRITE_CAPABILITY)?);
+    }
+
+    spawn_in_container(&profile, &capabilities, &command)
 }
 
-/// Spawn `command` inside the AppContainer and wait for it, relaying the
-/// exit code. The child inherits the helper's console and standard handles
-/// (the helper is the ConPTY child Zed spawned).
-fn spawn_in_container(profile: &AppContainerProfile, command: &[String]) -> Result<i32> {
+/// Spawn `command` inside the AppContainer with the given capability SIDs
+/// enabled, wait for it, and relay the exit code. The child inherits the
+/// helper's console and standard handles (the helper is the ConPTY child
+/// Zed spawned).
+fn spawn_in_container(
+    profile: &AppContainerProfile,
+    capabilities: &[SidBuffer],
+    command: &[String],
+) -> Result<i32> {
     let command_line = build_command_line(command);
     let mut command_line_wide: Vec<u16> = command_line.encode_utf16().chain([0]).collect();
+    let mut capability_attributes: Vec<SID_AND_ATTRIBUTES> = capabilities
+        .iter()
+        .map(|capability| SID_AND_ATTRIBUTES {
+            Sid: capability.as_psid(),
+            Attributes: SE_GROUP_ENABLED as u32,
+        })
+        .collect();
 
     unsafe {
         let mut attribute_list_size = 0usize;
@@ -382,17 +448,17 @@ fn spawn_in_container(profile: &AppContainerProfile, command: &[String]) -> Resu
             .context("failed to initialize the proc-thread attribute list")?;
 
         let result = (|| {
-            let capabilities = SECURITY_CAPABILITIES {
+            let security_capabilities = SECURITY_CAPABILITIES {
                 AppContainerSid: profile.sid(),
-                Capabilities: std::ptr::null_mut(),
-                CapabilityCount: 0,
+                Capabilities: capability_attributes.as_mut_ptr(),
+                CapabilityCount: capability_attributes.len() as u32,
                 Reserved: 0,
             };
             UpdateProcThreadAttribute(
                 attribute_list,
                 0,
                 PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
-                Some(&capabilities as *const SECURITY_CAPABILITIES as *const c_void),
+                Some(&security_capabilities as *const SECURITY_CAPABILITIES as *const c_void),
                 std::mem::size_of::<SECURITY_CAPABILITIES>(),
                 None,
                 None,
@@ -645,6 +711,51 @@ unsafe fn acl_contains_inheritable_allow_ace(acl: *const ACL, sid: PSID, access_
     }
 }
 
+/// Derive the SID for a custom ("private") capability name. Capability
+/// SIDs are deterministic hashes of the name — no registration is needed;
+/// any process may list them at launch, and any DACL may reference them.
+fn derive_capability_sid(name: &str) -> Result<SidBuffer> {
+    unsafe {
+        let mut group_sids: *mut PSID = std::ptr::null_mut();
+        let mut group_count = 0u32;
+        let mut capability_sids: *mut PSID = std::ptr::null_mut();
+        let mut capability_count = 0u32;
+        DeriveCapabilitySidsFromName(
+            &HSTRING::from(name),
+            &mut group_sids,
+            &mut group_count,
+            &mut capability_sids,
+            &mut capability_count,
+        )
+        .with_context(|| format!("failed to derive the capability SID for {name}"))?;
+
+        // Copy the capability SID into an owned buffer, then free
+        // everything the API allocated (each SID and both arrays, all via
+        // `LocalFree`).
+        let result = if capability_count > 0 {
+            let sid = *capability_sids;
+            let length = GetLengthSid(sid) as usize;
+            let mut buffer = vec![0u8; length];
+            CopySid(length as u32, PSID(buffer.as_mut_ptr().cast()), sid)
+                .map(|()| SidBuffer(buffer))
+                .with_context(|| format!("failed to copy the capability SID for {name}"))
+        } else {
+            Err(anyhow::anyhow!("no capability SID derived for {name}"))
+        };
+
+        for index in 0..group_count as usize {
+            LocalFree(Some(HLOCAL((*group_sids.add(index)).0)));
+        }
+        LocalFree(Some(HLOCAL(group_sids.cast())));
+        for index in 0..capability_count as usize {
+            LocalFree(Some(HLOCAL((*capability_sids.add(index)).0)));
+        }
+        LocalFree(Some(HLOCAL(capability_sids.cast())));
+
+        result
+    }
+}
+
 fn user_profile_dir() -> Result<PathBuf> {
     let directory = std::env::var_os("USERPROFILE")
         .context("the USERPROFILE environment variable is not set")?;
@@ -708,6 +819,16 @@ fn append_quoted_argument(command_line: &mut String, argument: &str) {
     command_line.push('"');
 }
 
+/// A SID copied into an owned buffer, independent of how the original was
+/// allocated.
+struct SidBuffer(Vec<u8>);
+
+impl SidBuffer {
+    fn as_psid(&self) -> PSID {
+        PSID(self.0.as_ptr() as *mut c_void)
+    }
+}
+
 /// A SID allocated by the AppContainer profile APIs, freed with `FreeSid`.
 struct OwnedSid(PSID);
 
@@ -754,10 +875,21 @@ mod tests {
         let policy = SandboxPolicy {
             profile_name: profile_name_for_thread("round-trip"),
             allow_network: true,
+            allow_fs_write: true,
         };
         let serialized = serde_json::to_string(&policy).unwrap();
         let deserialized: SandboxPolicy = serde_json::from_str(&serialized).unwrap();
         assert_eq!(policy, deserialized);
+    }
+
+    #[test]
+    fn test_capability_sid_derivation_is_stable() {
+        let first = derive_capability_sid(PROFILE_READ_CAPABILITY).unwrap();
+        let second = derive_capability_sid(PROFILE_READ_CAPABILITY).unwrap();
+        assert!(unsafe { EqualSid(first.as_psid(), second.as_psid()) }.is_ok());
+
+        let other = derive_capability_sid(PROFILE_WRITE_CAPABILITY).unwrap();
+        assert!(unsafe { EqualSid(first.as_psid(), other.as_psid()) }.is_err());
     }
 
     #[test]

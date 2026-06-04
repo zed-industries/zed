@@ -3186,8 +3186,16 @@ impl AcpThread {
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
-                let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
+                // Applying the sandbox wrap can do blocking filesystem work
+                // (on Windows, granting a directory ACE propagates the new
+                // DACL through the whole subtree, which can take tens of
+                // seconds on large trees), so it must not run on the
+                // foreground thread.
+                let (task_command, task_args, sandbox_config) = cx
+                    .background_spawn(async move {
+                        apply_sandbox_wrap(task_command, task_args, sandbox_wrap)
+                    })
+                    .await?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
