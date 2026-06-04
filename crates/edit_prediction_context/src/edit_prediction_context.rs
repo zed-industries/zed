@@ -34,6 +34,7 @@ pub use editable_context::{
 pub use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
 const IDENTIFIER_LINE_COUNT: u32 = 3;
+const MAX_CONTEXT_IDENTIFIER_COUNT: usize = 32;
 
 pub struct RelatedExcerptStore {
     project: WeakEntity<Project>,
@@ -259,6 +260,7 @@ impl RelatedExcerptStore {
                     })
                     .collect();
                 identifiers_with_distance.sort_by_key(|(_, distance)| *distance);
+                identifiers_with_distance.truncate(MAX_CONTEXT_IDENTIFIER_COUNT);
 
                 let mut cursor_distances: HashMap<Identifier, usize> = HashMap::default();
                 let mut current_rank = 0;
