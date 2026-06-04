@@ -72,7 +72,7 @@ pub async fn run_prediction(
             example,
             app_state.clone(),
             example_progress,
-            ContextRetrievalType::Lsp,
+            vec![ContextRetrievalType::Lsp],
             false,
             cx.clone(),
         )
@@ -123,7 +123,7 @@ pub async fn run_prediction(
         example,
         app_state.clone(),
         example_progress,
-        ContextRetrievalType::Lsp,
+        vec![ContextRetrievalType::Lsp],
         false,
         cx.clone(),
     )
