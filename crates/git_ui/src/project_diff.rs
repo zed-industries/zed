@@ -35,6 +35,7 @@ use project::{
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -978,8 +979,7 @@ impl ProjectDiff {
 
     #[instrument(skip(this, cx))]
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-        let mut path_keys = Vec::new();
-        let buffers_to_load = this.update(cx, |this, cx| {
+        let entries = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
@@ -992,16 +992,19 @@ impl ProjectDiff {
                 .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
                 .collect::<HashMap<_, _>>();
 
+            let mut entries = BTreeMap::new();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
 
-                path_keys = Vec::with_capacity(buffers_to_load.len());
-                for entry in buffers_to_load.iter() {
-                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
-                    let path_key =
-                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+                for diff_buffer in buffers_to_load {
+                    let sort_prefix =
+                        sort_prefix(&repo, &diff_buffer.repo_path, diff_buffer.file_status, cx);
+                    let path_key = PathKey::with_sort_prefix(
+                        sort_prefix,
+                        diff_buffer.repo_path.as_ref().clone(),
+                    );
                     previous_paths.remove(&path_key);
-                    path_keys.push(path_key)
+                    entries.insert(path_key, diff_buffer);
                 }
             }
 
@@ -1016,12 +1019,13 @@ impl ProjectDiff {
                     editor.remove_excerpts_for_path(path, cx);
                 }
             });
-            buffers_to_load
+
+            entries
         })?;
 
         let mut buffers_to_fold = Vec::new();
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys) {
+        for (path_key, entry) in entries {
             if let Some((buffer, diff, conflict_set)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
