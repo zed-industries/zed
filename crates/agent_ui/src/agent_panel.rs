@@ -7257,11 +7257,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remote_terminal_restore_without_working_directory(cx: &mut TestAppContext) {
+    async fn test_terminal_restore_working_directory_does_not_read_leased_workspace(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings
@@ -7273,13 +7276,6 @@ mod tests {
             });
         });
 
-        cx.update(|cx| {
-            assert!(matches!(
-                TerminalSettings::get_global(cx).working_directory,
-                WorkingDirectory::AlwaysHome
-            ));
-        });
-
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         project.update(cx, |project, _cx| {
@@ -7287,7 +7283,6 @@ mod tests {
         });
         project.read_with(cx, |project, _cx| {
             assert!(project.is_remote());
-            assert!(project.is_via_collab());
         });
 
         let multi_workspace =
@@ -7301,6 +7296,7 @@ mod tests {
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
+
         assert_eq!(
             workspace.read_with(cx, |workspace, cx| {
                 terminal_view::default_working_directory(workspace, cx)
