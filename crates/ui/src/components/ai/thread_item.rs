@@ -404,12 +404,12 @@ impl RenderOnce for ThreadItem {
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
-        let custom_tooltip = self.tooltip;
-        let show_status_tooltip = custom_tooltip.is_none()
-            && matches!(
-                self.status,
-                AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
-            );
+        // A blocking status takes precedence over a caller-provided tooltip.
+        let show_status_tooltip = matches!(
+            self.status,
+            AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
+        );
+        let custom_tooltip = self.tooltip.filter(|_| !show_status_tooltip);
 
         let linked_worktrees: Vec<ThreadItemWorktreeInfo> = self
             .worktrees

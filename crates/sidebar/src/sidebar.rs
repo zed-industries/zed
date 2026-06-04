@@ -5889,11 +5889,7 @@ impl Sidebar {
         let session_id_for_delete = thread.metadata.session_id.clone();
         let focus_handle = self.focus_handle.clone();
         let title_editor = self.thread_rename_editor.clone();
-        let open_tooltip = (!matches!(
-            thread.status,
-            AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
-        ))
-        .then(|| {
+        let open_tooltip = {
             let focus_handle = self.focus_handle.clone();
             let label = if is_draft {
                 "Open Draft"
@@ -5903,7 +5899,7 @@ impl Sidebar {
             move |_window: &mut Window, cx: &mut App| {
                 Tooltip::for_action_in(label, &Confirm, &focus_handle, cx)
             }
-        });
+        };
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
@@ -5956,7 +5952,7 @@ impl Sidebar {
             .selected(is_selected)
             .focused(is_focused)
             .hovered(is_hovered)
-            .when_some(open_tooltip, |this, tooltip| this.tooltip(tooltip))
+            .tooltip(open_tooltip)
             .on_hover(cx.listener(move |this, is_hovered: &bool, _window, cx| {
                 if *is_hovered {
                     this.hovered_thread_index = Some(ix);
