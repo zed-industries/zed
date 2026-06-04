@@ -1408,7 +1408,7 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
 
     project.update(cx, |project, cx| {
         assert!(
-            project.dap_store().read(cx).sessions().count() == 0,
+            project.dap_store().read(cx).sessions().is_empty(),
             "Session wouldn't exist if it was shutdown"
         );
     });

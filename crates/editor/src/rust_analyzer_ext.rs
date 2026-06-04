@@ -58,7 +58,7 @@ pub fn go_to_parent_module(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if editor.selections.count() == 0 {
+    if editor.selections.is_empty() {
         return;
     }
     let Some(project) = &editor.project else {
@@ -228,7 +228,7 @@ pub fn expand_macro_recursively(
 }
 
 pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mut Context<Editor>) {
-    if editor.selections.count() == 0 {
+    if editor.selections.is_empty() {
         return;
     }
     let Some(project) = &editor.project else {
