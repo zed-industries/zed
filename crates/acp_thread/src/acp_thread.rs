@@ -734,6 +734,19 @@ impl From<acp::ToolCallStatus> for ToolCallStatus {
     }
 }
 
+fn should_preserve_waiting_status(
+    current_status: &ToolCallStatus,
+    incoming_status: &ToolCallStatus,
+) -> bool {
+    matches!(
+        (current_status, incoming_status),
+        (
+            ToolCallStatus::WaitingForConfirmation { .. },
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        )
+    )
+}
+
 impl Display for ToolCallStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -2124,8 +2137,18 @@ impl AcpThread {
         };
 
         match update {
-            ToolCallUpdate::UpdateFields(update) => {
+            ToolCallUpdate::UpdateFields(mut update) => {
                 let location_updated = update.fields.locations.is_some();
+                let preserve_waiting_status = update
+                    .fields
+                    .status
+                    .as_ref()
+                    .map(|status| ToolCallStatus::from(*status))
+                    .is_some_and(|status| should_preserve_waiting_status(&call.status, &status));
+                if preserve_waiting_status {
+                    update.fields.status = None;
+                }
+
                 call.update_fields(
                     update.fields,
                     update.meta,
@@ -2198,15 +2221,23 @@ impl AcpThread {
                 unreachable!()
             };
 
+            let preserve_waiting_status = should_preserve_waiting_status(&call.status, &status);
+            let mut fields = update.fields;
+            if preserve_waiting_status {
+                fields.status = None;
+            }
+
             call.update_fields(
-                update.fields,
+                fields,
                 update.meta,
                 language_registry,
                 path_style,
                 &self.terminals,
                 cx,
             )?;
-            call.status = status;
+            if !preserve_waiting_status {
+                call.status = status;
+            }
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
@@ -4331,6 +4362,117 @@ mod tests {
                 .expect("resolved location should keep an open buffer");
             assert_eq!(buffer.read(cx).text(), "skill body");
         });
+    }
+
+    #[gpui::test]
+    async fn test_duplicate_tool_call_update_preserves_open_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01duplicate");
+        let allow_option_id = acp::PermissionOptionId::new("allow");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Original title")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .content(vec!["original content".into()])
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        allow_option_id.clone(),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "Updated title")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::Pending)
+                            .content(vec!["updated content".into()]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Updated title");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            ));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "updated content");
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::InProgress)
+                            .title("Updated again")
+                            .content(vec!["updated again".into()]),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Updated again");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            ));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "updated again");
+        });
+
+        let selected_outcome = SelectedPermissionOutcome::new(
+            allow_option_id.clone(),
+            acp::PermissionOptionKind::AllowOnce,
+        );
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(tool_call_id.clone(), selected_outcome, cx);
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, allow_option_id);
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("permission request should remain open after duplicate tool call update")
+            }
+        }
     }
 
     #[gpui::test]
