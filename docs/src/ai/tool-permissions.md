@@ -54,9 +54,12 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 | `create_directory` | The directory path           |
 | `fetch`            | The URL                      |
 | `search_web`       | The search query             |
+| `skill`            | The skill name               |
 
 For MCP tools, use the format `mcp:<server>:<tool_name>`.
 For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.
+
+For model-invoked [Skills](./skills.md), use the `skill` tool. A user-invoked `/skill-name` slash command does not prompt again because you explicitly invoked the skill.
 
 ## Configuration
 
@@ -305,3 +308,22 @@ MCP tools only support the tool-level option.
   }
 }
 ```
+
+### Skills
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "skill": {
+          "default": "confirm",
+          "always_allow": [{ "pattern": "^code-review$" }]
+        }
+      }
+    }
+  }
+}
+```
+
+To prevent the model from invoking a skill at all, set `disable-model-invocation: true` in that skill's `SKILL.md`. See [Skills](./skills.md#disable-model-invocation).
