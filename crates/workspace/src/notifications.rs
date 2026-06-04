@@ -1015,7 +1015,7 @@ pub mod simple_message_notification {
             let suffix = h_flex()
                 .gap_1()
                 .children(self.primary_message.iter().map(|message| {
-                    Button::new("notification-primary-button", message.clone())
+                    Button::new(("notification-primary", cx.entity_id()), message.clone())
                         .when_some(self.button_style, |button, style| button.style(style))
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -1035,7 +1035,7 @@ pub mod simple_message_notification {
                         })
                 }))
                 .children(self.secondary_message.iter().map(|message| {
-                    Button::new("notification-secondary-button", message.clone())
+                    Button::new(("notification-secondary", cx.entity_id()), message.clone())
                         .when_some(self.button_style, |button, style| button.style(style))
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener(|this, _, window, cx| {
