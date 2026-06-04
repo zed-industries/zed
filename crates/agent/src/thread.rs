@@ -11,8 +11,8 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
-    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag, LspToolFeatureFlag,
-    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
+    FeatureFlagAppExt as _, HandoffFeatureFlag, UpdatePlanToolFeatureFlag,
+    UpdateTitleToolFeatureFlag,
 };
 use zed_env_vars::{EnvVar, env_var};
 
@@ -3400,17 +3400,7 @@ impl Thread {
                     None
                 }
             })
-            .filter(|(tool_name, _)| match tool_name.as_ref() {
-                RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
-                FindReferencesTool::NAME
-                | GetCodeActionsTool::NAME
-                | ApplyCodeActionTool::NAME
-                | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
-                CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
-                    cx.has_flag::<CreateThreadToolFeatureFlag>()
-                }
-                _ => true,
-            })
+            .filter(|(tool_name, _)| crate::tools::tool_feature_flag_enabled(tool_name, cx))
             .collect::<BTreeMap<_, _>>();
 
         let mut context_server_tools = Vec::new();
