@@ -535,23 +535,12 @@ impl ConfigurationView {
         label: impl Into<SharedString>,
         edit_prediction: bool,
     ) -> impl IntoElement {
-        ButtonLike::new("loading_button")
+        Button::new("loading_button", label)
+            .full_width()
             .disabled(true)
+            .loading(true)
             .style(ButtonStyle::Outlined)
             .when(edit_prediction, |this| this.size(ButtonSize::Medium))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .justify_center()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_rotate_animation(4),
-                    )
-                    .child(Label::new(label)),
-            )
     }
 
     fn render_sign_in_button(&self, edit_prediction: bool) -> impl IntoElement {

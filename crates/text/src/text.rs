@@ -1176,7 +1176,7 @@ impl Buffer {
                 fragment_start = old_fragments.start().0.full_offset();
             }
 
-            // Skip over insertions that are concurrent to this edit, but have a lower lamport
+            // Skip over insertions that are concurrent to this edit, but have a higher lamport
             // timestamp.
             while let Some(fragment) = old_fragments.item() {
                 if fragment_start == range.start && fragment.timestamp > timestamp {

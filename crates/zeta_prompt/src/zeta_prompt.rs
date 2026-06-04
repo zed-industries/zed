@@ -99,6 +99,7 @@ pub enum ZetaFormat {
     #[default]
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
+    #[serde(alias = "Zeta2")]
     V0211SeedCoder,
     V0331SeedCoderModelPy,
     v0226Hashline,
@@ -111,6 +112,7 @@ pub enum ZetaFormat {
     /// V0316, but marker numbers are relative to the cursor block (e.g. -1, -0, +1).
     V0317SeedMultiRegions,
     /// V0316 with larger block sizes.
+    #[serde(alias = "Zeta2.1")]
     V0318SeedMultiRegions,
     /// V0318-style markers over the full available current file excerpt with no related files.
     V0327SingleFile,
@@ -238,6 +240,21 @@ pub struct RelatedExcerpt {
     pub text: Arc<str>,
     #[serde(default)]
     pub order: usize,
+    #[serde(default)]
+    pub context_source: ContextSource,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSource {
+    #[default]
+    Lsp,
+    CursorExcerpt,
+    CurrentFile,
+    EditHistory,
+    EditHistoryFile,
+    GitLog,
+    OracleFile,
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
@@ -396,6 +413,61 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         }
         ZetaFormat::V0317SeedMultiRegions => &[multi_region::V0317_END_MARKER],
         ZetaFormat::V0327SingleFile => &[multi_region::V0327_END_MARKER],
+    }
+}
+
+/// Delimiters used by response-only SFT (e.g. Unsloth `train_on_responses_only`)
+/// to mask the prompt and train only on the model's completion.
+///
+/// Both strings must appear verbatim in the prompt produced by
+/// [`format_zeta_prompt`] for the same format: `instruction_part` marks the
+/// start of an example, and `response_part` is the final marker before the
+/// completion begins.
+pub struct TrainingDelimiters {
+    pub instruction_part: &'static str,
+    pub response_part: &'static str,
+}
+
+/// Return the response-only training delimiters for a format.
+///
+/// This match is intentionally exhaustive with no wildcard arm so that adding a
+/// new [`ZetaFormat`] fails to compile until its delimiters are specified.
+pub fn training_delimiters_for_format(format: ZetaFormat) -> TrainingDelimiters {
+    match format {
+        ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0318SeedMultiRegions
+        | ZetaFormat::V0327SingleFile
+        | ZetaFormat::V0420Diagnostics => TrainingDelimiters {
+            instruction_part: seed_coder::FIM_SUFFIX,
+            response_part: seed_coder::FIM_MIDDLE,
+        },
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: "<|fim_middle|>updated\n",
+        },
+        ZetaFormat::V0120GitMergeMarkers => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: v0120_git_merge_markers::SEPARATOR,
+        },
+        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: "<|fim_middle|>",
+        },
+        ZetaFormat::v0226Hashline => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: hashline::END_MARKER,
+        },
+        ZetaFormat::V0304VariableEdit => TrainingDelimiters {
+            instruction_part: "<|file_sep|>",
+            response_part: "<|fim_prefix|>",
+        },
     }
 }
 
@@ -838,7 +910,7 @@ pub fn format_prompt_with_budget_for_format(
     return Some(prompt);
 }
 
-fn format_active_buffer_diagnostics_with_budget(
+pub fn format_active_buffer_diagnostics_with_budget(
     diagnostics: &[ActiveBufferDiagnostic],
     cursor_buffer_row: Option<u32>,
     budget: usize,
@@ -868,16 +940,20 @@ fn format_active_buffer_diagnostics_with_budget(
         let diagnostic = &diagnostics[diagnostic_index];
         let snippet = clamp_text_to_token_count(&diagnostic.snippet, 256);
 
-        let diagnostic_section = format!(
-            "*{}*:\n```\n{}{}\n```\n",
-            diagnostic.message,
-            snippet,
-            if snippet.len() < diagnostic.snippet.len() {
-                "..."
-            } else {
-                ""
-            }
-        );
+        let diagnostic_section = if snippet.is_empty() {
+            format!("*{}*\n", diagnostic.message)
+        } else {
+            format!(
+                "*{}*:\n```\n{}{}\n```\n",
+                diagnostic.message,
+                snippet,
+                if snippet.len() < diagnostic.snippet.len() {
+                    "..."
+                } else {
+                    ""
+                }
+            )
+        };
         let diagnostic_tokens = estimate_tokens(diagnostic_section.len());
         if used_tokens + diagnostic_tokens > budget {
             break;
@@ -4845,6 +4921,7 @@ mod tests {
                 row_range: 0..content.lines().count() as u32,
                 text: content.into(),
                 order: 0,
+                context_source: ContextSource::Lsp,
             }],
             in_open_source_repo: false,
         }
@@ -4964,16 +5041,19 @@ mod tests {
                         row_range: 0..10,
                         text: "first excerpt\n".into(),
                         order: 0,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 10..20,
                         text: "second excerpt\n".into(),
                         order: 0,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 20..30,
                         text: "third excerpt\n".into(),
                         order: 0,
+                        context_source: ContextSource::Lsp,
                     },
                 ],
             }],
@@ -5033,6 +5113,7 @@ mod tests {
                         row_range: 0..10,
                         text: "low priority content\n".into(),
                         order: 5,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
                 RelatedFile {
@@ -5043,6 +5124,7 @@ mod tests {
                         row_range: 0..10,
                         text: "high priority content\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
             ],
@@ -5107,16 +5189,19 @@ mod tests {
                         row_range: 0..5,
                         text: "mod header\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 5..15,
                         text: "important fn\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 15..30,
                         text: "less important fn\n".into(),
                         order: 3,
+                        context_source: ContextSource::Lsp,
                     },
                 ],
             }],
@@ -5297,13 +5382,22 @@ mod tests {
             vec![],
             vec![make_related_file("related.rs", "fn helper() {}\n")],
         );
-        input.active_buffer_diagnostics = vec![ActiveBufferDiagnostic {
-            severity: Some(1),
-            message: "missing semicolon".to_string(),
-            snippet: "let value = 1".to_string(),
-            snippet_buffer_row_range: 1..2,
-            diagnostic_range_in_snippet: 12..13,
-        }];
+        input.active_buffer_diagnostics = vec![
+            ActiveBufferDiagnostic {
+                severity: Some(1),
+                message: "missing semicolon".to_string(),
+                snippet: "let value = 1".to_string(),
+                snippet_buffer_row_range: 1..2,
+                diagnostic_range_in_snippet: 12..13,
+            },
+            ActiveBufferDiagnostic {
+                severity: Some(2),
+                message: "file-level warning".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 0..0,
+                diagnostic_range_in_snippet: 0..0,
+            },
+        ];
 
         let prompt =
             format_prompt_with_budget_for_format(&input, ZetaFormat::V0420Diagnostics, 10000)
@@ -5319,6 +5413,7 @@ mod tests {
                 ```
                 let value = 1
                 ```
+                *file-level warning*
 
                 <filename>related.rs
                 fn helper() {}
@@ -5506,6 +5601,7 @@ mod tests {
                         row_range: 0..5,
                         text: "low prio\n".into(),
                         order: 10,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
                 RelatedFile {
@@ -5516,6 +5612,7 @@ mod tests {
                         row_range: 0..5,
                         text: "high prio\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
             ],

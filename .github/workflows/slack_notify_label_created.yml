@@ -1,0 +1,83 @@
+name: New label created, notify slack
+
+on:
+  label:
+    types: [created]
+
+jobs:
+  notify-slack:
+    if: >-
+      github.repository_owner == 'zed-industries'
+      && (startsWith(github.event.label.name, 'area:')
+          || startsWith(github.event.label.name, 'platform:'))
+    runs-on: namespace-profile-2x4-ubuntu-2404
+
+    steps:
+      - name: Build Slack message payload
+        env:
+          LABEL_NAME: ${{ github.event.label.name }}
+          LABEL_COLOR: ${{ github.event.label.color }}
+          LABEL_DESCRIPTION: ${{ github.event.label.description }}
+          CREATED_BY: ${{ github.event.sender.login }}
+          REPO_URL: ${{ github.event.repository.html_url }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          LABELS_PAGE_URL="${REPO_URL}/labels"
+          MAPPING_FILE_URL="${REPO_URL}/blob/${DEFAULT_BRANCH}/script/community-pr-track-mapping.json"
+
+          jq -n \
+            --arg label_name "$LABEL_NAME" \
+            --arg label_color "#$LABEL_COLOR" \
+            --arg label_description "${LABEL_DESCRIPTION:-(none)}" \
+            --arg created_by "$CREATED_BY" \
+            --arg labels_url "$LABELS_PAGE_URL" \
+            --arg mapping_file_url "$MAPPING_FILE_URL" \
+            '{
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "New label created: *\($label_name)*\nPlease choose a Track for it <\($mapping_file_url)|community-pr-track-mapping.json>."
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Created by:*\n\($created_by)" },
+                    { "type": "mrkdwn", "text": "*Color:*\n\($label_color)" },
+                    { "type": "mrkdwn", "text": "*Description:*\n\($label_description)" },
+                    { "type": "mrkdwn", "text": "*Labels page:*\n<\($labels_url)|View all labels>" }
+                  ]
+                }
+              ]
+            }' > payload.json
+
+          echo "Payload built successfully:"
+          cat payload.json
+
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_LABEL_CREATED }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::error::SLACK_WEBHOOK_LABEL_CREATED secret is not set"
+            exit 1
+          fi
+
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @payload.json)
+
+          HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+          HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+
+          echo "Slack API response status: $HTTP_STATUS"
+          echo "Slack API response body: $HTTP_BODY"
+
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::error::Slack notification failed with status $HTTP_STATUS: $HTTP_BODY"
+            exit 1
+          fi
+
+          echo "Slack notification sent successfully"

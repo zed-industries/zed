@@ -2,17 +2,17 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
-use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
-use super::save_file_tool::SaveFileTool;
-use crate::{AgentTool, Thread, ToolCallEventStream};
+use super::tool_permissions::resolve_creatable_global_skill_path;
+use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::{ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::Result;
 use collections::HashSet;
+use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::language_settings::{self, FormatOnSave};
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, BufferEditSource, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
@@ -278,6 +278,7 @@ pub(crate) enum EditSessionResult {
 
 pub(crate) async fn run_session(
     result: EditSessionResult,
+    event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<EditSessionOutput, EditSessionOutput> {
     match result {
@@ -303,6 +304,11 @@ pub(crate) async fn run_session(
                 .ensure_buffer_saved(&session.buffer, cx)
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
+            if diff.is_empty() {
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                    acp::ToolCallContent::Content(acp::Content::new(error.clone())),
+                ]));
+            }
             Err(EditSessionOutput::Error {
                 error,
                 input_path: Some(session.input_path),
@@ -312,11 +318,16 @@ pub(crate) async fn run_session(
         EditSessionResult::Failed {
             error,
             session: None,
-        } => Err(EditSessionOutput::Error {
-            error,
-            input_path: None,
-            diff: String::new(),
-        }),
+        } => {
+            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                acp::ToolCallContent::Content(acp::Content::new(error.clone())),
+            ]));
+            Err(EditSessionOutput::Error {
+                error,
+                input_path: None,
+                diff: String::new(),
+            })
+        }
     }
 }
 
@@ -351,6 +362,16 @@ pub(crate) struct EditSession {
     pipeline: Pipeline,
     context: Arc<EditSessionContext>,
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
+}
+
+/// The destination of an edit session, identified by its absolute path on
+/// disk. `project_path` is `Some` for files that live inside one of the
+/// project's worktrees (i.e. that the standard project-path machinery can
+/// resolve), and `None` for global skill files reached through the
+/// `~/.agents/skills` allowlist.
+struct EditSessionTarget {
+    abs_path: PathBuf,
+    project_path: Option<ProjectPath>,
 }
 
 enum Pipeline {
@@ -599,21 +620,14 @@ impl EditPipeline {
 
                 log::debug!("new_text_chunk: done=true, final_text='{}'", final_text);
 
-                if !final_text.is_empty() {
-                    let char_ops = streaming_diff.push_new(&final_text);
-                    apply_char_operations(
-                        &char_ops,
-                        buffer,
-                        &original_snapshot,
-                        &mut edit_cursor,
-                        &context.action_log,
-                        cx,
-                    );
-                }
-
-                let remaining_ops = streaming_diff.finish();
+                let mut char_ops = if final_text.is_empty() {
+                    Vec::new()
+                } else {
+                    streaming_diff.push_new(&final_text)
+                };
+                char_ops.extend(streaming_diff.finish());
                 apply_char_operations(
-                    &remaining_ops,
+                    &char_ops,
                     buffer,
                     &original_snapshot,
                     &mut edit_cursor,
@@ -640,16 +654,34 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<Self, String> {
-        let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
+        let target = if let Some(abs_path) =
+            resolve_global_skill_path_for_edit_session(mode, &path, &context, cx).await?
+        {
+            EditSessionTarget {
+                abs_path,
+                project_path: None,
+            }
+        } else {
+            let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
 
-        let Some(abs_path) =
-            cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
-        else {
-            return Err(format!(
-                "Worktree at '{}' does not exist",
-                path.to_string_lossy()
-            ));
+            let Some(abs_path) =
+                cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
+            else {
+                return Err(format!(
+                    "Worktree at '{}' does not exist",
+                    path.to_string_lossy()
+                ));
+            };
+
+            EditSessionTarget {
+                abs_path,
+                project_path: Some(project_path),
+            }
         };
+        let EditSessionTarget {
+            abs_path,
+            project_path,
+        } = target;
 
         event_stream.update_fields(
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
@@ -659,13 +691,23 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        let buffer = context
-            .project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))
-            .await
-            .map_err(|e| e.to_string())?;
+        let buffer = match project_path {
+            Some(project_path) => context
+                .project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await
+                .map_err(|e| e.to_string())?,
+            None => context
+                .project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(abs_path.clone(), cx)
+                })
+                .await
+                .map_err(|e| e.to_string())?,
+        };
 
-        let file_changed_since_last_read = ensure_buffer_saved(&buffer, &abs_path, &context, cx)?;
+        let file_changed_since_last_read =
+            ensure_buffer_saved(&buffer, &abs_path, mode, &context, event_stream, cx).await?;
 
         let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
         event_stream.update_diff(diff.clone());
@@ -853,22 +895,26 @@ fn apply_char_operations(
     action_log: &Entity<ActionLog>,
     cx: &mut AsyncApp,
 ) {
+    let mut edits: Vec<_> = Vec::new();
     for op in ops {
         match op {
             CharOperation::Insert { text } => {
                 let anchor = snapshot.anchor_after(*edit_cursor);
-                agent_edit_buffer(&buffer, [(anchor..anchor, text.as_str())], action_log, cx);
+                edits.push((anchor..anchor, text.as_str().into()));
             }
             CharOperation::Delete { bytes } => {
                 let delete_end = *edit_cursor + bytes;
                 let anchor_range = snapshot.anchor_range_inside(*edit_cursor..delete_end);
-                agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
+                edits.push((anchor_range, Arc::<str>::from("")));
                 *edit_cursor = delete_end;
             }
             CharOperation::Keep { bytes } => {
                 *edit_cursor += bytes;
             }
         }
+    }
+    if !edits.is_empty() {
+        agent_edit_buffer(buffer, edits, action_log, cx);
     }
 }
 
@@ -926,59 +972,33 @@ fn agent_edit_buffer<I, S, T>(
 {
     cx.update(|cx| {
         buffer.update(cx, |buffer, cx| {
+            buffer.start_transaction();
             buffer.edit(edits, None, cx);
+            buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
         });
         action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
     });
 }
 
-fn ensure_buffer_saved(
+async fn ensure_buffer_saved(
     buffer: &Entity<Buffer>,
     abs_path: &PathBuf,
+    mode: EditSessionMode,
     context: &EditSessionContext,
+    event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<bool, String> {
     let last_read_mtime = context
         .action_log
         .read_with(cx, |log, _| log.file_read_time(abs_path));
-    let check_result = context.thread.read_with(cx, |thread, cx| {
-        let current = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| file.disk_state().mtime());
-        let dirty = buffer.read(cx).is_dirty();
-        let has_save = thread.has_tool(SaveFileTool::NAME);
-        let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
-        (current, dirty, has_save, has_restore)
+    let (current_mtime, is_dirty) = buffer.read_with(cx, |buffer, _cx| {
+        let current = buffer.file().and_then(|file| file.disk_state().mtime());
+        let dirty = buffer.is_dirty();
+        (current, dirty)
     });
 
-    let Ok((current_mtime, is_dirty, has_save_tool, has_restore_tool)) = check_result else {
-        return Ok(false);
-    };
-
     if is_dirty {
-        let message = match (has_save_tool, has_restore_tool) {
-            (true, true) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-            }
-            (true, false) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                         If they want to discard them, ask the user to manually revert the file, then inform you when it's ok to proceed."
-            }
-            (false, true) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask the user to manually save the file, then inform you when it's ok to proceed. \
-                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-            }
-            (false, false) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
-                         then ask them to save or revert the file manually and inform you when it's ok to proceed."
-            }
-        };
-        return Err(message.to_string());
+        resolve_dirty_buffer(buffer, mode, context, event_stream, cx).await?;
     }
 
     if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime)
@@ -988,6 +1008,165 @@ fn ensure_buffer_saved(
     }
 
     Ok(false)
+}
+
+/// Prompts the user about how to handle a dirty buffer that the agent
+/// wants to edit (`EditSessionMode::Edit`) or overwrite
+/// (`EditSessionMode::Write`), and performs the chosen action so the
+/// edit session can proceed (or returns `Err` to cancel).
+///
+/// If the user resolves the dirty state externally (e.g. cmd-s or
+/// reload) while the prompt is visible, the prompt is dismissed
+/// automatically.
+async fn resolve_dirty_buffer(
+    buffer: &Entity<Buffer>,
+    mode: EditSessionMode,
+    context: &EditSessionContext,
+    event_stream: &ToolCallEventStream,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let (manual_resolve_tx, manual_resolve_rx) = oneshot::channel::<()>();
+    let _buffer_subscription = cx.update(|cx| {
+        let mut tx = Some(manual_resolve_tx);
+        cx.subscribe(buffer, move |buffer, event: &BufferEvent, cx| {
+            if matches!(
+                event,
+                BufferEvent::Saved | BufferEvent::Reloaded | BufferEvent::DirtyChanged
+            ) && !buffer.read(cx).is_dirty()
+                && let Some(tx) = tx.take()
+            {
+                tx.send(()).ok();
+            }
+        })
+    });
+
+    let prompt_kind = match mode {
+        EditSessionMode::Edit => super::tool_permissions::DirtyBufferPromptKind::Edit,
+        EditSessionMode::Write => super::tool_permissions::DirtyBufferPromptKind::Overwrite,
+    };
+    let prompt = cx.update(|cx| {
+        super::tool_permissions::authorize_dirty_buffer(prompt_kind, event_stream, cx)
+    });
+
+    let decision = futures::select_biased! {
+        _ = manual_resolve_rx.fuse() => {
+            None
+        }
+        decision = prompt.fuse() => {
+            Some(decision.map_err(|e| e.to_string())?)
+        }
+    };
+
+    let Some(decision) = decision else {
+        event_stream.update_fields(
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+        );
+        return match mode {
+            EditSessionMode::Edit => Ok(()),
+            EditSessionMode::Write => Err(
+                "The user saved their unsaved changes while the prompt was visible; \
+                 the file overwrite was cancelled to preserve them. Ask the user how \
+                 they'd like to proceed before retrying."
+                    .to_string(),
+            ),
+        };
+    };
+
+    match decision {
+        super::tool_permissions::DirtyBufferDecision::Save => {
+            context
+                .project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+                .await
+                .map_err(|e| format!("Failed to save buffer: {e}"))?;
+        }
+        super::tool_permissions::DirtyBufferDecision::Discard => {
+            context
+                .project
+                .update(cx, |project, cx| {
+                    project.reload_buffers(HashSet::from_iter([buffer.clone()]), false, cx)
+                })
+                .await
+                .map_err(|e| format!("Failed to discard unsaved changes: {e}"))?;
+        }
+        super::tool_permissions::DirtyBufferDecision::Keep => {
+            let error = "The user chose to keep their unsaved changes; the file overwrite \
+             was cancelled. Ask the user how they'd like to proceed before \
+             retrying."
+                .to_string();
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
+            );
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+/// Mirrors [`resolve_path`]'s pre-auth validation for the global-skill
+/// branch: returns `Ok(Some(abs_path))` if the path lives under
+/// `~/.agents/skills` and is in a valid state for the requested mode,
+/// `Ok(None)` if the path isn't a global skill at all (so the caller should
+/// fall through to project-path resolution), or `Err(message)` if the path
+/// is a global skill but can't be used (missing in Edit mode, parent
+/// missing in Write mode, etc.).
+///
+/// Errors returned from here surface to the model as tool-result errors
+/// without prompting the user — same contract as [`resolve_path`]. The
+/// idea is that "file doesn't exist" or "parent isn't a directory" are
+/// model mistakes, not decisions the user should be asked to approve.
+async fn resolve_global_skill_path_for_edit_session(
+    mode: EditSessionMode,
+    path: &PathBuf,
+    context: &EditSessionContext,
+    cx: &mut AsyncApp,
+) -> Result<Option<PathBuf>, String> {
+    let fs = context
+        .project
+        .read_with(cx, |project, _cx| project.fs().clone());
+    let Some(abs_path) = resolve_creatable_global_skill_path(path, fs.as_ref()).await else {
+        return Ok(None);
+    };
+
+    match mode {
+        EditSessionMode::Edit => {
+            let metadata = fs
+                .metadata(&abs_path)
+                .await
+                .map_err(|e| format!("Can't edit file: {e}"))?
+                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+            if metadata.is_dir {
+                return Err("Can't edit file: path is a directory".to_string());
+            }
+        }
+        EditSessionMode::Write => {
+            if let Some(metadata) = fs
+                .metadata(&abs_path)
+                .await
+                .map_err(|e| format!("Can't write to file: {e}"))?
+            {
+                if metadata.is_dir {
+                    return Err("Can't write to file: path is a directory".to_string());
+                }
+            } else {
+                let parent_path = abs_path
+                    .parent()
+                    .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
+                let parent_metadata = fs
+                    .metadata(parent_path)
+                    .await
+                    .map_err(|e| format!("Can't create file: {e}"))?
+                    .ok_or_else(|| {
+                        "Can't create file: parent directory doesn't exist".to_string()
+                    })?;
+                if !parent_metadata.is_dir {
+                    return Err("Can't create file: parent is not a directory".to_string());
+                }
+            }
+        }
+    }
+
+    Ok(Some(abs_path))
 }
 
 fn resolve_path(

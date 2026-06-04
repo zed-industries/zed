@@ -195,6 +195,19 @@ pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
     strip_path_suffix(base, suffix).is_some()
 }
 
+/// Case-insensitive ASCII comparison of a path component to a literal
+/// folder name. macOS and Windows use case-insensitive filesystems by
+/// default, so a path like `.ZED/settings.json` resolves to the same
+/// inode as the lowercase form. A case-sensitive `==` check would miss
+/// those and let a malicious settings author bypass classifiers with
+/// unusual casing. Callers should restrict `name` to ASCII; for ASCII
+/// inputs `eq_ignore_ascii_case` is safe and stable across platforms.
+pub fn component_matches_ignore_ascii_case(component: &OsStr, name: &str) -> bool {
+    component
+        .to_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case(name))
+}
+
 pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
     if let Some(remainder) = base
         .as_os_str()
@@ -646,6 +659,29 @@ pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
         }
     }
     Ok(lexical)
+}
+
+/// Insert `path` into a set of "subtree" grants, keeping the set minimal.
+///
+/// A subtree grant covers a path and all of its descendants. Insertion is a
+/// no-op when `path` is already covered by an existing (equal-or-broader)
+/// entry; otherwise `path` is added and any now-subsumed descendant entries
+/// are pruned. Containment is purely lexical (component-wise `starts_with`),
+/// so callers should normalize paths (e.g. via [`normalize_lexically`]) before
+/// inserting, otherwise `..` components can defeat the containment checks.
+pub fn insert_subtree(subtrees: &mut Vec<PathBuf>, path: PathBuf) {
+    if subtrees.iter().any(|existing| path.starts_with(existing)) {
+        return;
+    }
+    subtrees.retain(|existing| !existing.starts_with(&path));
+    subtrees.push(path);
+}
+
+/// Whether `path` sits under (or exactly equals) any of the given subtree
+/// grants. As with [`insert_subtree`], containment is purely lexical, so
+/// callers should pass normalized paths.
+pub fn path_within_subtree<'a>(path: &Path, mut subtrees: impl Iterator<Item = &'a Path>) -> bool {
+    subtrees.any(|granted| path.starts_with(granted))
 }
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.

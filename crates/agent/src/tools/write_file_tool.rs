@@ -21,15 +21,14 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 ///
 /// To make granular edits to an existing file, prefer the `edit_file` tool instead.
 ///
-/// Before using this tool:
+/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location
 ///
-/// 1. Verify the directory path is correct (only applicable when creating new files):
-///    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WriteFileToolInput {
     /// The full path of the file to create or overwrite in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -44,10 +43,13 @@ pub struct WriteFileToolInput {
     /// <example>
     /// `frontend/db.js`
     /// </example>
+    ///
+    /// <example>
+    /// To create or overwrite a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
+    /// </example>
     pub path: PathBuf,
 
-    /// The complete content for the file.
-    /// This field should contain the entire file content.
+    /// The entire content for the file.
     pub content: String,
 }
 
@@ -241,6 +243,7 @@ impl AgentTool for WriteFileTool {
             run_session(
                 self.process_streaming_writes(&mut input, &event_stream, cx)
                     .await,
+                &event_stream,
                 cx,
             )
             .await
@@ -276,7 +279,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
     use util::path;
     use util::rel_path::{RelPath, rel_path};
 
@@ -329,6 +332,62 @@ mod tests {
         };
         assert_eq!(new_text, "new content");
         assert_eq!(*old_text, "old content");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_write_global_skill_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.insert_tree(&skill_dir, json!({})).await;
+        let (write_tool, _project, _action_log, fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md");
+        let skill_file = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: input_path,
+                    content: "# My Skill\n".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        event_rx.expect_update_fields().await;
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let EditSessionOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "# My Skill\n");
+        assert_eq!(
+            fs.load(&skill_file).await.unwrap().replace("\r\n", "\n"),
+            "# My Skill\n"
+        );
     }
 
     #[gpui::test]
@@ -1002,7 +1061,8 @@ mod tests {
 
         cx.run_until_parked();
 
-        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        let changed =
+            action_log.read_with(cx, |log, cx| log.changed_buffers(cx).collect::<Vec<_>>());
         assert!(
             !changed.is_empty(),
             "action_log.changed_buffers() should be non-empty after streaming write, \
@@ -1074,7 +1134,8 @@ mod tests {
         );
 
         // Reject all edits — this should delete the newly created file
-        let changed = action_log.read_with(cx, |log, cx| log.changed_buffers(cx));
+        let changed =
+            action_log.read_with(cx, |log, cx| log.changed_buffers(cx).collect::<Vec<_>>());
         assert!(
             !changed.is_empty(),
             "action_log should track the created file as changed"
@@ -1089,6 +1150,212 @@ mod tests {
             !fs.is_file(path!("/root/dir/new_file.txt").as_ref()).await,
             "file should be deleted after rejecting creation, but an empty file was left behind"
         );
+    }
+
+    /// When the buffer has unsaved user edits and the user picks
+    /// "Discard my edits", the pending edits are reverted to match disk
+    /// and the agent's overwrite proceeds.
+    #[gpui::test]
+    async fn test_streaming_write_dirty_buffer_discard(cx: &mut TestAppContext) {
+        let (write_tool, project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": "on disk content"})).await;
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/file.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/file.txt".into(),
+                    content: "agent overwrote it".into(),
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+
+        // Verify the prompt is the overwrite-mode prompt.
+        let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
+        let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
+        else {
+            panic!("expected text body, got: {:?}", content.first());
+        };
+        let acp::ContentBlock::Text(text) = &text.content else {
+            panic!("expected text body, got: {:?}", text.content);
+        };
+        assert!(
+            text.text.contains("overwrite"),
+            "expected overwrite-mode prompt, got: {:?}",
+            text.text,
+        );
+
+        // Verify both option ids are present (option_id is the stable contract).
+        let option_ids: Vec<&str> = match &auth.options {
+            acp_thread::PermissionOptions::Flat(opts) => {
+                opts.iter().map(|o| o.option_id.0.as_ref()).collect()
+            }
+            other => panic!("expected flat options, got: {other:?}"),
+        };
+        assert!(option_ids.contains(&"keep"), "options: {option_ids:?}");
+        assert!(option_ids.contains(&"discard"), "options: {option_ids:?}");
+
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("discard"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let EditSessionOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "agent overwrote it");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/file.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "agent overwrote it");
+    }
+
+    /// When the buffer has unsaved user edits and the user picks
+    /// "Keep my edits", the overwrite is cancelled with an error and the
+    /// user's pending edits are preserved.
+    #[gpui::test]
+    async fn test_streaming_write_dirty_buffer_keep(cx: &mut TestAppContext) {
+        let (write_tool, project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": "on disk content"})).await;
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/file.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/file.txt".into(),
+                    content: "agent overwrote it".into(),
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("keep"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .unwrap();
+
+        let EditSessionOutput::Error { error, .. } = task.await.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            error.contains("keep") || error.contains("cancelled"),
+            "expected cancel-style error message, got: {error:?}",
+        );
+
+        // The user's in-memory edits are preserved.
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_eq!(buffer_text, "on disk content plus user edit");
+
+        // The on-disk content is untouched.
+        let on_disk = fs.load(path!("/root/file.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "on disk content");
+    }
+
+    /// When the user manually saves the buffer (e.g. cmd-s) while the
+    /// overwrite prompt is visible, that's treated as "Keep my edits":
+    /// the user just deliberately persisted their work, so we cancel the
+    /// agent's overwrite to avoid clobbering it.
+    #[gpui::test]
+    async fn test_streaming_write_dirty_buffer_resolved_externally(cx: &mut TestAppContext) {
+        let (write_tool, project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": "on disk content"})).await;
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/file.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/file.txt".into(),
+                    content: "agent overwrote it".into(),
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+
+        // User saves manually while the prompt is up.
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+
+        // The prompt is dismissed by transitioning to InProgress.
+        let dismiss = stream_rx.expect_update_fields().await;
+        assert_eq!(dismiss.status, Some(acp::ToolCallStatus::InProgress));
+        drop(auth);
+
+        // The overwrite is cancelled with an error.
+        let EditSessionOutput::Error { error, .. } = task.await.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            error.contains("saved") || error.contains("cancelled"),
+            "expected cancel-on-manual-save error, got: {error:?}",
+        );
+
+        // The user's edits were saved to disk and not clobbered.
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/file.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "on disk content plus user edit");
     }
 
     async fn setup_test_with_fs(

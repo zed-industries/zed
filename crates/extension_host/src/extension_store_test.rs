@@ -29,7 +29,7 @@ use theme::ThemeRegistry;
 use util::{rel_path::rel_path_buf, test::TempTree};
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -162,7 +162,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -194,7 +193,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -377,7 +375,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
-                agent_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),

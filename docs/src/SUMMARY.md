@@ -18,6 +18,7 @@
 - [Parallel Agents](./ai/parallel-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
+- [Skills](./ai/skills.md)
 - [Rules](./ai/rules.md)
 - [Model Context Protocol](./ai/mcp.md)
 - [Configuration](./ai/configuration.md)
@@ -27,6 +28,7 @@
 
 # Working with Code
 
+- [Windows & Projects](./windows-and-projects.md)
 - [Editing Code](./editing-code.md)
   - [Code Completions](./completions.md)
   - [Snippets](./snippets.md)
@@ -185,7 +187,6 @@
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Snippets Extensions](./extensions/snippets.md)
-- [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 
 # Coming From…

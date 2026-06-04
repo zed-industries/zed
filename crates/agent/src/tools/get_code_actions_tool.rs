@@ -12,14 +12,11 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Gets the list of available code actions at a symbol location from the language server.
 ///
-/// Code actions include quick fixes, refactorings, and other automated transformations
-/// suggested by the language server (e.g. "Add missing import", "Extract to function").
+/// Code actions include quick fixes, refactorings, and other automated transformations suggested by the language server (e.g. "Add missing import", "Extract to function").
 ///
-/// Returns a numbered list of available actions. Use apply_code_action with the
-/// corresponding number to apply one.
+/// Returns a numbered list of available actions. Use apply_code_action with the corresponding number to apply one.
 ///
-/// Before using this tool, use read_file or grep to find the exact symbol
-/// name and line number.
+/// Before using this tool, use read_file or grep to find the exact symbol name and line number.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GetCodeActionsToolInput {
     /// The symbol to get code actions for.

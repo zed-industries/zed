@@ -71,7 +71,7 @@ impl IncomingCallNotificationState {
         let active_call = ActiveCall::global(cx);
         if accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
-            let caller_user_id = self.call.calling_user.id;
+            let caller_user_id = self.call.calling_user.legacy_id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             let app_state = self.app_state.clone();
             let cx: &mut App = cx;

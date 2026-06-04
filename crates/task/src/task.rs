@@ -185,6 +185,14 @@ pub enum VariableName {
     /// For normal checkouts, this equals the worktree root. For linked worktrees,
     /// this is the original repo's working directory.
     MainGitWorktree,
+    /// Full SHA for the Git commit associated with the task context.
+    GitSha,
+    /// Short SHA for the Git commit associated with the task context.
+    GitShaShort,
+    /// Name of the Git repository associated with the task context.
+    GitRepositoryName,
+    /// Absolute path of the Git repository associated with the task context.
+    GitRepositoryPath,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -221,6 +229,10 @@ impl FromStr for VariableName {
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
             "MAIN_GIT_WORKTREE" => Self::MainGitWorktree,
+            "GIT_SHA" => Self::GitSha,
+            "GIT_SHA_SHORT" => Self::GitShaShort,
+            "GIT_REPOSITORY_NAME" => Self::GitRepositoryName,
+            "GIT_REPOSITORY_PATH" => Self::GitRepositoryPath,
             _ => {
                 if let Some(custom_name) =
                     without_prefix.strip_prefix(ZED_CUSTOM_VARIABLE_NAME_PREFIX)
@@ -257,6 +269,10 @@ impl std::fmt::Display for VariableName {
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
             Self::MainGitWorktree => write!(f, "{ZED_VARIABLE_NAME_PREFIX}MAIN_GIT_WORKTREE"),
+            Self::GitSha => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA"),
+            Self::GitShaShort => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_SHA_SHORT"),
+            Self::GitRepositoryName => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_NAME"),
+            Self::GitRepositoryPath => write!(f, "{ZED_VARIABLE_NAME_PREFIX}GIT_REPOSITORY_PATH"),
             Self::Custom(s) => write!(
                 f,
                 "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"
