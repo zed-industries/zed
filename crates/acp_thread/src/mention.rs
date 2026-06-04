@@ -40,7 +40,7 @@ pub enum MentionUri {
     /// deserialize. `id` (an opaque `prompt_store::PromptId`) is preserved
     /// verbatim so re-saved threads stay loadable by older Zed versions.
     Rule {
-        #[serde(default = "default_rule_id")]
+        #[serde(default = "default_deprecated_rule_id")]
         id: serde_json::Value,
         name: String,
     },
@@ -212,7 +212,7 @@ impl MentionUri {
                     // Deprecated: parses legacy rule mentions.
                     let name = single_query_param(&url, "name")?.context("Missing rule name")?;
                     let id = if rule_id.is_empty() {
-                        default_rule_id()
+                        default_deprecated_rule_id()
                     } else {
                         serde_json::json!({ "User": { "uuid": rule_id } })
                     };
@@ -604,8 +604,9 @@ fn default_include_errors() -> bool {
 }
 
 /// Placeholder rule `id` for legacy mentions missing one, shaped so older Zed
-/// versions can still deserialize it as a `prompt_store::PromptId`.
-fn default_rule_id() -> serde_json::Value {
+/// versions can still deserialize it as a `prompt_store::PromptId`. The `id` is
+/// never used as a key, so the shared value is fine even for multiple mentions.
+fn default_deprecated_rule_id() -> serde_json::Value {
     serde_json::json!({ "User": { "uuid": "00000000-0000-0000-0000-000000000000" } })
 }
 
