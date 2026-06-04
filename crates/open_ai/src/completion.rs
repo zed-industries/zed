@@ -15,8 +15,8 @@ use std::sync::Arc;
 use crate::responses::{
     Request as ResponseRequest, ResponseCompactionItem, ResponseError, ResponseFunctionCallItem,
     ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
-    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
-    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ResponseInput, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
+    ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
     ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
     ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
 };
@@ -310,60 +310,53 @@ pub fn into_open_ai_response(
 
 fn append_compaction_details_to_response_items(
     compaction_details: Option<&serde_json::Value>,
-    input_items: &mut Vec<Value>,
+    input_items: &mut Vec<ResponseInput>,
 ) {
     let Some(compaction_details) = compaction_details else {
         return;
     };
 
-    match compaction_details {
-        Value::Array(items) => input_items.extend(items.iter().cloned()),
-        Value::Object(details) => {
-            let provider = details.get("provider").and_then(Value::as_str);
-            if provider != Some(OPEN_AI_PROVIDER_ID.0.as_ref()) {
-                return;
-            }
-
-            let Some(items) = details.get("items").and_then(Value::as_array) else {
-                log::warn!("OpenAI native compaction details did not contain an items array");
-                return;
-            };
-            input_items.extend(items.iter().cloned());
-        }
-        _ => {
-            log::warn!("OpenAI native compaction details had an unexpected shape");
-        }
+    // `compaction_details` is always built by `CompactionInfo::ProviderNative`
+    // as `{ "provider", "items" }`; reject any other provider or shape.
+    let Value::Object(details) = compaction_details else {
+        log::warn!("OpenAI native compaction details had an unexpected shape");
+        return;
+    };
+    if details.get("provider").and_then(Value::as_str) != Some(OPEN_AI_PROVIDER_ID.0.as_ref()) {
+        return;
     }
+    let Some(items) = details.get("items").and_then(Value::as_array) else {
+        log::warn!("OpenAI native compaction details did not contain an items array");
+        return;
+    };
+    input_items.extend(items.iter().cloned().map(ResponseInput::Raw));
 }
 
-fn is_reasoning_input_item(item: &Value) -> bool {
-    item.get("type").and_then(Value::as_str) == Some("reasoning")
+fn is_reasoning_input_item(item: &ResponseInput) -> bool {
+    matches!(item, ResponseInput::Item(ResponseInputItem::Reasoning(_)))
 }
 
-fn push_response_input_item(input_items: &mut Vec<Value>, item: ResponseInputItem) {
-    match serde_json::to_value(item) {
-        Ok(item) => input_items.push(item),
-        Err(error) => log::error!("failed to serialize OpenAI response input item: {error}"),
-    }
+fn push_response_input_item(input_items: &mut Vec<ResponseInput>, item: ResponseInputItem) {
+    input_items.push(ResponseInput::Item(item));
 }
 
-fn replace_response_input_item(input_items: &mut [Value], index: usize, item: ResponseInputItem) {
+fn replace_response_input_item(
+    input_items: &mut [ResponseInput],
+    index: usize,
+    item: ResponseInputItem,
+) {
     let Some(existing_item) = input_items.get_mut(index) else {
         log::error!("failed to replace OpenAI response input item at missing index {index}");
         return;
     };
-
-    match serde_json::to_value(item) {
-        Ok(item) => *existing_item = item,
-        Err(error) => log::error!("failed to serialize OpenAI response input item: {error}"),
-    }
+    *existing_item = ResponseInput::Item(item);
 }
 
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
-    input_items: &mut Vec<Value>,
+    input_items: &mut Vec<ResponseInput>,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
@@ -470,7 +463,7 @@ fn append_message_to_response_items(
 fn append_reasoning_details_to_response_items(
     reasoning_details: Option<&serde_json::Value>,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
-    input_items: &mut Vec<Value>,
+    input_items: &mut Vec<ResponseInput>,
 ) {
     let Some(reasoning_details) = reasoning_details else {
         return;
@@ -488,7 +481,7 @@ fn append_reasoning_details_to_response_items(
 fn push_replayed_reasoning_item(
     reasoning_item: ResponseReasoningInputItem,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
-    input_items: &mut Vec<Value>,
+    input_items: &mut Vec<ResponseInput>,
 ) {
     if let Some(id) = reasoning_item.id.as_ref() {
         if let Some(index) = replayed_reasoning_item_indexes.get(id) {
@@ -546,7 +539,7 @@ fn flush_response_parts(
     _index: usize,
     phase: Option<&str>,
     parts: &mut Vec<ResponseInputContent>,
-    input_items: &mut Vec<Value>,
+    input_items: &mut Vec<ResponseInput>,
 ) {
     if parts.is_empty() {
         return;
@@ -1369,16 +1362,18 @@ mod tests {
 
         let response = into_open_ai_response(request, "gpt-5", true, true, None, None, true);
 
+        // The compaction items are replayed verbatim ahead of the typed message,
+        // and the whole `input` serializes to the expected wire shape.
         assert_eq!(
-            response.input,
-            vec![
-                json!({"type": "compaction", "encrypted_content": "encrypted"}),
-                json!({
+            serde_json::to_value(&response.input).unwrap(),
+            json!([
+                {"type": "compaction", "encrypted_content": "encrypted"},
+                {
                     "type": "message",
                     "role": "user",
                     "content": [{"type": "input_text", "text": "after compaction"}],
-                }),
-            ]
+                },
+            ])
         );
     }
 

@@ -15,7 +15,10 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, RateLimiter,
 };
-use open_ai::{ReasoningEffort, responses::ContextManagement};
+use open_ai::{
+    ReasoningEffort, Role,
+    responses::{ContextManagement, ResponseInput, ResponseInputContent, ResponseInputItem},
+};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -505,18 +508,15 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // `instructions` field rather than as input items.
         let mut instructions = Vec::new();
         responses_request.input.retain(|item| {
-            let is_system_message = item.get("type").and_then(serde_json::Value::as_str)
-                == Some("message")
-                && item.get("role").and_then(serde_json::Value::as_str) == Some("system");
-            if !is_system_message {
+            let ResponseInput::Item(ResponseInputItem::Message(message)) = item else {
+                return true;
+            };
+            if message.role != Role::System {
                 return true;
             }
-
-            if let Some(content) = item.get("content").and_then(serde_json::Value::as_array) {
-                for part in content {
-                    if let Some(text) = part.get("text").and_then(serde_json::Value::as_str) {
-                        instructions.push(text.to_string());
-                    }
+            for part in &message.content {
+                if let ResponseInputContent::Text { text } = part {
+                    instructions.push(text.clone());
                 }
             }
             false

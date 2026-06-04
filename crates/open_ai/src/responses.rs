@@ -14,7 +14,7 @@ pub struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub input: Vec<Value>,
+    pub input: Vec<ResponseInput>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
@@ -68,6 +68,23 @@ impl ContextManagement {
 pub enum ResponseIncludable {
     #[serde(rename = "reasoning.encrypted_content")]
     ReasoningEncryptedContent,
+}
+
+/// An entry in a Responses request's `input` array. Most entries are typed
+/// (`Item`); provider-native compaction items are opaque JSON replayed verbatim
+/// (`Raw`). Serializing is untagged, so typed items go straight to the wire
+/// (keeping their internal `type` tag) without an intermediate `Value`.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum ResponseInput {
+    Item(ResponseInputItem),
+    Raw(Value),
+}
+
+impl From<ResponseInputItem> for ResponseInput {
+    fn from(item: ResponseInputItem) -> Self {
+        Self::Item(item)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
