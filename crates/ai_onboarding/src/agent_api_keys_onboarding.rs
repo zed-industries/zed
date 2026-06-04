@@ -73,6 +73,7 @@ impl Render for ApiKeysWithProviders {
                 offset: point(px(1.), px(-1.)),
                 blur_radius: px(3.),
                 spread_radius: px(0.),
+                inset: false,
             }])
             .child(
                 h_flex()

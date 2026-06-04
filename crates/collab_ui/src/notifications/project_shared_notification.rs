@@ -2,7 +2,7 @@ use crate::notification_window_options;
 use call::{ActiveCall, room};
 use client::User;
 use collections::HashMap;
-use gpui::{App, Size};
+use gpui::{App, Size, TaskExt};
 use std::sync::{Arc, Weak};
 
 use ui::{CollabNotification, prelude::*};
@@ -102,7 +102,7 @@ impl ProjectSharedNotification {
 
     fn join(&mut self, cx: &mut Context<Self>) {
         if let Some(app_state) = self.app_state.upgrade() {
-            workspace::join_in_room_project(self.project_id, self.owner.id, app_state, cx)
+            workspace::join_in_room_project(self.project_id, self.owner.legacy_id, app_state, cx)
                 .detach_and_log_err(cx);
         }
     }

@@ -90,10 +90,7 @@ impl AgentTool for UpdatePlanTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
 
             event_stream.update_plan(Self::to_plan(input));
 

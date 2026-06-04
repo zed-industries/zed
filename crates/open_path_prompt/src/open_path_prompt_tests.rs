@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{AppContext, Entity, TestAppContext, VisualTestContext};
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -8,7 +9,7 @@ use ui::rems;
 use util::path;
 use workspace::{AppState, MultiWorkspace};
 
-use crate::OpenPathDelegate;
+use crate::{CandidateInfo, DirectoryState, OpenPathDelegate};
 
 #[gpui::test]
 async fn test_open_path_prompt(cx: &mut TestAppContext) {
@@ -58,7 +59,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec![expected_separator, "a1", "a2", "a3", "dir1", "dir2"]
+        vec![expected_separator, "dir1", "dir2", "a1", "a2", "a3"]
     );
 
     // Show candidates for the query "a".
@@ -82,7 +83,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec![expected_separator, "c", "d1", "d2", "d3", "dir3", "dir4"]
+        vec![expected_separator, "dir3", "dir4", "c", "d1", "d2", "d3"]
     );
 
     // Show candidates for the query "d".
@@ -90,7 +91,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec!["d1", "d2", "d3", "dir3", "dir4"]
+        vec!["dir3", "dir4", "d1", "d2", "d3"]
     );
 
     let query = path!("/root/dir2/di");
@@ -113,7 +114,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec![expected_separator, "a1", "a2", "a3", "dir1", "dir2"]
+        vec![expected_separator, "dir1", "dir2", "a1", "a2", "a3"]
     );
 
     // Show candidates for the query "../". Show parent contents.
@@ -121,7 +122,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec![expected_separator, "a1", "a2", "a3", "dir1", "dir2"]
+        vec![expected_separator, "dir1", "dir2", "a1", "a2", "a3"]
     );
 }
 
@@ -158,7 +159,7 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
         path!("/root/")
     );
 
-    // Confirm completion for the query "/root/", selecting the first candidate "a", since it's a file, it should not add a trailing slash.
+    // Confirm completion for the query "/root/", selecting the first candidate "dir1", since it's a directory, it should add a trailing slash.
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -168,16 +169,16 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
     );
     assert_eq!(
         confirm_completion(query, 1, &picker, cx).unwrap(),
-        path!("/root/a"),
-        "Second entry is the first entry of a directory that we want to be completed"
+        path!("/root/dir1/"),
+        "Second entry is the first directory"
     );
 
-    // Confirm completion for the query "/root/", selecting the second candidate "dir1", since it's a directory, it should add a trailing slash.
+    // Confirm completion for the query "/root/", selecting the third candidate "a", since it's a file, it should not add a trailing slash.
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
     assert_eq!(
-        confirm_completion(query, 2, &picker, cx).unwrap(),
-        path!("/root/dir1/")
+        confirm_completion(query, 3, &picker, cx).unwrap(),
+        path!("/root/a")
     );
 
     let query = path!("/root/a");
@@ -205,28 +206,28 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         confirm_completion(query, 1, &picker, cx).unwrap(),
-        path!("/root/dir2/c")
+        path!("/root/dir2/dir3/")
     );
 
     let query = path!("/root/dir2/");
     insert_query(query, &picker, cx).await;
     assert_eq!(
         confirm_completion(query, 3, &picker, cx).unwrap(),
-        path!("/root/dir2/dir3/")
+        path!("/root/dir2/c")
     );
 
     let query = path!("/root/dir2/d");
     insert_query(query, &picker, cx).await;
     assert_eq!(
         confirm_completion(query, 0, &picker, cx).unwrap(),
-        path!("/root/dir2/d")
+        path!("/root/dir2/dir3/")
     );
 
     let query = path!("/root/dir2/d");
     insert_query(query, &picker, cx).await;
     assert_eq!(
         confirm_completion(query, 1, &picker, cx).unwrap(),
-        path!("/root/dir2/dir3/")
+        path!("/root/dir2/dir4/")
     );
 
     let query = path!("/root/dir2/di");
@@ -263,7 +264,7 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec![".\\", "a", "dir1", "dir2"]
+        vec![".\\", "dir1", "dir2", "a"]
     );
     assert_eq!(
         confirm_completion(query, 0, &picker, cx),
@@ -272,30 +273,30 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
     );
     assert_eq!(
         confirm_completion(query, 1, &picker, cx).unwrap(),
-        "C:/root/a",
-        "Second entry is the first entry of a directory that we want to be completed"
+        "C:/root/dir1\\",
+        "Second entry is the first directory"
     );
 
     let query = "C:\\root/";
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec![".\\", "a", "dir1", "dir2"]
+        vec![".\\", "dir1", "dir2", "a"]
     );
     assert_eq!(
         confirm_completion(query, 1, &picker, cx).unwrap(),
-        "C:\\root/a"
+        "C:\\root/dir1\\"
     );
 
     let query = "C:\\root\\";
     insert_query(query, &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec![".\\", "a", "dir1", "dir2"]
+        vec![".\\", "dir1", "dir2", "a"]
     );
     assert_eq!(
         confirm_completion(query, 1, &picker, cx).unwrap(),
-        "C:\\root\\a"
+        "C:\\root\\dir1\\"
     );
 
     // Confirm completion for the query "C:/root/d", selecting the second candidate "dir2", since it's a directory, it should add a trailing slash.
@@ -370,6 +371,39 @@ async fn test_new_path_prompt(cx: &mut TestAppContext) {
 
     insert_query(path!("/root/dir1"), &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1"]);
+}
+
+#[gpui::test]
+async fn test_open_path_prompt_panics_with_stale_highlight_positions(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({}))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, cx) = build_open_path_prompt(project, false, false, cx);
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.prompt_root = "/".to_string();
+        picker.delegate.directory_state = DirectoryState::List {
+            parent_path: picker.delegate.prompt_root.clone(),
+            entries: vec![CandidateInfo {
+                path: StringMatchCandidate::new(0, "éclair"),
+                is_dir: false,
+            }],
+            error: None,
+        };
+        picker.delegate.string_matches = vec![StringMatch {
+            candidate_id: 0,
+            score: 0.0,
+            positions: vec![1],
+            string: "ab".to_string(),
+        }];
+
+        picker.delegate.render_match(0, false, window, cx);
+    });
 }
 
 #[gpui::test]

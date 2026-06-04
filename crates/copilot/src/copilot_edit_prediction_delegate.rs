@@ -10,7 +10,7 @@ use edit_prediction_types::{
     EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
     interpolate_edits,
 };
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, Task, TaskExt};
 use icons::IconName;
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToPointUtf16};
 use std::{ops::Range, sync::Arc, time::Duration};

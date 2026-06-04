@@ -1,11 +1,11 @@
 ---
 title: Parallel Agents - Zed
-description: Run multiple agent threads concurrently using the Threads Sidebar, manage them across projects, and isolate work using Git worktrees.
+description: Run multiple agent threads and terminal threads concurrently using the Threads Sidebar, manage them across projects, and isolate work using Git worktrees.
 ---
 
 # Parallel Agents
 
-Parallel Agents lets you run multiple agent threads at once, each working independently with its own agent, context window, and conversation history. The Threads Sidebar is where you start, manage, and switch between them.
+Parallel Agents lets you run multiple agent threads and terminal threads at once from the Threads Sidebar. Each thread works independently with its own agent, context window, and conversation history. Terminal threads appear alongside agent threads in the same sidebar, so you can switch between them without leaving the Agent Panel.
 
 Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 
@@ -14,6 +14,8 @@ Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 ## Threads Sidebar {#threads-sidebar}
 
 The sidebar shows your threads grouped by project. Each project gets its own section with a header. Threads appear below with their title, status indicator, and which agent is running them. Threads running in linked Git worktrees appear under the same project as their main worktree. See [Worktree Isolation](#worktree-isolation).
+
+Terminal threads also appear as entries in the sidebar alongside agent threads, identified by a terminal icon. Click one to switch to it. See [terminal threads](./agent-panel.md#terminal-threads) for details.
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
@@ -49,7 +51,7 @@ Each thread can use a different agent, so you can run Zed's built-in agent in on
 
 ## Multiple Projects {#multiple-projects}
 
-The Threads Sidebar can hold multiple projects at once. Each project gets its own group with its own threads and conversation history.
+The Threads Sidebar can hold multiple projects at once. Each project gets its own group with its own threads and conversation history. This mirrors how Zed handles projects in general — see [Windows & Projects](../windows-and-projects.md) for more on how projects open and how to manage them.
 
 To add another project to the sidebar, click the **Add Project** button (open-folder icon) in the sidebar bottom bar. The popover that opens lists your recent projects and also provides **Add Local Folders** and **Add Remote Folder** buttons at the bottom.
 

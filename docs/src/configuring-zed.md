@@ -16,7 +16,7 @@ The **Settings Editor** ({#kb zed::OpenSettings}) is the primary way to configur
 To open it:
 
 - Press {#kb zed::OpenSettings}
-- Or run `zed: open settings` from the command palette
+- Or run {#action zed::OpenSettings} from the command palette
 
 As you type in the search box, matching settings appear with descriptions and controls to modify them. Changes save automatically to your settings file.
 
@@ -26,7 +26,7 @@ As you type in the search box, matching settings appear with descriptions and co
 
 ### User Settings
 
-Your user settings apply globally across all projects. Open the file with {#kb zed::OpenSettingsFile} or run `zed: open settings file` from the command palette.
+Your user settings apply globally across all projects. Open the file with {#kb zed::OpenSettingsFile} or run {#action zed::OpenSettingsFile} from the command palette.
 
 The file is located at:
 
