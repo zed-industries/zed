@@ -285,7 +285,31 @@ impl Editor {
                     match save_clipboard_image(&image, &working_dir) {
                         Ok(filename) => {
                             let markdown_text = format!("![]({filename})");
-                            return self.do_paste(&markdown_text, None, false, window, cx);
+                            // "![" is 2 bytes; we want the cursor between [ and ]
+                            let move_back_by = markdown_text.len() - 2;
+                            self.do_paste(&markdown_text, None, false, window, cx);
+                            let display_map = self.display_snapshot(cx);
+                            let new_selections = self
+                                .selections
+                                .all::<MultiBufferOffset>(&display_map)
+                                .into_iter()
+                                .map(|sel| {
+                                    let pos = MultiBufferOffset(
+                                        sel.head().0.saturating_sub(move_back_by),
+                                    );
+                                    Selection {
+                                        id: sel.id,
+                                        start: pos,
+                                        end: pos,
+                                        reversed: false,
+                                        goal: SelectionGoal::None,
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            self.change_selections(Default::default(), window, cx, |s| {
+                                s.select(new_selections);
+                            });
+                            return;
                         }
                         Err(err) => {
                             log::error!("Failed to save clipboard image: {err}");
@@ -709,17 +733,12 @@ fn save_clipboard_image(image: &gpui::Image, directory: &Path) -> anyhow::Result
         gpui::ImageFormat::Pnm => "pnm",
     };
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-
-    let mut filename = format!("pasted_{timestamp}.{extension}");
+    let mut filename = format!("image.{extension}");
     let mut path = directory.join(&filename);
 
     let mut counter = 1u32;
     while path.exists() {
-        filename = format!("pasted_{timestamp}_{counter}.{extension}");
+        filename = format!("image_{counter}.{extension}");
         path = directory.join(&filename);
         counter += 1;
     }
