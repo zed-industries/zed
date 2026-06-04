@@ -2136,6 +2136,16 @@ impl BlockMapWriter<'_> {
 }
 
 impl BlockSnapshot {
+    /// Whether any block replaces (collapses) buffer rows - i.e. a custom `Replace` block or a
+    /// folded buffer. Like folds, replacement blocks map distinct buffer points to the same display
+    /// position, so they disqualify fast paths that assume buffer<->display point bijection. This is
+    /// O(1) when there are no blocks (a single isomorphic transform), which is the common case.
+    pub fn has_replacement_blocks(&self) -> bool {
+        self.transforms
+            .iter()
+            .any(|transform| transform.block.as_ref().is_some_and(Block::is_replacement))
+    }
+
     #[cfg(test)]
     #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {

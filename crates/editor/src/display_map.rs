@@ -1547,6 +1547,13 @@ impl DisplaySnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
     }
 
+    /// Whether the display collapses any buffer content (folds or replacement blocks), so that
+    /// distinct buffer points can map to the same display point. When false, buffer<->display point
+    /// conversions are a bijection and fast paths can skip the display round-trip.
+    pub fn has_collapsed_content(&self) -> bool {
+        self.fold_snapshot().has_folds() || self.block_snapshot.has_replacement_blocks()
+    }
+
     pub fn inlay_snapshot(&self) -> &InlaySnapshot {
         &self
             .block_snapshot
