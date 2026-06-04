@@ -7257,9 +7257,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_terminal_restore_working_directory_uses_borrowed_workspace(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_remote_terminal_restore_without_working_directory(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
@@ -7275,10 +7273,21 @@ mod tests {
             });
         });
 
+        cx.update(|cx| {
+            assert!(matches!(
+                TerminalSettings::get_global(cx).working_directory,
+                WorkingDirectory::AlwaysHome
+            ));
+        });
+
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         project.update(cx, |project, _cx| {
             project.mark_as_collab_for_testing();
+        });
+        project.read_with(cx, |project, _cx| {
+            assert!(project.is_remote());
+            assert!(project.is_via_collab());
         });
 
         let multi_workspace =
@@ -7292,6 +7301,13 @@ mod tests {
         let panel = workspace.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| {
+                terminal_view::default_working_directory(workspace, cx)
+            }),
+            None
+        );
+
         let metadata = TerminalThreadMetadata {
             terminal_id: TerminalId::new(),
             title: "Dev Server".into(),
@@ -7301,6 +7317,7 @@ mod tests {
             remote_connection: None,
             working_directory: None,
         };
+        assert_eq!(metadata.working_directory, None);
 
         let working_directory = workspace.update_in(cx, |workspace, _window, cx| {
             panel
