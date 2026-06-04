@@ -10,6 +10,10 @@ Each keystroke sends a new request to the edit prediction provider, which return
 
 The default provider is [Zeta, an open source model developed by Zed](https://zed.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
 
+For privacy and training data details, see
+[AI Privacy](./privacy-and-security.md) and
+[Feedback and Training Data](./ai-improvement.md#edit-predictions).
+
 ## Configuring Zeta
 
 To use Zeta, [sign in](../authentication.md#what-features-require-signing-in).
@@ -31,7 +35,7 @@ The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../ai/plans-and-usage.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
+The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../account/plans-and-pricing.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
