@@ -514,6 +514,19 @@ impl WindowTextSystem {
         wrap_width: Option<Pixels>,
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
+        self.shape_text_with_replacements(text, font_size, runs, &[], wrap_width, line_clamp)
+    }
+
+    /// Shape a multi line string of text with inline replacements.
+    pub fn shape_text_with_replacements(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        inline_replacements: &[InlineReplacement],
+        wrap_width: Option<Pixels>,
+        line_clamp: Option<usize>,
+    ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
@@ -574,13 +587,38 @@ impl WindowTextSystem {
                 run_start += run_len_within_line;
             }
 
-            let layout = self.line_layout_cache.layout_wrapped_line(
-                &line_text,
-                font_size,
-                &font_runs,
-                wrap_width,
-                max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
-            );
+            let line_replacements = inline_replacements
+                .iter()
+                .filter(|replacement| {
+                    replacement.range.start >= line_start && replacement.range.end <= line_end
+                })
+                .map(|replacement| InlineReplacement {
+                    range: replacement.range.start - line_start..replacement.range.end - line_start,
+                    width: replacement.width,
+                    ascent: replacement.ascent,
+                    descent: replacement.descent,
+                })
+                .collect::<SmallVec<[_; 1]>>();
+
+            let layout = if line_replacements.is_empty() {
+                self.line_layout_cache.layout_wrapped_line(
+                    &line_text,
+                    font_size,
+                    &font_runs,
+                    wrap_width,
+                    max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
+                )
+            } else {
+                self.line_layout_cache
+                    .layout_wrapped_line_with_replacements(
+                        &line_text,
+                        font_size,
+                        &font_runs,
+                        &line_replacements,
+                        wrap_width,
+                        max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
+                    )
+            };
             wrapped_lines += layout.wrap_boundaries.len();
 
             lines.push(WrappedLine {

@@ -1,8 +1,8 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    HighlightStyle, Hitbox, HitboxBehavior, InlineReplacement, InspectorElementId, IntoElement,
+    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
+    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
@@ -271,7 +271,7 @@ impl Element for &'static str {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut state = TextLayout::default();
-        let layout_id = state.layout(SharedString::from(*self), None, window, cx);
+        let layout_id = state.layout(SharedString::from(*self), None, Vec::new(), window, cx);
         (layout_id, state)
     }
 
@@ -345,7 +345,7 @@ impl Element for SharedString {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut state = TextLayout::default();
-        let layout_id = state.layout(self.clone(), None, window, cx);
+        let layout_id = state.layout(self.clone(), None, Vec::new(), window, cx);
         (layout_id, state)
     }
 
@@ -391,6 +391,7 @@ impl IntoElement for SharedString {
 pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
+    inline_replacements: Vec<InlineReplacement>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
     layout: TextLayout,
@@ -402,6 +403,7 @@ impl StyledText {
         StyledText {
             text: text.into(),
             runs: None,
+            inline_replacements: Vec::new(),
             delayed_highlights: None,
             delayed_font_family_overrides: None,
             layout: TextLayout::default(),
@@ -411,6 +413,25 @@ impl StyledText {
     /// Get the layout for this element. This can be used to map indices to pixels and vice versa.
     pub fn layout(&self) -> &TextLayout {
         &self.layout
+    }
+
+    /// Set inline replacement objects for byte ranges in this text.
+    ///
+    /// Each range must be sorted, non-overlapping, and fall on UTF-8 character
+    /// boundaries. Callers typically use this with a single U+FFFC OBJECT
+    /// REPLACEMENT CHARACTER per object.
+    pub fn with_inline_replacements(
+        mut self,
+        replacements: impl IntoIterator<Item = InlineReplacement>,
+    ) -> Self {
+        self.inline_replacements = replacements
+            .into_iter()
+            .inspect(|replacement| {
+                debug_assert!(self.text.is_char_boundary(replacement.range.start));
+                debug_assert!(self.text.is_char_boundary(replacement.range.end));
+            })
+            .collect();
+        self
     }
 
     /// Set the styling attributes for the given text, as well as
@@ -571,7 +592,13 @@ impl Element for StyledText {
             Self::apply_font_family_overrides(runs, overrides);
         }
 
-        let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
+        let layout_id = self.layout.layout(
+            self.text.clone(),
+            runs,
+            self.inline_replacements.clone(),
+            window,
+            cx,
+        );
         (layout_id, ())
     }
 
@@ -616,6 +643,7 @@ pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 struct TextLayoutInner {
     len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
+    inline_replacements: Vec<InlineReplacement>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
@@ -627,6 +655,7 @@ impl TextLayout {
         &self,
         text: SharedString,
         runs: Option<Vec<TextRun>>,
+        inline_replacements: Vec<InlineReplacement>,
         window: &mut Window,
         _: &mut App,
     ) -> LayoutId {
@@ -716,10 +745,11 @@ impl TextLayout {
 
                 let Some(lines) = window
                     .text_system()
-                    .shape_text(
+                    .shape_text_with_replacements(
                         text,
                         font_size,
                         &runs,
+                        &inline_replacements,
                         wrap_width,            // Wrap if we know the width.
                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
                     )
@@ -727,6 +757,7 @@ impl TextLayout {
                 else {
                     element_state.0.borrow_mut().replace(TextLayoutInner {
                         lines: Default::default(),
+                        inline_replacements: inline_replacements.clone(),
                         len: 0,
                         line_height,
                         wrap_width,
@@ -745,6 +776,7 @@ impl TextLayout {
 
                 element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
+                    inline_replacements: inline_replacements.clone(),
                     len,
                     line_height,
                     wrap_width,
@@ -801,6 +833,15 @@ impl TextLayout {
             .log_err();
             line_origin.y += line.size(line_height).height;
         }
+    }
+
+    /// The inline replacements associated with this layout.
+    pub fn inline_replacements(&self) -> Vec<InlineReplacement> {
+        self.0
+            .borrow()
+            .as_ref()
+            .map(|inner| inner.inline_replacements.clone())
+            .unwrap_or_default()
     }
 
     /// Get the byte index into the input of the pixel position.

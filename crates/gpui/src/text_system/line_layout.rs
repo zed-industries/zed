@@ -11,6 +11,23 @@ use std::{
 
 use super::LineWrapper;
 
+/// Metrics for an inline object that occupies a byte range in text.
+///
+/// The range usually covers a single U+FFFC OBJECT REPLACEMENT CHARACTER. The
+/// replacement participates in text layout with the supplied width and baseline
+/// metrics instead of the shaped glyph metrics for that range.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InlineReplacement {
+    /// The UTF-8 byte range occupied by this replacement in the source text.
+    pub range: Range<usize>,
+    /// The horizontal advance used for line layout.
+    pub width: Pixels,
+    /// The distance from the replacement top to the text baseline.
+    pub ascent: Pixels,
+    /// The distance from the text baseline to the replacement bottom.
+    pub descent: Pixels,
+}
+
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
 pub struct LineLayout {
@@ -521,10 +538,34 @@ impl LineLayoutCache {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        self.layout_wrapped_line_with_replacements(
+            text,
+            font_size,
+            runs,
+            &[],
+            wrap_width,
+            max_lines,
+        )
+    }
+
+    pub fn layout_wrapped_line_with_replacements<Text>(
+        &self,
+        text: Text,
+        font_size: Pixels,
+        runs: &[FontRun],
+        inline_replacements: &[InlineReplacement],
+        wrap_width: Option<Pixels>,
+        max_lines: Option<usize>,
+    ) -> Arc<WrappedLineLayout>
+    where
+        Text: AsRef<str>,
+        SharedString: From<Text>,
+    {
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
             runs,
+            inline_replacements,
             wrap_width,
             force_width: None,
         } as &dyn AsCacheKeyRef;
@@ -545,7 +586,13 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
+            let unwrapped_layout = self.layout_line_with_replacements::<&SharedString>(
+                &text,
+                font_size,
+                runs,
+                inline_replacements,
+                None,
+            );
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
@@ -560,6 +607,7 @@ impl LineLayoutCache {
                 text,
                 font_size,
                 runs: SmallVec::from(runs),
+                inline_replacements: SmallVec::from(inline_replacements),
                 wrap_width,
                 force_width: None,
             });
@@ -585,10 +633,26 @@ impl LineLayoutCache {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        self.layout_line_with_replacements(text, font_size, runs, &[], force_width)
+    }
+
+    pub fn layout_line_with_replacements<Text>(
+        &self,
+        text: Text,
+        font_size: Pixels,
+        runs: &[FontRun],
+        inline_replacements: &[InlineReplacement],
+        force_width: Option<Pixels>,
+    ) -> Arc<LineLayout>
+    where
+        Text: AsRef<str>,
+        SharedString: From<Text>,
+    {
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
             runs,
+            inline_replacements,
             wrap_width: None,
             force_width,
         } as &dyn AsCacheKeyRef;
@@ -609,6 +673,8 @@ impl LineLayoutCache {
                 .platform_text_system
                 .layout_line(&text, font_size, runs);
 
+            apply_inline_replacements_to_layout(&mut layout, inline_replacements);
+
             if let Some(force_width) = force_width {
                 apply_force_width_to_layout(&mut layout, force_width);
             }
@@ -617,6 +683,7 @@ impl LineLayoutCache {
                 text,
                 font_size,
                 runs: SmallVec::from(runs),
+                inline_replacements: SmallVec::from(inline_replacements),
                 wrap_width: None,
                 force_width,
             });
@@ -648,6 +715,7 @@ impl LineLayoutCache {
             text_len,
             font_size,
             runs,
+            inline_replacements: &[],
             wrap_width: None,
             force_width,
         };
@@ -659,6 +727,7 @@ impl LineLayoutCache {
                 text_len: key.text_len,
                 font_size: key.font_size,
                 runs: key.runs.as_slice(),
+                inline_replacements: key.inline_replacements.as_slice(),
                 wrap_width: key.wrap_width,
                 force_width: key.force_width,
             } == key_ref
@@ -673,6 +742,7 @@ impl LineLayoutCache {
                 text_len: key.text_len,
                 font_size: key.font_size,
                 runs: key.runs.as_slice(),
+                inline_replacements: key.inline_replacements.as_slice(),
                 wrap_width: key.wrap_width,
                 force_width: key.force_width,
             } == key_ref
@@ -705,6 +775,7 @@ impl LineLayoutCache {
             text_len,
             font_size,
             runs,
+            inline_replacements: &[],
             wrap_width: None,
             force_width,
         };
@@ -717,6 +788,7 @@ impl LineLayoutCache {
                 text_len: key.text_len,
                 font_size: key.font_size,
                 runs: key.runs.as_slice(),
+                inline_replacements: key.inline_replacements.as_slice(),
                 wrap_width: key.wrap_width,
                 force_width: key.force_width,
             } == key_ref
@@ -738,6 +810,7 @@ impl LineLayoutCache {
                     text_len: key.text_len,
                     font_size: key.font_size,
                     runs: key.runs.as_slice(),
+                    inline_replacements: key.inline_replacements.as_slice(),
                     wrap_width: key.wrap_width,
                     force_width: key.force_width,
                 } == key_ref
@@ -767,6 +840,7 @@ impl LineLayoutCache {
             text_len,
             font_size,
             runs: SmallVec::from(runs),
+            inline_replacements: SmallVec::new(),
             wrap_width: None,
             force_width,
         });
@@ -776,6 +850,63 @@ impl LineLayoutCache {
             .insert(key.clone(), layout.clone());
         current_frame.used_lines_by_hash.push(key);
         layout
+    }
+}
+
+fn apply_inline_replacements_to_layout(
+    layout: &mut LineLayout,
+    inline_replacements: &[InlineReplacement],
+) {
+    for replacement in inline_replacements {
+        layout.ascent = layout.ascent.max(replacement.ascent);
+        layout.descent = layout.descent.max(replacement.descent);
+
+        let Some((replacement_run_ix, replacement_glyph_ix, replacement_x)) =
+            layout.runs.iter().enumerate().find_map(|(run_ix, run)| {
+                run.glyphs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, glyph)| glyph.index == replacement.range.start)
+                    .map(|(glyph_ix, glyph)| (run_ix, glyph_ix, glyph.position.x))
+            })
+        else {
+            continue;
+        };
+
+        let next_glyph_x = layout
+            .runs
+            .iter()
+            .enumerate()
+            .skip(replacement_run_ix)
+            .flat_map(|(run_ix, run)| {
+                run.glyphs
+                    .iter()
+                    .enumerate()
+                    .map(move |(glyph_ix, glyph)| (run_ix, glyph_ix, glyph.position.x))
+            })
+            .find(|(run_ix, glyph_ix, _)| {
+                *run_ix > replacement_run_ix
+                    || (*run_ix == replacement_run_ix && *glyph_ix > replacement_glyph_ix)
+            })
+            .map(|(_, _, x)| x)
+            .unwrap_or(layout.width);
+        let shaped_width = next_glyph_x - replacement_x;
+        let delta = replacement.width - shaped_width;
+
+        if delta == px(0.) {
+            continue;
+        }
+
+        for (run_ix, run) in layout.runs.iter_mut().enumerate() {
+            for (glyph_ix, glyph) in run.glyphs.iter_mut().enumerate() {
+                if run_ix > replacement_run_ix
+                    || (run_ix == replacement_run_ix && glyph_ix > replacement_glyph_ix)
+                {
+                    glyph.position.x += delta;
+                }
+            }
+        }
+        layout.width += delta;
     }
 }
 
@@ -826,6 +957,7 @@ struct CacheKey {
     text: SharedString,
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
+    inline_replacements: SmallVec<[InlineReplacement; 1]>,
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
 }
@@ -835,6 +967,7 @@ struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: Pixels,
     runs: &'a [FontRun],
+    inline_replacements: &'a [InlineReplacement],
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
 }
@@ -845,6 +978,7 @@ struct HashedCacheKey {
     text_len: usize,
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
+    inline_replacements: SmallVec<[InlineReplacement; 1]>,
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
 }
@@ -855,6 +989,7 @@ struct HashedCacheKeyRef<'a> {
     text_len: usize,
     font_size: Pixels,
     runs: &'a [FontRun],
+    inline_replacements: &'a [InlineReplacement],
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
 }
@@ -871,6 +1006,7 @@ impl PartialEq for HashedCacheKey {
             && self.text_len == other.text_len
             && self.font_size == other.font_size
             && self.runs.as_slice() == other.runs.as_slice()
+            && self.inline_replacements.as_slice() == other.inline_replacements.as_slice()
             && self.wrap_width == other.wrap_width
             && self.force_width == other.force_width
     }
@@ -884,6 +1020,7 @@ impl Hash for HashedCacheKey {
         self.text_len.hash(state);
         self.font_size.hash(state);
         self.runs.as_slice().hash(state);
+        self.inline_replacements.as_slice().hash(state);
         self.wrap_width.hash(state);
         self.force_width.hash(state);
     }
@@ -895,6 +1032,7 @@ impl PartialEq for HashedCacheKeyRef<'_> {
             && self.text_len == other.text_len
             && self.font_size == other.font_size
             && self.runs == other.runs
+            && self.inline_replacements == other.inline_replacements
             && self.wrap_width == other.wrap_width
             && self.force_width == other.force_width
     }
@@ -908,6 +1046,7 @@ impl Hash for HashedCacheKeyRef<'_> {
         self.text_len.hash(state);
         self.font_size.hash(state);
         self.runs.hash(state);
+        self.inline_replacements.hash(state);
         self.wrap_width.hash(state);
         self.force_width.hash(state);
     }
@@ -927,6 +1066,7 @@ impl AsCacheKeyRef for CacheKey {
             text: &self.text,
             font_size: self.font_size,
             runs: self.runs.as_slice(),
+            inline_replacements: self.inline_replacements.as_slice(),
             wrap_width: self.wrap_width,
             force_width: self.force_width,
         }
