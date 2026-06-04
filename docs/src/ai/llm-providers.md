@@ -5,9 +5,13 @@ description: Choose how Zed gets language models: Zed-hosted models, API access,
 
 # LLM Providers
 
-Use this page to choose which models power Zed-owned AI features, including [Zed Agent](./zed-agent.md), [Inline Assistant](./inline-assistant.md), Git commit generation, thread summaries, and similar model-backed features.
+Use this page to choose which models power [the Zed Agent](./zed-agent.md) and
+other Zed-owned AI features, including [Inline Assistant](./inline-assistant.md),
+Git commit generation, thread summaries, and similar model-backed features.
 
-[External Agents](./external-agents.md) and [Terminal Threads](./terminal-threads.md) are different: Zed hosts the thread, but the External Agent or CLI usually owns its own model setup.
+Model access paths do not configure [External Agents](./external-agents.md) or
+[Terminal Threads](./terminal-threads.md). External Agents and Terminal Threads
+usually own their own model access, auth, and configuration.
 
 ## Choose a Model Access Path {#choose-a-model-access-path}
 
@@ -19,27 +23,8 @@ Use this page to choose which models power Zed-owned AI features, including [Zed
 | [Use a Gateway](./use-a-gateway.md)                               | You route through OpenRouter, Bedrock, Vercel, or a similar platform  | Use a Gateway                         |
 | [Use a Local Model](./use-a-local-model.md)                       | You run models locally or self-hosted                                 | Use a Local Model                     |
 
-## Zed AI Features {#zed-ai-features}
-
-Zed AI features are Zed-owned features that use a selected language model, including Zed Agent, Inline Assistant, Git commit generation, thread summaries, and similar model-backed features.
-
-| Model access path     | Zed AI features | External Agents   | Terminal Threads |
-| --------------------- | --------------- | ----------------- | ---------------- |
-| Zed-hosted models     | Yes             | No                | No               |
-| API access            | Yes             | Separate config   | Separate config  |
-| Existing subscription | Some            | Often agent-owned | Often CLI-owned  |
-| Gateway               | Yes             | Separate config   | Separate config  |
-| Local model           | Yes             | Separate config   | Separate config  |
-
-Use the child pages for provider-specific details and setup steps.
-
-## Agent Path Boundaries {#agent-path-boundaries}
-
-| Agent path                                | Model configuration                          |
-| ----------------------------------------- | -------------------------------------------- |
-| [Zed Agent](./zed-agent.md)               | Uses LLM providers configured in Zed         |
-| [External Agents](./external-agents.md)   | Usually owned by the External Agent          |
-| [Terminal Threads](./terminal-threads.md) | Owned by the CLI/TUI running in the terminal |
+Use the setup pages for provider-specific details. See [Agents](./agents.md) for
+the difference between the Zed Agent, External Agents, and Terminal Threads.
 
 ## Edit Prediction {#edit-prediction}
 

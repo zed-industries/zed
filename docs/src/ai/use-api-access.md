@@ -14,22 +14,29 @@ Paid API credits, usage billing, and top-ups are API access, even when you pay t
 Zed supports these first-class API providers for model-backed Zed AI features:
 
 - [Anthropic](#anthropic)
+  - [Custom Anthropic Models](#anthropic-custom-models)
 - [OpenAI API](#openai)
+  - [Custom OpenAI Models](#openai-custom-models)
 - [Google AI](#google-ai)
+  - [Custom Google AI Models](#google-ai-custom-models)
 - [Mistral](#mistral)
+  - [Custom Mistral Models](#mistral-custom-models)
 - [DeepSeek](#deepseek)
+  - [Custom DeepSeek Models](#deepseek-custom-models)
 - [xAI](#xai)
+  - [Custom xAI Models](#xai-custom-models)
 - [OpenCode API](#opencode)
   - [Custom OpenCode Models](#opencode-custom-models)
 - [OpenAI-compatible endpoints](#openai-compatible)
 
 ## What API Access Applies To {#support}
 
-| Access path                       | Zed AI features | External Agents | Terminal Threads | Notes                                                                                                        |
-| --------------------------------- | --------------- | --------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
-| Provider API key                  | Yes             | Separate config | Separate config  | Zed Agent, Inline Assistant, Git commit generation, and similar Zed-owned features can use configured models |
-| API key used by an External Agent | No              | Agent-owned     | Separate config  | Configure it in the External Agent                                                                           |
-| API key used by a CLI/TUI         | No              | Separate config | CLI-owned        | Configure it in the terminal environment or CLI config                                                       |
+Use API access for the Zed Agent, Inline Assistant, Git commit generation,
+thread summaries, and similar Zed-owned AI features.
+
+External Agents and Terminal Threads usually configure model access in the
+agent or CLI itself. See [Agents](./agents.md) for the difference between
+agent paths and model access paths.
 
 ## API Keys and Environment Variables {#api-keys}
 
@@ -95,6 +102,51 @@ Use Anthropic API access when you have an Anthropic API key or API credits. Clau
 
 Zed also reads `ANTHROPIC_API_KEY` from the local Zed process environment.
 
+#### Custom Anthropic Models {#anthropic-custom-models}
+
+Add custom Anthropic models in settings when you need an alternate model ID,
+display name, context window, output limit, tool override, or thinking mode.
+
+```json [settings]
+{
+  "language_models": {
+    "anthropic": {
+      "available_models": [
+        {
+          "name": "claude-3-5-sonnet-20240620",
+          "display_name": "Sonnet 2024-June",
+          "max_tokens": 128000,
+          "max_output_tokens": 2560,
+          "tool_override": "some-model-that-supports-toolcalling"
+        }
+      ]
+    }
+  }
+}
+```
+
+For Anthropic models that support extended thinking, add a `mode` configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "anthropic": {
+      "available_models": [
+        {
+          "name": "claude-sonnet-4-latest",
+          "display_name": "claude-sonnet-4-thinking",
+          "max_tokens": 200000,
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 4096
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
 ### OpenAI API {#openai}
 
 Use OpenAI API access when you have an OpenAI API key or API billing. ChatGPT Plus and Pro subscriptions use a different setup path; see [Use an Existing Subscription](./use-an-existing-subscription.md#chatgpt).
@@ -140,6 +192,40 @@ Use Google AI API access when you have a Gemini API key.
 
 Zed reads `GEMINI_API_KEY`, falling back to `GOOGLE_AI_API_KEY`, from the local Zed process environment.
 
+#### Custom Google AI Models {#google-ai-custom-models}
+
+Add custom Google AI models when you need a specific Gemini model version,
+including experimental models, or a thinking-mode configuration.
+
+```json [settings]
+{
+  "language_models": {
+    "google": {
+      "available_models": [
+        {
+          "name": "gemini-3.1-pro-preview",
+          "display_name": "Gemini 3.1 Pro",
+          "max_tokens": 1000000,
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 24000
+          }
+        },
+        {
+          "name": "gemini-3-flash-preview",
+          "display_name": "Gemini 3 Flash (Thinking)",
+          "max_tokens": 1000000,
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 24000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
 ### Mistral {#mistral}
 
 Use Mistral API access when you have a Mistral API key.
@@ -149,6 +235,32 @@ Use Mistral API access when you have a Mistral API key.
 3. Enter your Mistral API key.
 
 Zed also reads `MISTRAL_API_KEY` from the local Zed process environment.
+
+#### Custom Mistral Models {#mistral-custom-models}
+
+Add custom Mistral models when you need alternate model IDs, custom limits, tool
+support, image support, or a custom endpoint.
+
+```json [settings]
+{
+  "language_models": {
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1",
+      "available_models": [
+        {
+          "name": "mistral-tiny-latest",
+          "display_name": "Mistral Tiny",
+          "max_tokens": 32000,
+          "max_output_tokens": 4096,
+          "max_completion_tokens": 1024,
+          "supports_tools": true,
+          "supports_images": false
+        }
+      ]
+    }
+  }
+}
+```
 
 ### DeepSeek {#deepseek}
 
@@ -160,6 +272,35 @@ Use DeepSeek API access when you have paid API usage, top-ups, or an API key. In
 
 Zed also reads `DEEPSEEK_API_KEY` from the local Zed process environment.
 
+#### Custom DeepSeek Models {#deepseek-custom-models}
+
+Add custom DeepSeek models when you need alternate model IDs, custom token
+limits, or a custom endpoint.
+
+```json [settings]
+{
+  "language_models": {
+    "deepseek": {
+      "api_url": "https://api.deepseek.com",
+      "available_models": [
+        {
+          "name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
+        },
+        {
+          "name": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
+        }
+      ]
+    }
+  }
+}
+```
+
 ### xAI {#xai}
 
 Use xAI API access when you have an xAI API key.
@@ -169,6 +310,36 @@ Use xAI API access when you have an xAI API key.
 3. Enter your xAI API key.
 
 Zed also reads `XAI_API_KEY` from the local Zed process environment.
+
+#### Custom xAI Models {#xai-custom-models}
+
+Add custom xAI models when you need alternate Grok model IDs, custom limits,
+image support, or a custom endpoint.
+
+```json [settings]
+{
+  "language_models": {
+    "x_ai": {
+      "api_url": "https://api.x.ai/v1",
+      "available_models": [
+        {
+          "name": "grok-1.5",
+          "display_name": "Grok 1.5",
+          "max_tokens": 131072,
+          "max_output_tokens": 8192
+        },
+        {
+          "name": "grok-1.5v",
+          "display_name": "Grok 1.5V (Vision)",
+          "max_tokens": 131072,
+          "max_output_tokens": 8192,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
 
 ### OpenCode API {#opencode}
 

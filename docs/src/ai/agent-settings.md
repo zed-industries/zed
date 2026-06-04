@@ -102,7 +102,28 @@ See [LLM Providers](./llm-providers.md) for model access, and [All Settings](../
 
 ## Model Temperature {#model-temperature}
 
-Most Zed AI features use the selected model's default generation behavior. Configure feature-specific models in settings when you need a different model for a workflow. For provider-specific model parameters such as custom model entries, context windows, or gateway routing, see [LLM Providers](./llm-providers.md) and the provider setup pages.
+Most Zed AI features use the selected model's default generation behavior.
+Use `agent.model_parameters` when you need to set a temperature for a provider,
+a model, or a specific provider/model pair.
+
+```json [settings]
+{
+  "agent": {
+    "model_parameters": [
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "temperature": 0.2
+      }
+    ]
+  }
+}
+```
+
+Zed checks matching entries from last to first. An entry can omit `provider` or
+`model` to apply more broadly. For provider-specific model configuration such as
+custom model entries, context windows, or gateway routing, see
+[LLM Providers](./llm-providers.md) and the provider setup pages.
 
 ## Rules, Skills, and Instructions {#rules-skills-instructions}
 
