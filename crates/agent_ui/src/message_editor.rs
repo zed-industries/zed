@@ -13,6 +13,7 @@ use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
+use base64::Engine as _;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
@@ -24,8 +25,8 @@ use editor::{
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
     AppContext, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt, TextStyle,
-    WeakEntity,
+    Focusable, Image, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt,
+    TextStyle, WeakEntity,
 };
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
@@ -36,6 +37,7 @@ use project::{
 use rope::Point;
 use settings::Settings;
 use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use text::LineEnding;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
@@ -1718,11 +1720,15 @@ impl MessageEditor {
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
+        let append_normalized = |text: &mut String, mut segment: String| {
+            LineEnding::normalize(&mut segment);
+            text.push_str(&segment);
+        };
 
         for chunk in message {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
-                    text.push_str(&text_content.text);
+                    append_normalized(&mut text, text_content.text);
                 }
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
@@ -1733,7 +1739,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1749,7 +1755,7 @@ impl MessageEditor {
                         MentionUri::parse(&resource.uri, path_style).log_err()
                     {
                         let start = text.len();
-                        write!(&mut text, "{}", mention_uri.as_link()).ok();
+                        append_normalized(&mut text, mention_uri.as_link().to_string());
                         let end = text.len();
                         mentions.push((start..end, mention_uri, Mention::Link));
                     }
@@ -1775,7 +1781,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1815,6 +1821,7 @@ impl MessageEditor {
         for (range, mention_uri, mention) in mentions {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
+            let image_preview = image_preview_task_for_mention(&mention);
             let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                 snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                 range.end - range.start,
@@ -1823,7 +1830,7 @@ impl MessageEditor {
                 mention_uri.tooltip_text(),
                 Some(mention_uri.clone()),
                 Some(self.workspace.clone()),
-                None,
+                image_preview,
                 self.editor.clone(),
                 window,
                 cx,
@@ -2092,6 +2099,31 @@ fn build_chunks_from_creases(
         }
     }
     (chunks, tracked_buffers)
+}
+
+fn image_preview_task_for_mention(
+    mention: &Mention,
+) -> Option<futures::future::Shared<Task<Result<Arc<Image>, String>>>> {
+    let Mention::Image(mention_image) = mention else {
+        return None;
+    };
+
+    let bytes =
+        match base64::engine::general_purpose::STANDARD.decode(mention_image.data.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log::error!("failed to decode image mention: {error}");
+                return None;
+            }
+        };
+
+    Some(
+        Task::ready(Ok::<Arc<Image>, String>(Arc::new(Image::from_bytes(
+            mention_image.format,
+            bytes,
+        ))))
+        .shared(),
+    )
 }
 
 fn mention_to_content_block(
@@ -5267,6 +5299,33 @@ mod tests {
         let text = message_editor.update(cx, |editor, cx| editor.text(cx));
         assert_eq!(text, "hello world");
         assert!(!message_editor.update(cx, |editor, cx| editor.is_empty(cx)));
+    }
+
+    #[gpui::test]
+    async fn test_set_message_normalizes_crlf_before_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_message(
+                vec![
+                    acp::ContentBlock::Text(acp::TextContent::new("before\r\n".to_string())),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                        "file.txt",
+                        "file:///project/file.txt",
+                    )),
+                ],
+                window,
+                cx,
+            );
+        });
+
+        let text = message_editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "before\n[@file.txt](file:///project/file.txt)");
+
+        let mention_uris =
+            message_editor.update(cx, |editor, cx| editor.mention_set.read(cx).mentions());
+        assert_eq!(mention_uris.len(), 1);
     }
 
     #[gpui::test]

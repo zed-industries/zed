@@ -15,7 +15,8 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
+    Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -32,7 +33,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -77,6 +78,7 @@ pub struct CommitView {
     editor: Entity<SplittableEditor>,
     message: Entity<Markdown>,
     message_expanded: bool,
+    message_scroll_handle: ScrollHandle,
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
@@ -462,6 +464,7 @@ impl CommitView {
             editor,
             message,
             message_expanded: false,
+            message_scroll_handle: ScrollHandle::new(),
             multibuffer,
             stash,
             repository,
@@ -707,6 +710,7 @@ impl CommitView {
         let has_more = message.contains('\n');
         let collapsed = has_more && !is_expanded;
         let collapsed_height = window.line_height();
+        let max_expanded_height = window.line_height() * 12.;
 
         Some(
             h_flex()
@@ -718,9 +722,20 @@ impl CommitView {
                         .relative()
                         .flex_1()
                         .min_w_0()
-                        .text_sm()
-                        .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
-                        .child(MarkdownElement::new(self.message.clone(), markdown_style)),
+                        .child(
+                            div()
+                                .id("commit-message")
+                                .size_full()
+                                .text_sm()
+                                .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
+                                .when(!collapsed, |this| {
+                                    this.max_h(max_expanded_height)
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.message_scroll_handle)
+                                })
+                                .child(MarkdownElement::new(self.message.clone(), markdown_style)),
+                        )
+                        .vertical_scrollbar_for(&self.message_scroll_handle, window, cx),
                 ),
         )
     }
@@ -1199,6 +1214,7 @@ impl Item for CommitView {
                 editor,
                 message,
                 message_expanded: self.message_expanded,
+                message_scroll_handle: ScrollHandle::new(),
                 multibuffer: self.multibuffer.clone(),
                 commit: self.commit.clone(),
                 stash: self.stash,
@@ -1306,7 +1322,7 @@ impl Render for CommitViewToolbar {
                         .tooltip(Tooltip::text("Show in Git Graph"))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
-                                Box::new(crate::git_panel::OpenAtCommit {
+                                Box::new(crate::git_graph::OpenAtCommit {
                                     sha: sha_for_graph.clone(),
                                 }),
                                 cx,

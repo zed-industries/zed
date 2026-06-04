@@ -181,25 +181,7 @@ Codex supports the same workflows as Zed's first-party agent. Add context by @-m
 
 ## Add More Agents {#add-more-agents}
 
-### Via Agent Server Extensions
-
-<div class="warning">
-
-Starting from `v0.221.x`, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
-Learn more about it in [the release blog post](https://zed.dev/blog/acp-registry).
-At some point in the near future, Agent Server extensions will be deprecated.
-
-</div>
-
-Add more external agents to Zed by installing [Agent Server extensions](../extensions/agent-servers.md).
-
-See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with {#action zed::Extensions}, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
-
 ### Via The ACP Registry
-
-#### Overview
-
-As mentioned above, the Agent Server extensions will be deprecated in the near future to give room to the ACP Registry.
 
 [The ACP Registry](https://github.com/agentclientprotocol/registry) lets developers distribute ACP-compatible agents to any client that implements the protocol. Agents installed from the registry update automatically.
 

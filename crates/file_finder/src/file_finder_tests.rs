@@ -3,7 +3,7 @@ use std::{future::IntoFuture, path::Path, time::Duration};
 use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use menu::{Confirm, SelectNext, SelectPrevious};
+use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
@@ -2403,6 +2403,252 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_non_project_file_open_with_filter(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                }
+            }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/external"), json!({ "notes.txt": "some notes" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    // Open the external file so it gets a single-file worktree and enters history.
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/external/notes.txt")),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let finder = open_file_picker(&workspace, cx);
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate
+                .spawn_search(test_path_position("notes"), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+
+    finder.update(cx, |f, _| {
+        let entries = collect_search_matches(f);
+        assert_eq!(
+            entries.search.len(),
+            0,
+            "External file should appear as a history match, not a search match"
+        );
+        assert_eq!(
+            entries.history.len(),
+            1,
+            "Expected the external file in history matches"
+        );
+    });
+
+    // Confirming should open /external/notes.txt without a path-duplication error.
+    // Explicitly select index 0: skip_focus_for_active_in_search would otherwise
+    // auto-advance past the currently-open file to the CreateNew entry.
+    finder.update_in(cx, |f, window, cx| {
+        f.delegate.set_selected_index(0, window, cx);
+        f.delegate.confirm(false, window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let active_editor = workspace
+            .read(cx)
+            .active_item_as::<Editor>(cx)
+            .expect("Should have an active editor after confirming");
+        let abs_path = active_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .map(|f| f.full_path(cx));
+        assert_eq!(
+            abs_path.as_deref(),
+            Some(Path::new(path!("/external/notes.txt"))),
+            "Should open /external/notes.txt, not a duplicated path"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_non_project_file_matches_history_with_hidden_root(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                }
+            }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/external"), json!({ "notes.txt": "some notes" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/external/notes.txt")),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate
+                .spawn_search(test_path_position("notes"), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+
+    finder.update(cx, |f, _| {
+        let entries = collect_search_matches(f);
+        assert_eq!(
+            entries.search.len(),
+            0,
+            "External file should appear as a history match, not a search match"
+        );
+        assert_eq!(
+            entries.history.len(),
+            1,
+            "Expected the external file in history matches"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_single_file_search_result_split_open(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({ "the-parent-dir": { "the-file": "" } }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/root/the-parent-dir/the-file").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = cx.read(|cx| {
+        workspace
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .expect("Expected a single-file worktree")
+            .read(cx)
+            .id()
+    });
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .spawn_search(test_path_position("thf"), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+
+    finder.update(cx, |finder, _| {
+        let matches = collect_search_matches(finder);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(matches.search.len(), 1);
+    });
+
+    cx.dispatch_action(pane::SplitRight::default());
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let active_editor = workspace
+            .read(cx)
+            .active_item_as::<Editor>(cx)
+            .expect("Should have an active editor after splitting the search result");
+        assert_eq!(
+            active_editor.read(cx).active_project_path(cx),
+            Some(ProjectPath {
+                worktree_id,
+                path: RelPath::empty().into_arc(),
+            }),
+            "Should split-open the single-file worktree root with an empty relative path"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
@@ -3303,12 +3549,42 @@ async fn test_search_results_refreshed_on_standalone_file_creation(cx: &mut gpui
     .unwrap();
     assert_eq!(cx.update(|_, cx| cx.windows().len()), 1);
 
-    let initial_history = open_close_queried_buffer("new", 1, "new.rs", &workspace, cx).await;
+    // Verify the standalone file appears as a history match when filtered. Because new.rs IS the
+    // currently-open file and skip_focus_for_active_in_search is enabled, confirming would skip
+    // it. Close the finder without confirming and use CloseActiveItem to close the file instead.
+    let initial_history = {
+        let picker = open_file_picker(&workspace, cx);
+        cx.simulate_input("new");
+        let history_items = picker.update(cx, |finder, _| {
+            assert_eq!(
+                finder.delegate.matches.len(),
+                2, // 1 history match + 1 CreateNew
+                "Unexpected number of matches found for query `new`, matches: {:?}",
+                finder.delegate.matches
+            );
+            let entries = collect_search_matches(finder);
+            assert_eq!(entries.history.len(), 1, "new.rs should be a history match");
+            assert_eq!(
+                entries.search.len(),
+                0,
+                "new.rs should not be a plain search match"
+            );
+            finder.delegate.history_items.clone()
+        });
+        cx.dispatch_action(Cancel);
+        history_items
+    };
     assert_eq!(
         initial_history.first().unwrap().absolute,
         PathBuf::from(path!("/test/new.rs")),
         "Should show 1st opened item in the history when opening the 2nd item"
     );
+
+    cx.dispatch_action(CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
+    cx.run_until_parked();
 
     let history_after_first = open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
     assert_eq!(

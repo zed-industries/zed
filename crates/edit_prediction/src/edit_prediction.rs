@@ -55,6 +55,8 @@ use std::env;
 use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
+#[cfg(feature = "cli-support")]
+use zeta_prompt::ContextSource;
 use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
 use std::mem;
@@ -129,6 +131,7 @@ const GIT_CHANGED_FILE_SETS_COMMIT_LIMIT: usize = 100;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
+const REQUEST_TIMEOUT_BACKOFF: Duration = Duration::from_secs(10);
 
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
@@ -165,6 +168,7 @@ pub struct EditPredictionStore {
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
     zeta2_raw_config: Option<Zeta2RawConfig>,
+    request_backoff_until: Option<Instant>,
     preferred_experiment: Option<String>,
     available_experiments: Vec<String>,
     pub mercury: Mercury,
@@ -925,6 +929,7 @@ impl EditPredictionStore {
             update_required: false,
             edit_prediction_model: EditPredictionModel::Zeta,
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
+            request_backoff_until: None,
             preferred_experiment: None,
             available_experiments: Vec::new(),
             mercury: Mercury::new(cx),
@@ -965,6 +970,27 @@ impl EditPredictionStore {
 
     pub fn zeta2_raw_config(&self) -> Option<&Zeta2RawConfig> {
         self.zeta2_raw_config.as_ref()
+    }
+
+    pub(crate) fn back_off_requests_after_timeout(&mut self, cx: &mut Context<Self>) {
+        self.request_backoff_until = Some(cx.background_executor().now() + REQUEST_TIMEOUT_BACKOFF);
+        log::info!(
+            "Backing off edit prediction requests for {:?} after Cloud timeout",
+            REQUEST_TIMEOUT_BACKOFF
+        );
+    }
+
+    fn request_backoff_active(&mut self, cx: &App) -> bool {
+        let Some(backoff_until) = self.request_backoff_until else {
+            return false;
+        };
+
+        if cx.background_executor().now() < backoff_until {
+            true
+        } else {
+            self.request_backoff_until = None;
+            false
+        }
     }
 
     pub fn preferred_experiment(&self) -> Option<&str> {
@@ -1249,6 +1275,7 @@ impl EditPredictionStore {
                     file_context.git_changed_file_sets = result
                         .context("failed to receive git changed file sets")
                         .flatten()
+                        .log_with_level(log::Level::Trace)
                         .map(|mut file_sets| file_sets.pop().unwrap_or_default())
                         .context("failed to load git changed file sets")
                         .map(Arc::new)
@@ -2655,6 +2682,13 @@ impl EditPredictionStore {
             return Task::ready(Ok(None));
         }
 
+        if is_cloud_zeta && self.request_backoff_active(cx) {
+            log::debug!(
+                "Skipping Zeta edit prediction request while backing off after Cloud timeout"
+            );
+            return Task::ready(Ok(None));
+        }
+
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);
@@ -3029,6 +3063,9 @@ impl EditPredictionStore {
             let status = response.status();
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
+            if status == http_client::http::StatusCode::REQUEST_TIMEOUT {
+                return Err(anyhow::Error::new(CloudRequestTimeoutError));
+            }
             anyhow::bail!("Request failed with status: {status:?}\nBody: {body}");
         }
     }
@@ -3045,6 +3082,51 @@ impl EditPredictionStore {
             .update(cx, |store, cx| {
                 store.refresh(buffer.clone(), cursor_position, cx);
             });
+    }
+
+    #[cfg(feature = "cli-support")]
+    pub fn collect_editable_context(
+        &mut self,
+        project: Entity<Project>,
+        buffer: Entity<language::Buffer>,
+        cursor_position: language::Anchor,
+        oracle_paths: Vec<Arc<Path>>,
+        context_sources: Vec<ContextSource>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<RelatedFile>>> {
+        use edit_prediction_context::{EditHistoryContextEntry, collect_editable_context};
+
+        let buffers_by_id = project.read(cx).opened_buffers(cx).into_iter().fold(
+            HashMap::default(),
+            |mut buffers_by_id, buffer| {
+                buffers_by_id.insert(buffer.read(cx).remote_id(), buffer.clone());
+                buffers_by_id
+            },
+        );
+        let edit_history = self
+            .edit_history_for_project(&project, cx)
+            .into_iter()
+            .filter_map(|event| {
+                let buffer = buffers_by_id.get(&event.old_snapshot.remote_id())?.clone();
+                Some(EditHistoryContextEntry {
+                    buffer,
+                    edited_range: event.total_edit_range,
+                })
+            })
+            .collect();
+
+        cx.spawn(async move |_, cx| {
+            collect_editable_context(
+                project,
+                buffer,
+                cursor_position,
+                edit_history,
+                oracle_paths,
+                context_sources,
+                cx,
+            )
+            .await
+        })
     }
 
     #[cfg(feature = "cli-support")]
@@ -3357,6 +3439,10 @@ fn merge_anchor_ranges(
 pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
+
+#[derive(Error, Debug)]
+#[error("Cloud request timed out")]
+pub(crate) struct CloudRequestTimeoutError;
 
 struct ZedPredictUpsell;
 

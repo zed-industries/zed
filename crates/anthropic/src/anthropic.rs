@@ -6,7 +6,10 @@ use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{self, HeaderMap, HeaderValue};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
+};
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
 use thiserror::Error;
@@ -206,10 +209,18 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
-    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
-        .await
-        .map(|output| output.0)
+    stream_completion_with_rate_limit_info(
+        client,
+        api_url,
+        api_key,
+        request,
+        beta_headers,
+        extra_headers,
+    )
+    .await
+    .map(|output| output.0)
 }
 
 /// A raw model entry returned by the Anthropic models listing endpoint.
@@ -237,6 +248,7 @@ pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<Model>> {
     let uri = format!("{api_url}/v1/models?limit=1000");
 
@@ -246,6 +258,7 @@ pub async fn list_models(
         .header("Anthropic-Version", "2023-06-01")
         .header("X-Api-Key", api_key.trim())
         .header("Accept", "application/json")
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .context("failed to build Anthropic models list request")?;
 
@@ -286,9 +299,17 @@ pub async fn non_streaming_completion(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<Response, AnthropicError> {
-    let (mut response, rate_limits) =
-        send_request(client, api_url, api_key, &request, beta_headers).await?;
+    let (mut response, rate_limits) = send_request(
+        client,
+        api_url,
+        api_key,
+        &request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
 
     if response.status().is_success() {
         let mut body = String::new();
@@ -310,6 +331,7 @@ async fn send_request(
     api_key: &str,
     request: impl Serialize,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
 
@@ -327,6 +349,7 @@ async fn send_request(
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
     let request = request_builder
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(serialized_request))
         .map_err(AnthropicError::BuildRequestBody)?;
 
@@ -466,6 +489,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -478,8 +502,15 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
 
-    let (response, rate_limits) =
-        send_request(client, api_url, api_key, &request, beta_headers).await?;
+    let (response, rate_limits) = send_request(
+        client,
+        api_url,
+        api_key,
+        &request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
 
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
