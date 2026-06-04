@@ -27,6 +27,7 @@ pub enum ContextRetrievalType {
     EditHistory,
     EditHistoryFile,
     GitLog,
+    Bm25,
     OracleFile,
     #[default]
     All,
@@ -42,6 +43,7 @@ impl std::fmt::Display for ContextRetrievalType {
             ContextRetrievalType::EditHistory => write!(f, "edit-history"),
             ContextRetrievalType::EditHistoryFile => write!(f, "edit-history-file"),
             ContextRetrievalType::GitLog => write!(f, "git-log"),
+            ContextRetrievalType::Bm25 => write!(f, "bm25"),
             ContextRetrievalType::OracleFile => write!(f, "oracle-file"),
             ContextRetrievalType::All => write!(f, "all"),
             ContextRetrievalType::None => write!(f, "none"),
@@ -58,6 +60,7 @@ impl ContextRetrievalType {
             ContextRetrievalType::EditHistory => vec![ContextSource::EditHistory],
             ContextRetrievalType::EditHistoryFile => vec![ContextSource::EditHistoryFile],
             ContextRetrievalType::GitLog => vec![ContextSource::GitLog],
+            ContextRetrievalType::Bm25 => vec![ContextSource::Bm25],
             ContextRetrievalType::OracleFile => vec![ContextSource::OracleFile],
             ContextRetrievalType::All => {
                 let mut sources = vec![ContextSource::Lsp];
@@ -105,6 +108,8 @@ fn editable_context_sources() -> Vec<ContextSource> {
         ContextSource::EditHistory,
         ContextSource::EditHistoryFile,
         ContextSource::GitLog,
+        ContextSource::Bm25,
+        ContextSource::OracleFile,
     ]
 }
 
