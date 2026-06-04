@@ -12,6 +12,7 @@ gpui = { version = "*" }
 ```
 
 - [Ownership and data flow](_ownership_and_data_flow)
+- [Accessibility](_accessibility)
 
 Everything in GPUI starts with an `Application`. You can create one with `Application::new()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
 

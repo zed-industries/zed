@@ -9,21 +9,24 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
-    ZED_CLOUD_PROVIDER_NAME,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
 use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use std::sync::Arc;
+use std::time::Duration;
 use ui::{TintColor, prelude::*};
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
+const MODELS_REFRESH_DEBOUNCE: Duration = Duration::from_secs(5 * 60);
 
 struct ClientTokenProvider {
     client: Arc<Client>,
@@ -84,10 +87,12 @@ pub struct State {
     user_store: Entity<UserStore>,
     status: client::Status,
     provider: Entity<CloudModelProvider<ClientTokenProvider>>,
+    pending_models_refresh: Option<Task<()>>,
     _user_store_subscription: Subscription,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
     _provider_subscription: Subscription,
+    _cloud_reconnect_task: Task<()>,
 }
 
 impl State {
@@ -112,10 +117,32 @@ impl State {
             )
         });
 
+        let cloud_reconnect_task = cx.spawn({
+            let client = client.clone();
+            async move |this, cx| {
+                let mut connection_id_rx = client.cloud_connection_id();
+                while let Some(connection_id) = connection_id_rx.next().await {
+                    // The initial value `0` means no connection has been
+                    // established since this `Client` was created; only real
+                    // reconnects trigger a refresh.
+                    if connection_id == 0 {
+                        continue;
+                    }
+                    if this
+                        .update(cx, |this, cx| this.schedule_debounced_models_refresh(cx))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
         Self {
             client: client.clone(),
             user_store: user_store.clone(),
             status,
+            pending_models_refresh: None,
             _provider_subscription: cx.observe(&provider, |_, _, cx| cx.notify()),
             provider,
             _user_store_subscription: cx.subscribe(
@@ -141,11 +168,12 @@ impl State {
                     this.refresh_models(cx);
                 },
             ),
+            _cloud_reconnect_task: cloud_reconnect_task,
         }
     }
 
     fn is_signed_out(&self, cx: &App) -> bool {
-        self.user_store.read(cx).current_user().is_none()
+        self.status.is_signed_out() || self.user_store.read(cx).current_user().is_none()
     }
 
     fn sign_in(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -167,6 +195,24 @@ impl State {
             provider.refresh_models(cx).detach_and_log_err(cx);
         });
     }
+
+    /// Schedules a model list refresh, replacing any previously scheduled
+    /// refresh.
+    fn schedule_debounced_models_refresh(&mut self, cx: &mut Context<Self>) {
+        self.pending_models_refresh = Some(cx.spawn(async move |this, cx| {
+            #[cfg(any(test, feature = "test-support"))]
+            let mut rng = StdRng::seed_from_u64(0);
+            #[cfg(not(any(test, feature = "test-support")))]
+            let mut rng = StdRng::from_os_rng();
+            let jitter = Duration::from_millis(
+                rng.random_range(0..MODELS_REFRESH_DEBOUNCE.as_millis() as u64),
+            );
+            cx.background_executor()
+                .timer(MODELS_REFRESH_DEBOUNCE + jitter)
+                .await;
+            this.update(cx, |this, cx| this.refresh_models(cx)).ok();
+        }));
+    }
 }
 
 impl CloudLanguageModelProvider {
@@ -183,6 +229,12 @@ impl CloudLanguageModelProvider {
                     _ = this.update(cx, |this, cx| {
                         if this.status != status {
                             this.status = status;
+                            if status.is_signed_out() {
+                                this.provider.update(cx, |provider, cx| {
+                                    provider.clear_models();
+                                    cx.notify();
+                                });
+                            }
                             cx.notify();
                         }
                     });
@@ -305,6 +357,16 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
+    }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for Zed?".into(),
+            message: "Fast mode routes requests through the upstream provider's fast mode or priority tier. The \
+                upstream provider's premium per-token pricing applies and is passed through to \
+                your Zed billing."
+                .into(),
+        })
     }
 }
 
@@ -650,6 +712,76 @@ mod tests {
             .expect_err("provider authentication should fail when sign-in fails");
         assert!(error.to_string().contains("AuthenticationError"));
     }
+
+    #[gpui::test]
+    async fn sign_out_hides_cached_cloud_models(cx: &mut TestAppContext) {
+        let (client, _user_store, provider) = cx.update(init_test);
+        let (authenticate_tx, authenticate_rx) = futures::channel::oneshot::channel();
+        let (authenticated_user_tx, authenticated_user_rx) = futures::channel::oneshot::channel();
+        override_authenticate(&client, authenticate_rx);
+        respond_to_authenticated_user_after(&client, authenticated_user_rx);
+
+        let sign_in_task = sign_in_until_authenticating(client.clone(), cx).await;
+        authenticate_tx
+            .send(Ok(Credentials {
+                user_id: TEST_USER_ID,
+                access_token: "token".to_string(),
+            }))
+            .expect("authenticate receiver dropped");
+        authenticated_user_tx
+            .send(())
+            .expect("authenticated user receiver dropped");
+        sign_in_task.await.expect("sign-in should complete");
+        cx.executor().run_until_parked();
+
+        let model_id = cloud_llm_client::LanguageModelId(Arc::from("test-model"));
+        cx.update(|cx| {
+            let cloud_model_provider = provider.state.read(cx).provider.clone();
+            cloud_model_provider.update(cx, |cloud_model_provider, cx| {
+                cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
+                    models: vec![cloud_llm_client::LanguageModel {
+                        provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+                        id: model_id.clone(),
+                        display_name: "Test Model".to_string(),
+                        is_latest: true,
+                        max_token_count: 200_000,
+                        max_token_count_in_max_mode: None,
+                        max_output_tokens: 8_192,
+                        supports_tools: true,
+                        supports_images: false,
+                        supports_thinking: false,
+                        supports_fast_mode: false,
+                        supported_effort_levels: Vec::new(),
+                        supports_streaming_tools: false,
+                        supports_parallel_tool_calls: false,
+                    }],
+                    default_model: Some(model_id.clone()),
+                    default_fast_model: None,
+                    recommended_models: vec![model_id],
+                });
+                cx.notify();
+            });
+        });
+
+        assert!(cx.read(|cx| provider.is_authenticated(cx)));
+        assert_eq!(cx.read(|cx| provider.provided_models(cx).len()), 1);
+        assert!(cx.read(|cx| provider.default_model(cx).is_some()));
+        assert_eq!(cx.read(|cx| provider.recommended_models(cx).len()), 1);
+
+        cx.update(|cx| {
+            cx.spawn({
+                let client = client.clone();
+                async move |cx| client.sign_out(cx).await
+            })
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        assert!(!cx.read(|cx| provider.is_authenticated(cx)));
+        assert!(cx.read(|cx| provider.provided_models(cx).is_empty()));
+        assert!(cx.read(|cx| provider.default_model(cx).is_none()));
+        assert!(cx.read(|cx| provider.recommended_models(cx).is_empty()));
+    }
 }
 
 impl Component for ZedAiConfiguration {
@@ -665,7 +797,13 @@ impl Component for ZedAiConfiguration {
         ComponentScope::Onboarding
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "The configuration surface for Zed's hosted AI models, \
+        showing the user's connection status, current plan, trial eligibility, \
+        and entry points for enabling the Zed model provider."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         struct PreviewConfiguration {
             plan: Option<Plan>,
             is_connected: bool,
@@ -685,94 +823,92 @@ impl Component for ZedAiConfiguration {
             .into_any_element()
         };
 
-        Some(
-            v_flex()
-                .p_4()
-                .gap_4()
-                .children(vec![
-                    single_example(
-                        "Not connected",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: false,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                    single_example(
-                        "Accept Terms of Service",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "No Plan - Not eligible for trial",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                    single_example(
-                        "No Plan - Eligible for trial",
-                        configuration(PreviewConfiguration {
-                            plan: None,
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Free Plan",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedFree),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Zed Pro Trial Plan",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedProTrial),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Zed Pro Plan",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedPro),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: true,
-                        }),
-                    ),
-                    single_example(
-                        "Business Plan - Zed models enabled",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedBusiness),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: true,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                    single_example(
-                        "Business Plan - Zed models disabled",
-                        configuration(PreviewConfiguration {
-                            plan: Some(Plan::ZedBusiness),
-                            is_connected: true,
-                            is_zed_model_provider_enabled: false,
-                            eligible_for_trial: false,
-                        }),
-                    ),
-                ])
-                .into_any_element(),
-        )
+        v_flex()
+            .p_4()
+            .gap_4()
+            .children(vec![
+                single_example(
+                    "Not connected",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: false,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: false,
+                    }),
+                ),
+                single_example(
+                    "Accept Terms of Service",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "No Plan - Not eligible for trial",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: false,
+                    }),
+                ),
+                single_example(
+                    "No Plan - Eligible for trial",
+                    configuration(PreviewConfiguration {
+                        plan: None,
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Free Plan",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedFree),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Zed Pro Trial Plan",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedProTrial),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Zed Pro Plan",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedPro),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: true,
+                    }),
+                ),
+                single_example(
+                    "Business Plan - Zed models enabled",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedBusiness),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: true,
+                        eligible_for_trial: false,
+                    }),
+                ),
+                single_example(
+                    "Business Plan - Zed models disabled",
+                    configuration(PreviewConfiguration {
+                        plan: Some(Plan::ZedBusiness),
+                        is_connected: true,
+                        is_zed_model_provider_enabled: false,
+                        eligible_for_trial: false,
+                    }),
+                ),
+            ])
+            .into_any_element()
     }
 }

@@ -2177,6 +2177,9 @@ mod tests {
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "tab_size": 37
             }
             "#
@@ -2195,6 +2198,9 @@ mod tests {
             r#"{ "editor.tabSize": 42 }"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "tab_size": 42,
                 "preferred_line_length": 99,
             }
@@ -2215,6 +2221,9 @@ mod tests {
             r#"{}"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "preferred_line_length": 99,
                 "tab_size": 42
             }
@@ -2241,6 +2250,9 @@ mod tests {
               "base_keymap": "VSCode",
               "tabs": {
                 "git_status": true
+              },
+              "minimap": {
+                "show": "always"
               }
             }
             "#
@@ -2265,7 +2277,10 @@ mod tests {
                 "sort_mode": "mixed",
                 "sort_order": "lower"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2282,6 +2297,9 @@ mod tests {
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "buffer_font_fallbacks": [
                 "Consolas",
                 "Courier New"
@@ -2305,7 +2323,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2324,7 +2345,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2343,7 +2367,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2362,7 +2389,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2385,7 +2415,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2406,6 +2439,9 @@ mod tests {
             .to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "hover_popover_hiding_delay": 500,
               "hover_popover_sticky": false
             }
