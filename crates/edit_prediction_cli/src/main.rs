@@ -1534,7 +1534,12 @@ fn main() {
                             context_source_filter.as_deref(),
                         );
                         if let Some(summary_path) = &args.summary_json {
-                            score::write_summary_json(&examples, summary_path)?;
+                            score::write_summary_json(
+                                &examples,
+                                summary_path,
+                                Some(args.related_context_limit * 3),
+                                context_source_filter.as_deref(),
+                            )?;
                         }
                     }
                     Command::Repair(args) => {
