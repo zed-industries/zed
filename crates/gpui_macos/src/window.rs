@@ -564,29 +564,24 @@ impl MacWindowState {
                 let minimize_x = traffic_light_position.x + button_width + button_padding;
                 let zoom_x = minimize_x + button_width + button_padding;
 
-                // SAFETY: These views are from the same AppKit titlebar hierarchy.
-                // The new titlebar frame and button origins are based on their current AppKit
-                // layout and the requested traffic-light inset.
-                unsafe {
-                    titlebar_container.setFrame(titlebar_frame);
-                    buttons.close.setFrameOrigin(Objc2NSPoint::new(
-                        traffic_light_position.x.to_f64(),
-                        traffic_light_position.y.to_f64(),
-                    ));
-                    buttons.minimize.setFrameOrigin(Objc2NSPoint::new(
-                        minimize_x.to_f64(),
-                        traffic_light_position.y.to_f64(),
-                    ));
-                    buttons.zoom.setFrameOrigin(Objc2NSPoint::new(
-                        zoom_x.to_f64(),
-                        traffic_light_position.y.to_f64(),
-                    ));
+                titlebar_container.setFrame(titlebar_frame);
+                buttons.close.setFrameOrigin(Objc2NSPoint::new(
+                    traffic_light_position.x.to_f64(),
+                    traffic_light_position.y.to_f64(),
+                ));
+                buttons.minimize.setFrameOrigin(Objc2NSPoint::new(
+                    minimize_x.to_f64(),
+                    traffic_light_position.y.to_f64(),
+                ));
+                buttons.zoom.setFrameOrigin(Objc2NSPoint::new(
+                    zoom_x.to_f64(),
+                    traffic_light_position.y.to_f64(),
+                ));
 
-                    titlebar_container.updateTrackingAreas();
-                    buttons.close.updateTrackingAreas();
-                    buttons.minimize.updateTrackingAreas();
-                    buttons.zoom.updateTrackingAreas();
-                }
+                titlebar_container.updateTrackingAreas();
+                buttons.close.updateTrackingAreas();
+                buttons.minimize.updateTrackingAreas();
+                buttons.zoom.updateTrackingAreas();
             }
         }
     }
@@ -637,20 +632,15 @@ impl MacWindowState {
                 return;
             };
 
-            // SAFETY: These views are from the same AppKit titlebar hierarchy that the
-            // stored frames were captured from. Restoring those frames puts the titlebar
-            // container and buttons back into AppKit's original layout.
-            unsafe {
-                buttons.close.setFrame(frames.close);
-                buttons.minimize.setFrame(frames.minimize);
-                buttons.zoom.setFrame(frames.zoom);
-                titlebar_container.setFrame(frames.titlebar);
+            buttons.close.setFrame(frames.close);
+            buttons.minimize.setFrame(frames.minimize);
+            buttons.zoom.setFrame(frames.zoom);
+            titlebar_container.setFrame(frames.titlebar);
 
-                titlebar_container.updateTrackingAreas();
-                buttons.close.updateTrackingAreas();
-                buttons.minimize.updateTrackingAreas();
-                buttons.zoom.updateTrackingAreas();
-            }
+            titlebar_container.updateTrackingAreas();
+            buttons.close.updateTrackingAreas();
+            buttons.minimize.updateTrackingAreas();
+            buttons.zoom.updateTrackingAreas();
         }
     }
 
