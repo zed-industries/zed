@@ -1015,7 +1015,7 @@
     },
   },
   {
-    "context": "GitCommit > Editor",
+    "context": "GitCommit > Editor && mode == auto_height",
     "bindings": {
       "escape": "menu::Cancel",
       "enter": "editor::Newline",

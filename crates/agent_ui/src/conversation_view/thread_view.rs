@@ -19,6 +19,7 @@ use crate::message_editor::SharedSessionCapabilities;
 
 use db::kvp::KeyValueStore;
 use gpui::List;
+use gpui::Stateful;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{
@@ -27,8 +28,8 @@ use language_model::{
 };
 use settings::update_settings_file;
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
-use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::notifications::NotificationId;
+use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::*;
 
@@ -575,6 +576,9 @@ pub struct ThreadView {
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
+    /// Tracks which context compaction entries (by entry index) have their
+    /// summary expanded.
+    expanded_compactions: HashSet<usize>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -660,6 +664,55 @@ fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Opti
 
     let full_path = file.full_path(cx).display().to_string();
     (!full_path.is_empty()).then_some(full_path)
+}
+
+pub fn open_markdown_in_workspace(
+    title: String,
+    markdown: String,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let markdown_language_task = workspace
+        .read(cx)
+        .app_state()
+        .languages
+        .language_for_name("Markdown");
+    let project = workspace.read(cx).project().clone();
+
+    window.spawn(cx, async move |cx| {
+        let markdown_language = markdown_language_task.await?;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.create_buffer(Some(markdown_language), false, cx)
+            })
+            .await?;
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(markdown, cx);
+            buffer.set_capability(language::Capability::ReadWrite, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.clone()));
+
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                    editor.set_breadcrumb_header(title);
+                    editor.disable_mouse_wheel_zoom();
+                    editor
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
+        })?;
+        anyhow::Ok(())
+    })
 }
 
 impl ThreadView {
@@ -890,6 +943,7 @@ impl ThreadView {
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
+            expanded_compactions: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -3437,6 +3491,113 @@ impl ThreadView {
             .into_any()
     }
 
+    fn render_context_compaction(
+        &self,
+        entry_ix: usize,
+        total_entries: usize,
+        compaction: &acp_thread::ContextCompaction,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let is_compacting = entry_ix + 1 == total_entries
+            && self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
+        let summary = compaction.summary.clone();
+        let summary_available = summary.is_some();
+        let is_expanded = summary_available && self.expanded_compactions.contains(&entry_ix);
+
+        let header = h_flex()
+            .id(("context-compaction", entry_ix))
+            .px_5()
+            .py_1()
+            .gap_2()
+            .w_full()
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Scissors)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(if is_compacting {
+                            "Compacting context…"
+                        } else {
+                            "Context compacted"
+                        })
+                        .size(LabelSize::Custom(self.tool_name_font_size()))
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(if is_compacting {
+                div().flex_1().into_any_element()
+            } else {
+                Divider::horizontal().into_any_element()
+            })
+            .child(
+                Disclosure::new(("compaction-disclosure", entry_ix), is_expanded)
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown),
+            )
+            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                this.toggle_compaction_expansion(entry_ix, cx);
+            }));
+
+        if let Some(summary) = summary.filter(|_| is_expanded) {
+            v_flex()
+                .w_full()
+                .child(header)
+                .child(
+                    div()
+                        .id(("compaction-summary", entry_ix))
+                        .mx_5()
+                        .pl_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(self.render_markdown(
+                            summary,
+                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                            cx,
+                        )),
+                )
+                .child(
+                    div()
+                        .mx_5()
+                        .mb_1()
+                        .pl_3p5()
+                        .pt_2()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(
+                            IconButton::new(
+                                ("compaction-summary-collapse", entry_ix),
+                                IconName::ChevronUp,
+                            )
+                            .full_width()
+                            .style(ButtonStyle::Outlined)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener(
+                                move |this, _event: &ClickEvent, _window, cx| {
+                                    this.expanded_compactions.remove(&entry_ix);
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                )
+                .into_any()
+        } else {
+            header.into_any()
+        }
+    }
+
+    fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        if !self.expanded_compactions.remove(&entry_ix) {
+            self.expanded_compactions.insert(entry_ix);
+        }
+        cx.notify();
+    }
+
     fn render_edits_summary(
         &self,
         changed_buffers: &[(Entity<Buffer>, Entity<BufferDiff>)],
@@ -5395,19 +5556,9 @@ impl ThreadView {
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
-            AgentThreadEntry::ContextCompaction => h_flex()
-                .id(("context_compaction", entry_ix))
-                .px_5()
-                .py_1()
-                .gap_2()
-                .child(Divider::horizontal())
-                .child(
-                    Label::new("Context Compacted")
-                        .size(LabelSize::Custom(self.tool_name_font_size()))
-                        .color(Color::Muted),
-                )
-                .child(Divider::horizontal())
-                .into_any(),
+            AgentThreadEntry::ContextCompaction(compaction) => {
+                self.render_context_compaction(entry_ix, total_entries, compaction, window, cx)
+            }
         };
 
         let is_subagent_output = self.is_subagent()
@@ -5912,12 +6063,6 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let markdown_language_task = workspace
-            .read(cx)
-            .app_state()
-            .languages
-            .language_for_name("Markdown");
-
         let thread = self.thread.read(cx);
         let thread_title = thread
             .title()
@@ -5925,41 +6070,7 @@ impl ThreadView {
             .to_string();
         let markdown = thread.to_markdown(cx);
 
-        let project = workspace.read(cx).project().clone();
-        window.spawn(cx, async move |cx| {
-            let markdown_language = markdown_language_task.await?;
-
-            let buffer = project
-                .update(cx, |project, cx| {
-                    project.create_buffer(Some(markdown_language), false, cx)
-                })
-                .await?;
-
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_text(markdown, cx);
-                buffer.set_capability(language::Capability::ReadWrite, cx);
-            });
-
-            workspace.update_in(cx, |workspace, window, cx| {
-                let buffer = cx
-                    .new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_title.clone()));
-
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                        editor.set_breadcrumb_header(thread_title);
-                        editor.disable_mouse_wheel_zoom();
-                        editor
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-            })?;
-            anyhow::Ok(())
-        })
+        open_markdown_in_workspace(thread_title, markdown, workspace, window, cx)
     }
 
     pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {
@@ -6518,7 +6629,7 @@ impl ThreadView {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
-                | AgentThreadEntry::ContextCompaction => {}
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
@@ -7419,34 +7530,46 @@ impl ThreadView {
         let is_open = !self
             .collapsed_sandbox_authorization_details
             .contains(tool_call_id);
-        let paths = details
-            .write_paths
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>();
+        let mut paths = details.write_paths.clone();
+        paths.sort();
 
         v_flex()
-            .p_2()
-            .gap_1()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
             .child(
                 h_flex()
                     .id(("sandbox-authorization-details-header", entry_ix))
-                    .gap_1()
-                    .pl_0p5()
-                    .rounded_xs()
+                    .p_1()
+                    .justify_between()
+                    .cursor_pointer()
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Write access")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("•")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{} {}",
+                                    paths.len(),
+                                    if paths.len() == 1 { "path" } else { "paths" }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
                     .child(
                         Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown),
-                    )
-                    .child(
-                        Label::new("Paths")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
                     )
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
@@ -7468,28 +7591,85 @@ impl ThreadView {
             .when(is_open, |this| {
                 this.child(
                     v_flex()
-                        .gap_0p5()
-                        .pl_5()
-                        .children(paths.into_iter().enumerate().map(|(path_ix, path)| {
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("•").size(LabelSize::Small).color(Color::Muted))
-                                .child(
-                                    div()
-                                        .id(format!(
-                                            "sandbox-authorization-path-{entry_ix}-{path_ix}"
-                                        ))
-                                        .w_full()
-                                        .max_w_full()
-                                        .overflow_x_scroll()
-                                        .child(
-                                            Label::new(path).buffer_font(cx).size(LabelSize::Small),
-                                        ),
-                                )
+                        .id(("sandbox-authorization-paths-list", entry_ix))
+                        .max_h_40()
+                        .overflow_y_scroll()
+                        .children(paths.iter().enumerate().map(|(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
                         })),
                 )
             })
             .into_any_element()
+    }
+
+    fn render_sandbox_authorization_path_row(
+        &self,
+        entry_ix: usize,
+        path_ix: usize,
+        path: &Path,
+        show_border: bool,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let display_path = path.display().to_string();
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| display_path.clone());
+        let parent_path = path.parent().and_then(|parent| {
+            let parent = parent.display().to_string();
+            (!parent.is_empty()).then_some(parent)
+        });
+        let path_icon = FileIcons::get_icon(path, cx)
+            .map(Icon::from_path)
+            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+            .unwrap_or_else(|| {
+                Icon::new(IconName::Folder)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+            });
+
+        h_flex()
+            .id(SharedString::from(format!(
+                "sandbox-authorization-path-{entry_ix}-{path_ix}"
+            )))
+            .min_w_0()
+            .p_1p5()
+            .gap_2()
+            .bg(cx.theme().colors().editor_background)
+            .when(show_border, |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .child(
+                h_flex()
+                    .id(SharedString::from(format!(
+                        "sandbox-authorization-path-name-{entry_ix}-{path_ix}"
+                    )))
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(path_icon)
+                    .child(
+                        Label::new(file_name)
+                            .size(LabelSize::XSmall)
+                            .buffer_font(cx),
+                    )
+                    .when_some(parent_path, |this, parent_path| {
+                        this.child(
+                            Label::new(format!(" {parent_path}"))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
+                        )
+                    })
+                    .tooltip(move |_window, cx| {
+                        Tooltip::with_meta("Requested write path", None, display_path.clone(), cx)
+                    }),
+            )
     }
 
     fn render_permission_buttons(
@@ -8226,12 +8406,24 @@ impl ThreadView {
             .project
             .upgrade()?
             .read(cx)
-            .find_project_path(&tool_call_location.path, cx)?;
+            .find_project_path(&tool_call_location.path, cx);
 
         let open_task = self
             .workspace
             .update(cx, |workspace, cx| {
-                workspace.open_path(project_path, None, true, window, cx)
+                if let Some(project_path) = project_path {
+                    workspace.open_path(project_path, None, true, window, cx)
+                } else {
+                    workspace.open_abs_path(
+                        tool_call_location.path.clone(),
+                        OpenOptions {
+                            focus: Some(true),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                }
             })
             .log_err()?;
         window

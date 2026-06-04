@@ -1,3 +1,6 @@
+-- WARNING: If you are modifying this file you MUST open a PR to the Cloud repository prior to merging any changes.
+-- If you are not Zed staff you MUST coordinate with a staff member to apply the schema migrations before this PR is merged.
+
 CREATE TABLE "users" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "github_login" VARCHAR,
