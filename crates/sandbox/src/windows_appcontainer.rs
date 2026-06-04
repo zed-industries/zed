@@ -245,6 +245,12 @@ struct SandboxPolicy {
     /// list, making the user profile writable for this command.
     #[serde(default)]
     allow_fs_write: bool,
+    /// Working directory to launch the command in. Set explicitly as
+    /// `lpCurrentDirectory` rather than inherited from the helper, which
+    /// runs in an arbitrary directory. `None` falls back to the helper's
+    /// current directory.
+    #[serde(default)]
+    working_directory: Option<String>,
 }
 
 /// RAII handle returned by [`wrap_invocation`]; keeps the on-disk policy
@@ -341,6 +347,9 @@ impl AppContainerProfile {
 /// * `permissions` - Sandbox relaxations requested for this command.
 /// * `profile_name` - The per-thread AppContainer profile name (see
 ///   [`profile_name_for_thread`]).
+/// * `working_directory` - Directory to launch the command in. Should be a
+///   granted root (e.g. a worktree) so the contained process can access
+///   it; passed through to the child's `lpCurrentDirectory`.
 pub fn wrap_invocation(
     program: &str,
     args: &[String],
@@ -348,6 +357,7 @@ pub fn wrap_invocation(
     readonly_directories: &[&Path],
     permissions: SandboxPermissions,
     profile_name: &str,
+    working_directory: Option<&Path>,
 ) -> Result<(String, Vec<String>, AppContainerLaunchConfig)> {
     let profile = AppContainerProfile::create_or_open(profile_name)?;
 
@@ -432,11 +442,20 @@ pub fn wrap_invocation(
         }
     }
 
+    // Canonicalize so the launch directory matches the form the grant was
+    // applied/registered under (BFS rules and DACL ACEs both use the
+    // canonicalized path), and so the kernel resolves the same directory
+    // the broker brokers.
+    let working_directory = working_directory
+        .map(canonicalize_or_original)
+        .map(|dir| dir.to_string_lossy().into_owned());
+
     let mut policy_file = NamedTempFile::new().context("failed to create sandbox policy file")?;
     let policy = SandboxPolicy {
         profile_name: profile.name,
         allow_network: permissions.allow_network,
         allow_fs_write: permissions.allow_fs_write,
+        working_directory,
     };
     serde_json::to_writer(&mut policy_file, &policy)
         .context("failed to write sandbox policy file")?;
@@ -740,7 +759,12 @@ fn run_helper(args: Vec<String>) -> Result<i32> {
         capabilities.push(derive_capability_sid(PROFILE_WRITE_CAPABILITY)?);
     }
 
-    spawn_in_container(&profile, &capabilities, &command)
+    spawn_in_container(
+        &profile,
+        &capabilities,
+        &command,
+        policy.working_directory.as_deref(),
+    )
 }
 
 /// Spawn `command` inside the AppContainer with the given capability SIDs
@@ -751,9 +775,15 @@ fn spawn_in_container(
     profile: &AppContainerProfile,
     capabilities: &[SidBuffer],
     command: &[String],
+    working_directory: Option<&str>,
 ) -> Result<i32> {
     let command_line = build_command_line(command);
     let mut command_line_wide: Vec<u16> = command_line.encode_utf16().chain([0]).collect();
+    // Null-terminated wide string for `lpCurrentDirectory`; kept alive for
+    // the duration of the `CreateProcessW` call.
+    let working_directory_wide: Option<Vec<u16>> = working_directory
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| dir.encode_utf16().chain([0]).collect());
     let mut capability_attributes: Vec<SID_AND_ATTRIBUTES> = capabilities
         .iter()
         .map(|capability| SID_AND_ATTRIBUTES {
@@ -817,6 +847,10 @@ fn spawn_in_container(
                 startup_info.StartupInfo.hStdError = stderr;
             }
 
+            let current_directory = working_directory_wide
+                .as_ref()
+                .map_or(PCWSTR::null(), |dir| PCWSTR(dir.as_ptr()));
+
             let mut process_information = PROCESS_INFORMATION::default();
             CreateProcessW(
                 PCWSTR::null(),
@@ -826,7 +860,7 @@ fn spawn_in_container(
                 true,
                 EXTENDED_STARTUPINFO_PRESENT,
                 None,
-                PCWSTR::null(),
+                current_directory,
                 &startup_info as *const STARTUPINFOEXW as *const STARTUPINFOW,
                 &mut process_information,
             )
@@ -1281,6 +1315,7 @@ mod tests {
             profile_name: profile_name_for_thread("round-trip"),
             allow_network: true,
             allow_fs_write: true,
+            working_directory: Some("D:\\src\\project".to_string()),
         };
         let serialized = serde_json::to_string(&policy).unwrap();
         let deserialized: SandboxPolicy = serde_json::from_str(&serialized).unwrap();

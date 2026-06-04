@@ -79,10 +79,12 @@ pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
     sandbox_wrap: Option<SandboxWrap>,
+    cwd: Option<&std::path::Path>,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let Some(sandbox_wrap) = sandbox_wrap else {
         return Ok((program, args, None));
     };
+    let _ = cwd;
 
     #[cfg(target_os = "macos")]
     {
@@ -136,6 +138,7 @@ pub(crate) fn apply_sandbox_wrap(
                 &readable,
                 permissions,
                 profile_name,
+                cwd,
             )?;
         Ok((
             new_program,

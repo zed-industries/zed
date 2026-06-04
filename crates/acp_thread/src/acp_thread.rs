@@ -3193,9 +3193,15 @@ impl AcpThread {
                 // DACL through the whole subtree, which can take tens of
                 // seconds on large trees), so it must not run on the
                 // foreground thread.
+                let sandbox_cwd = cwd.clone();
                 let (task_command, task_args, sandbox_config) = cx
                     .background_spawn(async move {
-                        apply_sandbox_wrap(task_command, task_args, sandbox_wrap)
+                        apply_sandbox_wrap(
+                            task_command,
+                            task_args,
+                            sandbox_wrap,
+                            sandbox_cwd.as_deref(),
+                        )
                     })
                     .await?;
                 let terminal = project
