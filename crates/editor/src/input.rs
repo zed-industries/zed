@@ -78,7 +78,9 @@ impl Editor {
 
         self.unfold_buffers_with_selections(cx);
 
-        // Capture the text the user is about to type over
+        // Capture the text the user is about to type over. The anchor is created
+        // against the pre-edit snapshot so it tracks correctly across the edit
+        // (the edited range may differ from the selection and shrink the buffer).
         let overtyped_selection = (!text.is_empty())
             .then(|| {
                 let newest = self
@@ -90,7 +92,7 @@ impl Editor {
                         .text_for_range(newest.start..newest.end)
                         .collect::<String>()
                         .into();
-                    (newest.start, overtyped_text)
+                    (snapshot.anchor_before(newest.start), overtyped_text)
                 })
             })
             .flatten();
@@ -544,8 +546,7 @@ impl Editor {
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
         });
 
-        if let Some((start_offset, overtyped_text)) = overtyped_selection {
-            let anchor = self.buffer.read(cx).read(cx).anchor_before(start_offset);
+        if let Some((anchor, overtyped_text)) = overtyped_selection {
             self.selection_overtyped = Some((anchor, overtyped_text));
         }
     }

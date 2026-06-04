@@ -14031,6 +14031,21 @@ async fn test_snippet_completion_uses_overtyped_selection(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_overtyping_shrinking_multiple_selections(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Typing a single character over several selections shrinks the buffer below
+    // the newest selection's original offset. Capturing the overtyped text for
+    // `TM_SELECTED_TEXT` must use a tracking anchor rather than resolving the
+    // stale pre-edit offset against the post-edit snapshot, which used to panic.
+    cx.set_state("«aaaaaˇ» «bbbbbˇ»");
+    cx.simulate_input("x");
+    cx.assert_editor_state("xˇ xˇ");
+}
+
+#[gpui::test]
 async fn test_document_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
