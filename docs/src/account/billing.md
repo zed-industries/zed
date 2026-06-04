@@ -7,7 +7,7 @@ description: Manage billing for your Zed subscription, including payment methods
 
 Zed uses Stripe for payment processing. All plans that require payment do so via credit card or other supported payment methods. Individual Pro subscriptions also use Orb for invoicing and metering.
 
-For details on what's included in each plan and how token usage works, see [Plans & Pricing](./plans-and-usage.md).
+For details on what's included in each plan and how token usage works, see [Plans & Pricing](./plans-and-pricing.md).
 
 ## Individual billing {#individual}
 
@@ -22,13 +22,13 @@ Zed is billed on a monthly basis based on the date you initially subscribe. You'
 
 ### Zed Pro threshold billing {#threshold-billing}
 
-For individual Zed Pro subscriptions, Zed uses threshold billing to ensure timely payment collection. Threshold billing controls when already-allowed token usage is invoiced during the month; your [monthly spend limit](./plans-and-usage.md#usage-spend-limits) still controls when hosted model usage stops.
+For individual Zed Pro subscriptions, Zed uses threshold billing to ensure timely payment collection. Threshold billing controls when already-allowed token usage is invoiced during the month; your [monthly spend limit](./plans-and-pricing.md#usage-spend-limits) still controls when hosted model usage stops.
 
 Threshold invoices start at $10 of pre-tax incremental token spend. For higher token usage, Zed may automatically raise your pre-tax invoicing threshold in $10 increments, up to $100, so you receive fewer mid-cycle invoices. Once raised, the invoicing threshold is not automatically lowered during the same subscription.
 
 For Zed Business billing, see [Organization billing](#organization).
 
-For example:
+For example,
 
 - You subscribe on February 1. Your first invoice is $10.
 - You use $12 of incremental tokens in the month of February, with the first $10 spent on February 15. You'll receive an invoice for $10 on February 15.
@@ -56,7 +56,7 @@ Use the Billing Manager role for someone who needs billing access but does not n
 
 ### AI usage {#ai-usage}
 
-AI usage across the organization is metered on a token basis at the same rates as individual Pro subscriptions. See [Plans & Pricing](./plans-and-usage.md#usage) for rate details.
+AI usage across the organization is metered on a token basis at the same rates as individual Pro subscriptions. See [Plans & Pricing](./plans-and-pricing.md#usage) for rate details.
 
 Administrators can set an org-wide AI spend limit from the Data & Privacy page in the organization dashboard. The limit starts at $0, so it must be increased before members can use any hosted models. Once the limit is reached, members will see an error when attempting to use hosted models.
 

@@ -199,6 +199,9 @@ fn open_mention_uri(
         } => {
             open_skill_file(workspace, skill_file_path, window, cx);
         }
+        MentionUri::Rule { name, .. } => {
+            open_migrated_rule(workspace, &name, window, cx);
+        }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
@@ -211,49 +214,70 @@ fn open_mention_uri(
     });
 }
 
+/// Notify the user that rules became skills and open the skill the rule was
+/// migrated into. Migrated skills live in the local global skills dir, so the
+/// file is always resolved against the local filesystem (local, SSH, or
+/// collab). Does nothing else when no matching skill exists.
+pub(crate) fn open_migrated_rule(
+    workspace: &mut Workspace,
+    name: &str,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    struct RulesMigratedToSkillsToast;
+    workspace.show_toast(
+        workspace::Toast::new(
+            workspace::notifications::NotificationId::unique::<RulesMigratedToSkillsToast>(),
+            "Rules have been migrated to Skills.",
+        )
+        .on_click("View docs", |_, cx| {
+            cx.open_url("https://zed.dev/docs/ai/skills");
+        })
+        .autohide(),
+        cx,
+    );
+
+    let Some(slug) = agent_skills::slugify_skill_name(name) else {
+        return;
+    };
+    let skill_file_path = agent_skills::global_skills_dir()
+        .join(slug)
+        .join(agent_skills::SKILL_FILE_NAME);
+
+    if workspace.project().read(cx).is_local() {
+        // Local project: open the editable on-disk file if it exists.
+        if skill_file_path.exists() {
+            open_skill_file(workspace, skill_file_path, window, cx);
+        }
+        return;
+    }
+
+    // Remote/collab: `open_abs_path` targets the remote project, where this
+    // local file doesn't exist, so read it locally and show it read-only.
+    let fs = workspace.app_state().fs.clone();
+    cx.spawn_in(window, async move |workspace, cx| {
+        let Ok(content) = fs.load(&skill_file_path).await else {
+            return Ok(()); // No readable migrated skill: do nothing.
+        };
+        let title = skill_content_buffer_title(&skill_file_path);
+        workspace.update_in(cx, |workspace, window, cx| {
+            open_skill_content_buffer(workspace, title, content, window, cx);
+        })
+    })
+    .detach_and_log_err(cx);
+}
+
 fn open_skill_file(
     workspace: &mut Workspace,
     skill_file_path: PathBuf,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    // Built-in skills have synthetic paths that don't exist on disk.
-    // Open a read-only buffer with the embedded content instead.
-    //
-    // The buffer is intentionally not registered with the project's buffer
-    // store: it has no on-disk backing, isn't searchable, and `Project::
-    // create_local_buffer` panics for remote projects (SSH/collab), which
-    // would crash Zed if a user clicked a built-in skill mention while
-    // connected to a remote project.
+    // Built-in skills have synthetic paths with no on-disk file, so show their
+    // embedded content in a local buffer instead.
     if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
-        let languages = workspace.project().read(cx).languages().clone();
-        let buffer = cx.new(|cx| Buffer::local(content, cx));
-        // Set markdown highlighting asynchronously — the buffer
-        // opens instantly and the highlighting appears once loaded.
-        cx.spawn({
-            let buffer = buffer.clone();
-            async move |_, cx| {
-                if let Ok(markdown) = languages.language_for_name("Markdown").await {
-                    buffer.update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
-                }
-            }
-        })
-        .detach();
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::for_buffer(buffer, None, window, cx);
-            editor.set_read_only(true);
-            let title = skill_file_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "built-in skill".into());
-            editor
-                .buffer()
-                .update(cx, |buffer, cx| buffer.set_title(title, cx));
-            editor
-        });
-        let pane = workspace.active_pane().clone();
-        workspace.add_item(pane, Box::new(editor), None, true, true, window, cx);
+        let title = skill_content_buffer_title(&skill_file_path);
+        open_skill_content_buffer(workspace, title, content, window, cx);
         return;
     }
 
@@ -268,6 +292,51 @@ fn open_skill_file(
             cx,
         )
         .detach_and_log_err(cx);
+}
+
+fn skill_content_buffer_title(skill_file_path: &std::path::Path) -> String {
+    skill_file_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "skill".into())
+}
+
+/// Open `content` as a local, read-only Markdown buffer, for skills with no
+/// openable file in the active project (built-in skills, and migrated rules on
+/// remote/collab projects). It's deliberately not registered with the project's
+/// buffer store: that keeps it out of search and avoids
+/// `Project::create_local_buffer` panicking on remote projects.
+fn open_skill_content_buffer(
+    workspace: &mut Workspace,
+    title: String,
+    content: impl Into<String>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let languages = workspace.project().read(cx).languages().clone();
+    let buffer = cx.new(|cx| Buffer::local(content, cx));
+    // Set markdown highlighting asynchronously — the buffer
+    // opens instantly and the highlighting appears once loaded.
+    cx.spawn({
+        let buffer = buffer.clone();
+        async move |_, cx| {
+            if let Ok(markdown) = languages.language_for_name("Markdown").await {
+                buffer.update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
+            }
+        }
+    })
+    .detach();
+    let editor = cx.new(|cx| {
+        let mut editor = Editor::for_buffer(buffer, None, window, cx);
+        editor.set_read_only(true);
+        editor
+            .buffer()
+            .update(cx, |buffer, cx| buffer.set_title(title, cx));
+        editor
+    });
+    let pane = workspace.active_pane().clone();
+    workspace.add_item(pane, Box::new(editor), None, true, true, window, cx);
 }
 
 fn open_file(
