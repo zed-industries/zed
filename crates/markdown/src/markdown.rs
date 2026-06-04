@@ -1,4 +1,5 @@
 pub mod html;
+mod math;
 mod mermaid;
 pub mod parser;
 mod path_range;
@@ -11,6 +12,11 @@ use gpui::UnderlineStyle;
 use language::LanguageName;
 
 use log::Level;
+use math::{
+    MathLayoutMetrics, MathState, ParsedMathExpression, ParsedMathExpressionContents,
+    extract_math_expressions, math_layout_metrics, paint_math_expression_at,
+    render_math_expression,
+};
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
 };
@@ -33,8 +39,8 @@ use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
+    ImageFormat, ImageSource, InlineReplacement, KeyContext, Length, MouseButton, MouseDownEvent,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
     TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
@@ -382,6 +388,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    math_state: MathState,
     _mermaid_theme_subscription: Option<Subscription>,
     mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
@@ -400,6 +407,7 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
+    pub render_math: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -573,6 +581,7 @@ impl Markdown {
             language_registry,
             fallback_code_block_language,
             options,
+            math_state: MathState::default(),
             mermaid_state: MermaidState::default(),
             _mermaid_theme_subscription: theme_subscription,
             mermaid_showing_code: HashSet::default(),
@@ -880,6 +889,7 @@ impl Markdown {
             self.active_root_block = None;
             self.images_by_source_offset.clear();
             self.mermaid_state.clear();
+            self.math_state.clear();
             cx.notify();
             cx.refresh_windows();
             return;
@@ -915,6 +925,7 @@ impl Markdown {
                         html_blocks: BTreeMap::default(),
                         metadata_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
+                        math_expressions: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
                     },
@@ -941,6 +952,7 @@ impl Markdown {
             } else {
                 BTreeMap::default()
             };
+            let math_expressions = extract_math_expressions(&source, &events);
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
@@ -1003,6 +1015,7 @@ impl Markdown {
                     html_blocks,
                     metadata_blocks,
                     mermaid_diagrams,
+                    math_expressions,
                     heading_slugs,
                     footnote_definitions,
                 },
@@ -1029,6 +1042,12 @@ impl Markdown {
                 } else {
                     this.mermaid_state.clear();
                     this.mermaid_showing_code.clear();
+                }
+                if this.options.render_math {
+                    let parsed_markdown = this.parsed_markdown.clone();
+                    this.math_state.update(&parsed_markdown, cx);
+                } else {
+                    this.math_state.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1132,6 +1151,7 @@ pub struct ParsedMarkdown {
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+    pub(crate) math_expressions: BTreeMap<usize, ParsedMathExpression>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
 }
@@ -1594,6 +1614,31 @@ impl MarkdownElement {
         builder.push_div(div().flex_1().w_0(), range, markdown_end);
     }
 
+    fn push_markdown_display_math(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        range: Range<usize>,
+        expr: &ParsedMathExpression,
+        math_state: &MathState,
+        window: &Window,
+    ) {
+        let font_size = self
+            .style
+            .base_text_style
+            .font_size
+            .to_pixels(window.rem_size());
+
+        let math = render_math_expression(expr, math_state, font_size, &self.style);
+        builder.push_sourced_element(
+            range,
+            div()
+                .w_full()
+                .my_3()
+                .child(div().flex().justify_center().child(math))
+                .into_any_element(),
+        );
+    }
+
     fn pop_markdown_list_item(&self, builder: &mut MarkdownElementBuilder) {
         builder.pop_div();
         builder.pop_div();
@@ -1962,8 +2007,17 @@ impl Element for MarkdownElement {
             &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
+            window.rem_size(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_mermaid_diagrams,
+            mermaid_state,
+            render_math,
+            math_state,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -1971,6 +2025,8 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.options.render_math,
+                markdown.math_state.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -2635,6 +2691,49 @@ impl Element for MarkdownElement {
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
                 }
+
+                MarkdownEvent::InlineMath => {
+                    if render_math {
+                        if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
+                            let font_size =
+                                builder.text_style().font_size.to_pixels(window.rem_size());
+                            if !builder.push_inline_math(
+                                range.clone(),
+                                expr,
+                                &math_state,
+                                font_size,
+                            ) {
+                                builder.push_text(
+                                    &parsed_markdown.source[range.clone()],
+                                    range.clone(),
+                                );
+                            }
+                        } else {
+                            builder
+                                .push_text(&parsed_markdown.source[range.clone()], range.clone());
+                        }
+                    } else {
+                        builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    }
+                }
+                MarkdownEvent::DisplayMath => {
+                    if render_math {
+                        if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
+                            self.push_markdown_display_math(
+                                &mut builder,
+                                range.clone(),
+                                expr,
+                                &math_state,
+                                window,
+                            );
+                        } else {
+                            builder
+                                .push_text(&parsed_markdown.source[range.clone()], range.clone());
+                        }
+                    } else {
+                        builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    }
+                }
             }
         }
         if self.style.code_block_overflow_x_scroll {
@@ -2705,6 +2804,10 @@ impl Element for MarkdownElement {
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
+        let math_state = self.markdown.read(cx).math_state.clone();
+        rendered_markdown
+            .text
+            .paint_inline_math(&math_state, window);
         self.paint_search_highlights(&rendered_markdown.text, window, cx);
         self.paint_selection(&rendered_markdown.text, window, cx);
     }
@@ -2984,13 +3087,42 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+    rem_size: Pixels,
 }
+
+const INLINE_OBJECT_REPLACEMENT: char = '\u{fffc}';
 
 #[derive(Default)]
 struct PendingLine {
     text: String,
     runs: Vec<TextRun>,
     source_mappings: Vec<SourceMapping>,
+    inline_objects: Vec<PendingInlineObject>,
+}
+
+#[derive(Clone)]
+struct PendingInlineObject {
+    rendered_range: Range<usize>,
+    kind: InlineObjectKind,
+    metrics: MathLayoutMetrics,
+    font_size: Pixels,
+    default_color: Hsla,
+}
+
+#[derive(Clone)]
+enum InlineObjectKind {
+    Math {
+        expression: ParsedMathExpressionContents,
+    },
+}
+
+#[derive(Clone)]
+struct RenderedInlineObject {
+    rendered_range: Range<usize>,
+    kind: InlineObjectKind,
+    metrics: MathLayoutMetrics,
+    font_size: Pixels,
+    default_color: Hsla,
 }
 
 struct ListStackEntry {
@@ -3002,6 +3134,7 @@ impl MarkdownElementBuilder {
         container_style: &StyleRefinement,
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
+        rem_size: Pixels,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3023,6 +3156,7 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
+            rem_size,
         }
     }
 
@@ -3183,6 +3317,42 @@ impl MarkdownElementBuilder {
         });
     }
 
+    fn push_inline_math(
+        &mut self,
+        source_range: Range<usize>,
+        expr: &ParsedMathExpression,
+        math_state: &MathState,
+        font_size: Pixels,
+    ) -> bool {
+        let Some(metrics) = math_layout_metrics(expr, math_state, font_size) else {
+            return false;
+        };
+
+        let rendered_start = self.pending_line.text.len();
+        self.pending_line.source_mappings.push(SourceMapping {
+            rendered_index: rendered_start,
+            source_index: source_range.start,
+        });
+        self.pending_line.text.push(INLINE_OBJECT_REPLACEMENT);
+        let rendered_end = self.pending_line.text.len();
+        let mut placeholder_style = self.text_style();
+        placeholder_style.color = Hsla::transparent_black();
+        self.pending_line
+            .runs
+            .push(placeholder_style.to_run(rendered_end - rendered_start));
+        self.pending_line.inline_objects.push(PendingInlineObject {
+            rendered_range: rendered_start..rendered_end,
+            kind: InlineObjectKind::Math {
+                expression: expr.contents.clone(),
+            },
+            metrics,
+            font_size,
+            default_color: self.text_style().color,
+        });
+        self.current_source_index = source_range.end;
+        true
+    }
+
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
@@ -3308,6 +3478,7 @@ impl MarkdownElementBuilder {
             source_end: source_range.end,
             language: None,
             text_align: TextAlign::Left,
+            inline_objects: Vec::new(),
         });
         div()
             .absolute()
@@ -3325,15 +3496,93 @@ impl MarkdownElementBuilder {
             return;
         }
 
-        let text = StyledText::new(line.text).with_runs(line.runs);
+        let inline_replacements = line
+            .inline_objects
+            .iter()
+            .map(|object| InlineReplacement {
+                range: object.rendered_range.clone(),
+                width: object.metrics.width,
+                ascent: object.metrics.ascent,
+                descent: object.metrics.descent,
+            })
+            .collect::<Vec<_>>();
+
+        // If the line carries an inline math expression that would clip when
+        // baseline-aligned with the surrounding text, grow the line height to
+        // fit it. The math itself is painted at its natural size in
+        // `paint_inline_math`; here we only ensure the line is tall enough.
+        let line_height_override = {
+            let max_math_ascent = line
+                .inline_objects
+                .iter()
+                .map(|object| object.metrics.ascent)
+                .fold(Pixels::ZERO, Pixels::max);
+            let max_math_descent = line
+                .inline_objects
+                .iter()
+                .map(|object| object.metrics.descent)
+                .fold(Pixels::ZERO, Pixels::max);
+            if max_math_ascent > Pixels::ZERO || max_math_descent > Pixels::ZERO {
+                let text_style = self.text_style();
+                let font_size = text_style.font_size.to_pixels(self.rem_size);
+                let default_line_height = text_style
+                    .line_height
+                    .to_pixels(font_size.into(), self.rem_size);
+                // We don't know the exact text ascent/descent at build time, so
+                // approximate the typical 80/20 split. The actual values come
+                // from the text layout at paint time.
+                let text_ascent_approx = font_size * 0.8;
+                let text_descent_approx = font_size * 0.2;
+                // Required line height for the math baseline to align with the
+                // text baseline without clipping at the top or bottom.
+                let top_needed = max_math_ascent * 2. - text_ascent_approx + text_descent_approx;
+                let bottom_needed =
+                    text_ascent_approx - text_descent_approx + max_math_descent * 2.;
+                let padding = font_size * 0.15;
+                let required = top_needed.max(bottom_needed) + padding;
+                if required > default_line_height {
+                    Some(required)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        let text = StyledText::new(line.text)
+            .with_runs(line.runs)
+            .with_inline_replacements(inline_replacements);
+        let layout = text.layout().clone();
+        let text_any = text.into_any();
+        let rendered_inline_objects = line
+            .inline_objects
+            .into_iter()
+            .map(|object| RenderedInlineObject {
+                rendered_range: object.rendered_range,
+                kind: object.kind,
+                metrics: object.metrics,
+                font_size: object.font_size,
+                default_color: object.default_color,
+            })
+            .collect();
         self.rendered_lines.push(RenderedLine {
-            layout: text.layout().clone(),
+            layout,
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
+            inline_objects: rendered_inline_objects,
         });
-        self.div_stack.last_mut().unwrap().extend([text.into_any()]);
+        let element: AnyElement = if let Some(line_height) = line_height_override {
+            div()
+                .line_height(line_height)
+                .child(text_any)
+                .into_any_element()
+        } else {
+            text_any
+        };
+        self.div_stack.last_mut().unwrap().extend([element]);
     }
 
     fn build(mut self) -> RenderedMarkdown {
@@ -3356,6 +3605,7 @@ struct RenderedLine {
     source_end: usize,
     language: Option<Arc<Language>>,
     text_align: TextAlign,
+    inline_objects: Vec<RenderedInlineObject>,
 }
 
 impl RenderedLine {
@@ -3435,6 +3685,71 @@ impl RenderedLine {
             TextAlign::Center => ((available_width - segment_width) / 2.).max(px(0.)),
             TextAlign::Right => (available_width - segment_width).max(px(0.)),
         }
+    }
+
+    fn bounds_for_rendered_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
+        let mut all_bounds = Vec::new();
+        let layout = &self.layout;
+        let line_bounds = layout.bounds();
+        let line_height = layout.line_height();
+        let rendered_start = range.start;
+        let rendered_end = range.end;
+
+        let mut wrapped_line_start = 0;
+        let mut row_top = line_bounds.top();
+
+        while wrapped_line_start < rendered_end {
+            let Some(wrapped_line) = layout.line_layout_for_index(wrapped_line_start) else {
+                break;
+            };
+
+            let unwrapped_layout = &wrapped_line.unwrapped_layout;
+            let wrapped_line_end = wrapped_line_start + wrapped_line.len();
+
+            let row_ends = wrapped_line
+                .wrap_boundaries()
+                .iter()
+                .map(|wrap_boundary| {
+                    let glyph =
+                        &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix];
+                    (wrapped_line_start + glyph.index, glyph.position.x)
+                })
+                .chain([(wrapped_line_end, unwrapped_layout.width)]);
+
+            let mut row_start = wrapped_line_start;
+            let mut row_start_x = Pixels::ZERO;
+
+            for (row_end, row_end_x) in row_ends {
+                let selection_start = rendered_start.max(row_start);
+                let selection_end = rendered_end.min(row_end);
+
+                if selection_start < selection_end {
+                    let alignment_offset = self.alignment_offset_for_segment(
+                        line_bounds.size.width,
+                        row_start_x,
+                        row_end_x,
+                    );
+                    let x_for_index = |index| {
+                        line_bounds.left()
+                            + alignment_offset
+                            + unwrapped_layout.x_for_index(index - wrapped_line_start)
+                            - row_start_x
+                    };
+                    all_bounds.push(Bounds::from_corners(
+                        point(x_for_index(selection_start), row_top),
+                        point(x_for_index(selection_end), row_top + line_height),
+                    ));
+                }
+
+                row_start = row_end;
+                row_start_x = row_end_x;
+                row_top += line_height;
+            }
+
+            wrapped_line_start = wrapped_line_end + 1;
+        }
+
+        all_bounds
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
@@ -3559,6 +3874,46 @@ struct RenderedFootnoteRef {
 }
 
 impl RenderedText {
+    fn paint_inline_math(&self, math_state: &MathState, window: &mut Window) {
+        for line in self.lines.iter() {
+            for inline_object in &line.inline_objects {
+                let InlineObjectKind::Math { expression } = &inline_object.kind;
+                let mut bounds =
+                    line.bounds_for_rendered_range(inline_object.rendered_range.clone());
+                for mut bounds in bounds.drain(..) {
+                    let Some(wrapped_line) = line
+                        .layout
+                        .line_layout_for_index(inline_object.rendered_range.start)
+                    else {
+                        continue;
+                    };
+                    let line_height = line.layout.line_height();
+                    let text_ascent = wrapped_line.ascent();
+                    let text_descent = wrapped_line.descent();
+                    let math_ascent = inline_object.metrics.ascent;
+                    let math_descent = inline_object.metrics.descent;
+                    // Align the math's baseline with the surrounding text's
+                    // baseline (the conventional inline-math alignment). The
+                    // line height is grown in `flush_text` so the math still
+                    // fits when the expression is taller than the text.
+                    let baseline_y = bounds.top()
+                        + (line_height - text_ascent - text_descent) / 2.
+                        + text_ascent;
+                    bounds.origin.y = baseline_y - math_ascent;
+                    bounds.size.height = math_ascent + math_descent;
+                    paint_math_expression_at(
+                        expression,
+                        math_state,
+                        bounds,
+                        inline_object.font_size,
+                        inline_object.default_color,
+                        window,
+                    );
+                }
+            }
+        }
+    }
+
     fn bounds_for_source_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
         let mut all_bounds = Vec::new();
 

@@ -224,6 +224,7 @@ impl MarkdownPreviewView {
                         render_mermaid_diagrams: true,
                         parse_heading_slugs: true,
                         render_metadata_blocks: true,
+                        render_math: true,
                         ..Default::default()
                     },
                     cx,
