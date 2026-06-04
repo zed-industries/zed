@@ -709,6 +709,8 @@ impl LanguageModel for OpenCodeLanguageModel {
                     .model
                     .supported_reasoning_effort_levels()
                     .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
+                // `provider_id` (3rd arg) is only used to match native-compaction
+                // items on replay; keep it equal to this provider's `provider_id()`.
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),

@@ -396,6 +396,8 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             }
             .boxed()
         } else {
+            // `provider_id` (3rd arg) is only used to match native-compaction
+            // items on replay; keep it equal to this provider's `provider_id()`.
             let request = into_open_ai_response(
                 request,
                 &self.model.name,

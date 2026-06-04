@@ -81,12 +81,6 @@ pub enum ResponseInput {
     Raw(Value),
 }
 
-impl From<ResponseInputItem> for ResponseInput {
-    fn from(item: ResponseInputItem) -> Self {
-        Self::Item(item)
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseInputItem {
