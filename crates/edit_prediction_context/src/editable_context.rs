@@ -11,7 +11,10 @@ use text::Anchor;
 use util::{paths::PathStyle, rel_path::RelPath};
 use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
-use crate::git_log_context::build_git_log_index;
+use crate::{
+    bm25_context::{Bm25ContextCandidate, collect_bm25_context},
+    git_log_context::build_git_log_index,
+};
 
 /// This module contains collectors for editable context:
 /// excerpts or full files that are likely to be edited.
@@ -69,8 +72,27 @@ pub async fn collect_editable_context(
         collect_edit_history_file_context(&mut ranges_by_buffer, &edit_history, cx);
     }
     if context_sources.contains(&ContextSource::GitLog) {
-        collect_git_log_context(&mut ranges_by_buffer, project.clone(), active_buffer, cx).await;
+        collect_git_log_context(
+            &mut ranges_by_buffer,
+            project.clone(),
+            active_buffer.clone(),
+            cx,
+        )
+        .await;
     }
+
+    if context_sources.contains(&ContextSource::Bm25) {
+        collect_bm25_context_ranges(
+            &mut ranges_by_buffer,
+            project.clone(),
+            active_buffer,
+            cursor_position,
+            &edit_history,
+            cx,
+        )
+        .await;
+    }
+
     if context_sources.contains(&ContextSource::OracleFile) {
         collect_oracle_file_context(&mut ranges_by_buffer, project.clone(), oracle_paths, cx).await;
     }
@@ -296,6 +318,88 @@ fn collect_edit_history_file_context(
         );
         index += 1;
     }
+}
+
+async fn collect_bm25_context_ranges(
+    ranges_by_buffer: &mut RangesByBuffer,
+    project: Entity<Project>,
+    active_buffer: Entity<Buffer>,
+    cursor_position: Anchor,
+    edit_history: &[EditHistoryContextEntry],
+    cx: &mut AsyncApp,
+) {
+    let next_order = next_context_order(ranges_by_buffer);
+    let candidates = collect_bm25_context(
+        project.clone(),
+        active_buffer,
+        cursor_position,
+        edit_history,
+        next_order,
+        cx,
+    )
+    .await;
+
+    for candidate in candidates {
+        collect_bm25_candidate_context(ranges_by_buffer, &project, candidate, cx).await;
+    }
+}
+
+async fn collect_bm25_candidate_context(
+    ranges_by_buffer: &mut RangesByBuffer,
+    project: &Entity<Project>,
+    candidate: Bm25ContextCandidate,
+    cx: &mut AsyncApp,
+) {
+    let buffer = match open_buffer_for_path(project, &candidate.path, cx).await {
+        Ok(Some(buffer)) => buffer,
+        Ok(None) => {
+            log::debug!(
+                "failed to find BM25 context path: {}",
+                candidate.path.display()
+            );
+            return;
+        }
+        Err(error) => {
+            log::debug!(
+                "failed to open BM25 context path {}: {error:#}",
+                candidate.path.display()
+            );
+            return;
+        }
+    };
+
+    let Some(range) = buffer.read_with(cx, |buffer, _cx| {
+        anchor_range_for_row_range(&buffer.snapshot(), candidate.row_range.clone())
+    }) else {
+        return;
+    };
+
+    push_context_range(
+        ranges_by_buffer,
+        buffer,
+        range,
+        candidate.order,
+        ContextSource::Bm25,
+    );
+}
+
+fn anchor_range_for_row_range(
+    snapshot: &BufferSnapshot,
+    row_range: Range<u32>,
+) -> Option<Range<Anchor>> {
+    if row_range.start >= row_range.end || row_range.start > snapshot.max_point().row {
+        return None;
+    }
+
+    let max_point = snapshot.max_point();
+    let start = snapshot.anchor_before(Point::new(row_range.start, 0));
+    let end_point = if row_range.end > max_point.row {
+        max_point
+    } else {
+        Point::new(row_range.end, 0)
+    };
+    let end = snapshot.anchor_after(end_point);
+    Some(start..end)
 }
 
 async fn collect_oracle_file_context(
@@ -611,6 +715,7 @@ fn context_source_order(context_source: ContextSource) -> usize {
         ContextSource::EditHistory => 3,
         ContextSource::EditHistoryFile => 4,
         ContextSource::GitLog => 5,
-        ContextSource::OracleFile => 6,
+        ContextSource::Bm25 => 6,
+        ContextSource::OracleFile => 7,
     }
 }
