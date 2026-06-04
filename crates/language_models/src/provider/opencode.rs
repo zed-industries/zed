@@ -488,15 +488,15 @@ impl OpenCodeLanguageModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request = open_ai::responses::stream_response(
+            let response = open_ai::responses::stream_response(
                 http_client.as_ref(),
                 &provider_name,
                 &api_url,
                 &api_key,
-                request,
+                &request,
                 &extra_headers,
-            );
-            let response = request.await?;
+            )
+            .await?;
             Ok(response)
         });
 

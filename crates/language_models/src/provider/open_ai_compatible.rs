@@ -287,15 +287,15 @@ impl OpenAiCompatibleLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_response(
+            let response = stream_response(
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
                 &api_key,
-                request,
+                &request,
                 &extra_headers,
-            );
-            let response = request.await?;
+            )
+            .await?;
             Ok(response)
         });
 

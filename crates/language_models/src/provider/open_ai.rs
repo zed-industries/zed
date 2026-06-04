@@ -13,7 +13,7 @@ use language_model::{
 };
 use menu;
 use open_ai::{
-    OPEN_AI_API_URL, ResponseStreamEvent,
+    OPEN_AI_API_URL, RequestError, ResponseStreamEvent,
     responses::{
         ContextManagement, Request as ResponseRequest, StreamEvent as ResponsesStreamEvent,
         stream_response,
@@ -21,7 +21,8 @@ use open_ai::{
     stream_completion,
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
-use std::sync::{Arc, LazyLock};
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock, RwLock};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
@@ -243,6 +244,85 @@ pub(crate) fn native_compaction_threshold(
     max_token_count.saturating_sub(reserved).max(1)
 }
 
+/// Process-wide set of model telemetry ids that returned a 400
+/// `unsupported_parameter` for `compact_threshold`. OpenAI publishes no static
+/// per-model capability list, so we learn it at runtime: once a model lands
+/// here we stop requesting native compaction for it and fall back to summary
+/// compaction.
+static NATIVE_COMPACTION_UNSUPPORTED: LazyLock<RwLock<HashSet<String>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
+
+/// Whether a model previously rejected native compaction at runtime.
+pub(crate) fn native_compaction_unsupported(model_telemetry_id: &str) -> bool {
+    NATIVE_COMPACTION_UNSUPPORTED
+        .read()
+        .is_ok_and(|set| set.contains(model_telemetry_id))
+}
+
+fn mark_native_compaction_unsupported(model_telemetry_id: &str) {
+    if let Ok(mut set) = NATIVE_COMPACTION_UNSUPPORTED.write() {
+        set.insert(model_telemetry_id.to_string());
+    }
+}
+
+fn is_unsupported_compaction_error(error: &RequestError) -> bool {
+    let RequestError::HttpResponseError {
+        status_code, body, ..
+    } = error
+    else {
+        return false;
+    };
+    status_code.as_u16() == 400
+        && body.contains("compact_threshold")
+        && body.contains("unsupported_parameter")
+}
+
+/// Sends a Responses request, transparently retrying once without
+/// `context_management` if the model rejects native compaction. On rejection we
+/// record the model (keyed by telemetry id) so subsequent turns skip native
+/// compaction and use summary compaction instead.
+pub(crate) async fn stream_response_with_compaction_fallback(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    mut request: ResponseRequest,
+    extra_headers: &CustomHeaders,
+    model_telemetry_id: &str,
+) -> Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>, RequestError> {
+    match stream_response(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        &request,
+        extra_headers,
+    )
+    .await
+    {
+        Err(error)
+            if !request.context_management.is_empty()
+                && is_unsupported_compaction_error(&error) =>
+        {
+            log::warn!(
+                "{model_telemetry_id} rejected native compaction; retrying without it and falling back to summary compaction"
+            );
+            mark_native_compaction_unsupported(model_telemetry_id);
+            request.context_management.clear();
+            stream_response(
+                client,
+                provider_name,
+                api_url,
+                api_key,
+                &request,
+                extra_headers,
+            )
+            .await
+        }
+        result => result,
+    }
+}
+
 fn default_thinking_reasoning_effort(model: &open_ai::Model) -> Option<open_ai::ReasoningEffort> {
     use open_ai::ReasoningEffort;
 
@@ -302,6 +382,39 @@ fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModel
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_unsupported_compaction_error() {
+        use http_client::StatusCode;
+        use http_client::http::HeaderMap;
+
+        let http_error = |status: StatusCode, body: &str| RequestError::HttpResponseError {
+            provider: "openai".into(),
+            status_code: status,
+            body: body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        // The exact 400 OpenAI returns when a model can't compact.
+        assert!(is_unsupported_compaction_error(&http_error(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"compact_threshold is not enabled.","type":"invalid_request_error","param":"compact_threshold","code":"unsupported_parameter"}}"#,
+        )));
+
+        // Unrelated 400s, other statuses, and non-HTTP errors must not trigger
+        // the fallback.
+        assert!(!is_unsupported_compaction_error(&http_error(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"unknown model","code":"invalid_value"}}"#,
+        )));
+        assert!(!is_unsupported_compaction_error(&http_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "compact_threshold unsupported_parameter",
+        )));
+        assert!(!is_unsupported_compaction_error(&RequestError::Other(
+            anyhow::anyhow!("boom")
+        )));
+    }
 
     #[test]
     fn native_compaction_threshold_reserves_output_headroom() {
@@ -406,6 +519,7 @@ impl OpenAiLanguageModel {
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
+        let model_telemetry_id = self.telemetry_id();
 
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
@@ -420,15 +534,16 @@ impl OpenAiLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_response(
+            let response = stream_response_with_compaction_fallback(
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
                 &api_key,
                 request,
                 &extra_headers,
-            );
-            let response = request.await?;
+                &model_telemetry_id,
+            )
+            .await?;
             Ok(response)
         });
 
@@ -511,6 +626,7 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn uses_native_compaction(&self) -> bool {
         self.model.supports_native_compaction()
+            && !native_compaction_unsupported(&self.telemetry_id())
     }
 
     fn telemetry_id(&self) -> String {
@@ -554,7 +670,7 @@ impl LanguageModel for OpenAiLanguageModel {
                     .supported_reasoning_efforts()
                     .contains(&open_ai::ReasoningEffort::None),
             );
-            if self.model.supports_native_compaction() {
+            if self.uses_native_compaction() {
                 request.context_management =
                     vec![ContextManagement::compaction(native_compaction_threshold(
                         self.model.max_token_count(),

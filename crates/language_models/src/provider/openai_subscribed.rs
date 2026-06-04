@@ -15,10 +15,7 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, RateLimiter,
 };
-use open_ai::{
-    ReasoningEffort,
-    responses::{ContextManagement, stream_response},
-};
+use open_ai::{ReasoningEffort, responses::ContextManagement};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -30,6 +27,7 @@ use util::ResultExt as _;
 
 use crate::provider::open_ai::{
     OpenAiResponseEventMapper, into_open_ai_response, native_compaction_threshold,
+    native_compaction_unsupported, stream_response_with_compaction_fallback,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
@@ -443,6 +441,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
     fn uses_native_compaction(&self) -> bool {
         self.model.supports_native_compaction()
+            && !native_compaction_unsupported(&self.telemetry_id())
     }
 
     fn telemetry_id(&self) -> String {
@@ -494,7 +493,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // The Codex backend supports server-side compaction for every model it
         // serves (all GPT-5 family). `store = false` above keeps this
         // ZDR-friendly, as the compaction guide requires.
-        if self.model.supports_native_compaction() {
+        if self.uses_native_compaction() {
             responses_request.context_management =
                 vec![ContextManagement::compaction(native_compaction_threshold(
                     self.model.max_token_count(),
@@ -527,6 +526,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
         let request_limiter = self.request_limiter.clone();
+        let model_telemetry_id = self.telemetry_id();
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
@@ -553,13 +553,14 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             let access_token = creds.access_token.clone();
             request_limiter
                 .stream(async move {
-                    stream_response(
+                    stream_response_with_compaction_fallback(
                         http_client.as_ref(),
                         PROVIDER_NAME.0.as_str(),
                         CODEX_BASE_URL,
                         &access_token,
                         responses_request,
                         &extra_headers,
+                        &model_telemetry_id,
                     )
                     .await
                     .map_err(LanguageModelCompletionError::from)

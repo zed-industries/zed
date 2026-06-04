@@ -475,7 +475,7 @@ pub async fn stream_response(
     provider_name: &str,
     api_url: &str,
     api_key: &str,
-    request: Request,
+    request: &Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
@@ -487,7 +487,7 @@ pub async fn stream_response(
         .header("Authorization", format!("Bearer {}", api_key.trim()))
         .extra_headers(extra_headers)
         .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+            serde_json::to_string(request).map_err(|e| RequestError::Other(e.into()))?,
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
