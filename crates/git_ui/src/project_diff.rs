@@ -2325,14 +2325,13 @@ mod tests {
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
-        cx.assert_excerpts_with_selections(indoc!(
+        cx.set_selections_state(indoc!(
             "
-            [EXCERPT]
             before
             really changed
-            [EXCERPT]
-            [FOLDED]
-            [EXCERPT]
+
+            deleted
+
             ˇcreated
         "
         ));

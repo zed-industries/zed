@@ -1187,7 +1187,6 @@ impl GitStore {
             let conflict_set = conflict_set;
             let buffer_snapshot = buffer.read(cx).text_snapshot();
 
-            // FIXME surely we don't always want to do this
             let rx = git_state.update(cx, |state, cx| {
                 state.reparse_conflict_markers(buffer_snapshot, cx)
             });
