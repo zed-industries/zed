@@ -199,6 +199,9 @@ fn open_mention_uri(
         } => {
             open_skill_file(workspace, skill_file_path, window, cx);
         }
+        MentionUri::Rule { name, .. } => {
+            open_migrated_rule(workspace, &name, window, cx);
+        }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
@@ -207,9 +210,38 @@ fn open_mention_uri(
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
         | MentionUri::GitDiff { .. }
-        | MentionUri::MergeConflict { .. }
-        | MentionUri::Rule { .. } => {}
+        | MentionUri::MergeConflict { .. } => {}
     });
+}
+
+/// Rules were migrated to Skills. Notify the user that the feature moved and,
+/// best-effort, open the skill file the rule was migrated into. Does nothing
+/// (besides showing the notification) when no matching skill file exists.
+pub(crate) fn open_migrated_rule(
+    workspace: &mut Workspace,
+    name: &str,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    struct RulesMigratedToSkillsToast;
+    workspace.show_toast(
+        workspace::Toast::new(
+            workspace::notifications::NotificationId::unique::<RulesMigratedToSkillsToast>(),
+            "Rules have been migrated to Skills.",
+        )
+        .autohide(),
+        cx,
+    );
+
+    let Some(slug) = agent_skills::slugify_skill_name(name) else {
+        return;
+    };
+    let skill_file_path = agent_skills::global_skills_dir()
+        .join(slug)
+        .join(agent_skills::SKILL_FILE_NAME);
+    if skill_file_path.exists() {
+        open_skill_file(workspace, skill_file_path, window, cx);
+    }
 }
 
 fn open_skill_file(

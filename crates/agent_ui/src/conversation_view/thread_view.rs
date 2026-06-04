@@ -10353,7 +10353,9 @@ pub(crate) fn open_link(
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
-            MentionUri::Rule { .. } => {}
+            MentionUri::Rule { name, .. } => {
+                crate::ui::open_migrated_rule(workspace, &name, window, cx);
+            }
             MentionUri::Skill {
                 skill_file_path, ..
             } => {
