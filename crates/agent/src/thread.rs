@@ -852,6 +852,7 @@ pub struct ToolPermissionContext {
 pub enum ToolPermissionScope {
     ToolInput,
     SymlinkTarget,
+    AgentSkills,
 }
 
 impl ToolPermissionContext {
@@ -869,6 +870,11 @@ impl ToolPermissionContext {
             input_values: target_paths,
             scope: ToolPermissionScope::SymlinkTarget,
         }
+    }
+
+    pub fn for_agent_skills(mut self) -> Self {
+        self.scope = ToolPermissionScope::AgentSkills;
+        self
     }
 
     /// Builds the permission options for this tool context.
@@ -911,6 +917,22 @@ impl ToolPermissionContext {
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("deny"),
                     "No",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ]);
+        }
+
+        // Skills always prompt, so offer only once-only allow/deny.
+        if self.scope == ToolPermissionScope::AgentSkills {
+            return acp_thread::PermissionOptions::Flat(vec![
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("allow"),
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("deny"),
+                    "Deny",
                     acp::PermissionOptionKind::RejectOnce,
                 ),
             ]);
