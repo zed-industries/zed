@@ -31,6 +31,11 @@ log.workspace = true
 markup5ever_rcdom.workspace = true
 mermaid_render = { path = "../mermaid_render" }
 pulldown-cmark.workspace = true
+ratex-font.workspace = true
+ratex-katex-fonts.workspace = true
+ratex-layout.workspace = true
+ratex-parser.workspace = true
+ratex-types.workspace = true
 settings.workspace = true
 stacksafe.workspace = true
 sum_tree.workspace = true
