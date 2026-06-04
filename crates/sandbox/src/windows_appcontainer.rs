@@ -26,47 +26,54 @@
 //!
 //! # Filesystem posture: explicit allowlist, no "read everywhere"
 //!
-//! Granting an inheritable ACE is expensive: `SetNamedSecurityInfoW`
-//! eagerly rewrites the DACL of every existing descendant of the root.
-//! That makes a profile-wide "read everywhere under `%USERPROFILE%`" grant
-//! (macOS-Seatbelt parity) prohibitively costly — it would walk every file
-//! the user owns. Like Microsoft's MXC sandbox, we therefore grant access
-//! **only to explicit roots**: worktrees and the per-thread temp dir get
-//! read+write ACEs; user-approved `fs_read_paths` get read-only ACEs.
-//! Reads anywhere else (outside the `ALL APPLICATION PACKAGES`-readable OS
-//! directories) fail with access-denied, and the model escalates via
-//! `fs_read_paths`, `fs_write_paths`, or `unsandboxed`.
+//! Like Microsoft's MXC sandbox, access is granted **only to explicit
+//! roots**: worktrees and the per-thread temp dir get read+write grants;
+//! user-approved `fs_read_paths` get read-only grants. Reads anywhere else
+//! (outside the `ALL APPLICATION PACKAGES`-readable OS directories) fail
+//! with access-denied, and the model escalates via `fs_read_paths`,
+//! `fs_write_paths`, or `unsandboxed`. There is deliberately no
+//! profile-wide "read everywhere" grant (macOS-Seatbelt parity): in the
+//! DACL tier that would walk every file the user owns.
 //!
-//! The one exception is `allow_fs_write_all`: "write anywhere" has no
-//! bounded-ACE encoding, so it maps to a read+write grant over
-//! `%USERPROFILE%` for the shared [`PROFILE_WRITE_CAPABILITY`] SID. That
-//! single expensive walk happens at most once per user ever (the ACE
-//! persists and is inert for processes that don't list the capability),
-//! and only if the user ever approves `allow_fs_write_all`.
+//! # Filesystem tiers: BFS when available, DACLs as fallback
 //!
-//! All ACL mutation happens in the parent so the cleanup story (revoking
-//! ACEs and deleting the profile when the agent thread is deleted, see
-//! [`cleanup_profile`]) lives next to the thread-lifecycle code. Network
-//! access is denied by default for AppContainer processes; this milestone
-//! deliberately never grants the network capabilities, so sandboxed
-//! commands have no outbound network access regardless of
-//! [`SandboxPermissions::allow_network`].
+//! How the grants are enforced depends on the host (probed once per
+//! process, see [`filesystem_tier`]), mirroring MXC's tiering:
 //!
-//! # Future: Brokered File System (BFS)
+//! - **Brokered File System (Windows 25H2+).** Per-AppContainer path rules
+//!   registered via `bfscfg.exe` (`--addpolicy
+//!   --policybroker[readonly] --filename <path> --appid <container>
+//!   --containerinherit`), which the OS evaluates **at access time**:
+//!   O(1) per rule, no DACL mutation, no subtree walks, no admin. Rules
+//!   are keyed by the per-thread AppContainer name and cleared wholesale
+//!   (`--clearpolicy --appid`) when the thread is deleted. In this tier
+//!   `allow_fs_write_all` is a single read-write rule on `%USERPROFILE%`.
+//! - **DACL fallback (older Windows).** Inheritable allow-ACEs for the
+//!   package SID on each granted root. Granting is expensive here:
+//!   `SetNamedSecurityInfoW` eagerly rewrites the DACL of every existing
+//!   descendant, so the walk cost is bounded by the size of the granted
+//!   subtrees. `allow_fs_write_all` maps to a read+write grant over
+//!   `%USERPROFILE%` for the shared [`PROFILE_WRITE_CAPABILITY`] SID —
+//!   one whole-profile walk, at most once per user ever, and only if that
+//!   escalation is ever approved.
 //!
-//! Windows 25H2+ ships a Brokered File System: per-AppContainer path rules
-//! registered via `bfscfg.exe` (`--addpolicy --policybroker[readonly]
-//! --filename <path> --appid <container> [--containerinherit]`) that the
-//! OS evaluates **at access time** — O(1) per rule, no DACL mutation, no
-//! subtree walks, no admin. When we can rely on it (probe: `bfscfg.exe`
-//! resolvable under `%SystemRoot%\System32`), the grants below should
-//! switch to BFS rules and the DACL path become the downlevel fallback,
-//! mirroring MXC's tiering (BaseContainer → AppContainer+BFS →
-//! AppContainer+DACL).
+//! All policy mutation happens in the parent so the cleanup story
+//! (clearing BFS rules / revoking ACEs and deleting the profile when the
+//! agent thread is deleted, see [`cleanup_profile`]) lives next to the
+//! thread-lifecycle code. Network access is denied by default for
+//! AppContainer processes; this milestone deliberately never grants the
+//! network capabilities, so sandboxed commands have no outbound network
+//! access regardless of [`SandboxPermissions::allow_network`].
+//!
+//! Set `ZED_SANDBOX_FORCE_DACL=1` to skip the BFS probe and exercise the
+//! DACL tier on hosts that have the broker.
 
-use std::ffi::c_void;
+use std::collections::HashSet;
+use std::ffi::{OsStr, OsString, c_void};
 use std::io::Write as _;
+use std::os::windows::ffi::OsStringExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -93,6 +100,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Console::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
+use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::SystemServices::{ACCESS_ALLOWED_ACE_TYPE, SE_GROUP_ENABLED};
 use windows::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
@@ -138,9 +146,67 @@ const PROFILE_WRITE_CAPABILITY: &str = "zedAgentSandboxProfileWrite";
 const WRITE_ACCESS_MASK: u32 =
     FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0 | DELETE.0;
 
-/// Rights granted on read-only roots (the user profile): read+execute so
-/// commands can load user-level toolchains and config.
+/// Rights granted on read-only roots: read+execute so commands can load
+/// user-level toolchains and config.
 const READ_ACCESS_MASK: u32 = FILE_GENERIC_READ.0 | FILE_GENERIC_EXECUTE.0;
+
+/// How filesystem grants are enforced on this host. See the module docs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FilesystemTier {
+    /// Brokered File System: path rules registered with `bfscfg.exe` (at
+    /// the contained absolute path), evaluated by the OS at access time.
+    Bfs { bfscfg: PathBuf },
+    /// Downlevel fallback: inheritable package-SID ACEs on each granted
+    /// root.
+    Dacl,
+}
+
+/// Probe (once per process) for the Brokered File System.
+///
+/// The broker's configuration tool ships as `System32\bfscfg.exe` on
+/// Windows 25H2+; its presence is the availability signal (matching MXC's
+/// tier detector). The System32 path comes from `GetSystemDirectoryW` —
+/// boot configuration, not the scrubbable process environment — and the
+/// resolved absolute path is the one we later execute, so a rogue
+/// `bfscfg.exe` on `PATH` or next to zed.exe is never picked up.
+pub fn filesystem_tier() -> &'static FilesystemTier {
+    static TIER: OnceLock<FilesystemTier> = OnceLock::new();
+    TIER.get_or_init(|| {
+        if std::env::var_os("ZED_SANDBOX_FORCE_DACL").is_some_and(|value| value == "1") {
+            return FilesystemTier::Dacl;
+        }
+        match system_directory() {
+            Ok(system32) => {
+                let bfscfg = system32.join("bfscfg.exe");
+                if bfscfg.exists() {
+                    FilesystemTier::Bfs { bfscfg }
+                } else {
+                    FilesystemTier::Dacl
+                }
+            }
+            Err(_) => FilesystemTier::Dacl,
+        }
+    })
+}
+
+/// Resolve `System32` via `GetSystemDirectoryW`.
+fn system_directory() -> Result<PathBuf> {
+    let mut buffer = vec![0u16; 260];
+    let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    ensure!(length > 0, "GetSystemDirectoryW failed");
+    if length > buffer.len() {
+        buffer.resize(length, 0);
+        let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+        ensure!(
+            length > 0 && length <= buffer.len(),
+            "GetSystemDirectoryW retry failed"
+        );
+        buffer.truncate(length);
+    } else {
+        buffer.truncate(length);
+    }
+    Ok(PathBuf::from(OsString::from_wide(&buffer)))
+}
 
 /// The on-disk policy the parent writes for the helper. Only contains what
 /// the helper needs to *launch*: the ACL work has already happened in the
@@ -232,9 +298,9 @@ impl AppContainerProfile {
 /// [`AppContainerLaunchConfig`] that **must** be kept alive for the
 /// duration of the command.
 ///
-/// This function does blocking filesystem work that can take a long time
-/// (granting a new ACE propagates the DACL through the whole subtree), so
-/// call it from a background thread, never the UI thread.
+/// This function does blocking work (process spawns in the BFS tier;
+/// potentially long DACL-propagation walks in the fallback tier), so call
+/// it from a background thread, never the UI thread.
 ///
 /// # Arguments
 /// * `program` - The program to invoke (typically a shell).
@@ -259,37 +325,49 @@ pub fn wrap_invocation(
 ) -> Result<(String, Vec<String>, AppContainerLaunchConfig)> {
     let profile = AppContainerProfile::create_or_open(profile_name)?;
 
-    for directory in writable_directories {
-        let directory = canonicalize_or_original(directory);
-        grant_subtree(profile.sid(), &directory, WRITE_ACCESS_MASK).with_context(|| {
-            format!(
-                "failed to grant sandbox write access to {}",
-                directory.display()
-            )
-        })?;
-    }
+    match filesystem_tier() {
+        FilesystemTier::Bfs { bfscfg } => {
+            configure_bfs_rules(
+                bfscfg,
+                profile_name,
+                writable_directories,
+                readonly_directories,
+                permissions.allow_fs_write,
+            )?;
+        }
+        FilesystemTier::Dacl => {
+            for directory in writable_directories {
+                let directory = canonicalize_or_original(directory);
+                grant_subtree(profile.sid(), &directory, WRITE_ACCESS_MASK).with_context(|| {
+                    format!(
+                        "failed to grant sandbox write access to {}",
+                        directory.display()
+                    )
+                })?;
+            }
 
-    for directory in readonly_directories {
-        let directory = canonicalize_or_original(directory);
-        grant_subtree(profile.sid(), &directory, READ_ACCESS_MASK).with_context(|| {
-            format!(
-                "failed to grant sandbox read access to {}",
-                directory.display()
-            )
-        })?;
-    }
+            for directory in readonly_directories {
+                let directory = canonicalize_or_original(directory);
+                grant_subtree(profile.sid(), &directory, READ_ACCESS_MASK).with_context(|| {
+                    format!(
+                        "failed to grant sandbox read access to {}",
+                        directory.display()
+                    )
+                })?;
+            }
 
-    if permissions.allow_fs_write {
-        let user_profile = user_profile_dir()?;
-        let write_capability = derive_capability_sid(PROFILE_WRITE_CAPABILITY)?;
-        grant_subtree(write_capability.as_psid(), &user_profile, WRITE_ACCESS_MASK).with_context(
-            || {
-                format!(
-                    "failed to grant sandbox write access to {}",
-                    user_profile.display()
-                )
-            },
-        )?;
+            if permissions.allow_fs_write {
+                let user_profile = user_profile_dir()?;
+                let write_capability = derive_capability_sid(PROFILE_WRITE_CAPABILITY)?;
+                grant_subtree(write_capability.as_psid(), &user_profile, WRITE_ACCESS_MASK)
+                    .with_context(|| {
+                        format!(
+                            "failed to grant sandbox write access to {}",
+                            user_profile.display()
+                        )
+                    })?;
+            }
+        }
     }
 
     let mut policy_file = NamedTempFile::new().context("failed to create sandbox policy file")?;
@@ -343,14 +421,16 @@ pub fn wrap_invocation(
     ))
 }
 
-/// Best-effort cleanup when an agent thread is deleted: revoke the ACEs
-/// granted to the thread's package SID on every recorded root, then delete
-/// the profile. The user-profile grants are left alone: they target the
-/// shared capability SIDs, which are deliberately persistent and grant
-/// nothing to processes that don't list the capability.
+/// Best-effort cleanup when an agent thread is deleted: clear the BFS
+/// rules registered for the thread's AppContainer identity (when the
+/// broker is available), revoke the ACEs granted to the thread's package
+/// SID on every recorded root, then delete the profile. The DACL tier's
+/// user-profile grant is left alone: it targets the shared capability SID,
+/// which is deliberately persistent and grants nothing to processes that
+/// don't list the capability.
 ///
-/// This is a hygiene concern, not a security one — an ACE for a deleted
-/// profile's SID grants access to nobody — so failures are aggregated
+/// This is a hygiene concern, not a security one — BFS rules and ACEs for
+/// a deleted profile grant access to nobody — so failures are aggregated
 /// rather than aborting at the first error.
 pub fn cleanup_profile(profile_name: &str, granted_roots: &[PathBuf]) -> Result<()> {
     let sid = unsafe { DeriveAppContainerSidFromAppContainerName(&HSTRING::from(profile_name)) }
@@ -358,6 +438,20 @@ pub fn cleanup_profile(profile_name: &str, granted_roots: &[PathBuf]) -> Result<
     let sid = OwnedSid(sid);
 
     let mut errors = Vec::new();
+
+    // Clear all BFS rules registered for this AppContainer identity. Done
+    // unconditionally when the broker is available: rules may exist even
+    // if this session never added any (e.g. they were added by a previous
+    // Zed session for the same thread).
+    if let FilesystemTier::Bfs { bfscfg } = filesystem_tier() {
+        if let Err(error) = run_bfscfg(bfscfg, &bfs_clear_policy_args(profile_name)) {
+            errors.push(format!("{error:#}"));
+        }
+    }
+
+    // Revoke DACL grants regardless of the current tier: ACEs may predate
+    // the BFS tier (older sessions, or runs with `ZED_SANDBOX_FORCE_DACL`),
+    // and revoking is a no-op when none exist.
     let roots = granted_roots
         .iter()
         .map(|root| canonicalize_or_original(root));
@@ -379,6 +473,157 @@ pub fn cleanup_profile(profile_name: &str, granted_roots: &[PathBuf]) -> Result<
             errors.join("; ")
         );
     }
+}
+
+/// Access level of a single BFS path rule.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum BfsAccess {
+    ReadWrite,
+    ReadOnly,
+}
+
+/// Register the BFS rules for one command: read-write rules for the
+/// writable roots, read-only rules for the readable roots, and — when
+/// `allow_fs_write` was approved — a read-write rule over `%USERPROFILE%`
+/// (the BFS encoding of "broad writes": O(1), unlike the DACL tier's
+/// capability walk).
+fn configure_bfs_rules(
+    bfscfg: &Path,
+    app_container_name: &str,
+    writable_directories: &[&Path],
+    readonly_directories: &[&Path],
+    allow_fs_write: bool,
+) -> Result<()> {
+    for directory in writable_directories {
+        ensure_bfs_rule(bfscfg, app_container_name, directory, BfsAccess::ReadWrite)?;
+    }
+    for directory in readonly_directories {
+        ensure_bfs_rule(bfscfg, app_container_name, directory, BfsAccess::ReadOnly)?;
+    }
+    if allow_fs_write {
+        let user_profile = user_profile_dir()?;
+        ensure_bfs_rule(
+            bfscfg,
+            app_container_name,
+            &user_profile,
+            BfsAccess::ReadWrite,
+        )?;
+    }
+    Ok(())
+}
+
+/// Register one BFS path rule, deduplicating within this Zed session so a
+/// rule already registered for the thread isn't re-added on every command.
+///
+/// Rules outlive this process and are cleared wholesale by
+/// [`cleanup_profile`] (`--clearpolicy --appid`), so a rule re-added after
+/// a Zed restart at worst duplicates an existing entry — harmless, and
+/// removed with everything else at thread deletion.
+fn ensure_bfs_rule(
+    bfscfg: &Path,
+    app_container_name: &str,
+    directory: &Path,
+    access: BfsAccess,
+) -> Result<()> {
+    static REGISTERED_RULES: OnceLock<std::sync::Mutex<HashSet<(String, PathBuf, BfsAccess)>>> =
+        OnceLock::new();
+
+    let directory = canonicalize_or_original(directory);
+    let key = (app_container_name.to_string(), directory.clone(), access);
+    let registered = REGISTERED_RULES.get_or_init(Default::default);
+    {
+        let registered = registered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if registered.contains(&key) {
+            return Ok(());
+        }
+    }
+
+    run_bfscfg(
+        bfscfg,
+        &bfs_add_policy_args(app_container_name, &directory, access),
+    )
+    .with_context(|| {
+        format!(
+            "failed to register a sandbox filesystem rule for {}",
+            directory.display()
+        )
+    })?;
+
+    registered
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key);
+    Ok(())
+}
+
+fn bfs_add_policy_args(
+    app_container_name: &str,
+    directory: &Path,
+    access: BfsAccess,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec![
+        "--addpolicy".into(),
+        match access {
+            BfsAccess::ReadWrite => "--policybroker",
+            BfsAccess::ReadOnly => "--policybrokerreadonly",
+        }
+        .into(),
+        "--filename".into(),
+        directory.as_os_str().to_owned(),
+        "--appid".into(),
+        app_container_name.into(),
+    ];
+    // Cover the whole subtree. Skipped for bare drive roots, where the
+    // broker rejects subtree rules (mirrors MXC's special case); the rule
+    // then covers the root directory itself only, which fails closed —
+    // deeper accesses get denied and the model can escalate.
+    if directory.parent().is_some() {
+        args.push("--containerinherit".into());
+    }
+    args
+}
+
+fn bfs_clear_policy_args(app_container_name: &str) -> Vec<OsString> {
+    vec![
+        "--clearpolicy".into(),
+        "--appid".into(),
+        app_container_name.into(),
+    ]
+}
+
+/// Marker `bfscfg.exe` prints when an operation fails (it does not always
+/// reflect failures in its exit code, so the output is checked too — same
+/// convention MXC relies on).
+const BFSCFG_FAILURE_MARKER: &str = "Unable to perform policy operation";
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "runs on the background executor: wrap_invocation and cleanup_profile are documented as blocking"
+)]
+fn run_bfscfg(bfscfg: &Path, args: &[OsString]) -> Result<()> {
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let output = std::process::Command::new(bfscfg)
+        .args(args.iter().map(OsStr::new))
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .with_context(|| format!("failed to run {}", bfscfg.display()))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        output.status.success()
+            && !stdout.contains(BFSCFG_FAILURE_MARKER)
+            && !stderr.contains(BFSCFG_FAILURE_MARKER),
+        "bfscfg.exe failed (status {:?}): {}{}",
+        output.status.code(),
+        stdout.trim(),
+        stderr.trim(),
+    );
+    Ok(())
 }
 
 /// Entry point for the hidden `zed --sandbox-helper` subcommand.
@@ -895,6 +1140,62 @@ mod tests {
         let serialized = serde_json::to_string(&policy).unwrap();
         let deserialized: SandboxPolicy = serde_json::from_str(&serialized).unwrap();
         assert_eq!(policy, deserialized);
+    }
+
+    #[test]
+    fn test_bfs_add_policy_args_shape() {
+        let args = bfs_add_policy_args(
+            "Zed.AgentSandbox.0123",
+            Path::new("D:\\src\\project"),
+            BfsAccess::ReadWrite,
+        );
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("--addpolicy"),
+                OsString::from("--policybroker"),
+                OsString::from("--filename"),
+                OsString::from("D:\\src\\project"),
+                OsString::from("--appid"),
+                OsString::from("Zed.AgentSandbox.0123"),
+                OsString::from("--containerinherit"),
+            ]
+        );
+
+        let args = bfs_add_policy_args(
+            "Zed.AgentSandbox.0123",
+            Path::new("C:\\Users\\me\\.cargo"),
+            BfsAccess::ReadOnly,
+        );
+        assert!(args.contains(&OsString::from("--policybrokerreadonly")));
+        assert!(args.contains(&OsString::from("--containerinherit")));
+
+        // Drive roots don't get a subtree rule.
+        let args = bfs_add_policy_args(
+            "Zed.AgentSandbox.0123",
+            Path::new("C:\\"),
+            BfsAccess::ReadWrite,
+        );
+        assert!(!args.contains(&OsString::from("--containerinherit")));
+    }
+
+    #[test]
+    fn test_bfs_clear_policy_args_shape() {
+        assert_eq!(
+            bfs_clear_policy_args("Zed.AgentSandbox.0123"),
+            vec![
+                OsString::from("--clearpolicy"),
+                OsString::from("--appid"),
+                OsString::from("Zed.AgentSandbox.0123"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_system_directory_resolves() {
+        let system32 = system_directory().unwrap();
+        assert!(system32.is_absolute());
+        assert!(system32.join("kernel32.dll").exists());
     }
 
     #[test]
