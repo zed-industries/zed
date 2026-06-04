@@ -48,6 +48,9 @@
 //!   are keyed by the per-thread AppContainer name and cleared wholesale
 //!   (`--clearpolicy --appid`) when the thread is deleted. In this tier
 //!   `allow_fs_write_all` is a single read-write rule on `%USERPROFILE%`.
+//!   The contained process must be launched with the
+//!   [`BFS_BROKER_CAPABILITY`] capability or the broker ignores the rules
+//!   entirely (every access stays default-denied).
 //! - **DACL fallback (older Windows).** Inheritable allow-ACEs for the
 //!   package SID on each granted root. Granting is expensive here:
 //!   `SetNamedSecurityInfoW` eagerly rewrites the DACL of every existing
@@ -155,6 +158,14 @@ pub struct SandboxPermissions {
 /// list this capability at launch, and is only listed for commands the
 /// user approved with `allow_fs_write_all`.
 const PROFILE_WRITE_CAPABILITY: &str = "zedAgentSandboxProfileWrite";
+
+/// System capability (gated by the Windows `Feature_AgenticAppContainerBfsSupport`
+/// feature) that opts an AppContainer into the Brokered File System. The
+/// broker only honors `bfscfg`-registered rules for processes launched
+/// with this capability in their [`SECURITY_CAPABILITIES`]; without it the
+/// rules are silently ignored and every access stays default-denied. Must
+/// be listed at launch for the BFS tier, matching MXC.
+const BFS_BROKER_CAPABILITY: &str = "AgenticAppContainer";
 
 /// Rights granted on writable roots: full read/write/execute plus delete,
 /// inherited by the whole subtree.
@@ -717,6 +728,14 @@ fn run_helper(args: Vec<String>) -> Result<i32> {
     // capabilities are never included, so network access stays
     // default-denied even when the policy requested it.
     let mut capabilities = Vec::new();
+    // On the BFS tier the broker only enforces our registered path rules
+    // for processes that hold this capability; without it the container
+    // gets no filesystem access at all. (Re-probed here because the helper
+    // is a fresh process; the parent registered the rules under the same
+    // tier.)
+    if matches!(filesystem_tier(), FilesystemTier::Bfs { .. }) {
+        capabilities.push(derive_capability_sid(BFS_BROKER_CAPABILITY)?);
+    }
     if policy.allow_fs_write {
         capabilities.push(derive_capability_sid(PROFILE_WRITE_CAPABILITY)?);
     }
