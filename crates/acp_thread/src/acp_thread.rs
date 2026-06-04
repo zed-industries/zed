@@ -3152,6 +3152,17 @@ impl AcpThread {
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
         let is_windows = project.read(cx).path_style(cx).is_windows();
+        // When Windows sandboxing is enabled for this process, skip the Git
+        // Bash preference and use the native system shell (PowerShell, or
+        // cmd as a fallback): Git Bash is an MSYS runtime that relies on
+        // shared-memory and pipe handshakes with its own subprocesses,
+        // which don't survive the AppContainer boundary. Gated on the flag
+        // rather than per-command sandbox state so the shell dialect stays
+        // consistent across a thread (including commands approved to run
+        // unsandboxed), matching the shell reported in the system prompt.
+        let prefer_native_windows_shell = cfg!(target_os = "windows")
+            && self.project.read(cx).is_local()
+            && cx.has_flag::<feature_flags::SandboxingFeatureFlag>();
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
@@ -3164,7 +3175,13 @@ impl AcpThread {
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
-                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
+                    .unwrap_or_else(|| {
+                        if prefer_native_windows_shell {
+                            util::get_default_system_shell()
+                        } else {
+                            get_default_system_shell_preferring_bash()
+                        }
+                    });
                 let (task_command, task_args) =
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
                         .redirect_stdin_to_dev_null()

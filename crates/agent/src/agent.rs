@@ -927,6 +927,16 @@ impl NativeAgent {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadError>)> {
+        // When the Windows sandbox is enabled, agent terminal commands skip
+        // the Git Bash preference and run in the native system shell
+        // (PowerShell or cmd — see `AcpThread::create_terminal`). Report
+        // that shell to the model so it writes commands in the dialect that
+        // will actually run.
+        let shell_override = (cfg!(target_os = "windows")
+            && project.read(cx).is_local()
+            && crate::sandboxing::sandboxing_enabled(cx))
+        .then(|| util::shell::ShellKind::new(&util::get_default_system_shell(), true).to_string());
+
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         let worktree_tasks = worktrees
             .iter()
@@ -1100,7 +1110,10 @@ impl NativeAgent {
             let (catalog_skills, budget_errors) = select_catalog_skills(&overridden);
             skill_errors.extend(budget_errors);
 
-            let project_context = ProjectContext::new(worktrees).with_skills(catalog_skills);
+            let mut project_context = ProjectContext::new(worktrees).with_skills(catalog_skills);
+            if let Some(shell) = shell_override {
+                project_context.shell = shell;
+            }
             (project_context, skills, skill_errors)
         })
     }
