@@ -17,9 +17,6 @@
   "("
   ")" @end) @indent
 
-((comment) @indent
-  (#match? @indent "^/\\*"))
-
 (if_statement) @start.if
 
 (for_statement) @start.for
