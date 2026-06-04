@@ -103,12 +103,7 @@ impl State {
         cx.spawn(async move |this, cx| {
             let models = list_models(http_client.as_ref(), &api_url, &api_key, &extra_headers)
                 .await
-                .map_err(|e| {
-                    LanguageModelCompletionError::Other(anyhow::anyhow!(
-                        "OpenRouter error: {:?}",
-                        e
-                    ))
-                })?;
+                .map_err(LanguageModelCompletionError::from)?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
