@@ -215,8 +215,11 @@ fn open_mention_uri(
 }
 
 /// Rules were migrated to Skills. Notify the user that the feature moved and,
-/// best-effort, open the skill file the rule was migrated into. Does nothing
-/// (besides showing the notification) when no matching skill file exists.
+/// best-effort, open the skill file the rule was migrated into. Migrated skills
+/// always live in the local global skills dir, so the file is resolved against
+/// the local filesystem regardless of whether the active project is local,
+/// remote (SSH), or collab. Does nothing (besides the notification) when no
+/// matching skill file exists.
 pub(crate) fn open_migrated_rule(
     workspace: &mut Workspace,
     name: &str,
@@ -239,9 +242,30 @@ pub(crate) fn open_migrated_rule(
     let skill_file_path = agent_skills::global_skills_dir()
         .join(slug)
         .join(agent_skills::SKILL_FILE_NAME);
-    if skill_file_path.exists() {
-        open_skill_file(workspace, skill_file_path, window, cx);
+
+    if workspace.project().read(cx).is_local() {
+        // Local project: open the editable on-disk file if it exists.
+        if skill_file_path.exists() {
+            open_skill_file(workspace, skill_file_path, window, cx);
+        }
+        return;
     }
+
+    // Remote/collab project: `open_abs_path` resolves the path against the
+    // remote project, where this local file does not exist. Read it from the
+    // local filesystem and show it as a read-only buffer instead.
+    let fs = workspace.app_state().fs.clone();
+    cx.spawn_in(window, async move |workspace, cx| {
+        let Ok(content) = fs.load(&skill_file_path).await else {
+            // No migrated skill file (or it couldn't be read): do nothing.
+            return Ok(());
+        };
+        let title = skill_content_buffer_title(&skill_file_path);
+        workspace.update_in(cx, |workspace, window, cx| {
+            open_skill_content_buffer(workspace, title, content, window, cx);
+        })
+    })
+    .detach_and_log_err(cx);
 }
 
 fn open_skill_file(
@@ -259,34 +283,8 @@ fn open_skill_file(
     // would crash Zed if a user clicked a built-in skill mention while
     // connected to a remote project.
     if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
-        let languages = workspace.project().read(cx).languages().clone();
-        let buffer = cx.new(|cx| Buffer::local(content, cx));
-        // Set markdown highlighting asynchronously — the buffer
-        // opens instantly and the highlighting appears once loaded.
-        cx.spawn({
-            let buffer = buffer.clone();
-            async move |_, cx| {
-                if let Ok(markdown) = languages.language_for_name("Markdown").await {
-                    buffer.update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
-                }
-            }
-        })
-        .detach();
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::for_buffer(buffer, None, window, cx);
-            editor.set_read_only(true);
-            let title = skill_file_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "built-in skill".into());
-            editor
-                .buffer()
-                .update(cx, |buffer, cx| buffer.set_title(title, cx));
-            editor
-        });
-        let pane = workspace.active_pane().clone();
-        workspace.add_item(pane, Box::new(editor), None, true, true, window, cx);
+        let title = skill_content_buffer_title(&skill_file_path);
+        open_skill_content_buffer(workspace, title, content, window, cx);
         return;
     }
 
@@ -301,6 +299,53 @@ fn open_skill_file(
             cx,
         )
         .detach_and_log_err(cx);
+}
+
+fn skill_content_buffer_title(skill_file_path: &std::path::Path) -> String {
+    skill_file_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "skill".into())
+}
+
+/// Open `content` as a local, read-only Markdown buffer. Used for skills that
+/// have no openable on-disk file in the active project: built-in skills (whose
+/// paths are synthetic) and migrated rules viewed from a remote/collab project
+/// (whose files live in the local global skills dir). The buffer is
+/// deliberately not registered with the project's buffer store, which keeps it
+/// out of search and avoids `Project::create_local_buffer` panicking on remote
+/// projects.
+fn open_skill_content_buffer(
+    workspace: &mut Workspace,
+    title: String,
+    content: impl Into<String>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let languages = workspace.project().read(cx).languages().clone();
+    let buffer = cx.new(|cx| Buffer::local(content, cx));
+    // Set markdown highlighting asynchronously — the buffer
+    // opens instantly and the highlighting appears once loaded.
+    cx.spawn({
+        let buffer = buffer.clone();
+        async move |_, cx| {
+            if let Ok(markdown) = languages.language_for_name("Markdown").await {
+                buffer.update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
+            }
+        }
+    })
+    .detach();
+    let editor = cx.new(|cx| {
+        let mut editor = Editor::for_buffer(buffer, None, window, cx);
+        editor.set_read_only(true);
+        editor
+            .buffer()
+            .update(cx, |buffer, cx| buffer.set_title(title, cx));
+        editor
+    });
+    let pane = workspace.active_pane().clone();
+    workspace.add_item(pane, Box::new(editor), None, true, true, window, cx);
 }
 
 fn open_file(
