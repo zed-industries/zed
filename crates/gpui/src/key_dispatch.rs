@@ -629,9 +629,10 @@ mod tests {
     use std::{cell::RefCell, ops::Range, rc::Rc};
 
     use crate::{
-        ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler, IntoElement,
-        KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription, TestAppContext,
-        UTF16Selection, Unbind, Window,
+        ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
+        InputHandler, IntoElement, KeyBinding, KeyContext, KeyDownHandledByInputMethodEvent,
+        Keymap, Modifiers, Pixels, Point, Render, Subscription, TestAppContext, UTF16Selection,
+        Unbind, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -1131,5 +1132,120 @@ mod tests {
         });
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
+    }
+
+    #[crate::test]
+    fn test_key_down_handled_by_input_method_counts_for_modifier_only_bindings(
+        cx: &mut TestAppContext,
+    ) {
+        #[derive(Clone)]
+        struct CustomElement {
+            focus_handle: FocusHandle,
+            action_count: Rc<RefCell<usize>>,
+        }
+        impl CustomElement {
+            fn new(cx: &mut Context<Self>) -> Self {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    action_count: Rc::default(),
+                }
+            }
+        }
+        impl Element for CustomElement {
+            type RequestLayoutState = ();
+
+            type PrepaintState = ();
+
+            fn id(&self) -> Option<ElementId> {
+                Some("custom".into())
+            }
+            fn source_location(&self) -> Option<&'static panic::Location<'static>> {
+                None
+            }
+            fn request_layout(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> (LayoutId, Self::RequestLayoutState) {
+                (window.request_layout(Style::default(), [], cx), ())
+            }
+            fn prepaint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> Self::PrepaintState {
+                window.set_focus_handle(&self.focus_handle, cx);
+            }
+            fn paint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                _: &mut Self::PrepaintState,
+                window: &mut Window,
+                _: &mut App,
+            ) {
+                let mut key_context = KeyContext::default();
+                key_context.add("Terminal");
+                window.set_key_context(key_context);
+                let action_count = self.action_count.clone();
+                window.on_action(
+                    std::any::TypeId::of::<TestAction>(),
+                    move |_, phase, _, _| {
+                        if phase == DispatchPhase::Bubble {
+                            *action_count.borrow_mut() += 1;
+                        }
+                    },
+                );
+            }
+        }
+        impl IntoElement for CustomElement {
+            type Element = Self;
+
+            fn into_element(self) -> Self::Element {
+                self
+            }
+        }
+        impl Render for CustomElement {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.clone()
+            }
+        }
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("shift shift", TestAction, Some("Terminal"))]);
+        });
+        let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_event(KeyDownHandledByInputMethodEvent);
+        cx.simulate_modifiers_change(Modifiers::none());
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_event(KeyDownHandledByInputMethodEvent);
+        cx.simulate_modifiers_change(Modifiers::none());
+
+        test.update(cx, |test, _| assert_eq!(*test.action_count.borrow(), 0));
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        cx.simulate_modifiers_change(Modifiers::shift());
+        cx.simulate_modifiers_change(Modifiers::none());
+
+        test.update(cx, |test, _| assert_eq!(*test.action_count.borrow(), 1));
     }
 }
