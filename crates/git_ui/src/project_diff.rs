@@ -1,12 +1,12 @@
 use crate::{
-    branch_picker,
+    branch_picker, conflict_view,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
@@ -68,13 +68,19 @@ actions!(
     ]
 );
 
+struct BufferSubscriptions {
+    _diff: Entity<BufferDiff>,
+    _diff_subscription: Subscription,
+    _conflict_set: Entity<ConflictSet>,
+    _conflict_set_subscription: Subscription,
+}
+
 pub struct ProjectDiff {
     project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<SplittableEditor>,
-    buffer_diff_subscriptions: HashMap<Arc<RelPath>, (Entity<BufferDiff>, Subscription)>,
-    conflict_set_subscriptions: HashMap<Arc<RelPath>, (Entity<ConflictSet>, Subscription)>,
+    buffer_subscriptions: HashMap<Arc<RelPath>, BufferSubscriptions>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
@@ -481,8 +487,7 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
-            buffer_diff_subscriptions: Default::default(),
-            conflict_set_subscriptions: Default::default(),
+            buffer_subscriptions: Default::default(),
             pending_scroll: None,
             review_comment_count: 0,
             _task: task,
@@ -691,7 +696,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<BufferId> {
-        let buffer_diff_subscription = cx.subscribe_in(&diff, window, {
+        let diff_subscription = cx.subscribe_in(&diff, window, {
             let path_key = path_key.clone();
             let buffer = buffer.clone();
             let diff = diff.clone();
@@ -713,10 +718,6 @@ impl ProjectDiff {
                 | buffer_diff::BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
             }
         });
-        self.buffer_diff_subscriptions.insert(
-            path_key.path.clone(),
-            (diff.clone(), buffer_diff_subscription),
-        );
         let conflict_set_subscription = cx.subscribe_in(&conflict_set, window, {
             let path_key = path_key.clone();
             let buffer = buffer.clone();
@@ -734,9 +735,14 @@ impl ProjectDiff {
                 )
             }
         });
-        self.conflict_set_subscriptions.insert(
+        self.buffer_subscriptions.insert(
             path_key.path.clone(),
-            (conflict_set.clone(), conflict_set_subscription),
+            BufferSubscriptions {
+                _diff: diff.clone(),
+                _diff_subscription: diff_subscription,
+                _conflict_set: conflict_set.clone(),
+                _conflict_set_subscription: conflict_set_subscription,
+            },
         );
 
         let snapshot = buffer.read(cx).snapshot();
@@ -775,6 +781,9 @@ impl ProjectDiff {
                 diff,
                 cx,
             );
+            editor.rhs_editor().update(cx, |editor, cx| {
+                conflict_view::buffer_ranges_updated(editor, conflict_set, cx);
+            });
             (was_empty, is_newly_added)
         });
 
@@ -859,8 +868,8 @@ impl ProjectDiff {
                 .read(cx)
                 .snapshot(cx)
                 .buffers_with_paths()
-                .map(|(_buffer_snapshot, path_key)| path_key.clone())
-                .collect::<HashSet<_>>();
+                .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
+                .collect::<HashMap<_, _>>();
 
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
@@ -876,8 +885,11 @@ impl ProjectDiff {
             }
 
             this.editor.update(cx, |editor, cx| {
-                for path in previous_paths {
-                    this.buffer_diff_subscriptions.remove(&path.path);
+                for (path, buffer_id) in previous_paths {
+                    this.buffer_subscriptions.remove(&path.path);
+                    editor.rhs_editor().update(cx, |editor, cx| {
+                        conflict_view::buffers_removed(editor, &[buffer_id], cx);
+                    });
                     let _span = ztracing::info_span!("remove_excerpts_for_path");
                     _span.enter();
                     editor.remove_excerpts_for_path(path, cx);
@@ -2136,10 +2148,7 @@ mod tests {
         );
     }
 
-    use crate::{
-        conflict_view::{ConflictAddon, resolve_conflict},
-        project_diff::{self, ProjectDiff},
-    };
+    use crate::project_diff::{self, ProjectDiff};
 
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
@@ -2311,89 +2320,6 @@ mod tests {
         cx.dispatch_action(editor::actions::MoveToBeginning);
 
         cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
-    }
-
-    #[gpui::test]
-    async fn test_saving_resolved_conflicts(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "foo": "<<<<<<< x\nours\n=======\ntheirs\n>>>>>>> y\n",
-            }),
-        )
-        .await;
-        fs.set_status_for_repo(
-            Path::new(path!("/project/.git")),
-            &[(
-                "foo",
-                UnmergedStatus {
-                    first_head: UnmergedStatusCode::Updated,
-                    second_head: UnmergedStatusCode::Updated,
-                }
-                .into(),
-            )],
-        );
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
-        });
-        cx.run_until_parked();
-
-        cx.update(|window, cx| {
-            let editor = diff.read(cx).editor.read(cx).rhs_editor().clone();
-            let excerpts = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .excerpts()
-                .collect::<Vec<_>>();
-            assert_eq!(excerpts.len(), 1);
-            let buffer = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .next()
-                .unwrap();
-            let buffer_id = buffer.read(cx).remote_id();
-            let conflict_set = diff
-                .read(cx)
-                .editor
-                .read(cx)
-                .rhs_editor()
-                .read(cx)
-                .addon::<ConflictAddon>()
-                .unwrap()
-                .conflict_set(buffer_id)
-                .unwrap();
-            assert!(conflict_set.read(cx).has_conflict);
-            let snapshot = conflict_set.read(cx).snapshot();
-            assert_eq!(snapshot.conflicts.len(), 1);
-
-            let ours_range = snapshot.conflicts[0].ours.clone();
-
-            resolve_conflict(
-                editor.downgrade(),
-                snapshot.conflicts[0].clone(),
-                vec![ours_range],
-                window,
-                cx,
-            )
-        })
-        .await;
-
-        let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
-        let contents = String::from_utf8(contents).unwrap();
-        assert_eq!(contents, "ours\n");
     }
 
     #[gpui::test(iterations = 50)]

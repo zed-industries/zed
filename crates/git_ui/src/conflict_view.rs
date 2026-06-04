@@ -2,7 +2,7 @@ use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
-    Editor, EditorEvent, MultiBuffer, RowHighlightOptions,
+    Editor, MultiBuffer, RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
@@ -27,15 +27,6 @@ pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
 }
 
-impl ConflictAddon {
-    #[cfg(test)]
-    pub(crate) fn conflict_set(&self, buffer_id: BufferId) -> Option<Entity<ConflictSet>> {
-        self.buffers
-            .get(&buffer_id)
-            .map(|entry| entry.conflict_set.clone())
-    }
-}
-
 struct BufferConflicts {
     block_ids: Vec<(Range<Anchor>, CustomBlockId)>,
     conflict_set: Entity<ConflictSet>,
@@ -53,10 +44,9 @@ impl editor::Addon for ConflictAddon {
 }
 
 pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mut Context<Editor>) {
-    // Only show conflict UI for singletons and in the project diff.
+    let is_singleton = editor.buffer().read(cx).is_singleton();
     if !editor.mode().is_full()
-        || (!editor.buffer().read(cx).is_singleton()
-            && !editor.buffer().read(cx).all_diff_hunks_expanded())
+        || (!is_singleton && !editor.buffer().read(cx).all_diff_hunks_expanded())
         || editor.read_only(cx)
     {
         return;
@@ -66,28 +56,35 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
         buffers: Default::default(),
     });
 
-    let buffers = buffer.read(cx).all_buffers();
-    for buffer in buffers {
-        buffer_ranges_updated(editor, buffer, cx);
+    if is_singleton {
+        let buffers = buffer.read(cx).all_buffers();
+        for buffer in buffers {
+            open_conflict_set_for_buffer(editor, buffer, cx);
+        }
     }
-
-    cx.subscribe(&cx.entity(), |editor, _, event, cx| match event {
-        EditorEvent::BufferRangesUpdated { buffer, .. } => {
-            buffer_ranges_updated(editor, buffer.clone(), cx)
-        }
-        EditorEvent::BuffersRemoved { removed_buffer_ids } => {
-            buffers_removed(editor, removed_buffer_ids, cx)
-        }
-        _ => {}
-    })
-    .detach();
 }
 
-fn buffer_ranges_updated(_editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
+fn open_conflict_set_for_buffer(
+    _editor: &mut Editor,
+    buffer: Entity<Buffer>,
+    cx: &mut Context<Editor>,
+) {
     let buffer = buffer.downgrade();
 
     cx.spawn(async move |editor, cx| {
         let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
+        if let Some(conflict_set) = editor.read_with(cx, |editor, _| {
+            editor
+                .addon::<ConflictAddon>()
+                .and_then(|addon| addon.buffers.get(&buffer_id))
+                .map(|buffer_conflicts| buffer_conflicts.conflict_set.clone())
+        })? {
+            editor.update(cx, |editor, cx| {
+                buffer_ranges_updated(editor, conflict_set, cx);
+            })?;
+            return anyhow::Ok(());
+        }
+
         let Some(project) = editor.read_with(cx, |editor, _| editor.project().cloned())? else {
             return anyhow::Ok(());
         };
@@ -95,53 +92,63 @@ fn buffer_ranges_updated(_editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut 
         let Some(buffer) = buffer.upgrade() else {
             return Ok(());
         };
-        let conflict_set = editor
-            .update(cx, |editor, cx| {
-                let addon = editor.addon_mut::<ConflictAddon>().unwrap();
-                if let Some(buffer_conflicts) = addon.buffers.get(&buffer_id) {
-                    Task::ready(buffer_conflicts.conflict_set.clone())
-                } else {
-                    git_store.update(cx, |git_store, cx| {
-                        git_store.open_conflict_set(buffer.clone(), cx)
-                    })
-                }
-            })?
+        let conflict_set = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_conflict_set(buffer.clone(), cx)
+            })
             .await;
         editor.update(cx, |editor, cx| {
-            let buffer_conflicts = editor
-                .addon_mut::<ConflictAddon>()
-                .unwrap()
-                .buffers
-                .entry(buffer_id)
-                .or_insert_with(|| {
-                    let subscription = cx.subscribe(&conflict_set, conflicts_updated);
-                    BufferConflicts {
-                        block_ids: Vec::new(),
-                        conflict_set,
-                        _subscription: subscription,
-                    }
-                });
-
-            let conflict_set = buffer_conflicts.conflict_set.clone();
-            let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
-            let addon_conflicts_len = buffer_conflicts.block_ids.len();
-            conflicts_updated(
-                editor,
-                conflict_set,
-                &ConflictSetUpdate {
-                    buffer_range: None,
-                    old_range: 0..addon_conflicts_len,
-                    new_range: 0..conflicts_len,
-                },
-                cx,
-            );
+            buffer_ranges_updated(editor, conflict_set, cx);
         })?;
         Ok(())
     })
     .detach();
 }
 
-fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mut Context<Editor>) {
+pub(crate) fn buffer_ranges_updated(
+    editor: &mut Editor,
+    conflict_set: Entity<ConflictSet>,
+    cx: &mut Context<Editor>,
+) {
+    let buffer_id = conflict_set.read(cx).snapshot.buffer_id;
+    if editor.buffer().read(cx).buffer(buffer_id).is_none() {
+        return;
+    }
+
+    let buffer_conflicts = editor
+        .addon_mut::<ConflictAddon>()
+        .unwrap()
+        .buffers
+        .entry(buffer_id)
+        .or_insert_with(|| {
+            let subscription = cx.subscribe(&conflict_set, conflicts_updated);
+            BufferConflicts {
+                block_ids: Vec::new(),
+                conflict_set: conflict_set.clone(),
+                _subscription: subscription,
+            }
+        });
+
+    let conflict_set = buffer_conflicts.conflict_set.clone();
+    let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
+    let addon_conflicts_len = buffer_conflicts.block_ids.len();
+    conflicts_updated(
+        editor,
+        conflict_set,
+        &ConflictSetUpdate {
+            buffer_range: None,
+            old_range: 0..addon_conflicts_len,
+            new_range: 0..conflicts_len,
+        },
+        cx,
+    );
+}
+
+pub(crate) fn buffers_removed(
+    editor: &mut Editor,
+    removed_buffer_ids: &[BufferId],
+    cx: &mut Context<Editor>,
+) {
     let mut removed_block_ids = HashSet::default();
     editor
         .addon_mut::<ConflictAddon>()
