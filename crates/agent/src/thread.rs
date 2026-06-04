@@ -366,8 +366,7 @@ impl UserMessage {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
                         MentionUri::Rule { .. } => {
-                            // Deprecated: retained so legacy rule mentions in
-                            // older threads are still included as context.
+                            // Deprecated: keeps legacy rule mentions as context.
                             write!(
                                 &mut rules_context,
                                 "\n{}",

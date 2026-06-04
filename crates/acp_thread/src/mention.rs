@@ -36,11 +36,9 @@ pub enum MentionUri {
         id: acp::SessionId,
         name: String,
     },
-    /// Deprecated: rules were removed in favor of skills, but this variant is
-    /// retained so that threads saved before the removal can still be
-    /// deserialized. The `id` field (matching the old `prompt_store::PromptId`
-    /// serialization) is preserved verbatim so that re-saved threads stay
-    /// loadable by older Zed versions that still require it.
+    /// Deprecated: kept so threads from before rules became skills still
+    /// deserialize. `id` (an opaque `prompt_store::PromptId`) is preserved
+    /// verbatim so re-saved threads stay loadable by older Zed versions.
     Rule {
         #[serde(default = "default_rule_id")]
         id: serde_json::Value,
@@ -211,7 +209,7 @@ impl MentionUri {
                         name,
                     })
                 } else if let Some(rule_id) = path.strip_prefix("/agent/rule/") {
-                    // Deprecated: retained so legacy rule mentions still parse.
+                    // Deprecated: parses legacy rule mentions.
                     let name = single_query_param(&url, "name")?.context("Missing rule name")?;
                     let id = if rule_id.is_empty() {
                         default_rule_id()
@@ -605,9 +603,8 @@ fn default_include_errors() -> bool {
     true
 }
 
-/// Placeholder for the deprecated rule `id` field. Used when a legacy rule
-/// mention is missing its id so the value still serializes into a shape older
-/// Zed versions can deserialize as a `prompt_store::PromptId`.
+/// Placeholder rule `id` for legacy mentions missing one, shaped so older Zed
+/// versions can still deserialize it as a `prompt_store::PromptId`.
 fn default_rule_id() -> serde_json::Value {
     serde_json::json!({ "User": { "uuid": "00000000-0000-0000-0000-000000000000" } })
 }
@@ -844,22 +841,19 @@ mod tests {
 
     #[test]
     fn test_parse_legacy_rule_uri() {
-        // Rules were removed, but legacy threads still reference them by URI.
         let rule_uri = "zed:///agent/rule/d8694ff2-90d5-4b6f-be33-33c1763acd52?name=Some+rule";
         let parsed = MentionUri::parse(rule_uri, PathStyle::local()).unwrap();
         match &parsed {
             MentionUri::Rule { name, .. } => assert_eq!(name, "Some rule"),
             _ => panic!("Expected Rule variant"),
         }
-        // The legacy id is encoded back into the URI so older versions round-trip.
+        // The id round-trips through the URI.
         assert_eq!(parsed.to_uri().to_string(), rule_uri);
     }
 
     #[test]
     fn test_legacy_rule_mention_preserves_id() {
-        // Threads saved before rules were removed include an `id` field that
-        // older Zed versions still require; it must survive a load + save
-        // round-trip rather than being dropped.
+        // The `id` older Zed versions require must survive a load + save.
         let json = r#"{"Rule":{"id":{"User":{"uuid":"d8694ff2-90d5-4b6f-be33-33c1763acd52"}},"name":"Some rule"}}"#;
         let parsed: MentionUri = serde_json::from_str(json).unwrap();
         match &parsed {
@@ -875,8 +869,7 @@ mod tests {
 
     #[test]
     fn test_legacy_rule_mention_without_id_gets_placeholder() {
-        // A rule mention missing its id (e.g. saved by an intermediate version)
-        // must still serialize with a valid id so older versions can load it.
+        // A mention missing its id still serializes a valid id for older versions.
         let json = r#"{"Rule":{"name":"Some rule"}}"#;
         let parsed: MentionUri = serde_json::from_str(json).unwrap();
         let reserialized = serde_json::to_value(&parsed).unwrap();
