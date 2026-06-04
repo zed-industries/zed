@@ -13998,6 +13998,39 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snippet_completion_uses_overtyped_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_editor(|editor, _, cx| {
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
+                let snippet = project::snippet_provider::Snippet {
+                    prefix: vec!["wrap".to_string()],
+                    body: "wrap($TM_SELECTED_TEXT)$0".to_string(),
+                    description: Some("wrap selection".to_string()),
+                    name: "wrap".to_string(),
+                };
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![Arc::new(snippet)],
+                );
+            });
+        })
+    });
+
+    cx.set_state("call «fooˇ»");
+    cx.simulate_input("wrap");
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion(&ConfirmCompletion::default(), window, cx);
+    });
+    cx.assert_editor_state("call wrap(foo)ˇ");
+}
+
+#[gpui::test]
 async fn test_document_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -32484,6 +32517,110 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
     cx.assert_editor_state(
         r#"First cursor at an Unspecified Locationˇ after and second cursor at an Unspecified Locationˇ after"#,
     );
+}
+
+#[gpui::test]
+async fn test_insert_snippet_with_selected_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(r#"call «fooˇ»"#));
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("wrap($TM_SELECTED_TEXT)$0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(indoc!(r#"call wrap(foo)ˇ"#));
+
+    // Each selection contributes its own selected text.
+    cx.set_state(indoc!(r#"«oneˇ» «twoˇ»"#));
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("[${TM_SELECTED_TEXT}]$0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(indoc!(r#"[one]ˇ [two]ˇ"#));
+
+    // Selections of differing lengths exercise the per-range tabstop offset math:
+    // the second cursor's tabstop must account for the first replacement growing
+    // the buffer by a different amount.
+    cx.set_state(indoc!(r#"«xˇ» «yyyyˇ»"#));
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("[${TM_SELECTED_TEXT}]$0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(indoc!(r#"[x]ˇ [yyyy]ˇ"#));
+
+    // With no selection, `${TM_SELECTED_TEXT:default}` falls back to its default.
+    cx.set_state(indoc!(r#"hereˇ"#));
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("<${TM_SELECTED_TEXT:nothing}>$0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(indoc!(r#"here<nothing>ˇ"#));
+
+    // `TM_CURRENT_WORD` and the per-cursor `CURSOR_NUMBER` resolve independently
+    // for each cursor.
+    cx.set_state(indoc!(r#"aaaˇ bbbˇ"#));
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("[$TM_CURRENT_WORD#$CURSOR_NUMBER]$0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(indoc!(r#"aaa[aaa#1]ˇ bbb[bbb#2]ˇ"#));
+
+    // `TM_LINE_NUMBER` and `TM_CURRENT_LINE` reflect the cursor's line.
+    cx.set_state(indoc!(
+        r#"line one
+        lineˇ two"#
+    ));
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some(" L$TM_LINE_NUMBER=[$TM_CURRENT_LINE]$0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(indoc!(
+        r#"line one
+        line L2=[line two]ˇ two"#
+    ));
 }
 
 #[gpui::test]

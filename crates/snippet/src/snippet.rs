@@ -6,6 +6,8 @@ use std::{collections::BTreeMap, ops::Range};
 pub struct Snippet {
     pub text: String,
     pub tabstops: Vec<TabStop>,
+    /// Occurrences of snippet variables in order of appearance.
+    pub variables: Vec<SnippetVariable>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -14,11 +16,18 @@ pub struct TabStop {
     pub choices: Option<Vec<String>>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct SnippetVariable {
+    pub name: String,
+    pub range: Range<usize>,
+}
+
 impl Snippet {
     pub fn parse(source: &str) -> Result<Self> {
         let mut text = String::with_capacity(source.len());
         let mut tabstops = BTreeMap::new();
-        parse_snippet(source, false, &mut text, &mut tabstops)
+        let mut variables = Vec::new();
+        parse_snippet(source, false, &mut text, &mut tabstops, &mut variables)
             .context("failed to parse snippet")?;
 
         let len = text.len() as isize;
@@ -38,7 +47,68 @@ impl Snippet {
             }
         }
 
-        Ok(Snippet { text, tabstops })
+        Ok(Snippet {
+            text,
+            tabstops,
+            variables,
+        })
+    }
+
+    /// Returns a copy of this snippet with its variables replaced by the values
+    /// returned from `resolve`. Tabstop offsets and any remaining variable spans
+    /// are shifted to account for the difference in length between a variable's
+    /// default text and its resolved value. Variables for which `resolve` returns
+    /// `None` or an empty string keep their default text.
+    pub fn resolve_variables(&self, resolve: impl Fn(&str) -> Option<String>) -> Snippet {
+        if self.variables.is_empty() {
+            return self.clone();
+        }
+
+        let mut text = String::with_capacity(self.text.len());
+        let mut last = 0;
+        let mut deltas: Vec<(usize, isize)> = Vec::new();
+        for variable in &self.variables {
+            let Some(value) = resolve(&variable.name).filter(|value| !value.is_empty()) else {
+                continue;
+            };
+            text.push_str(&self.text[last..variable.range.start]);
+            text.push_str(&value);
+            last = variable.range.end;
+            let original_len = variable.range.end - variable.range.start;
+            let delta = value.len() as isize - original_len as isize;
+            if delta != 0 {
+                deltas.push((variable.range.end, delta));
+            }
+        }
+        text.push_str(&self.text[last..]);
+
+        let remap = |offset: isize| -> isize {
+            offset
+                + deltas
+                    .iter()
+                    .filter(|(boundary, _)| *boundary as isize <= offset)
+                    .map(|(_, delta)| delta)
+                    .sum::<isize>()
+        };
+
+        let tabstops = self
+            .tabstops
+            .iter()
+            .map(|tabstop| TabStop {
+                ranges: tabstop
+                    .ranges
+                    .iter()
+                    .map(|range| remap(range.start)..remap(range.end))
+                    .collect(),
+                choices: tabstop.choices.clone(),
+            })
+            .collect();
+
+        Snippet {
+            text,
+            tabstops,
+            variables: Vec::new(),
+        }
     }
 }
 
@@ -47,12 +117,13 @@ fn parse_snippet<'a>(
     nested: bool,
     text: &mut String,
     tabstops: &mut BTreeMap<usize, TabStop>,
+    variables: &mut Vec<SnippetVariable>,
 ) -> Result<&'a str> {
     loop {
         match source.chars().next() {
             None => return Ok(""),
             Some('$') => {
-                source = parse_tabstop(&source[1..], text, tabstops)?;
+                source = parse_tabstop(&source[1..], text, tabstops, variables)?;
             }
             Some('\\') => {
                 // As specified in the LSP spec (`Grammar` section),
@@ -93,13 +164,19 @@ fn parse_tabstop<'a>(
     mut source: &'a str,
     text: &mut String,
     tabstops: &mut BTreeMap<usize, TabStop>,
+    variables: &mut Vec<SnippetVariable>,
 ) -> Result<&'a str> {
     let tabstop_start = text.len();
     let tabstop_index;
     let mut choices = None;
 
     if source.starts_with('{') {
-        let (index, rest) = parse_int(&source[1..])?;
+        let inner = &source[1..];
+        if starts_with_variable_name(inner) {
+            return parse_variable(inner, true, text, variables);
+        }
+
+        let (index, rest) = parse_int(inner)?;
         tabstop_index = index;
         source = rest;
 
@@ -108,7 +185,7 @@ fn parse_tabstop<'a>(
         }
 
         if source.starts_with(':') {
-            source = parse_snippet(&source[1..], true, text, tabstops)?;
+            source = parse_snippet(&source[1..], true, text, tabstops, variables)?;
         }
 
         if source.starts_with('}') {
@@ -116,6 +193,8 @@ fn parse_tabstop<'a>(
         } else {
             anyhow::bail!("expected a closing brace");
         }
+    } else if starts_with_variable_name(source) {
+        return parse_variable(source, false, text, variables);
     } else {
         let (index, rest) = parse_int(source)?;
         tabstop_index = index;
@@ -131,6 +210,90 @@ fn parse_tabstop<'a>(
         .ranges
         .push(tabstop_start as isize..text.len() as isize);
     Ok(source)
+}
+
+fn starts_with_variable_name(source: &str) -> bool {
+    source
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+}
+
+fn parse_variable<'a>(
+    source: &'a str,
+    braced: bool,
+    text: &mut String,
+    variables: &mut Vec<SnippetVariable>,
+) -> Result<&'a str> {
+    let name_len = source
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(source.len());
+    let (name, mut source) = source.split_at(name_len);
+
+    let start = text.len();
+    if braced {
+        if let Some(rest) = source.strip_prefix(':') {
+            source = parse_variable_default(rest, text)?;
+        } else if source.starts_with('/') {
+            // Variable transforms (e.g. `${TM_FILENAME/.../.../}`) are not
+            // supported; skip past the transform body without applying it.
+            source = skip_to_closing_brace(source)?;
+        }
+
+        source = source
+            .strip_prefix('}')
+            .context("expected a closing brace")?;
+    }
+
+    variables.push(SnippetVariable {
+        name: name.to_string(),
+        range: start..text.len(),
+    });
+    Ok(source)
+}
+
+fn parse_variable_default<'a>(mut source: &'a str, text: &mut String) -> Result<&'a str> {
+    loop {
+        match source.chars().next() {
+            None => anyhow::bail!("expected a closing brace"),
+            Some('}') => return Ok(source),
+            Some('\\') => {
+                source = &source[1..];
+                if let Some(c) = source.chars().next() {
+                    if c == '$' || c == '\\' || c == '}' {
+                        text.push(c);
+                        source = &source[c.len_utf8()..];
+                    } else {
+                        text.push('\\');
+                    }
+                } else {
+                    text.push('\\');
+                }
+            }
+            Some(_) => {
+                let chunk_end = source.find(['}', '\\']).unwrap_or(source.len());
+                let (chunk, rest) = source.split_at(chunk_end);
+                text.push_str(chunk);
+                source = rest;
+            }
+        }
+    }
+}
+
+fn skip_to_closing_brace(mut source: &str) -> Result<&str> {
+    loop {
+        match source.chars().next() {
+            None => anyhow::bail!("expected a closing brace"),
+            Some('}') => return Ok(source),
+            Some('\\') => {
+                source = &source[1..];
+                if let Some(c) = source.chars().next() {
+                    source = &source[c.len_utf8()..];
+                }
+            }
+            Some(c) => source = &source[c.len_utf8()..],
+        }
+    }
 }
 
 fn parse_int(source: &str) -> Result<(usize, &str)> {
@@ -322,6 +485,74 @@ mod tests {
         let snippet = Snippet::parse("one\\\\$1two").unwrap();
         assert_eq!(snippet.text, "one\\two");
         assert_eq!(tabstops(&snippet), &[vec![4..4], vec![7..7]]);
+    }
+
+    #[test]
+    fn test_snippet_with_selected_text_variable() {
+        let snippet = Snippet::parse("wrap($TM_SELECTED_TEXT)").unwrap();
+        assert_eq!(snippet.text, "wrap()");
+        assert_eq!(
+            snippet.variables,
+            &[SnippetVariable {
+                name: "TM_SELECTED_TEXT".to_string(),
+                range: 5..5,
+            }]
+        );
+
+        let resolved = snippet
+            .resolve_variables(|name| (name == "TM_SELECTED_TEXT").then(|| "hello".to_string()));
+        assert_eq!(resolved.text, "wrap(hello)");
+        assert!(resolved.variables.is_empty());
+        // The trailing end tabstop is shifted past the inserted text.
+        assert_eq!(tabstops(&resolved), &[vec![11..11]]);
+    }
+
+    #[test]
+    fn test_snippet_with_braced_variable_and_tabstops() {
+        let snippet = Snippet::parse("${TM_SELECTED_TEXT}$1 = $2").unwrap();
+        assert_eq!(snippet.text, " = ");
+        assert_eq!(tabstops(&snippet), &[vec![0..0], vec![3..3]]);
+
+        let resolved = snippet
+            .resolve_variables(|name| (name == "TM_SELECTED_TEXT").then(|| "value".to_string()));
+        assert_eq!(resolved.text, "value = ");
+        assert_eq!(tabstops(&resolved), &[vec![5..5], vec![8..8]]);
+    }
+
+    #[test]
+    fn test_snippet_variable_default() {
+        let snippet = Snippet::parse("log(${TM_SELECTED_TEXT:msg})").unwrap();
+        assert_eq!(snippet.text, "log(msg)");
+        assert_eq!(
+            snippet.variables,
+            &[SnippetVariable {
+                name: "TM_SELECTED_TEXT".to_string(),
+                range: 4..7,
+            }]
+        );
+
+        let unresolved = snippet.resolve_variables(|_| None);
+        assert_eq!(unresolved.text, "log(msg)");
+
+        let empty = snippet.resolve_variables(|_| Some(String::new()));
+        assert_eq!(empty.text, "log(msg)");
+
+        let resolved = snippet
+            .resolve_variables(|name| (name == "TM_SELECTED_TEXT").then(|| "abc".to_string()));
+        assert_eq!(resolved.text, "log(abc)");
+        assert_eq!(tabstops(&resolved), &[vec![8..8]]);
+    }
+
+    #[test]
+    fn test_snippet_with_multiple_variables() {
+        let snippet = Snippet::parse("$TM_SELECTED_TEXT-$1-$TM_SELECTED_TEXT").unwrap();
+        assert_eq!(snippet.text, "--");
+        assert_eq!(tabstops(&snippet), &[vec![1..1], vec![2..2]]);
+
+        let resolved = snippet
+            .resolve_variables(|name| (name == "TM_SELECTED_TEXT").then(|| "xy".to_string()));
+        assert_eq!(resolved.text, "xy--xy");
+        assert_eq!(tabstops(&resolved), &[vec![3..3], vec![6..6]]);
     }
 
     fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {

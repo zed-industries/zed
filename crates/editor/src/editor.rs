@@ -43,6 +43,7 @@ mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
 pub mod semantic_tokens;
+mod snippet_variables;
 mod split;
 pub mod split_editor_view;
 
@@ -399,6 +400,12 @@ pub struct SearchWithinRange;
 
 trait InvalidationRegion {
     fn ranges(&self) -> &[Range<Anchor>];
+}
+
+enum SelectedTextSource {
+    None,
+    InsertionRanges,
+    Explicit(Arc<str>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -944,6 +951,8 @@ pub struct Editor {
     deferred_selection_effects_state: Option<DeferredSelectionEffectsState>,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
+    /// Text that was replaced by the user typing over a selection
+    selection_overtyped: Option<(Anchor, Arc<str>)>,
     select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
     pub diagnostics_max_severity: DiagnosticSeverity,
@@ -2143,6 +2152,7 @@ impl Editor {
             deferred_selection_effects_state: None,
             autoclose_regions: Vec::new(),
             snippet_stack: InvalidationStack::default(),
+            selection_overtyped: None,
             select_syntax_node_history: SelectSyntaxNodeHistory::default(),
             ime_transaction: None,
             active_diagnostics: ActiveDiagnostic::None,
@@ -4489,6 +4499,7 @@ impl Editor {
         cx.notify();
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
+        self.selection_overtyped = None;
         self.stale_edit_prediction_in_menu.take();
         self.update_visible_edit_prediction(window, cx);
         if let Some(CodeContextMenu::Completions(_)) = &context_menu
@@ -4540,55 +4551,139 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        self.insert_snippet_inner(
+            insertion_ranges,
+            snippet,
+            SelectedTextSource::None,
+            window,
+            cx,
+        )
+    }
+
+    pub fn insert_snippet_with_selected_text(
+        &mut self,
+        insertion_ranges: &[Range<MultiBufferOffset>],
+        snippet: Snippet,
+        selected_text: Arc<str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.insert_snippet_inner(
+            insertion_ranges,
+            snippet,
+            SelectedTextSource::Explicit(selected_text),
+            window,
+            cx,
+        )
+    }
+
+    pub fn insert_snippet_over_selection(
+        &mut self,
+        insertion_ranges: &[Range<MultiBufferOffset>],
+        snippet: Snippet,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.insert_snippet_inner(
+            insertion_ranges,
+            snippet,
+            SelectedTextSource::InsertionRanges,
+            window,
+            cx,
+        )
+    }
+
+    fn insert_snippet_inner(
+        &mut self,
+        insertion_ranges: &[Range<MultiBufferOffset>],
+        snippet: Snippet,
+        selected_text: SelectedTextSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         struct Tabstop<T> {
             is_end_tabstop: bool,
             ranges: Vec<Range<T>>,
             choices: Option<Vec<String>>,
         }
 
+        let variable_context = (!snippet.variables.is_empty())
+            .then(|| snippet_variables::SnippetVariableContext::new(self, cx));
+
         let tabstops = self.buffer.update(cx, |buffer, cx| {
-            let snippet_text: Arc<str> = snippet.text.clone().into();
+            let resolved_snippets = {
+                let snapshot = buffer.read(cx);
+                insertion_ranges
+                    .iter()
+                    .enumerate()
+                    .map(|(cursor_index, range)| {
+                        let Some(variable_context) = &variable_context else {
+                            return snippet.clone();
+                        };
+                        let selected_text: String = match &selected_text {
+                            SelectedTextSource::None => String::new(),
+                            SelectedTextSource::InsertionRanges => {
+                                snapshot.text_for_range(range.clone()).collect()
+                            }
+                            SelectedTextSource::Explicit(text) => text.to_string(),
+                        };
+                        snippet.resolve_variables(|name| {
+                            variable_context.resolve(
+                                name,
+                                &selected_text,
+                                &snapshot,
+                                range,
+                                cursor_index,
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+
             let edits = insertion_ranges
                 .iter()
                 .cloned()
-                .map(|range| (range, snippet_text.clone()));
+                .zip(&resolved_snippets)
+                .map(|(range, resolved)| (range, Arc::<str>::from(resolved.text.as_str())));
             let autoindent_mode = AutoindentMode::Block {
                 original_indent_columns: Vec::new(),
             };
             buffer.edit(edits, Some(autoindent_mode), cx);
 
             let snapshot = &*buffer.read(cx);
-            let snippet = &snippet;
-            snippet
-                .tabstops
-                .iter()
-                .map(|tabstop| {
-                    let is_end_tabstop = tabstop.ranges.first().is_some_and(|tabstop| {
-                        tabstop.is_empty() && tabstop.start == snippet.text.len() as isize
-                    });
-                    let mut tabstop_ranges = tabstop
-                        .ranges
-                        .iter()
-                        .flat_map(|tabstop_range| {
-                            let mut delta = 0_isize;
-                            insertion_ranges.iter().map(move |insertion_range| {
-                                let insertion_start = insertion_range.start + delta;
-                                delta += snippet.text.len() as isize
-                                    - (insertion_range.end - insertion_range.start) as isize;
+            let tabstop_count = resolved_snippets.first().map_or(0, |s| s.tabstops.len());
+            (0..tabstop_count)
+                .map(|tabstop_index| {
+                    let first = &resolved_snippets[0];
+                    let is_end_tabstop =
+                        first.tabstops[tabstop_index]
+                            .ranges
+                            .first()
+                            .is_some_and(|range| {
+                                range.is_empty() && range.start == first.text.len() as isize
+                            });
 
-                                let start =
-                                    (insertion_start + tabstop_range.start).min(snapshot.len());
-                                let end = (insertion_start + tabstop_range.end).min(snapshot.len());
-                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
-                            })
-                        })
-                        .collect::<Vec<_>>();
+                    let mut tabstop_ranges = Vec::new();
+                    let mut delta = 0_isize;
+                    for (range_index, insertion_range) in insertion_ranges.iter().enumerate() {
+                        let resolved = &resolved_snippets[range_index];
+                        let insertion_start = insertion_range.start + delta;
+                        delta += resolved.text.len() as isize
+                            - (insertion_range.end - insertion_range.start) as isize;
+
+                        for tabstop_range in &resolved.tabstops[tabstop_index].ranges {
+                            let start = (insertion_start + tabstop_range.start).min(snapshot.len());
+                            let end = (insertion_start + tabstop_range.end).min(snapshot.len());
+                            tabstop_ranges
+                                .push(snapshot.anchor_before(start)..snapshot.anchor_after(end));
+                        }
+                    }
                     tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
 
                     Tabstop {
                         is_end_tabstop,
                         ranges: tabstop_ranges,
-                        choices: tabstop.choices.clone(),
+                        choices: first.tabstops[tabstop_index].choices.clone(),
                     }
                 })
                 .collect::<Vec<_>>()

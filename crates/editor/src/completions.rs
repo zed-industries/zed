@@ -769,6 +769,8 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
+        let overtyped_selection = self.selection_overtyped.take();
+
         let CodeContextMenu::Completions(completions_menu) = self.hide_context_menu(window, cx)?
         else {
             return None;
@@ -810,6 +812,16 @@ impl Editor {
         else {
             return None;
         };
+
+        // Overtyped text is used as `TM_SELECTED_TEXT` only when it sits
+        // exactly where this completion is being inserted
+        let snippet_selected_text = overtyped_selection.and_then(|(anchor, text)| {
+            let anchor_offset = anchor.to_offset(&multibuffer_snapshot);
+            let replace_start = replace_range_multibuffer
+                .start
+                .to_offset(&multibuffer_snapshot);
+            (anchor_offset == replace_start).then_some(text)
+        });
 
         let Some((buffer_snapshot, newest_range_buffer)) =
             multibuffer_snapshot.anchor_range_to_buffer_anchor_range(newest_selection.range())
@@ -896,9 +908,21 @@ impl Editor {
                     .iter()
                     .map(|range| range.to_offset(&multibuffer_snapshot))
                     .collect::<Vec<_>>();
-                editor
-                    .insert_snippet(&offset_ranges, snippet, window, cx)
-                    .log_err();
+                if let Some(selected_text) = snippet_selected_text {
+                    editor
+                        .insert_snippet_with_selected_text(
+                            &offset_ranges,
+                            snippet,
+                            selected_text,
+                            window,
+                            cx,
+                        )
+                        .log_err();
+                } else {
+                    editor
+                        .insert_snippet(&offset_ranges, snippet, window, cx)
+                        .log_err();
+                }
             } else {
                 editor.buffer.update(cx, |multi_buffer, cx| {
                     let auto_indent = match completion.insert_text_mode {
