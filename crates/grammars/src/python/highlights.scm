@@ -4,10 +4,6 @@
 (attribute
   attribute: (identifier) @property)
 
-; Dunder variables
-((identifier) @variable.special
-  (#match? @variable.special "^__[a-zA-Z0-9_]+__$"))
-
 ; CamelCase for classes
 ((identifier) @type.class
   (#match? @type.class "^_*[A-Z][A-Za-z0-9_]*$"))
@@ -331,6 +327,16 @@
 (decorator
   (identifier) @attribute.builtin
   (#any-of? @attribute.builtin "classmethod" "staticmethod" "property"))
+
+(attribute
+  attribute: (identifier) @attribute.special
+  (#any-of? @attribute.special
+    "__all__" "__annotations__" "__bases__" "__builtins__" "__class__" "__closure__" "__code__"
+    "__debug__" "__defaults__" "__dict__" "__doc__" "__file__" "__func__" "__globals__"
+    "__kwdefaults__" "__match_args__" "__members__" "__metaclass__" "__methods__" "__module__"
+    "__mro__" "__mro_entries__" "__name__" "__qualname__" "__post_init__" "__self__" "__signature__"
+    "__slots__" "__subclasses__" "__version__" "__weakref__" "__wrapped__" "__classcell__"
+    "__spec__" "__path__" "__package__" "__future__" "__traceback__"))
 
 ; Builtin types as identifiers
 [
