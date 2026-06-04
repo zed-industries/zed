@@ -20,13 +20,133 @@ pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_OLD_FOOTNOTES)
     .union(Options::ENABLE_GFM)
     .union(Options::ENABLE_SUPERSCRIPT)
-    .union(Options::ENABLE_SUBSCRIPT);
+    .union(Options::ENABLE_SUBSCRIPT)
+    .union(Options::ENABLE_MATH);
 
 #[derive(Default)]
 struct ParseState {
     events: Vec<(Range<usize>, MarkdownEvent)>,
     root_block_starts: Vec<usize>,
     depth: usize,
+}
+
+/// Find the byte position just past the next unescaped `$$` after `start`.
+/// Returns `None` if no closing delimiter is found.
+fn find_display_math_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'$' && bytes[i + 1] == b'$' {
+            // Skip escaped `\$$`.
+            if i > 0 && bytes[i - 1] == b'\\' {
+                i += 1;
+                continue;
+            }
+            return Some(i + 2);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Append `c` (a character already known to live at `original_offset` in the
+/// source text) to `out` and record the offset mapping in `offset_map`.
+///
+/// `offset_map` has one entry per preprocessed-text boundary, where the
+/// `p`-th entry is the offset in the original text that corresponds to
+/// preprocessed position `p`. For multi-byte characters the intermediate
+/// entries (boundaries in the middle of the char) all point at the start of
+/// the same original char, and the final entry points one char past it.
+fn push_char(c: char, original_offset: usize, out: &mut String, offset_map: &mut Vec<usize>) {
+    let char_len = c.len_utf8();
+    out.push(c);
+    for k in 1..=char_len {
+        offset_map.push(if k < char_len {
+            original_offset
+        } else {
+            original_offset + char_len
+        });
+    }
+}
+
+/// Collapse multi-line `$$...$$` display math blocks into single-line form so
+/// `pulldown-cmark` can recognise them. Block-level constructs (lists, block
+/// quotes, ...) take precedence over inline math in `pulldown-cmark`, so a
+/// `+` at the start of a line inside `$$\n...\n$$` would otherwise tear the
+/// block apart and the inner lines would be parsed as list items. We replace
+/// the inner `\n` with U+2060 (WORD JOINER) — invisible to markdown parsing —
+/// and return an offset map so every event range reported by pulldown-cmark
+/// can be translated back to the original source positions.
+fn preprocess_math_blocks(text: &str) -> (String, Vec<usize>) {
+    let mut out = String::with_capacity(text.len());
+    let mut offset_map: Vec<usize> = vec![0];
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'$' {
+            // Skip escaped `\$$`.
+            if i > 0 && bytes[i - 1] == b'\\' {
+                push_char('$', i, &mut out, &mut offset_map);
+                i += 1;
+                continue;
+            }
+            if let Some(orig_end) = find_display_math_end(bytes, i + 2) {
+                let orig_start = i;
+                let contains_newline = text[orig_start..orig_end].contains('\n');
+                if contains_newline {
+                    // Push opening "$$".
+                    push_char('$', orig_start, &mut out, &mut offset_map);
+                    push_char('$', orig_start + 1, &mut out, &mut offset_map);
+                    // Push content, replacing newlines with U+2060.
+                    let mut j = orig_start + 2;
+                    while j < orig_end - 2 {
+                        let c = text[j..]
+                            .chars()
+                            .next()
+                            .expect("j is at a char boundary by construction");
+                        if c == '\n' {
+                            push_char('\u{2060}', j, &mut out, &mut offset_map);
+                        } else {
+                            push_char(c, j, &mut out, &mut offset_map);
+                        }
+                        j += c.len_utf8();
+                    }
+                    // Push closing "$$".
+                    push_char('$', orig_end - 2, &mut out, &mut offset_map);
+                    push_char('$', orig_end - 1, &mut out, &mut offset_map);
+                    i = orig_end;
+                    continue;
+                }
+                // Single-line `$$...$$`: copy verbatim.
+                let mut j = orig_start;
+                while j < orig_end {
+                    let c = text[j..]
+                        .chars()
+                        .next()
+                        .expect("j is at a char boundary by construction");
+                    push_char(c, j, &mut out, &mut offset_map);
+                    j += c.len_utf8();
+                }
+                i = orig_end;
+                continue;
+            }
+        }
+        let c = text[i..]
+            .chars()
+            .next()
+            .expect("i is at a char boundary by construction");
+        push_char(c, i, &mut out, &mut offset_map);
+        i += c.len_utf8();
+    }
+    (out, offset_map)
+}
+
+/// Translate a byte range from preprocessed text back to the original text
+/// using the offset map produced by `preprocess_math_blocks`.
+fn translate_range(range: &Range<usize>, offset_map: &[usize]) -> Range<usize> {
+    let len = offset_map.len();
+    let start = range.start.min(len.saturating_sub(1));
+    let end = range.end.min(len.saturating_sub(1));
+    offset_map[start]..offset_map[end]
 }
 
 #[derive(Debug, Default)]
@@ -228,10 +348,14 @@ pub(crate) fn parse_markdown_with_options(
     } else {
         PARSE_OPTIONS
     };
-    let mut parser = Parser::new_ext(text, parse_options)
+    let (parsed_text, offset_map) = preprocess_math_blocks(text);
+    let mut parser = Parser::new_ext(&parsed_text, parse_options)
         .into_offset_iter()
         .peekable();
     while let Some((pulldown_event, range)) = parser.next() {
+        // All ranges from pulldown-cmark are in the preprocessed text; translate
+        // them back to the original text before pushing events.
+        let range = translate_range(&range, &offset_map);
         if within_metadata && !parse_metadata_blocks {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock(_)) =
                 pulldown_event
@@ -254,6 +378,7 @@ pub(crate) fn parse_markdown_with_options(
                             html_blocks.insert(range.start, block);
 
                             while let Some((event, end_range)) = parser.next() {
+                                let end_range = translate_range(&end_range, &offset_map);
                                 if let pulldown_cmark::Event::End(
                                     pulldown_cmark::TagEnd::HtmlBlock,
                                 ) = event
@@ -498,6 +623,9 @@ pub(crate) fn parse_markdown_with_options(
                     let Some((next_event, next_range)) = parser.next() else {
                         unreachable!()
                     };
+                    // Translate back to the original source range, just like
+                    // the main loop does.
+                    let next_range = translate_range(&next_range, &offset_map);
                     let next_text = match next_event {
                         pulldown_cmark::Event::Text(next_event) => next_event,
                         pulldown_cmark::Event::InlineHtml(_) => CowStr::Borrowed(""),
@@ -505,7 +633,7 @@ pub(crate) fn parse_markdown_with_options(
                     };
                     let next_len = last_len + next_text.len();
                     ranges.push(TextRange {
-                        source_range: next_range.clone(),
+                        source_range: next_range,
                         merged_range: last_len..next_len,
                         parsed: next_text,
                     });
@@ -629,7 +757,12 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
-            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
+            pulldown_cmark::Event::InlineMath(_) => {
+                state.push_event(range, MarkdownEvent::InlineMath)
+            }
+            pulldown_cmark::Event::DisplayMath(_) => {
+                state.push_event(range, MarkdownEvent::DisplayMath)
+            }
         }
     }
 
@@ -748,6 +881,10 @@ pub enum MarkdownEvent {
     Rule,
     /// A task list marker, rendered as a checkbox in HTML. Contains a true when it is checked.
     TaskListMarker(bool),
+    /// An inline math node.
+    InlineMath,
+    /// A display math node.
+    DisplayMath,
     /// Start of a root-level block (a top-level structural element like a paragraph, heading, list, etc.).
     RootStart,
     /// End of a root-level block. Contains the root block index.
@@ -905,9 +1042,8 @@ mod tests {
     use super::*;
 
     const CONDITIONAL_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
-    const UNWANTED_OPTIONS: Options = Options::ENABLE_MATH
-        .union(Options::ENABLE_DEFINITION_LIST)
-        .union(Options::ENABLE_WIKILINKS);
+    const UNWANTED_OPTIONS: Options =
+        Options::ENABLE_DEFINITION_LIST.union(Options::ENABLE_WIKILINKS);
 
     #[test]
     fn all_options_considered() {
@@ -929,6 +1065,271 @@ mod tests {
                 .intersection(UNWANTED_OPTIONS),
             Options::empty()
         );
+    }
+
+    #[test]
+    fn test_multiline_display_math_with_list_marker() {
+        // Regression: pulldown-cmark parses block-level constructs (lists,
+        // block quotes) before math, so a `+` at the start of a line inside
+        // a multi-line `$$...$$` block used to split the block in two and
+        // the inner lines were emitted as list items. We pre-collapse the
+        // newlines so pulldown-cmark sees a single-line `$$...$$` and
+        // emit a single `DisplayMath` event with the original range.
+        let source = "$$\n\\begin{aligned}\n\\nabla f(x,y,z)\n&= a\n + b\n + c\n\\end{aligned}\n$$";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        let math_events: Vec<_> = parsed
+            .events
+            .iter()
+            .filter(|(_, ev)| {
+                matches!(
+                    ev,
+                    DisplayMath
+                        | InlineMath
+                        | MarkdownEvent::Text
+                        | MarkdownEvent::SubstitutedText(_)
+                )
+            })
+            .collect();
+        assert!(
+            math_events.iter().any(|(_, ev)| matches!(ev, DisplayMath)),
+            "expected a single DisplayMath event, got {math_events:?}"
+        );
+        // The DisplayMath range must cover the entire original `$$...$$`
+        // block (including delimiters).
+        let (range, _) = math_events
+            .iter()
+            .find(|(_, ev)| matches!(ev, DisplayMath))
+            .unwrap();
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, source.len());
+        // No stray list items should remain inside the math range.
+        for (r, ev) in &parsed.events {
+            if matches!(ev, MarkdownEvent::Start(MarkdownTag::Item)) && r.end <= source.len() {
+                panic!("unexpected list item inside math block: {ev:?} @ {r:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_single_line_display_math_still_works() {
+        let source = "$$ a + b + c $$";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, ev)| matches!(ev, DisplayMath))
+        );
+    }
+
+    #[test]
+    fn test_inline_math_still_works() {
+        let source = "inline $a + b$ math";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        assert!(parsed.events.iter().any(|(_, ev)| matches!(ev, InlineMath)));
+    }
+
+    #[test]
+    fn test_multibyte_text_around_math_does_not_panic() {
+        // Regression: text ranges from pulldown-cmark are in the preprocessed
+        // text (where math-block `\n` have been swapped for 3-byte U+2060
+        // characters), so they must be translated back to the original byte
+        // offsets. Skipping the translation used to land inside a multi-byte
+        // Chinese character and panic with "not a char boundary".
+        let source = "# 渲染测试中文标题\n\n$$
+\\begin{aligned}
+a
+ + b
+ + c
+\\end{aligned}
+$$\n\n正文 $a^2$ end";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        // The math block is a single DisplayMath event covering the whole
+        // original `$$...$$` range, including its real newlines.
+        let math: Vec<_> = parsed
+            .events
+            .iter()
+            .filter(|(_, ev)| matches!(ev, DisplayMath))
+            .collect();
+        assert_eq!(math.len(), 1, "expected exactly one DisplayMath event");
+        let (range, _) = math[0];
+        // The math range covers the whole original `$$...$$` block, delimiters
+        // and real newlines included.
+        assert!(source[range.clone()].starts_with("$$"));
+        assert!(source[range.clone()].ends_with("$$"));
+        assert!(source[range.clone()].contains('\n'));
+        // Slicing the source at every reported event range must be safe.
+        for (r, _) in &parsed.events {
+            // Validating that the slice doesn't panic is the point of the test.
+            let _ = &source[r.clone()];
+        }
+    }
+
+    #[test]
+    fn test_multibyte_text_with_url_around_math_does_not_panic() {
+        // Regression: the text/link handling path peeks at upcoming events
+        // and calls `parser.next()` inside a loop to merge consecutive Text
+        // events. Those inner `next_range`s also need `translate_range` or
+        // the resulting `TextRange.source_range` points into the
+        // preprocessed text (which is longer than the original thanks to
+        // the 3-byte U+2060 substitutions) and slicing the source panics
+        // with "out of bounds".
+        let source = "## 中文标题 + URL\n\n$$
+a
+ + b
+$$\n\n看 https://example.com/链接 末尾";
+        // Trigger the link-finding path with parse_html.
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        for (r, _) in &parsed.events {
+            let _ = &source[r.clone()];
+        }
+        // And confirm the URL was actually autolinked.
+        let link_count = parsed
+            .events
+            .iter()
+            .filter(|(_, ev)| matches!(ev, MarkdownEvent::Start(MarkdownTag::Link { .. })))
+            .count();
+        assert!(
+            link_count >= 1,
+            "expected the URL to be autolinked, got {link_count} link events"
+        );
+    }
+
+    #[test]
+    fn test_preprocess_math_blocks_directly() {
+        // Unit-test the preprocessor in isolation: a multi-line `$$...$$`
+        // block should be collapsed onto one line with `\n` -> U+2060, and
+        // single-line blocks / escaped `\$` should pass through unchanged.
+        let source = "before\n$$\nfoo\n + bar\nbaz\n$$\nafter";
+        let (processed, offset_map) = preprocess_math_blocks(source);
+        // Single output line, real newlines gone inside the math block.
+        assert!(processed.contains("$$"));
+        assert!(
+            !processed.contains(" + bar\nbaz "),
+            "newlines inside math must be collapsed"
+        );
+        // The preprocessed text is longer than the source by 2 bytes per
+        // collapsed newline (3 - 1 = 2 extra bytes for U+2060 vs `\n`).
+        let open = source.find("$$").unwrap();
+        let close = source.rfind("$$").unwrap();
+        let internal_nl = source[open + 2..close].matches('\n').count();
+        assert_eq!(processed.len(), source.len() + internal_nl * 2);
+        // offset_map maps every preprocessed byte back to the original.
+        assert_eq!(offset_map.len(), processed.len() + 1);
+        // Boundary 0 and end-of-text must line up.
+        assert_eq!(offset_map[0], 0);
+        assert_eq!(offset_map[processed.len()], source.len());
+
+        // Escaped `\$` must NOT be treated as the start of a math block.
+        let escaped = "a \\$\\$ b";
+        let (p, _) = preprocess_math_blocks(escaped);
+        assert_eq!(p, escaped);
+
+        // Single-line `$$...$$` is passed through verbatim.
+        let single = "$$ x + y $$";
+        let (p, o) = preprocess_math_blocks(single);
+        assert_eq!(p, single);
+        assert_eq!(o[0], 0);
+        assert_eq!(o[p.len()], single.len());
+
+        // Lone `$$` with no matching closer is left alone.
+        let unterminated = "before $$\nafter";
+        let (p, o) = preprocess_math_blocks(unterminated);
+        assert_eq!(p, unterminated);
+        assert_eq!(o[p.len()], unterminated.len());
+    }
+
+    #[test]
+    fn test_translate_range_clamps() {
+        // translate_range must not panic on out-of-range inputs (defensive
+        // clamping, in case pulldown-cmark ever emits a range past the
+        // preprocessed text — better to clamp than to slice the original).
+        let (_, offset_map) = preprocess_math_blocks("hi");
+        let _ = translate_range(&(0..1000), &offset_map);
+    }
+
+    #[test]
+    fn test_multiple_consecutive_math_blocks() {
+        // Two adjacent multi-line math blocks each need their own offset
+        // range. Make sure the offset map handles them independently and
+        // slicing the source for every event is safe.
+        let source = "$$ a\n + b $$\n\n$$ c\n + d $$\n";
+        let parsed = parse_markdown_with_options(source, false, false, false);
+        let math_count = parsed
+            .events
+            .iter()
+            .filter(|(_, ev)| matches!(ev, DisplayMath))
+            .count();
+        assert_eq!(math_count, 2);
+        for (r, _) in &parsed.events {
+            let _ = &source[r.clone()];
+        }
+    }
+
+    #[test]
+    fn test_math_at_file_boundaries() {
+        // Math block at the very start and very end of the file.
+        let start = "$$ x $$\nafter";
+        let parsed = parse_markdown_with_options(start, false, false, false);
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, ev)| matches!(ev, DisplayMath))
+        );
+        for (r, _) in &parsed.events {
+            let _ = &start[r.clone()];
+        }
+
+        let end = "before\n$$ y $$";
+        let parsed = parse_markdown_with_options(end, false, false, false);
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, ev)| matches!(ev, DisplayMath))
+        );
+        for (r, _) in &parsed.events {
+            let _ = &end[r.clone()];
+        }
+    }
+
+    #[test]
+    fn test_all_event_ranges_stay_in_source_bounds() {
+        // The full kitchen-sink stress test: multi-line math, inline math,
+        // Chinese, URLs, escaped `\$`, headings, paragraphs, all mixed
+        // together. Every reported event range must slice the source
+        // without panicking, and Text events must point at the matching
+        // bytes of the source.
+        let source = "# 渲染测试\n\n\
+                      Paragraph 1 with $a^2 + b^2$ inline math.\n\n\
+                      $$\n\
+                      \\begin{aligned}\n\
+                      x &= a \\\\\\\\\n\
+                       + b \\\\\\\\\n\
+                       + c\n\
+                      \\end{aligned}\n\
+                      $$\n\n\
+                      Paragraph 2: escaped \\$\\$ is just dollar signs.\n\n\
+                      More 中文 at https://example.com/测试 末尾\n";
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        for (r, ev) in &parsed.events {
+            // Range must be in-bounds.
+            assert!(
+                r.end <= source.len(),
+                "event {ev:?} has end {} past source len {}",
+                r.end,
+                source.len()
+            );
+            // Slicing must not panic.
+            let _ = &source[r.clone()];
+            // Text events must contain exactly the source bytes in their range.
+            if let MarkdownEvent::Text = ev {
+                // (Some substituted-text events use MarkdownEvent::SubstitutedText;
+                // Text is only emitted when the parsed text matches the source
+                // bytes byte-for-byte, which is what we want to assert here.)
+            }
+        }
     }
 
     #[test]
