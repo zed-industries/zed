@@ -5,7 +5,7 @@ use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    OPEN_AI_PROVIDER_ID, Role, StopReason, TokenUsage,
+    Role, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use serde_json::Value;
@@ -192,6 +192,7 @@ pub fn into_open_ai(
 pub fn into_open_ai_response(
     request: LanguageModelRequest,
     model_id: &str,
+    provider_id: &str,
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
@@ -221,6 +222,7 @@ pub fn into_open_ai_response(
     for (index, message) in messages.into_iter().enumerate() {
         append_compaction_details_to_response_items(
             message.compaction_details.as_deref(),
+            provider_id,
             &mut input_items,
         );
         append_message_to_response_items(
@@ -310,6 +312,7 @@ pub fn into_open_ai_response(
 
 fn append_compaction_details_to_response_items(
     compaction_details: Option<&serde_json::Value>,
+    provider_id: &str,
     input_items: &mut Vec<ResponseInput>,
 ) {
     let Some(compaction_details) = compaction_details else {
@@ -317,12 +320,13 @@ fn append_compaction_details_to_response_items(
     };
 
     // `compaction_details` is always built by `CompactionInfo::ProviderNative`
-    // as `{ "provider", "items" }`; reject any other provider or shape.
+    // as `{ "provider", "items" }`; only replay items produced by the provider
+    // handling the active request, and reject any other shape.
     let Value::Object(details) = compaction_details else {
         log::warn!("OpenAI native compaction details had an unexpected shape");
         return;
     };
-    if details.get("provider").and_then(Value::as_str) != Some(OPEN_AI_PROVIDER_ID.0.as_ref()) {
+    if details.get("provider").and_then(Value::as_str) != Some(provider_id) {
         return;
     }
     let Some(items) = details.get("items").and_then(Value::as_array) else {
@@ -1124,7 +1128,6 @@ impl OpenAiResponseEventMapper {
         self.compaction_items.push(Value::Object(item));
 
         vec![Ok(LanguageModelCompletionEvent::CompactionDetails {
-            provider: OPEN_AI_PROVIDER_ID,
             items: self.compaction_items.clone(),
         })]
     }
@@ -1360,7 +1363,8 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5", true, true, None, None, true);
+        let response =
+            into_open_ai_response(request, "gpt-5", "openai", true, true, None, None, true);
 
         // The compaction items are replayed verbatim ahead of the typed message,
         // and the whole `input` serializes to the expected wire shape.
@@ -1405,23 +1409,18 @@ mod tests {
         let compaction_events: Vec<_> = map_response_events(events)
             .into_iter()
             .filter_map(|event| match event {
-                LanguageModelCompletionEvent::CompactionDetails { provider, items } => {
-                    Some((provider, items))
-                }
+                LanguageModelCompletionEvent::CompactionDetails { items } => Some(items),
                 _ => None,
             })
             .collect();
 
         assert_eq!(
             compaction_events,
-            vec![(
-                OPEN_AI_PROVIDER_ID,
-                vec![json!({
-                    "type": "compaction",
-                    "encrypted_content": "enc-abc",
-                    "id": "cmp_1",
-                })],
-            )]
+            vec![vec![json!({
+                "type": "compaction",
+                "encrypted_content": "enc-abc",
+                "id": "cmp_1",
+            })]]
         );
     }
 
@@ -1633,6 +1632,7 @@ mod tests {
         let response = into_open_ai_response(
             request,
             "custom-model",
+            "openai",
             true,
             true,
             Some(2048),
@@ -1755,6 +1755,7 @@ mod tests {
         let response = into_open_ai_response(
             request,
             "gpt-5",
+            "openai",
             true,
             true,
             None,
@@ -1835,8 +1836,16 @@ mod tests {
             speed: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            "openai",
+            false,
+            false,
+            None,
+            None,
+            false,
+        );
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -1895,6 +1904,7 @@ mod tests {
         let response = into_open_ai_response(
             request,
             "gpt-5",
+            "openai",
             true,
             true,
             None,
@@ -1936,7 +1946,8 @@ mod tests {
                 speed,
             };
 
-            let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, true);
+            let response =
+                into_open_ai_response(request, "gpt-5.4", "openai", true, true, None, None, true);
 
             let serialized = serde_json::to_value(&response)?;
             assert_eq!(
@@ -2017,6 +2028,7 @@ mod tests {
         let response = into_open_ai_response(
             request,
             "gpt-5.1",
+            "openai",
             true,
             true,
             None,
@@ -2056,6 +2068,7 @@ mod tests {
         let response = into_open_ai_response(
             request,
             "gpt-5.1",
+            "openai",
             true,
             true,
             None,
@@ -2107,6 +2120,7 @@ mod tests {
         let response = into_open_ai_response(
             request,
             "gpt-5.3-codex",
+            "openai",
             true,
             true,
             None,
@@ -2198,6 +2212,7 @@ mod tests {
         let response = into_open_ai_response(
             request,
             "gpt-5.3-codex",
+            "openai",
             true,
             true,
             None,
@@ -2283,8 +2298,16 @@ mod tests {
             speed: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            "openai",
+            false,
+            false,
+            None,
+            None,
+            false,
+        );
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(

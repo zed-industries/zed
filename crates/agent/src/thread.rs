@@ -2752,8 +2752,13 @@ impl Thread {
                     last_message.reasoning_details = Some(Arc::new(details));
                 }
             }
-            CompactionDetails { provider, items } => {
-                if !items.is_empty() {
+            CompactionDetails { items } => {
+                // Stamp the compaction with the provider that produced it so the
+                // replay guard can match it against the active request's provider.
+                // A model is always present during a turn; the check is defensive.
+                if !items.is_empty()
+                    && let Some(provider) = self.model.as_ref().map(|model| model.provider_id())
+                {
                     // The model performed server-side compaction mid-turn. Record it as a
                     // compaction boundary before the assistant message it precedes: the
                     // pending assistant message hasn't been flushed yet, so pushing here

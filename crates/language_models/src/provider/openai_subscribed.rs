@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
+use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{
@@ -483,6 +484,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let mut responses_request = into_open_ai_response(
             request,
             self.model.id(),
+            PROVIDER_ID.0.as_ref(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
             /*max_output_tokens*/ None,
@@ -496,7 +498,9 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // The Codex backend supports server-side compaction for every model it
         // serves (all GPT-5 family). `store = false` above keeps this
         // ZDR-friendly, as the compaction guide requires.
-        if self.uses_native_compaction() {
+        let native_compaction_enabled =
+            self.uses_native_compaction() && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>());
+        if native_compaction_enabled {
             responses_request.context_management =
                 vec![ContextManagement::compaction(native_compaction_threshold(
                     self.model.max_token_count(),

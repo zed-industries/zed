@@ -34,6 +34,7 @@ credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 extension.workspace = true
 extension_host.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
@@ -73,7 +74,6 @@ client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 cloud_llm_client.workspace = true
 db = { workspace = true, features = ["test-support"] }
-feature_flags.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }

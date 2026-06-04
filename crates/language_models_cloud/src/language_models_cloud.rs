@@ -471,6 +471,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let mut request = into_open_ai_response(
                     request,
                     &self.model.id.0,
+                    PROVIDER_ID.0.as_ref(),
                     self.model.supports_parallel_tool_calls,
                     true,
                     None,

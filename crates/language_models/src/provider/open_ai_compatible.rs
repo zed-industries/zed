@@ -399,6 +399,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             let request = into_open_ai_response(
                 request,
                 &self.model.name,
+                self.provider_id.0.as_ref(),
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),

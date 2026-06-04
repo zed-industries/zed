@@ -29,7 +29,7 @@ use language_model::{
     LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    OPEN_AI_PROVIDER_ID, Role, StopReason, TokenUsage,
+    Role, StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -332,7 +332,6 @@ async fn test_native_compaction_captured_from_response(cx: &mut TestAppContext) 
 
     // The model compacts the context server-side before replying.
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::CompactionDetails {
-        provider: OPEN_AI_PROVIDER_ID,
         items: vec![json!({
             "type": "compaction",
             "encrypted_content": "enc-abc",
@@ -375,7 +374,7 @@ async fn test_native_compaction_captured_from_response(cx: &mut TestAppContext) 
     assert_eq!(
         compaction_message.compaction_details.as_deref(),
         Some(&json!({
-            "provider": "openai",
+            "provider": "fake",
             "items": [{
                 "type": "compaction",
                 "encrypted_content": "enc-abc",

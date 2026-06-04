@@ -712,6 +712,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),
+                    PROVIDER_ID.0.as_ref(),
                     false,
                     false,
                     self.model.max_output_tokens(self.subscription),
