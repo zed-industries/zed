@@ -604,8 +604,7 @@ fn default_include_errors() -> bool {
 }
 
 /// Placeholder rule `id` for legacy mentions missing one, shaped so older Zed
-/// versions can still deserialize it as a `prompt_store::PromptId`. The `id` is
-/// never used as a key, so the shared value is fine even for multiple mentions.
+/// versions can still deserialize it as a `prompt_store::PromptId`.
 fn default_deprecated_rule_id() -> serde_json::Value {
     serde_json::json!({ "User": { "uuid": "00000000-0000-0000-0000-000000000000" } })
 }
