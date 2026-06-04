@@ -1828,10 +1828,10 @@ mod tests {
             },
         );
         assert_eq!(
-            registry_archive_kind_for_url("https://x.ai/cli/grok-0.2.20-windows-x86_64.ex")
+            registry_archive_kind_for_url("https://x.ai/cli/grok-0.2.20-windows-x86_64.exe")
                 .unwrap(),
             RegistryArchiveKind::RawBinary {
-                file_name: "sigit-win-amd64.exe".to_string()
+                file_name: "grok-0.2.20-windows-x86_64.exe".to_string()
             },
         );
         assert_eq!(
