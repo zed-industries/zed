@@ -47,8 +47,7 @@ pub(crate) fn render_skills_setup_page(
     v_flex()
         .id("skills-page")
         .size_full()
-        .pt_2p5()
-        .px_8()
+        .pt_2()
         .pb_16()
         .map(|this| {
             if skills.is_empty() {
@@ -57,8 +56,10 @@ pub(crate) fn render_skills_setup_page(
                     SettingsUiFile::Project(_) => "No project skills found.",
                     _ => "No skills available for this context.",
                 };
+
                 let original_window = settings_window.original_window;
-                this.items_center().justify_center().child(
+
+                this.px_8().items_center().justify_center().child(
                     v_flex()
                         .items_center()
                         .gap_2()
@@ -95,9 +96,16 @@ pub(crate) fn render_skills_setup_page(
                     .children(skills.iter().enumerate().flat_map(|(i, skill)| {
                         let mut elements: Vec<AnyElement> =
                             vec![render_skill_row(skill, settings_window, cx)];
+
                         if i + 1 < skills.len() {
-                            elements.push(Divider::horizontal().into_any_element());
+                            elements.push(
+                                div()
+                                    .px_8()
+                                    .child(Divider::horizontal().flex_grow_1())
+                                    .into_any_element(),
+                            );
                         }
+
                         elements
                     }))
             }
@@ -115,76 +123,79 @@ fn render_skill_row(
 
     let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
         == Some(skill.directory_path.as_path());
+
     let (share_icon, share_icon_color) = if share_copied {
         (IconName::Check, Color::Success)
     } else {
         (IconName::Link, Color::Muted)
     };
 
+    let group = format!("group-{}", skill.name);
+
+    let title = h_flex()
+        .ml(rems_from_px(-22.))
+        .gap_1()
+        .child({
+            let share_skill_file_path = skill.skill_file_path.clone();
+            let share_directory_path = skill.directory_path.clone();
+            IconButton::new(
+                SharedString::from(format!("share-{}", skill.name)),
+                share_icon,
+            )
+            .tab_index(0_isize)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .icon_color(share_icon_color)
+            .tooltip(Tooltip::text("Copy Share Link"))
+            .visible_on_hover(&group)
+            .on_click(cx.listener(move |_settings_window, _event, _window, cx| {
+                let skill_file_path = share_skill_file_path.clone();
+                let directory_path = share_directory_path.clone();
+                let app_state = workspace::AppState::global(cx);
+                let fs = app_state.fs.clone();
+                cx.spawn(
+                    async move |settings_window, cx| match fs.load(&skill_file_path).await {
+                        Ok(content) => {
+                            let link = encode_skill_share_link(&content);
+                            settings_window
+                                .update(cx, |settings_window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(link));
+                                    settings_window.last_copied_skill_directory_path =
+                                        Some(directory_path.clone());
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                        Err(error) => {
+                            log::error!(
+                                "failed to read skill file {} for sharing: {error:#}",
+                                skill_file_path.display()
+                            );
+                        }
+                    },
+                )
+                .detach();
+            }))
+        })
+        .child(Label::new(skill.name.clone()));
+
     h_flex()
+        .group(group)
         .w_full()
         .justify_between()
-        .py_2p5()
+        .py_3()
+        .px_8()
         .gap_4()
         .child(
-            v_flex()
-                .gap_0p5()
-                .min_w_0()
-                .flex_1()
-                .child(Label::new(skill.name.clone()))
-                .child(
-                    Label::new(skill.description.clone())
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+            v_flex().gap_0p5().min_w_0().flex_1().child(title).child(
+                Label::new(skill.description.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            ),
         )
         .child(
             h_flex()
                 .gap_2()
-                .child({
-                    let share_skill_file_path = skill.skill_file_path.clone();
-                    let share_directory_path = skill.directory_path.clone();
-                    IconButton::new(
-                        SharedString::from(format!("share-{}", skill.name)),
-                        share_icon,
-                    )
-                    .tab_index(0_isize)
-                    .icon_size(IconSize::Small)
-                    .icon_color(share_icon_color)
-                    .tooltip(Tooltip::text("Copy Share Link"))
-                    .on_click(cx.listener(
-                        move |_settings_window, _event, _window, cx| {
-                            let skill_file_path = share_skill_file_path.clone();
-                            let directory_path = share_directory_path.clone();
-                            let app_state = workspace::AppState::global(cx);
-                            let fs = app_state.fs.clone();
-                            cx.spawn(async move |settings_window, cx| {
-                                match fs.load(&skill_file_path).await {
-                                    Ok(content) => {
-                                        let link = encode_skill_share_link(&content);
-                                        settings_window
-                                            .update(cx, |settings_window, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    link,
-                                                ));
-                                                settings_window.last_copied_skill_directory_path =
-                                                    Some(directory_path.clone());
-                                                cx.notify();
-                                            })
-                                            .ok();
-                                    }
-                                    Err(error) => {
-                                        log::error!(
-                                            "failed to read skill file {} for sharing: {error:#}",
-                                            skill_file_path.display()
-                                        );
-                                    }
-                                }
-                            })
-                            .detach();
-                        },
-                    ))
-                })
                 .child(
                     IconButton::new(
                         SharedString::from(format!("delete-{}", skill.name)),

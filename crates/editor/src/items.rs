@@ -767,7 +767,10 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(
+                description,
+                params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+            ))
         });
 
         // Whether the file was saved in the past but is now deleted.
@@ -783,7 +786,7 @@ impl Item for Editor {
             .child(
                 Label::new(util::truncate_and_trailoff(
                     &self.title(cx),
-                    MAX_TAB_TITLE_LEN,
+                    params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
                 ))
                 .color(label_color)
                 .when(params.preview, |this| this.italic())
