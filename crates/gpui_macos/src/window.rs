@@ -39,7 +39,7 @@ use image::RgbaImage;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::base::CFEqual;
 use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
-use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
+use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
 use objc::{
@@ -382,6 +382,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(windowDidExitFullScreen:),
+            window_did_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(windowDidMove:),
             window_did_move as extern "C" fn(&Object, Sel, id),
         );
@@ -459,6 +463,13 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     }
 }
 
+struct TrafficLightFrames {
+    titlebar: NSRect,
+    close: NSRect,
+    minimize: NSRect,
+    zoom: NSRect,
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     foreground_executor: ForegroundExecutor,
@@ -483,6 +494,7 @@ struct MacWindowState {
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
@@ -504,53 +516,163 @@ struct MacWindowState {
 }
 
 impl MacWindowState {
-    fn move_traffic_light(&self) {
+    fn move_traffic_light(&mut self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self.is_fullscreen() {
-                // Moving traffic lights while fullscreen doesn't work,
-                // see https://github.com/zed-industries/zed/issues/4712
+                self.restore_traffic_light();
                 return;
             }
 
-            let titlebar_height = self.titlebar_height();
+            if self.traffic_light_frames.is_none() {
+                self.traffic_light_frames = self.capture_traffic_light_frames();
+            }
 
+            // SAFETY: `self.native_window` is a valid NSWindow owned by this MacWindowState.
+            let window_height =
+                unsafe { Pixels::from(NSWindow::frame(self.native_window).size.height) };
+            if self.traffic_light_frames.is_some() {
+                // AppKit can recreate standard buttons, so fetch the live views for each layout pass.
+                let Some((close_button, min_button, zoom_button)) = self.traffic_light_buttons()
+                else {
+                    return;
+                };
+                let Some(titlebar_container) = Self::titlebar_container(close_button) else {
+                    return;
+                };
+
+                // SAFETY: Buttons and titlebar container come from this NSWindow and are
+                // null-checked before use.
+                unsafe {
+                    let close_frame: NSRect = msg_send![close_button, frame];
+                    let min_frame: NSRect = msg_send![min_button, frame];
+                    let button_width = Pixels::from(close_frame.size.width);
+                    let button_height = Pixels::from(close_frame.size.height);
+                    let button_padding = Pixels::from(
+                        min_frame.origin.x - close_frame.origin.x - close_frame.size.width,
+                    );
+                    let container_height =
+                        button_height + traffic_light_position.y + traffic_light_position.y;
+
+                    let mut frame: NSRect = msg_send![titlebar_container, frame];
+                    frame.size.height = container_height.to_f64();
+                    frame.origin.y = (window_height - container_height).to_f64();
+                    let _: () = msg_send![titlebar_container, setFrame: frame];
+
+                    let min_x = traffic_light_position.x + button_width + button_padding;
+                    let zoom_x = min_x + button_width + button_padding;
+                    Self::set_traffic_light_button_origin(
+                        close_button,
+                        traffic_light_position.x,
+                        traffic_light_position.y,
+                    );
+                    Self::set_traffic_light_button_origin(
+                        min_button,
+                        min_x,
+                        traffic_light_position.y,
+                    );
+                    Self::set_traffic_light_button_origin(
+                        zoom_button,
+                        zoom_x,
+                        traffic_light_position.y,
+                    );
+
+                    let _: () = msg_send![titlebar_container, updateTrackingAreas];
+                    for button in [close_button, min_button, zoom_button] {
+                        let _: () = msg_send![button, updateTrackingAreas];
+                    }
+                }
+            }
+        }
+    }
+
+    fn capture_traffic_light_frames(&self) -> Option<TrafficLightFrames> {
+        let (close_button, minimize_button, zoom_button) = self.traffic_light_buttons()?;
+        let titlebar_container = Self::titlebar_container(close_button)?;
+
+        // SAFETY: Buttons and titlebar container come from this NSWindow and are
+        // null-checked before use.
+        unsafe {
+            Some(TrafficLightFrames {
+                titlebar: msg_send![titlebar_container, frame],
+                close: msg_send![close_button, frame],
+                minimize: msg_send![minimize_button, frame],
+                zoom: msg_send![zoom_button, frame],
+            })
+        }
+    }
+
+    fn traffic_light_buttons(&self) -> Option<(id, id, id)> {
+        // SAFETY: `self.native_window` is a valid NSWindow owned by this MacWindowState. AppKit may
+        // return nil for any standard button, so each result is checked before use.
+        unsafe {
+            let close_button: id = msg_send![
+                self.native_window,
+                standardWindowButton: NSWindowButton::NSWindowCloseButton
+            ];
+            let min_button: id = msg_send![
+                self.native_window,
+                standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
+            ];
+            let zoom_button: id = msg_send![
+                self.native_window,
+                standardWindowButton: NSWindowButton::NSWindowZoomButton
+            ];
+
+            if close_button.is_null() || min_button.is_null() || zoom_button.is_null() {
+                None
+            } else {
+                Some((close_button, min_button, zoom_button))
+            }
+        }
+    }
+
+    fn titlebar_container(close_button: id) -> Option<id> {
+        // SAFETY: `close_button` comes from AppKit's standardWindowButton:. Each superview is
+        // null-checked before being returned or messaged further.
+        unsafe {
+            let button_container: id = msg_send![close_button, superview];
+            if button_container.is_null() {
+                return None;
+            }
+
+            let titlebar_container: id = msg_send![button_container, superview];
+            if titlebar_container.is_null() {
+                None
+            } else {
+                Some(titlebar_container)
+            }
+        }
+    }
+
+    fn set_traffic_light_button_origin(button: id, x: Pixels, y: Pixels) {
+        let origin = NSPoint::new(x.to_f64(), y.to_f64());
+
+        // SAFETY: Callers pass a valid AppKit button from traffic_light_buttons.
+        unsafe {
+            let _: () = msg_send![button, setFrameOrigin: origin];
+        }
+    }
+
+    fn restore_traffic_light(&mut self) {
+        if let Some(frames) = self.traffic_light_frames.take() {
+            let Some((close_button, min_button, zoom_button)) = self.traffic_light_buttons() else {
+                return;
+            };
+            let Some(titlebar_container) = Self::titlebar_container(close_button) else {
+                return;
+            };
+
+            // SAFETY: Buttons and titlebar container come from this NSWindow and are
+            // null-checked before use. The frames were captured from the same native titlebar hierarchy.
             unsafe {
-                let close_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowCloseButton
-                ];
-                let min_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
-                ];
-                let zoom_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowZoomButton
-                ];
-
-                let mut close_button_frame: CGRect = msg_send![close_button, frame];
-                let mut min_button_frame: CGRect = msg_send![min_button, frame];
-                let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
-                let mut origin = point(
-                    traffic_light_position.x,
-                    titlebar_height
-                        - traffic_light_position.y
-                        - px(close_button_frame.size.height as f32),
-                );
-                let button_spacing =
-                    px((min_button_frame.origin.x - close_button_frame.origin.x) as f32);
-
-                close_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
-                let _: () = msg_send![close_button, setFrame: close_button_frame];
-                origin.x += button_spacing;
-
-                min_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
-                let _: () = msg_send![min_button, setFrame: min_button_frame];
-                origin.x += button_spacing;
-
-                zoom_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
-                let _: () = msg_send![zoom_button, setFrame: zoom_button_frame];
-                origin.x += button_spacing;
+                let _: () = msg_send![close_button, setFrame: frames.close];
+                let _: () = msg_send![min_button, setFrame: frames.minimize];
+                let _: () = msg_send![zoom_button, setFrame: frames.zoom];
+                let _: () = msg_send![titlebar_container, setFrame: frames.titlebar];
+                let _: () = msg_send![titlebar_container, updateTrackingAreas];
+                for button in [close_button, min_button, zoom_button] {
+                    let _: () = msg_send![button, updateTrackingAreas];
+                }
             }
         }
     }
@@ -631,14 +753,6 @@ impl MacWindowState {
 
     fn scale_factor(&self) -> f32 {
         get_scale_factor(self.native_window)
-    }
-
-    fn titlebar_height(&self) -> Pixels {
-        unsafe {
-            let frame = NSWindow::frame(self.native_window);
-            let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
-            px((frame.size.height - content_layout_rect.size.height) as f32)
-        }
     }
 
     fn window_bounds(&self) -> WindowBounds {
@@ -812,6 +926,7 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
+                traffic_light_frames: None,
                 transparent_titlebar: titlebar
                     .as_ref()
                     .is_none_or(|titlebar| titlebar.appears_transparent),
@@ -2308,6 +2423,7 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.fullscreen_restore_bounds = lock.bounds();
+    lock.restore_traffic_light();
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
@@ -2329,6 +2445,13 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
             lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
     }
+}
+
+extern "C" fn window_did_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    // SAFETY: This method is registered only on GPUI window classes, which initialize
+    // WINDOW_STATE_IVAR with an Arc<Mutex<MacWindowState>> during window creation.
+    let window_state = unsafe { get_window_state(this) };
+    window_state.as_ref().lock().move_traffic_light();
 }
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
