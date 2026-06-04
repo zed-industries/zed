@@ -9,10 +9,10 @@ use std::{
     fs,
     ops::Range,
     path::{Path, PathBuf},
-    process::Command,
     time::Instant,
 };
 use text::Anchor;
+use util::command::new_command;
 
 const BM25_CONTEXT_QUERY_LINE_COUNT: u32 = 20;
 const BM25_CONTEXT_EDIT_HISTORY_QUERY_ENTRY_COUNT: usize = 8;
@@ -44,7 +44,7 @@ pub async fn collect_bm25_context(
     };
 
     let result = cx
-        .background_spawn(async move { collect_bm25_context_from_disk(query, next_order) })
+        .background_spawn(async move { collect_bm25_context_from_disk(query, next_order).await })
         .await;
 
     match result {
@@ -133,7 +133,7 @@ fn expanded_anchor_range(
     start..end
 }
 
-fn collect_bm25_context_from_disk(
+async fn collect_bm25_context_from_disk(
     query: Bm25ContextQuery,
     next_order: usize,
 ) -> Result<Vec<Bm25ContextCandidate>> {
@@ -143,7 +143,7 @@ fn collect_bm25_context_from_disk(
     }
 
     let started_at = Instant::now();
-    let index = Bm25Index::build(&query.worktree_abs_path)?;
+    let index = Bm25Index::build(&query.worktree_abs_path).await?;
     let elapsed = started_at.elapsed();
     log::debug!(
         "built BM25 context index: candidate_files:{}, indexed_files:{}, indexed_bytes:{}, chunks:{}, terms:{}, latency:{elapsed:?}",
@@ -209,8 +209,8 @@ struct DocumentsForFile {
 }
 
 impl Bm25Index {
-    fn build(worktree_abs_path: &Path) -> Result<Self> {
-        let relative_paths = git_ls_files(worktree_abs_path)?;
+    async fn build(worktree_abs_path: &Path) -> Result<Self> {
+        let relative_paths = git_ls_files(worktree_abs_path).await?;
         let mut stats = Bm25IndexStats {
             candidate_file_count: relative_paths.len(),
             ..Default::default()
@@ -360,12 +360,13 @@ impl Bm25Index {
     }
 }
 
-fn git_ls_files(worktree_abs_path: &Path) -> Result<Vec<PathBuf>> {
-    let output = Command::new("git")
+async fn git_ls_files(worktree_abs_path: &Path) -> Result<Vec<PathBuf>> {
+    let output = new_command("git")
         .arg("ls-files")
         .arg("-z")
         .current_dir(worktree_abs_path)
         .output()
+        .await
         .with_context(|| {
             format!(
                 "failed to run git ls-files in {}",
