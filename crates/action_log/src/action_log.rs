@@ -8,7 +8,7 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint};
-use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
+use project::{Project, ProjectItem, ProjectPath, lsp_store::OpenLspBufferHandle};
 use std::{
     cmp,
     ops::Range,
@@ -152,22 +152,10 @@ impl ActionLog {
             .tracked_buffers
             .entry(buffer.clone())
             .or_insert_with(|| {
-                let open_lsp_handle = self.project.update(cx, |project, cx| {
-                    project.register_buffer_with_language_servers(&buffer, cx)
-                });
-
-                let text_snapshot = buffer.read(cx).text_snapshot();
-                let language = buffer.read(cx).language().cloned();
-                let language_registry = buffer.read(cx).language_registry();
-                let diff = cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&text_snapshot, cx);
-                    diff.language_changed(language, language_registry, cx);
-                    diff
-                });
-                let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
                 if is_created {
+                    let text_snapshot = buffer.read(cx).text_snapshot();
                     diff_base = Rope::default();
                     unreviewed_edits = Patch::new(vec![Edit {
                         old: 0..1,
@@ -177,26 +165,14 @@ impl ActionLog {
                     diff_base = buffer.read(cx).as_rope().clone();
                     unreviewed_edits = Patch::default();
                 }
-                TrackedBuffer {
-                    buffer: buffer.clone(),
+                Self::make_tracked_buffer(
+                    &self.project,
+                    buffer.clone(),
                     diff_base,
                     unreviewed_edits,
-                    snapshot: text_snapshot,
                     status,
-                    version: buffer.read(cx).version(),
-                    diff,
-                    diff_update: diff_update_tx,
-                    _open_lsp_handle: open_lsp_handle,
-                    _maintain_diff: cx.spawn({
-                        let buffer = buffer.clone();
-                        async move |this, cx| {
-                            Self::maintain_diff(this, buffer, diff_update_rx, cx)
-                                .await
-                                .ok();
-                        }
-                    }),
-                    _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
-                }
+                    cx,
+                )
             });
         tracked_buffer.version = buffer.read(cx).version();
         tracked_buffer
@@ -1056,6 +1032,94 @@ impl ActionLog {
             })
             .map(|(buffer, _)| buffer)
     }
+
+    pub fn tracked_buffer_snapshots(&self, cx: &App) -> Vec<TrackedBufferSnapshot> {
+        self.tracked_buffers
+            .values()
+            .filter_map(|tracked| {
+                let buffer = tracked.buffer.read(cx);
+                let file = buffer.file()?;
+                let project_path = ProjectPath::from_file(file.as_ref(), cx);
+                Some(TrackedBufferSnapshot {
+                    project_path,
+                    diff_base: tracked.diff_base.clone(),
+                    status: tracked.status.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn restore_tracked_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        diff_base: Rope,
+        status: TrackedBufferStatus,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tracked_buffers.contains_key(&buffer) {
+            return;
+        }
+
+        let unreviewed_edits = Patch::default();
+        let tracked_buffer = Self::make_tracked_buffer(
+            &self.project,
+            buffer.clone(),
+            diff_base,
+            unreviewed_edits,
+            status,
+            cx,
+        );
+
+        // Trigger diff update to compute unreviewed_edits
+        tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+
+        self.tracked_buffers.insert(buffer, tracked_buffer);
+        cx.notify();
+    }
+
+    fn make_tracked_buffer(
+        project: &Entity<Project>,
+        buffer: Entity<Buffer>,
+        diff_base: Rope,
+        unreviewed_edits: Patch<u32>,
+        status: TrackedBufferStatus,
+        cx: &mut Context<Self>,
+    ) -> TrackedBuffer {
+        let open_lsp_handle = project.update(cx, |project, cx| {
+            project.register_buffer_with_language_servers(&buffer, cx)
+        });
+
+        let text_snapshot = buffer.read(cx).text_snapshot();
+        let language = buffer.read(cx).language().cloned();
+        let language_registry = buffer.read(cx).language_registry();
+        let diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&text_snapshot, cx);
+            diff.language_changed(language, language_registry, cx);
+            diff
+        });
+        let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
+
+        TrackedBuffer {
+            buffer: buffer.clone(),
+            diff_base,
+            unreviewed_edits,
+            snapshot: text_snapshot,
+            status,
+            version: buffer.read(cx).version(),
+            diff,
+            diff_update: diff_update_tx,
+            _open_lsp_handle: open_lsp_handle,
+            _maintain_diff: cx.spawn({
+                let buffer = buffer.clone();
+                async move |this, cx| {
+                    Self::maintain_diff(this, buffer, diff_update_rx, cx)
+                        .await
+                        .ok();
+                }
+            }),
+            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -1274,11 +1338,17 @@ enum ChangeAuthor {
     Agent,
 }
 
-#[derive(Debug)]
-enum TrackedBufferStatus {
+#[derive(Clone, Debug)]
+pub enum TrackedBufferStatus {
     Created { existing_file_content: Option<Rope> },
     Modified,
     Deleted,
+}
+
+pub struct TrackedBufferSnapshot {
+    pub project_path: ProjectPath,
+    pub diff_base: Rope,
+    pub status: TrackedBufferStatus,
 }
 
 pub struct TrackedBuffer {
@@ -3483,6 +3553,65 @@ mod tests {
             parent_log.read_with(cx, |log, _| log.file_read_time(&abs_path).is_none()),
             "parent should NOT get file_read_time from child's buffer_created"
         );
+    }
+
+    #[gpui::test]
+    async fn test_restore_tracked_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.txt": "a\nb\nc",
+            }),
+        )
+        .await;
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(path!("/project/file.txt"), cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let diff_base = Rope::from("a\nchanged_b\nc");
+        let status = TrackedBufferStatus::Modified;
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| {
+                log.restore_tracked_buffer(buffer.clone(), diff_base.clone(), status.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // 1. Verify unreviewed hunks are correctly computed from restored state
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer,
+                vec![HunkStatus {
+                    range: Point::new(1, 0)..Point::new(2, 0),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "changed_b\n".into()
+                }]
+            )]
+        );
+
+        // 2. Verify tracked_buffer_snapshots returns correct state
+        cx.read(|cx| {
+            let snapshots = action_log.read(cx).tracked_buffer_snapshots(cx);
+            assert_eq!(snapshots.len(), 1);
+            assert_eq!(snapshots[0].diff_base.to_string(), diff_base.to_string());
+            assert!(matches!(snapshots[0].status, TrackedBufferStatus::Modified));
+        });
     }
 
     #[derive(Debug, PartialEq)]

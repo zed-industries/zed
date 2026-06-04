@@ -1,5 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
+use action_log::TrackedBufferStatus;
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
@@ -83,12 +84,59 @@ pub struct DbThread {
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
     pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub tracked_buffers: Vec<SerializedTrackedBuffer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SerializedScrollPosition {
     pub item_ix: usize,
     pub offset_in_item: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SerializedTrackedBufferStatus {
+    Created {
+        existing_file_content: Option<String>,
+    },
+    Modified,
+    Deleted,
+}
+
+impl From<TrackedBufferStatus> for SerializedTrackedBufferStatus {
+    fn from(status: TrackedBufferStatus) -> Self {
+        match status {
+            TrackedBufferStatus::Created {
+                existing_file_content,
+            } => SerializedTrackedBufferStatus::Created {
+                existing_file_content: existing_file_content.map(|r| r.to_string()),
+            },
+            TrackedBufferStatus::Modified => SerializedTrackedBufferStatus::Modified,
+            TrackedBufferStatus::Deleted => SerializedTrackedBufferStatus::Deleted,
+        }
+    }
+}
+
+impl From<SerializedTrackedBufferStatus> for TrackedBufferStatus {
+    fn from(status: SerializedTrackedBufferStatus) -> Self {
+        match status {
+            SerializedTrackedBufferStatus::Created {
+                existing_file_content,
+            } => TrackedBufferStatus::Created {
+                existing_file_content: existing_file_content.map(text::Rope::from),
+            },
+            SerializedTrackedBufferStatus::Modified => TrackedBufferStatus::Modified,
+            SerializedTrackedBufferStatus::Deleted => TrackedBufferStatus::Deleted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SerializedTrackedBuffer {
+    pub worktree_id: u64,
+    pub path: String,
+    pub diff_base: String,
+    pub status: SerializedTrackedBufferStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +181,7 @@ impl SharedThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            tracked_buffers: Default::default(),
         }
     }
 
@@ -317,6 +366,7 @@ impl DbThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            tracked_buffers: Default::default(),
         })
     }
 }
@@ -768,6 +818,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            tracked_buffers: Default::default(),
         }
     }
 
@@ -884,6 +935,22 @@ mod tests {
         assert!(
             db_thread.sandboxed_terminal_temp_dir.is_none(),
             "Legacy threads without sandboxed_terminal_temp_dir should default to None"
+        );
+    }
+
+    #[test]
+    fn test_tracked_buffers_defaults_to_empty() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.tracked_buffers.is_empty(),
+            "Legacy threads without tracked_buffers field should default to empty list"
         );
     }
 
