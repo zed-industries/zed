@@ -5713,7 +5713,15 @@ impl BackgroundScanner {
                     }
                 }
                 Some(local_repository) => {
-                    affected_repo_roots.push(local_repository.work_directory_abs_path.clone());
+                    let affected_root = if local_repository
+                        .work_directory_abs_path
+                        .starts_with(state.snapshot.abs_path.as_path())
+                    {
+                        local_repository.work_directory_abs_path.clone()
+                    } else {
+                        state.snapshot.abs_path.as_path().into()
+                    };
+                    affected_repo_roots.push(affected_root);
                     state.snapshot.git_repositories.update(
                         &local_repository.work_directory_id,
                         |entry| {
