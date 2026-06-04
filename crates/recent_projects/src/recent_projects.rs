@@ -862,6 +862,8 @@ impl RecentProjectsDelegate {
         style: ProjectPickerStyle,
     ) -> Self {
         let render_paths = style == ProjectPickerStyle::Modal;
+        let has_any_non_local_projects = project_connection_options.is_some()
+            || window_project_groups.iter().any(|k| k.host().is_some());
         Self {
             workspace,
             open_folders,
@@ -872,7 +874,7 @@ impl RecentProjectsDelegate {
             create_new_window,
             render_paths,
             snap_selection_to_first_non_header_match: true,
-            has_any_non_local_projects: project_connection_options.is_some(),
+            has_any_non_local_projects,
             project_connection_options,
             focus_handle,
             style,
@@ -1325,7 +1327,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .map(|p| p.compact().to_string_lossy().to_string())
                     .collect();
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
-                let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
+                let icon = icon_for_remote_connection(key.host().as_ref());
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
