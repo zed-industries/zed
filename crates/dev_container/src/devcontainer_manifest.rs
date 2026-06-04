@@ -3965,9 +3965,7 @@ chmod +x ./install.sh
 
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
-    async fn test_spawns_devcontainer_with_dockerfile_features_and_podman(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_spawns_devcontainer_with_dockerfile_features_and_podman(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         env_logger::try_init().ok();
         let given_devcontainer_contents = r#"
