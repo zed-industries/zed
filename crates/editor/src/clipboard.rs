@@ -263,6 +263,38 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+
+        let clipboard_image = item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::Image(image) if !image.bytes.is_empty() => Some(image.clone()),
+            _ => None,
+        });
+
+        if let Some(image) = clipboard_image {
+            let is_markdown = {
+                let display_map = self.display_snapshot(cx);
+                let selections = self.selections.all::<MultiBufferOffset>(&display_map);
+                selections
+                    .first()
+                    .and_then(|s| display_map.buffer_snapshot().language_at(s.head()))
+                    .map(|lang| lang.name() == "Markdown")
+                    .unwrap_or(false)
+            };
+
+            if is_markdown {
+                if let Some(working_dir) = self.working_directory(cx) {
+                    match save_clipboard_image(&image, &working_dir) {
+                        Ok(filename) => {
+                            let markdown_text = format!("![]({filename})");
+                            return self.do_paste(&markdown_text, None, false, window, cx);
+                        }
+                        Err(err) => {
+                            log::error!("Failed to save clipboard image: {err}");
+                        }
+                    }
+                }
+            }
+        }
+
         let clipboard_string = item.entries().iter().find_map(|entry| match entry {
             ClipboardEntry::String(s) => Some(s),
             _ => None,
@@ -569,4 +601,37 @@ fn is_standalone_url(text: &str) -> bool {
         .links(text)
         .next()
         .is_some_and(|link| link.start() == 0 && link.end() == text.len())
+}
+
+
+fn save_clipboard_image(image: &gpui::Image, directory: &Path) -> anyhow::Result<String> {
+    let extension = match image.format {
+        gpui::ImageFormat::Png => "png",
+        gpui::ImageFormat::Jpeg => "jpg",
+        gpui::ImageFormat::Webp => "webp",
+        gpui::ImageFormat::Gif => "gif",
+        gpui::ImageFormat::Svg => "svg",
+        gpui::ImageFormat::Bmp => "bmp",
+        gpui::ImageFormat::Tiff => "tiff",
+        gpui::ImageFormat::Ico => "ico",
+        gpui::ImageFormat::Pnm => "pnm",
+    };
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    let mut filename = format!("pasted_{timestamp}.{extension}");
+    let mut path = directory.join(&filename);
+
+    let mut counter = 1u32;
+    while path.exists() {
+        filename = format!("pasted_{timestamp}_{counter}.{extension}");
+        path = directory.join(&filename);
+        counter += 1;
+    }
+
+    std::fs::write(&path, &image.bytes)?;
+    Ok(filename)
 }
