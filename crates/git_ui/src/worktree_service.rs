@@ -7,6 +7,7 @@ use anyhow::anyhow;
 use askpass::AskPassDelegate;
 use collections::HashSet;
 use fs::Fs;
+use git::repository::{CreateWorktreeTarget, FetchOptions, Remote};
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
     Task, TaskExt, WeakEntity,
@@ -22,8 +23,6 @@ use workspace::{
     MultiWorkspace, OpenMode, PreviousWorkspaceState, ToastView, Workspace, dock::DockPosition,
 };
 use zed_actions::NewWorktreeBranchTarget;
-
-use git::repository::{FetchOptions, Remote};
 
 use util::ResultExt as _;
 
@@ -265,16 +264,38 @@ pub fn classify_worktrees(
     (git_repos, non_git_paths)
 }
 
-/// Resolves a branch target into the ref the new worktree should be based on.
+/// Resolves a branch target into the detached base ref for legacy callers.
 /// Returns `None` for `CurrentBranch`, meaning "use the current HEAD".
 pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -> Option<String> {
     match branch_target {
         NewWorktreeBranchTarget::CurrentBranch => None,
-        NewWorktreeBranchTarget::ExistingBranch { name } => Some(name.clone()),
+        NewWorktreeBranchTarget::ExistingBranch { name }
+        | NewWorktreeBranchTarget::CheckoutExistingBranch { name } => Some(name.clone()),
         NewWorktreeBranchTarget::RemoteBranch {
             remote_name,
             branch_name,
         } => Some(format!("refs/remotes/{remote_name}/{branch_name}")),
+    }
+}
+
+/// Resolves an action branch target into the git worktree target to create.
+pub fn resolve_create_worktree_target(
+    branch_target: NewWorktreeBranchTarget,
+) -> CreateWorktreeTarget {
+    match branch_target {
+        NewWorktreeBranchTarget::CurrentBranch => CreateWorktreeTarget::Detached { base_sha: None },
+        NewWorktreeBranchTarget::ExistingBranch { name } => CreateWorktreeTarget::Detached {
+            base_sha: Some(name),
+        },
+        NewWorktreeBranchTarget::RemoteBranch {
+            remote_name,
+            branch_name,
+        } => CreateWorktreeTarget::Detached {
+            base_sha: Some(format!("refs/remotes/{remote_name}/{branch_name}")),
+        },
+        NewWorktreeBranchTarget::CheckoutExistingBranch { name } => {
+            CreateWorktreeTarget::ExistingBranch { branch_name: name }
+        }
     }
 }
 
@@ -284,9 +305,9 @@ fn remote_branch_to_fetch(branch_target: &NewWorktreeBranchTarget) -> Option<(&s
             remote_name,
             branch_name,
         } => Some((remote_name, branch_name)),
-        NewWorktreeBranchTarget::CurrentBranch | NewWorktreeBranchTarget::ExistingBranch { .. } => {
-            None
-        }
+        NewWorktreeBranchTarget::CurrentBranch
+        | NewWorktreeBranchTarget::ExistingBranch { .. }
+        | NewWorktreeBranchTarget::CheckoutExistingBranch { .. } => None,
     }
 }
 
@@ -366,7 +387,7 @@ fn start_worktree_creations(
     worktree_name: Option<String>,
     existing_worktree_names: &[String],
     existing_worktree_paths: &HashSet<PathBuf>,
-    base_ref: Option<String>,
+    target: CreateWorktreeTarget,
     worktree_directory_setting: &str,
     rng: &mut impl rand::Rng,
     cx: &mut gpui::App,
@@ -402,10 +423,7 @@ fn start_worktree_creations(
             let receiver = if scheduled_paths.contains(&new_path) {
                 None
             } else {
-                let target = git::repository::CreateWorktreeTarget::Detached {
-                    base_sha: base_ref.clone(),
-                };
-                Some(repo.create_worktree(target, new_path.clone()))
+                Some(repo.create_worktree(target.clone(), new_path.clone()))
             };
             anyhow::Ok((work_dir, new_path, receiver))
         })?;
@@ -941,7 +959,7 @@ async fn do_create_worktree(
 
     let mut rng = rand::rng();
 
-    let base_ref = resolve_worktree_branch_target(&branch_target);
+    let target = resolve_create_worktree_target(branch_target);
 
     let (creation_infos, path_remapping) = cx.update(|_, cx| {
         start_worktree_creations(
@@ -949,7 +967,7 @@ async fn do_create_worktree(
             worktree_name,
             &existing_worktree_names,
             &existing_worktree_paths,
-            base_ref,
+            target,
             &worktree_directory_setting,
             &mut rng,
             cx,
@@ -1368,6 +1386,42 @@ mod tests {
                     .expect("should inject create_worktree hook tasks for linked worktree");
             });
         });
+    }
+
+    #[test]
+    fn test_resolve_create_worktree_target() {
+        assert_eq!(
+            resolve_create_worktree_target(NewWorktreeBranchTarget::CurrentBranch),
+            CreateWorktreeTarget::Detached { base_sha: None }
+        );
+
+        assert_eq!(
+            resolve_create_worktree_target(NewWorktreeBranchTarget::ExistingBranch {
+                name: "main".to_string(),
+            }),
+            CreateWorktreeTarget::Detached {
+                base_sha: Some("main".to_string())
+            }
+        );
+
+        assert_eq!(
+            resolve_create_worktree_target(NewWorktreeBranchTarget::RemoteBranch {
+                remote_name: "origin".to_string(),
+                branch_name: "main".to_string(),
+            }),
+            CreateWorktreeTarget::Detached {
+                base_sha: Some("refs/remotes/origin/main".to_string())
+            }
+        );
+
+        assert_eq!(
+            resolve_create_worktree_target(NewWorktreeBranchTarget::CheckoutExistingBranch {
+                name: "feat/new-feature-foo".to_string(),
+            }),
+            CreateWorktreeTarget::ExistingBranch {
+                branch_name: "feat/new-feature-foo".to_string()
+            }
+        );
     }
 
     #[gpui::test]
