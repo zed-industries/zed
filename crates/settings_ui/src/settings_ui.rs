@@ -2,7 +2,9 @@ mod components;
 mod page_data;
 pub mod pages;
 
+use agent_skills::SkillIndex;
 use anyhow::{Context as _, Result};
+use cloud_api_types::OrganizationConfiguration;
 use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
@@ -29,6 +31,7 @@ use std::{
     collections::{HashMap, HashSet},
     num::{NonZero, NonZeroU32},
     ops::Range,
+    path::PathBuf,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
@@ -42,7 +45,8 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
+    client_side_decorations,
 };
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
@@ -101,6 +105,11 @@ struct FocusFile(pub u32);
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
     write: fn(&mut SettingsContent, Option<T>, &App),
+    /// Tells us whether the setting is overridden by the currently selected
+    /// organization's settings. Takes the organization configuration and the
+    /// resolved settings value, and returns `Some(...)` if the organization
+    /// overrides the setting, otherwise `None`.
+    organization_override: Option<fn(&OrganizationConfiguration) -> Option<&T>>,
 
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
@@ -150,6 +159,7 @@ impl<T: 'static> SettingField<T> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
             write: |_, _, _| unreachable!(),
+            organization_override: None,
             json_path: self.json_path,
         }
     }
@@ -169,6 +179,8 @@ trait AnySettingField {
     ) -> Option<Box<dyn Fn(&mut Window, &mut App)>>;
 
     fn json_path(&self) -> Option<&'static str>;
+
+    fn is_overridden_by_organization(&self, cx: &App) -> bool;
 }
 
 impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingField<T> {
@@ -243,6 +255,19 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
 
     fn json_path(&self) -> Option<&'static str> {
         self.json_path
+    }
+
+    fn is_overridden_by_organization(&self, cx: &App) -> bool {
+        let Some(org_override) = self.organization_override else {
+            return false;
+        };
+
+        let user_store = AppState::global(cx).user_store.read(cx);
+        let Some(org_config) = user_store.current_organization_configuration() else {
+            return false;
+        };
+
+        (org_override)(&org_config).is_some()
     }
 }
 
@@ -555,6 +580,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ScanSymlinksSetting>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -662,7 +688,10 @@ pub fn open_settings_editor(
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
             Ok(val) if val == "server" => gpui::WindowDecorations::Server,
             Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-            _ => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
         };
 
         cx.open_window(
@@ -763,8 +792,12 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
+    pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
+    /// Directory path of the skill whose share link was most recently copied,
+    /// used to show a transient "copied" checkmark on its share button.
+    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
 }
 
 struct SearchDocument {
@@ -1225,7 +1258,34 @@ fn render_settings_item(
                         .render_code_spans(),
                 ),
         )
-        .child(control)
+        .child(if setting_item.field.is_overridden_by_organization(cx) {
+            h_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .id(format!(
+                            "{}-organization-configuration-warning",
+                            setting_item.title
+                        ))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                        .tooltip(|_, cx| {
+                            Tooltip::with_meta(
+                                "Overridden by Organization",
+                                None,
+                                "Contact your organization admins to adjust this setting.",
+                                cx,
+                            )
+                        }),
+                )
+                .child(control)
+                .into_any_element()
+        } else {
+            control.into_any_element()
+        })
         .when(settings_window.sub_page_stack.is_empty(), |this| {
             this.child(render_settings_item_link(
                 setting_item.description,
@@ -1538,6 +1598,28 @@ impl SettingsWindow {
         })
         .detach();
 
+        cx.observe_global_in::<SkillIndex>(window, |this, _window, cx| {
+            if let Some(skill_index) = cx.try_global::<SkillIndex>() {
+                this.hidden_deleted_skill_directory_paths
+                    .retain(|directory_path| {
+                        skill_index
+                            .global_skills
+                            .iter()
+                            .chain(
+                                skill_index
+                                    .project_skills
+                                    .iter()
+                                    .flat_map(|group| group.skills.iter()),
+                            )
+                            .any(|skill| skill.directory_path.as_path() == directory_path.as_path())
+                    });
+            } else {
+                this.hidden_deleted_skill_directory_paths.clear();
+            }
+            cx.notify();
+        })
+        .detach();
+
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
@@ -1685,9 +1767,11 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             list_state,
             last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -2293,6 +2377,10 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        // Navigating to another page dismisses the transient "copied share
+        // link" checkmark shown on a Skills page row.
+        self.last_copied_skill_directory_path = None;
+
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
@@ -3002,19 +3090,26 @@ impl SettingsWindow {
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
+        let scope_name: SharedString = self
+            .display_name(&self.current_file)
+            .unwrap_or_else(|| self.current_file.setting_type().to_string())
+            .into();
+
         h_flex().min_w_0().gap_1().overflow_x_hidden().children(
             itertools::intersperse(
-                std::iter::once(self.current_page().title.into()).chain(
-                    self.sub_page_stack
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, page)| {
-                            (index == 0)
-                                .then(|| page.section_header.clone())
-                                .into_iter()
-                                .chain(std::iter::once(page.link.title.clone()))
-                        }),
-                ),
+                std::iter::once(scope_name)
+                    .chain(std::iter::once(self.current_page().title.into()))
+                    .chain(
+                        self.sub_page_stack
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(index, page)| {
+                                (index == 0)
+                                    .then(|| page.section_header.clone())
+                                    .into_iter()
+                                    .chain(std::iter::once(page.link.title.clone()))
+                            }),
+                    ),
                 "/".into(),
             )
             .map(|item| Label::new(item).color(Color::Muted)),
@@ -4167,6 +4262,33 @@ fn update_project_setting_file(
     Ok(())
 }
 
+struct CurrentSettingsValue<'a, T> {
+    value: &'a T,
+    disabled: bool,
+}
+
+fn get_current_value<'a, T>(
+    settings_store: &'a SettingsStore,
+    file: &SettingsUiFile,
+    field: &'a SettingField<T>,
+    cx: &'a App,
+) -> Option<CurrentSettingsValue<'a, T>> {
+    let user_store = AppState::global(cx).user_store.read(cx);
+    let org_config = user_store.current_organization_configuration();
+
+    let (_file, value) = settings_store.get_value_from_file(file.to_settings(), field.pick);
+    let value = value?;
+
+    let org_value = org_config
+        .zip(field.organization_override)
+        .and_then(|(org_config, org_override)| (org_override)(org_config));
+
+    Some(CurrentSettingsValue {
+        disabled: org_value.is_some(),
+        value: org_value.unwrap_or(&value),
+    })
+}
+
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     field: SettingField<T>,
     file: SettingsUiFile,
@@ -4211,9 +4333,12 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let value = get_current_value(&SettingsStore::global(cx), &file, &field, cx);
+    let (value, disabled) = value
+        .map(|current_value| (*current_value.value, current_value.disabled))
+        .unwrap_or((false.into(), false));
 
-    let toggle_state = if value.copied().map_or(false, Into::into) {
+    let toggle_state = if value.into() {
         ToggleState::Selected
     } else {
         ToggleState::Unselected
@@ -4221,6 +4346,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
+        .disabled(disabled)
         .on_click({
             move |state, window, cx| {
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
@@ -4287,9 +4413,10 @@ where
         .and_then(|metadata| metadata.should_do_titlecase)
         .unwrap_or(true);
 
-    let (_, current_value) =
-        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let current_value = current_value.copied().unwrap_or(variants()[0]);
+    let current_value = get_current_value(&SettingsStore::global(cx), &file, &field, cx);
+    let (current_value, disabled) = current_value
+        .map(|current_value| (*current_value.value, current_value.disabled))
+        .unwrap_or((variants()[0], false));
 
     EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
         move |value, window, cx| {
@@ -4308,6 +4435,7 @@ where
             .log_err(); // todo(settings_ui) don't log err
         }
     })
+    .disabled(disabled)
     .tab_index(0)
     .title_case(should_do_titlecase)
     .into_any_element()
@@ -4537,8 +4665,10 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
+                hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
                 last_copied_link_path: None,
+                last_copied_skill_directory_path: None,
             }
         }
     }
@@ -4663,8 +4793,10 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         settings_window.build_filter_table();

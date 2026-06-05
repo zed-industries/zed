@@ -293,7 +293,7 @@ pub struct LanguageModelRequestMessage {
     pub content: Vec<MessageContent>,
     pub cache: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_details: Option<serde_json::Value>,
+    pub reasoning_details: Option<Arc<serde_json::Value>>,
 }
 
 impl LanguageModelRequestMessage {
@@ -438,7 +438,6 @@ mod tests {
         // Test image object
         let json = serde_json::json!({
             "source": "base64encodedimagedata",
-            "size": {"width": 100, "height": 200}
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {

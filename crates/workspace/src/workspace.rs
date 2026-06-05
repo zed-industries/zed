@@ -13,9 +13,10 @@ pub mod pane_group;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+pub mod path_link;
 mod persistence;
 pub mod searchable;
-mod security_modal;
+pub mod security_modal;
 pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
@@ -47,7 +48,7 @@ use client::{
     ChannelId, Client, ErrorExt, ParticipantIndex, Status, TypedEnvelope, User, UserStore,
     proto::{self, ErrorCode, PanelId, PeerId},
 };
-use collections::{HashMap, HashSet, hash_map};
+use collections::{HashMap, HashSet, TypeIdHashMap, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use fs::Fs;
 use futures::{
@@ -144,6 +145,7 @@ pub use toolbar::{
 };
 pub use ui;
 use ui::{Window, prelude::*};
+use url::Url;
 use util::{
     ResultExt, TryFutureExt,
     paths::{PathStyle, SanitizedPath},
@@ -818,7 +820,7 @@ type BuildProjectItemForPathFn =
 
 #[derive(Clone, Default)]
 struct ProjectItemRegistry {
-    build_project_item_fns_by_type: HashMap<TypeId, BuildProjectItemFn>,
+    build_project_item_fns_by_type: TypeIdHashMap<BuildProjectItemFn>,
     build_project_item_for_path_fns: Vec<BuildProjectItemForPathFn>,
 }
 
@@ -946,7 +948,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
 }
 
 #[derive(Default)]
-pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
+pub struct FollowableViewRegistry(TypeIdHashMap<FollowableViewDescriptor>);
 
 struct FollowableViewDescriptor {
     from_state_proto: fn(
@@ -1019,7 +1021,7 @@ struct SerializableItemDescriptor {
 #[derive(Default)]
 struct SerializableItemRegistry {
     descriptors_by_kind: HashMap<Arc<str>, SerializableItemDescriptor>,
-    descriptors_by_type: HashMap<TypeId, SerializableItemDescriptor>,
+    descriptors_by_type: TypeIdHashMap<SerializableItemDescriptor>,
 }
 
 impl Global for SerializableItemRegistry {}
@@ -3671,8 +3673,23 @@ impl Workspace {
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
-                    let (_worktree, project_path) = project_path?;
-                    if fs.is_dir(&abs_path).await {
+                    let (worktree, project_path) = project_path?;
+                    let (entry_is_directory, worktree_is_local) =
+                        worktree.read_with(cx, |worktree, _| {
+                            let entry = if project_path.path.as_unix_str().is_empty() {
+                                worktree.root_entry()
+                            } else {
+                                worktree.entry_for_path(&project_path.path)
+                            };
+                            (entry.map(|entry| entry.is_dir()), worktree.is_local())
+                        });
+                    let is_directory = match entry_is_directory {
+                        Some(is_directory) => is_directory,
+                        None if worktree_is_local => fs.is_dir(&abs_path).await,
+                        None => false,
+                    };
+
+                    if is_directory {
                         // Opening a directory should not race to update the active entry.
                         // We'll select/reveal a deterministic final entry after all paths finish opening.
                         None
@@ -4654,6 +4671,108 @@ impl Workspace {
                 )
             })
         })
+    }
+
+    /// Opens a URL or file path, intelligently routing to the appropriate handler:
+    ///
+    /// - `http://` and `https://` URLs are opened in the system's default browser
+    /// - `file://` URIs are opened as files in the editor
+    /// - Paths without a URL scheme are treated as file paths:
+    ///   - Absolute paths are opened directly
+    ///   - Relative paths are first resolved against `base_path` (if provided),
+    ///     then against visible project worktrees
+    /// - Other URI schemes (e.g., `mailto:`, `vscode:`) are passed to the system handler
+    ///
+    /// # Arguments
+    /// * `url_or_path` - The URL or file path to open
+    /// * `base_path` - Optional base directory for resolving relative paths (e.g., the
+    ///   directory containing a markdown file). If not provided, relative paths are
+    ///   resolved against project worktrees.
+    ///
+    /// This method provides a unified way to handle links that may be either URLs
+    /// or file paths, such as those found in markdown documents, terminal output,
+    /// or LSP responses.
+    pub fn open_url_or_file(
+        &mut self,
+        url_or_path: &str,
+        base_path: Option<&Path>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut open_abs_path = |this: &mut Self, path, cx: &mut _| {
+            let url_or_path = url_or_path.to_owned();
+            let task = this.open_abs_path(
+                path,
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            (**cx)
+                .spawn(async move |cx| {
+                    if let Err(_) = task.await {
+                        cx.update(|cx| cx.open_url(&url_or_path));
+                    }
+                })
+                .detach();
+        };
+
+        if let Ok(url) = Url::parse(url_or_path) {
+            match url.scheme() {
+                "http" | "https" => cx.open_url(url_or_path),
+                "file" => open_abs_path(self, PathBuf::from(url.path()), cx),
+                _ => cx.open_url(url_or_path),
+            }
+            return;
+        }
+
+        // Not a valid URL - treat as a file path
+        let project = self.project();
+        let path_style = project.read(cx).path_style(cx);
+
+        // If it's an absolute path, open it directly
+        if path_style.is_absolute(url_or_path) {
+            open_abs_path(self, PathBuf::from(url_or_path), cx);
+            return;
+        }
+
+        let path = Path::new(url_or_path);
+        // Try to resolve relative path against base_path first
+        if let Some(base) = base_path
+            // TODO: remotes, the exists check below hits the local FS, unsure
+            // if this runs on the remote or not
+            && project.read(cx).is_local()
+        {
+            let resolved = path_style.join(base, path).map(PathBuf::from);
+            if let Some(resolved) = resolved
+                && resolved.exists()
+            {
+                open_abs_path(self, resolved, cx);
+                return;
+            }
+        }
+
+        // Try to resolve against project worktrees
+        if let Some(project_path) =
+            project.update(cx, |project, cx| project.find_project_path(url_or_path, cx))
+        {
+            let url_or_path = url_or_path.to_owned();
+            let task = self.open_path(project_path, None, true, window, cx);
+            (**cx)
+                .spawn(async move |cx| {
+                    if let Err(_) = task.await {
+                        cx.update(|cx| cx.open_url(&url_or_path));
+                    }
+                })
+                .detach();
+            return;
+        }
+
+        // Couldn't resolve as a file path - try opening as URL anyway
+        // (the OS might be able to handle it)
+        cx.open_url(url_or_path);
     }
 
     pub fn split_path(
@@ -5957,7 +6076,7 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(
+    pub(crate) fn active_item_path_changed(
         &mut self,
         focus_changed: bool,
         window: &mut Window,
@@ -6684,6 +6803,12 @@ impl Workspace {
             }
             ActiveCallEvent::LocalScreenShareStopped => {
                 self.handle_auto_watch_local_share_stopped(window, cx);
+            }
+            ActiveCallEvent::RoomLeft => {
+                if self.auto_watch.enabled() {
+                    self.auto_watch = AutoWatch::Off;
+                    cx.notify();
+                }
             }
         }
     }
@@ -7810,6 +7935,12 @@ impl Workspace {
                         .and_then(|state| state.size)
                         .unwrap_or_else(|| panel.default_size(window, cx));
                     container = container.w(size);
+                    // Allow the fixed-width dock to shrink when there isn't
+                    // enough space (e.g. when the sidebar is open). The
+                    // stored size is preserved so the dock expands back
+                    // when space becomes available.
+                    let style = container.style();
+                    style.flex_shrink = Some(1.0);
                 }
                 if let Some(min) = min_size {
                     container = container.min_w(min);
@@ -8136,6 +8267,7 @@ pub enum ActiveCallEvent {
     RemoteVideoTracksChanged { participant_id: PeerId },
     LocalScreenShareStarted,
     LocalScreenShareStopped,
+    RoomLeft,
 }
 
 fn leader_border_for_pane(
@@ -10629,6 +10761,7 @@ pub fn client_side_decorations(
                                 },
                                 blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
                                 spread_radius: px(0.),
+                                inset: false,
                                 offset: point(px(0.0), px(0.0)),
                             }])
                         }),
@@ -15965,5 +16098,50 @@ mod tests {
         });
         let path = workspace.read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx));
         assert_eq!(path, None);
+    }
+
+    #[gpui::test]
+    async fn test_open_url_or_file_routes_urls(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "content",
+                "subdir": {
+                    "nested.txt": "nested content"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Test opening an HTTPS URL - should go to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("https://example.com", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("https://example.com".to_string()));
+
+        // Test opening an HTTP URL - should go to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("http://example.com", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("http://example.com".to_string()));
+
+        // Test opening other URI schemes - should go to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("mailto:test@example.com", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("mailto:test@example.com".to_string()));
+
+        // Test opening a path that doesn't exist and doesn't match project - should fallback to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("nonexistent.txt", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("nonexistent.txt".to_string()));
     }
 }

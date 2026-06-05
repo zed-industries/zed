@@ -1,25 +1,96 @@
-use scheduler::Instant;
+use itertools::Itertools;
+use scheduler::{Instant, SpawnTime};
 use std::{
     cell::LazyCell,
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
+    hint::cold_path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread::ThreadId,
+    time::Duration,
 };
+
+mod actions;
+pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
+pub(crate) use actions::{save_action_timing, update_running_action};
 
 use serde::{Deserialize, Serialize};
 
-use crate::SharedString;
+use crate::{SharedString, TasksIncluded};
+
+#[doc(hidden)]
+pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
+    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
+    ThreadTaskTimings::collect(&global_thread_timings, included)
+}
+
+#[doc(hidden)]
+pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTimings {
+    gpui::profiler::get_current_thread_task_timings(included)
+}
+
+#[doc(hidden)]
+pub fn take_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
+    let global_timings = GLOBAL_THREAD_TIMINGS.lock();
+    ThreadTaskStatistics::collect_and_reset(&global_timings, included)
+}
 
 #[doc(hidden)]
 #[derive(Debug, Copy, Clone)]
+pub struct YieldTime(pub Instant);
+
+#[doc(hidden)]
+#[derive(Copy, Clone)]
 pub struct TaskTiming {
     pub location: &'static core::panic::Location<'static>,
+    pub spawned: SpawnTime,
     pub start: Instant,
-    pub end: Option<Instant>,
+    pub end: YieldTime,
+}
+
+impl std::fmt::Debug for TaskTiming {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskTiming")
+            .field("location", &self.location)
+            .field("since_spawned", &self.spawned.0.elapsed())
+            .field("last_poll_duration", &self.poll_duration())
+            .field("total_runtime", &self.since_spawn())
+            .finish()
+    }
+}
+
+#[doc(hidden)]
+#[derive(Debug, Copy, Clone)]
+pub struct ActiveTiming {
+    pub location: &'static core::panic::Location<'static>,
+    pub spawned: SpawnTime,
+    pub start: Instant,
+}
+
+impl TaskTiming {
+    /// A task timing with a duration of zero. Any task will replace this in history.
+    pub fn placeholder() -> Self {
+        let now = Instant::now();
+        Self {
+            location: std::panic::Location::caller(),
+            spawned: SpawnTime(now),
+            start: now,
+            end: YieldTime(now),
+        }
+    }
+
+    #[inline(always)]
+    pub fn poll_duration(&self) -> Duration {
+        self.end.0 - self.start
+    }
+
+    #[inline(always)]
+    fn since_spawn(&self) -> Duration {
+        self.end.0 - self.spawned.0
+    }
 }
 
 #[doc(hidden)]
@@ -28,12 +99,13 @@ pub struct ThreadTaskTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
     pub timings: Vec<TaskTiming>,
+    pub stats: TaskStatistics,
     pub total_pushed: u64,
 }
 
 impl ThreadTaskTimings {
     /// Convert global thread timings into their structured format.
-    pub fn convert(timings: &[GlobalThreadTimings]) -> Vec<Self> {
+    pub fn collect(timings: &[GlobalThreadTimings], included: TasksIncluded) -> Vec<Self> {
         timings
             .iter()
             .filter_map(|t| match t.timings.upgrade() {
@@ -44,18 +116,81 @@ impl ThreadTaskTimings {
                 let timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
                 let total_pushed = timings.total_pushed;
-                let timings = &timings.timings;
+                let completed = &timings.timings;
 
-                let mut vec = Vec::with_capacity(timings.len());
-                let (s1, s2) = timings.as_slices();
+                let mut vec = Vec::with_capacity(completed.len() + 1); // +1 for running task
+                let (s1, s2) = completed.as_slices();
                 vec.extend_from_slice(s1);
                 vec.extend_from_slice(s2);
+                if let TasksIncluded::CompletedAndRunning = included
+                    && let Some(running) = timings.running
+                {
+                    vec.push(TaskTiming {
+                        location: running.location,
+                        spawned: running.spawned,
+                        start: running.start,
+                        end: YieldTime(Instant::now()),
+                    })
+                }
 
                 ThreadTaskTimings {
                     thread_name,
                     thread_id,
                     timings: vec,
+                    stats: timings.stats.clone(),
                     total_pushed,
+                }
+            })
+            .collect()
+    }
+}
+
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ThreadTaskStatistics {
+    pub thread_name: Option<String>,
+    pub thread_id: ThreadId,
+    pub stats: TaskStatistics,
+}
+
+impl ThreadTaskStatistics {
+    pub fn collect_and_reset(
+        timings: &[GlobalThreadTimings],
+        include_running: TasksIncluded,
+    ) -> Vec<Self> {
+        timings
+            .iter()
+            .filter_map(|t| match t.timings.upgrade() {
+                Some(timings) => Some((t.thread_id, timings)),
+                _ => None,
+            })
+            .map(|(thread_id, timings)| {
+                let mut timings = timings.lock();
+                let thread_name = timings.thread_name.clone();
+
+                let mut stats = std::mem::take(&mut timings.stats);
+                if let TasksIncluded::CompletedAndRunning = include_running
+                    && let Some(ActiveTiming {
+                        location,
+                        spawned,
+                        start,
+                    }) = timings.running
+                {
+                    let end = YieldTime(Instant::now());
+                    let timing = TaskTiming {
+                        location,
+                        spawned,
+                        start,
+                        end,
+                    };
+                    stats.add_runtime(timing);
+                    stats.add_yield_timing(timing);
+                }
+
+                Self {
+                    thread_name,
+                    thread_id,
+                    stats,
                 }
             })
             .collect()
@@ -105,11 +240,7 @@ impl SerializedTaskTiming {
             .iter()
             .map(|timing| {
                 let start = timing.start.duration_since(anchor).as_nanos();
-                let duration = timing
-                    .end
-                    .unwrap_or_else(|| Instant::now())
-                    .duration_since(timing.start)
-                    .as_nanos();
+                let duration = timing.end.0.duration_since(timing.start).as_nanos();
                 SerializedTaskTiming {
                     location: timing.location.into(),
                     start,
@@ -119,6 +250,17 @@ impl SerializedTaskTiming {
             .collect::<Vec<_>>();
 
         serialized
+    }
+
+    /// `anchor` - [`Instant`] that should be earlier than all timings to use as base anchor
+    pub fn from(anchor: Instant, timing: TaskTiming) -> SerializedTaskTiming {
+        let start = timing.start.duration_since(anchor).as_nanos();
+        let duration = timing.end.0.duration_since(timing.start).as_nanos();
+        SerializedTaskTiming {
+            location: timing.location.into(),
+            start,
+            duration,
+        }
     }
 }
 
@@ -209,18 +351,7 @@ impl ProfilingCollector {
                 &thread.timings[skip.min(thread.timings.len())..]
             };
 
-            // Don't emit the last entry if it's still in-progress (end: None).
-            let incomplete_at_end = slice.last().is_some_and(|t| t.end.is_none());
-            if incomplete_at_end {
-                slice = &slice[..slice.len() - 1];
-            }
-
-            let cursor_advance = if incomplete_at_end {
-                thread.total_pushed.saturating_sub(1)
-            } else {
-                thread.total_pushed
-            };
-
+            let cursor_advance = thread.total_pushed;
             self.cursors.insert(thread.thread_id, cursor_advance);
 
             if slice.is_empty() {
@@ -262,6 +393,96 @@ pub struct GlobalThreadTimings {
 }
 
 #[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct TaskStatistics {
+    pub poll_time_to_beat: Duration,
+    pub runtime_to_beat: Duration,
+    pub longest_poll_times: [TaskTiming; 5],
+    pub longest_runtimes: [TaskTiming; 5],
+}
+
+impl std::fmt::Display for TaskStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Tasks that blocked the longest before yielding\n")?;
+        for timing in self.longest_poll_times {
+            f.write_fmt(format_args!(
+                "{:<20} - {}:{}\n",
+                format!("{:?}", timing.poll_duration()),
+                timing.location.file(),
+                timing.location.column()
+            ))?;
+        }
+        f.write_str("Tasks that ran the longest\n")?;
+        for timing in self.longest_runtimes {
+            f.write_fmt(format_args!(
+                "{:<20} - {}:{}\n",
+                format!("{:?}", timing.since_spawn()),
+                timing.location.file(),
+                timing.location.column()
+            ))?;
+        }
+        Ok(())
+    }
+}
+
+impl Default for TaskStatistics {
+    fn default() -> Self {
+        Self {
+            // Do not track polls that are not problematic
+            // this keeps more calls on the fast path
+            poll_time_to_beat: Duration::from_micros(100),
+            runtime_to_beat: Duration::from_micros(100),
+            longest_poll_times: [TaskTiming::placeholder(); 5],
+            longest_runtimes: [TaskTiming::placeholder(); 5],
+        }
+    }
+}
+
+impl TaskStatistics {
+    #[inline(always)]
+    fn add_yield_timing(&mut self, task: TaskTiming) {
+        let yielded_after = task.poll_duration();
+        if yielded_after >= self.poll_time_to_beat {
+            cold_path(); // most tasks are not the worst, optimize for that
+            let to_replace = self
+                .longest_poll_times
+                .iter()
+                .position_min_by_key(|task| task.since_spawn())
+                .expect("guarded by the comparison with nth_longest_yield_time");
+            self.longest_poll_times[to_replace] = task;
+
+            self.poll_time_to_beat = self
+                .longest_poll_times
+                .iter()
+                .map(|task| task.since_spawn())
+                .min()
+                .expect("never empty");
+        }
+    }
+
+    #[inline(always)]
+    fn add_runtime(&mut self, task: TaskTiming) {
+        let runtime = task.since_spawn();
+        if runtime >= self.runtime_to_beat {
+            cold_path(); // most tasks are not the worst, optimize for that
+            let to_replace = self
+                .longest_runtimes
+                .iter()
+                .position_min_by_key(|task| task.since_spawn())
+                .expect("guarded by the comparison with nth_longest_yield_time");
+            self.longest_runtimes[to_replace] = task;
+
+            self.runtime_to_beat = self
+                .longest_runtimes
+                .iter()
+                .map(|task| task.since_spawn())
+                .min()
+                .expect("never empty");
+        }
+    }
+}
+
+#[doc(hidden)]
 pub static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
     spin::Mutex::new(Vec::new());
 
@@ -292,6 +513,8 @@ pub struct ThreadTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
     pub timings: TaskTimings,
+    pub running: Option<ActiveTiming>,
+    pub stats: TaskStatistics,
     pub total_pushed: u64,
 }
 
@@ -301,22 +524,47 @@ impl ThreadTimings {
             thread_name,
             thread_id,
             timings: TaskTimings::new(),
+            stats: TaskStatistics::default(),
             total_pushed: 0,
+            running: None,
         }
     }
 
-    /// If this task is the same as the last task, update the end time of the last task.
-    ///
-    /// Otherwise, add the new task timing to the list.
-    pub fn add_task_timing(&mut self, timing: TaskTiming) {
-        if let Some(last_timing) = self.timings.back_mut()
-            && last_timing.location == timing.location
-            && last_timing.start == timing.start
-        {
-            last_timing.end = timing.end;
-        } else {
-            while self.timings.len() + 1 > MAX_TASK_TIMINGS {
-                // This should only ever pop one element because it matches the insertion below.
+    pub fn update_running_task(
+        &mut self,
+        spawned: SpawnTime,
+        location: &'static std::panic::Location<'_>,
+    ) {
+        let start = Instant::now();
+        self.running = Some(ActiveTiming {
+            spawned,
+            location,
+            start,
+        });
+    }
+
+    pub fn save_task_timing(&mut self, ended: YieldTime) {
+        let ActiveTiming {
+            location,
+            start,
+            spawned,
+        } = self
+            .running
+            .take()
+            .expect("this function is only ever called after register_task_start");
+
+        let timing = TaskTiming {
+            location,
+            spawned,
+            start,
+            end: ended,
+        };
+        self.stats.add_yield_timing(timing);
+        self.stats.add_runtime(timing);
+
+        if trace_enabled() {
+            cold_path(); // optimize for when the profiling is off
+            if self.timings.len() >= MAX_TASK_TIMINGS {
                 self.timings.pop_front();
             }
             self.timings.push_back(timing);
@@ -324,11 +572,28 @@ impl ThreadTimings {
         }
     }
 
-    pub fn get_thread_task_timings(&self) -> ThreadTaskTimings {
+    // Running tasks are included in the reliability trace, which is written
+    // whenever the foreground executor makes no progress for > n seconds
+    pub fn get_thread_task_timings(&self, includes: TasksIncluded) -> ThreadTaskTimings {
         ThreadTaskTimings {
             thread_name: self.thread_name.clone(),
             thread_id: self.thread_id,
-            timings: self.timings.iter().cloned().collect(),
+            timings: self
+                .timings
+                .iter()
+                .cloned()
+                .chain(
+                    self.running
+                        .filter(|_| matches!(includes, TasksIncluded::CompletedAndRunning))
+                        .map(|running| TaskTiming {
+                            spawned: running.spawned,
+                            location: running.location,
+                            start: running.start,
+                            end: YieldTime(Instant::now()),
+                        }),
+                )
+                .collect(),
+            stats: self.stats.clone(),
             total_pushed: self.total_pushed,
         }
     }
@@ -350,28 +615,34 @@ impl Drop for ThreadTimings {
 }
 
 #[doc(hidden)]
-pub fn add_task_timing(timing: TaskTiming) {
-    if !PROFILER_ENABLED.load(Ordering::Acquire) {
-        return;
-    }
+pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Location<'_>) {
     THREAD_TIMINGS.with(|timings| {
-        timings.lock().add_task_timing(timing);
+        timings.lock().update_running_task(spawned, location);
     });
 }
 
 #[doc(hidden)]
-pub fn get_current_thread_task_timings() -> ThreadTaskTimings {
-    THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings())
+pub fn save_task_timing() {
+    let yielded_at = YieldTime(Instant::now());
+    THREAD_TIMINGS.with(|timings| {
+        timings.lock().save_task_timing(yielded_at);
+    });
+}
+
+#[doc(hidden)]
+pub fn get_current_thread_task_timings(include_running: TasksIncluded) -> ThreadTaskTimings {
+    THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings(include_running))
 }
 
 static PROFILER_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Enables or disables task timing collection at runtime.
+/// Enables or disables task timing trace collection at runtime.
 ///
 /// When transitioning from enabled to disabled, `add_task_timing` becomes a
-/// no-op and the existing per-thread buffers are cleared so stale data isn't
-/// reported after a later re-enable. Calls with the current value are a no-op.
-pub fn set_enabled(enabled: bool) -> bool {
+/// cheaper since only cheap statistics are gathered. The existing per-thread
+/// buffers for traces are cleared so stale data isn't reported after a later
+/// re-enable. Calls with the current value are a no-op.
+pub fn set_trace_enabled(enabled: bool) -> bool {
     if PROFILER_ENABLED.swap(enabled, Ordering::AcqRel) == enabled {
         return false;
     }
@@ -387,4 +658,9 @@ pub fn set_enabled(enabled: bool) -> bool {
         }
     }
     true
+}
+
+/// Returns whether task timing tracing is enabled.
+pub fn trace_enabled() -> bool {
+    PROFILER_ENABLED.load(Ordering::Relaxed)
 }

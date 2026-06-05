@@ -1,13 +1,17 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
 use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use gpui::{Entity, Task, TestAppContext, VisualTestContext};
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    Pixels, Render, Task, TestAppContext, VisualTestContext, Window, div, px,
+};
 use project::AgentId;
 use project::Project;
 use settings::SettingsStore;
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
+use workspace::{MultiWorkspace, Sidebar as WorkspaceSidebar, SidebarEvent, SidebarSide};
 
 use crate::AgentPanel;
 use crate::agent_panel;
@@ -107,6 +111,71 @@ pub fn init_test(cx: &mut TestAppContext) {
         agent_panel::init(cx);
         crate::terminal_thread_metadata_store::TerminalThreadMetadataStore::init_global(cx);
     });
+}
+
+pub struct TestWorkspaceSidebar {
+    focus_handle: FocusHandle,
+    threads_list_active: bool,
+}
+
+impl TestWorkspaceSidebar {
+    fn new(threads_list_active: bool, cx: &mut Context<Self>) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+            threads_list_active,
+        }
+    }
+}
+
+impl EventEmitter<SidebarEvent> for TestWorkspaceSidebar {}
+
+impl Focusable for TestWorkspaceSidebar {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl WorkspaceSidebar for TestWorkspaceSidebar {
+    fn width(&self, _cx: &App) -> Pixels {
+        px(300.)
+    }
+
+    fn set_width(&mut self, _width: Option<Pixels>, _cx: &mut Context<Self>) {}
+
+    fn has_notifications(&self, _cx: &App) -> bool {
+        false
+    }
+
+    fn side(&self, _cx: &App) -> SidebarSide {
+        SidebarSide::Left
+    }
+
+    fn is_threads_list_view_active(&self) -> bool {
+        self.threads_list_active
+    }
+}
+
+impl Render for TestWorkspaceSidebar {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+pub fn register_test_sidebar(
+    threads_list_active: bool,
+    cx: &mut VisualTestContext,
+) -> Entity<TestWorkspaceSidebar> {
+    cx.update(|window, cx| {
+        let multi_workspace = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .expect("test window should have a MultiWorkspace root");
+        let sidebar = cx.new(|cx| TestWorkspaceSidebar::new(threads_list_active, cx));
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), cx);
+        });
+        sidebar
+    })
 }
 
 pub fn open_thread_with_connection(

@@ -106,7 +106,7 @@ See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#
 
 [basedpyright](https://docs.basedpyright.com/latest/) is the primary Python language server in Zed beginning with Zed v0.204.0. It provides core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
 
-Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on more for more details about how to configure basedpyright.
+Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on for more details about how to configure basedpyright.
 
 #### Basedpyright Configuration
 

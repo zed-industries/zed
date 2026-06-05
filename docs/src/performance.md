@@ -13,7 +13,7 @@ the browser (specifically a local instance of [firefox_profiler](https://profile
 
 See [samply](https://github.com/mstange/samply)'s README on how to install and run.
 
-The profile.json does not contain any symbols. Firefox profiler can add the local symbols to the profile for for. To do that hit the upload local profile button in the top right corner.
+The profile.json does not contain any symbols. Firefox profiler can add the local symbols to the profile. To do that hit the upload local profile button in the top right corner.
 
 <img width="851" height="auto" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" style="display: block; margin: 0 auto;" />
 

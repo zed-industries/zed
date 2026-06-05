@@ -1,15 +1,17 @@
 use crate::{
-    CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
-    ZedUpdateRequiredError, buffer_path_with_id_fallback,
+    CloudRequestTimeoutError, CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionStore, ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
+    data_collection::UncommittedDiffResult,
     prediction::EditPredictionResult,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
 use edit_prediction_types::PredictedCursorPosition;
+use futures::future::Shared;
 use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, EditPredictionPromptFormat, OffsetRangeExt as _,
@@ -39,6 +41,7 @@ pub fn request_prediction_with_zeta(
         position,
         related_files,
         events,
+        stored_events,
         debug_tx,
         mode,
         trigger,
@@ -48,7 +51,8 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
-    capture_data: Option<Vec<StoredEvent>>,
+    capture_data: Option<Shared<Task<UncommittedDiffResult>>>,
+    repo_url: Option<String>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let settings = &all_language_settings(None, cx).edit_predictions;
@@ -69,17 +73,7 @@ pub fn request_prediction_with_zeta(
 
     let excerpt_path = buffer_path_with_id_fallback(snapshot.file(), &snapshot.text, cx);
 
-    let repo_url = if can_collect_data {
-        let buffer_id = buffer.read(cx).remote_id();
-        project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .repository_and_path_for_buffer_id(buffer_id, cx)
-            .and_then(|(repo, _)| repo.read(cx).default_remote_url())
-    } else {
-        None
-    };
+    let repo_url = repo_url.filter(|_| can_collect_data);
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store
@@ -412,17 +406,41 @@ pub fn request_prediction_with_zeta(
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
             let model_version = prediction.model_version.clone();
-            let example_task = capture_data.and_then(|stored_events| {
-                cx.update(|cx| {
-                    crate::capture_example(
-                        project.clone(),
-                        edited_buffer.clone(),
-                        position,
-                        stored_events,
-                        false,
-                        cx,
-                    )
-                })
+            let example_task = capture_data.and_then(|uncommitted_diffs| {
+                let (recently_opened_files, recently_viewed_files) = this
+                    .read_with(cx, |this, _| {
+                        (
+                            this.recently_opened_files_for_project(&project),
+                            this.recently_viewed_files_for_project(&project),
+                        )
+                    })
+                    .ok()?;
+                Some(cx.spawn({
+                    let project = project.clone();
+                    let edited_buffer = edited_buffer.clone();
+                    async move |cx| {
+                        let uncommitted_diffs = uncommitted_diffs
+                            .await
+                            .map_err(|error| anyhow::anyhow!("{error:?}"))
+                            .context("failed to capture uncommitted diff")?;
+                        let Some(task) = cx.update(|cx| {
+                            crate::capture_example::capture_example(
+                                project.clone(),
+                                edited_buffer.clone(),
+                                position,
+                                stored_events,
+                                recently_opened_files,
+                                recently_viewed_files,
+                                uncommitted_diffs,
+                                false,
+                                cx,
+                            )
+                        }) else {
+                            return Err(anyhow::anyhow!("failed to capture example"));
+                        };
+                        task.await
+                    }
+                }))
             });
             cx.spawn(async move |cx| {
                 let example_spec = if let Some(task) = example_task {
@@ -473,6 +491,11 @@ fn handle_api_response<T>(
             Ok(data)
         }
         Err(err) => {
+            if err.is::<CloudRequestTimeoutError>() {
+                this.update(cx, |this, cx| this.back_off_requests_after_timeout(cx))
+                    .ok();
+            }
+
             if err.is::<ZedUpdateRequiredError>() {
                 cx.update(|cx| {
                     this.update(cx, |this, _cx| {

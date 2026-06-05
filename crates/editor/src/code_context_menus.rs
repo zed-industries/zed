@@ -1256,13 +1256,25 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Div {
+        let editor = cx.weak_entity();
         div().child(
             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                     copy_button_visibility: CopyButtonVisibility::Hidden,
+                    wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                     border: false,
                 })
-                .on_url_click(open_markdown_url),
+                .on_url_click(move |link, window, cx| {
+                    open_markdown_url(
+                        editor
+                            .read_with(cx, |editor, _| editor.workspace())
+                            .ok()
+                            .flatten(),
+                        link,
+                        window,
+                        cx,
+                    )
+                }),
         )
     }
 

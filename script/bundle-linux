@@ -151,10 +151,12 @@ cp "${target_dir}/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
 cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 
 # Libs
+# Bundle libstdc++ so older supported systems can run binaries built with our
+# toolchain even when their system libstdc++.so.6 lacks required GLIBCXX symbols.
 find_libs() {
     ldd ${target_dir}/${target_triple}/release/zed |\
         cut -d' ' -f3 |\
-        grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)'
+        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)'
 }
 
 mkdir -p "${zed_dir}/lib"

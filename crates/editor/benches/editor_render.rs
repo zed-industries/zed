@@ -3,18 +3,20 @@ use editor::{
     Editor, EditorMode, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
-use gpui::{AppContext, Focusable as _, TestAppContext, TestDispatcher};
+use gpui::{AppContext as _, BenchAppContext, Focusable as _, TestAppContext, TestDispatcher};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
 use ui::IntoElement;
 use util::RandomCharIter;
 
-fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
-    let mut cx = cx.clone();
+#[gpui::bench]
+fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &mut BenchAppContext) {
+    init_context(cx);
+
     let text = String::from_iter(["line:\n"; 1000]);
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
-    let cx = cx.add_empty_window();
+    let mut cx = cx.add_empty_window();
     let editor = cx.update(|window, cx| {
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
@@ -63,10 +65,10 @@ fn open_editor_with_one_long_line(bencher: &mut Bencher<'_>, args: &(String, Tes
     let mut cx = cx.clone();
 
     bencher.iter(|| {
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
 
         let cx = cx.add_empty_window();
-        let _ = cx.update(|window, cx| {
+        cx.update(|window, cx| {
             let editor = cx.new(|cx| {
                 let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
                 editor.set_style(editor::EditorStyle::default(), window, cx);
@@ -106,7 +108,6 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
 
     bencher.iter(|| {
         cx.update(|window, cx| {
-            // editor.update(cx, |editor, cx| editor.move_down(&MoveDown, window, cx));
             let mut view = editor.clone().into_any_element();
             let _ = view.request_layout(window, cx);
             let _ = view.prepaint(window, cx);
@@ -115,53 +116,49 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     })
 }
 
-pub fn benches() {
-    let dispatcher = TestDispatcher::new(1);
-    let cx = gpui::TestAppContext::build(dispatcher, None);
+fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         assets::Assets.load_test_fonts(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
-        // release_channel::init(semver::Version::new(0,0,0), cx);
         editor::init(cx);
     });
+}
 
-    let mut criterion: criterion::Criterion<_> =
-        (criterion::Criterion::default()).configure_from_args();
+fn init_test_context(cx: &TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        assets::Assets.load_test_fonts(cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        editor::init(cx);
+    });
+}
 
-    // setup app context
+fn criterion_benches(criterion: &mut criterion::Criterion) {
+    let dispatcher = TestDispatcher::new(1);
+    let cx = gpui::TestAppContext::build(dispatcher, None);
+    init_test_context(&cx);
+
     let mut group = criterion.benchmark_group("Time to render");
     group.bench_with_input(
         BenchmarkId::new("editor_render", "TestAppContext"),
         &cx,
         editor_render,
     );
-
     group.finish();
 
     let text = String::from_iter(["char"; 1000]);
+    let input = (text, cx.clone());
     let mut group = criterion.benchmark_group("Build buffer with one long line");
     group.bench_with_input(
         BenchmarkId::new("editor_with_one_long_line", "(String, TestAppContext )"),
-        &(text, cx.clone()),
+        &input,
         open_editor_with_one_long_line,
     );
-
-    group.finish();
-
-    let mut group = criterion.benchmark_group("multi cursor edits");
-    group.bench_with_input(
-        BenchmarkId::new("editor_input_with_1000_cursors", "TestAppContext"),
-        &cx,
-        editor_input_with_1000_cursors,
-    );
     group.finish();
 }
 
-fn main() {
-    benches();
-    criterion::Criterion::default()
-        .configure_from_args()
-        .final_summary();
-}
+gpui::bench_group!(benches, editor_input_with_1000_cursors, criterion_benches);
+gpui::bench_main!(benches);

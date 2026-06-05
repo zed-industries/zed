@@ -80,6 +80,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         ],
     ),
     ("backup", &["bak"]),
+    ("ballerina", &["bal"]),
     ("bicep", &["bicep"]),
     ("bun", &["lockb"]),
     ("c", &["c", "h"]),
@@ -312,6 +313,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
 const FILE_ICONS: &[(&str, &str)] = &[
     ("astro", "icons/file_icons/astro.svg"),
     ("audio", "icons/file_icons/audio.svg"),
+    ("ballerina", "icons/file_icons/ballerina.svg"),
     ("bicep", "icons/file_icons/file.svg"),
     ("bun", "icons/file_icons/bun.svg"),
     ("c", "icons/file_icons/c.svg"),

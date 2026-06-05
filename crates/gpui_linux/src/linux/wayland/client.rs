@@ -96,7 +96,7 @@ use gpui::{
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowButtonLayout,
+    ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout,
     WindowParams, point, profiler, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
@@ -264,6 +264,7 @@ pub(crate) struct WaylandClientState {
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     pub common: LinuxCommon,
+    ime_enabled: Option<bool>,
 }
 
 pub struct DragState {
@@ -319,6 +320,7 @@ impl WaylandClientStatePtr {
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+        state.ime_enabled = Some(true);
         let Some(text_input) = state.text_input.take() else {
             return;
         };
@@ -344,11 +346,17 @@ impl WaylandClientStatePtr {
     pub fn disable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+        state.ime_enabled = Some(false);
         state.composing = false;
         if let Some(text_input) = &state.text_input {
             text_input.disable();
             text_input.commit();
         }
+    }
+
+    pub fn ime_enabled(&self) -> Option<bool> {
+        let client = self.get_client();
+        client.borrow().ime_enabled
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
@@ -576,20 +584,11 @@ impl WaylandClient {
                 move |event, _, _: &mut WaylandClientStatePtr| {
                     if let calloop::channel::Event::Msg(runnable) = event {
                         handle.insert_idle(|_| {
-                            let start = Instant::now();
                             let location = runnable.metadata().location;
-                            let mut timing = TaskTiming {
-                                location,
-                                start,
-                                end: None,
-                            };
-                            profiler::add_task_timing(timing);
-
+                            let spawned = runnable.metadata().spawned;
+                            profiler::update_running_task(spawned, location);
                             runnable.run();
-
-                            let end = Instant::now();
-                            timing.end = Some(end);
-                            profiler::add_task_timing(timing);
+                            profiler::save_task_timing();
                         });
                     }
                 }
@@ -732,6 +731,7 @@ impl WaylandClient {
             cursor,
             pending_activation: None,
             event_loop: Some(event_loop),
+            ime_enabled: None,
         }));
 
         WaylandSource::new(conn, event_queue)
