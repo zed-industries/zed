@@ -404,6 +404,7 @@ actions!(
         CompareMarkedFiles,
         /// Compare files without marking, for better discoverability.
         SelectForCompare,
+        /// Compares the file with the previously selected file using :: SelectForCompare
         CompareWithSelected,
         /// Undoes the last file operation.
         Undo,
@@ -1108,21 +1109,13 @@ impl ProjectPanel {
                             .when(is_foldable, |menu| {
                                 menu.action("Fold Directory", Box::new(FoldDirectory))
                             })
+                            .separator()
                             .when(should_show_compare, |menu| {
-                                menu.separator()
-                                    .action("Compare Marked Files", Box::new(CompareMarkedFiles))
+                                menu.action("Compare Marked Files", Box::new(CompareMarkedFiles))
                             })
-                            .when(!compare_selection, |menu| {
-                                menu.action(
-                                    "Compare: Select for Compare",
-                                    Box::new(SelectForCompare),
-                                )
-                            })
-                            .when(compare_selection, |menu| {
-                                menu.action(
-                                    "Compare: Compare With Selected",
-                                    Box::new(CompareWithSelected),
-                                )
+                            .action("Select for Compare", Box::new(SelectForCompare))
+                            .when(self.compare_selection.is_some(), |menu| {
+                                menu.action("Compare With Selected", Box::new(CompareWithSelected))
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
@@ -3492,11 +3485,10 @@ impl ProjectPanel {
         }
     }
 
-    fn entry_paths_to_diff(
-        &self,
-        entries: impl IntoIterator<Item = SelectedEntry>,
-        cx: &Context<Self>,
-    ) -> Option<(PathBuf, PathBuf)>
+    fn entry_paths_to_diff<I>(&self, entries: I, cx: &Context<Self>) -> Option<(PathBuf, PathBuf)>
+    where
+        I: IntoIterator<Item = SelectedEntry>,
+        <I as IntoIterator>::IntoIter: DoubleEndedIterator,
     {
         let project = self.project.read(cx);
         let mut selections_abs_path = entries
@@ -3515,6 +3507,22 @@ impl ProjectPanel {
         let previous_to_last = selections_abs_path.next()?;
 
         Some((previous_to_last, last_path))
+    }
+
+    fn select_for_compare(&mut self, _: &SelectForCompare, _: &mut Window, cx: &mut Context<Self>) {
+        self.compare_selection = self.selection;
+        cx.notify();
+    }
+
+    fn open_diff(
+        &mut self,
+        old_path: PathBuf,
+        new_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        FileDiffView::open(old_path, new_path, self.workspace.clone(), window, cx)
+            .detach_and_log_err(cx);
     }
 
     fn file_abs_paths_to_diff(&self, cx: &Context<Self>) -> Option<(PathBuf, PathBuf)> {
@@ -6715,6 +6723,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
+                .on_action(cx.listener(Self::select_for_compare))
+                .on_action(cx.listener(Self::compare_with_selected))
                 .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |el| {
                     el.on_action(cx.listener(Self::undo))
                         .on_action(cx.listener(Self::redo))
