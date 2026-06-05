@@ -23,6 +23,8 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use bench_context::{BenchAppContext, BenchWindowContext};
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
@@ -56,6 +58,8 @@ use crate::{
 };
 
 mod async_context;
+#[cfg(any(test, feature = "test-support"))]
+mod bench_context;
 mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
@@ -68,7 +72,7 @@ mod test_context;
 mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
-pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
@@ -149,6 +153,21 @@ impl Application {
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
+    }
+
+    /// Builds an app with accessibility (AccessKit) integration forcibly
+    /// disabled.
+    ///
+    /// In this mode, accessibility APIs (e.g.
+    /// [`div().role()`][crate::StatefulInteractiveElement::role]) silently
+    /// no-op.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview of
+    /// the features this disables.
+    pub fn new_inaccessible(platform: Rc<dyn Platform>) -> Self {
+        let this = Self::with_platform(platform);
+        this.0.borrow_mut().accessibility_force_disabled = true;
+        this
     }
 
     /// Assigns the source of assets for the application.
@@ -255,6 +274,22 @@ pub enum QuitMode {
     LastWindowClosed,
     /// Quit only when requested via [`App::quit`].
     Explicit,
+}
+
+/// Controls when GPUI hides the mouse cursor in response to keyboard input.
+///
+/// Restoration on mouse motion is handled by the platform layer; this enum
+/// only describes the policy for *triggering* a hide.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CursorHideMode {
+    /// Never hide the cursor automatically.
+    Never,
+    /// Hide on character-producing key presses (typing).
+    OnTyping,
+    /// Hide on character-producing key presses, *and* when a key binding
+    /// resolves to an action that consumes the keystroke.
+    #[default]
+    OnTypingAndAction,
 }
 
 #[doc(hidden)]
@@ -638,6 +673,7 @@ pub struct App {
     pub(crate) window_invalidators_by_entity:
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
+    pub(crate) current_window_by_entity: FxHashMap<EntityId, WindowId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_renderer: Option<crate::InspectorRenderer>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -648,6 +684,10 @@ pub struct App {
 
     pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) mode: GpuiMode,
+    pub(crate) cursor_hide_mode: CursorHideMode,
+    /// Whether the app was created by [`Application::new_inaccessible`]. No
+    /// accesskit APIs will be called when this flag is set.
+    pub(crate) accessibility_force_disabled: bool,
     flushing_effects: bool,
     pending_updates: usize,
     quit_mode: QuitMode,
@@ -715,6 +755,7 @@ impl App {
                 observers: SubscriberSet::new(),
                 tracked_entities: FxHashMap::default(),
                 window_invalidators_by_entity: FxHashMap::default(),
+                current_window_by_entity: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
@@ -735,6 +776,8 @@ impl App {
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
                 quitting: false,
+                cursor_hide_mode: CursorHideMode::default(),
+                accessibility_force_disabled: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -819,7 +862,7 @@ impl App {
     }
 
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
-    /// will be given 100ms to complete before exiting.
+    /// will be given `SHUTDOWN_TIMEOUT` to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
 
@@ -873,6 +916,27 @@ impl App {
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&self) {
         self.platform.quit();
+    }
+
+    /// Returns the current policy for hiding the cursor in response to
+    /// keyboard input.
+    pub fn cursor_hide_mode(&self) -> CursorHideMode {
+        self.cursor_hide_mode
+    }
+
+    /// Sets the policy controlling when GPUI hides the cursor in response
+    /// to keyboard input.
+    pub fn set_cursor_hide_mode(&mut self, mode: CursorHideMode) {
+        self.cursor_hide_mode = mode;
+    }
+
+    /// Returns whether the cursor is currently visible according to the
+    /// platform. This will report `false` after a keyboard input has hidden
+    /// the cursor and the user has not yet moved the mouse to restore it.
+    ///
+    /// See [`App::set_cursor_hide_mode`].
+    pub fn is_cursor_visible(&self) -> bool {
+        self.platform.is_cursor_visible()
     }
 
     /// Schedules all windows in the application to be redrawn. This can be called
@@ -952,6 +1016,8 @@ impl App {
                 .entry(*entity)
                 .or_default()
                 .insert(window_handle.id, invalidator.clone());
+            self.current_window_by_entity
+                .insert(*entity, window_handle.id);
         }
         tracked_entities.clear();
         tracked_entities.extend(entities.iter().copied());
@@ -1458,6 +1524,8 @@ impl App {
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
+                self.window_invalidators_by_entity.remove(&entity_id);
+                self.current_window_by_entity.remove(&entity_id);
                 for release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(entity.as_mut(), self);
                 }
@@ -1534,6 +1602,13 @@ impl App {
         tid: TypeId,
         window: Option<WindowId>,
     ) {
+        // Seed the entity's current window from its creation context so
+        // `with_window` resolves correctly before the entity has ever been
+        // rendered.
+        if let Some(id) = window {
+            self.current_window_by_entity.insert(entity.entity_id(), id);
+        }
+
         self.new_entity_observers.clone().retain(&tid, |observer| {
             if let Some(id) = window {
                 self.update_window_id(id, {
@@ -1548,7 +1623,28 @@ impl App {
         });
     }
 
-    fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
+    /// Run `f` against the entity's *current* window — the most recently
+    /// rendered window that referenced the entity, or its creation window if
+    /// it has yet to be rendered. Returns `None` if the entity has no
+    /// current window, or if that window has been closed, or if it is
+    /// already on the update stack.
+    pub fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        let window_id = *self.current_window_by_entity.get(&entity_id)?;
+        self.update_window_id(window_id, |_, window, cx| f(window, cx))
+            .ok()
+    }
+
+    fn ensure_window(&mut self, entity_id: EntityId, window: WindowId) {
+        self.current_window_by_entity
+            .entry(entity_id)
+            .or_insert(window);
+    }
+
+    pub(crate) fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
@@ -1565,6 +1661,18 @@ impl App {
                 if window.removed {
                     cx.window_handles.remove(&id);
                     cx.windows.remove(id);
+                    if let Some(tracked) = cx.tracked_entities.remove(&id) {
+                        for entity_id in tracked {
+                            if let Some(windows) =
+                                cx.window_invalidators_by_entity.get_mut(&entity_id)
+                            {
+                                windows.remove(&id);
+                            }
+                            if cx.current_window_by_entity.get(&entity_id) == Some(&id) {
+                                cx.current_window_by_entity.remove(&entity_id);
+                            }
+                        }
+                    }
 
                     cx.window_closed_observers.clone().retain(&(), |callback| {
                         callback(cx, id);
@@ -2281,13 +2389,27 @@ impl App {
                 .or_default(),
         );
 
-        if window_invalidators.is_empty() {
+        // `window_invalidators_by_entity` is monotonic, so an entry alone
+        // doesn't mean the window is currently rendering the entity. Filter
+        // through `tracked_entities` to keep invalidation tight to windows
+        // that actually display this entity right now.
+        let live_invalidators: SmallVec<[WindowInvalidator; 2]> = window_invalidators
+            .iter()
+            .filter(|(window_id, _)| {
+                self.tracked_entities
+                    .get(window_id)
+                    .is_some_and(|set| set.contains(&entity_id))
+            })
+            .map(|(_, invalidator)| invalidator.clone())
+            .collect();
+
+        if live_invalidators.is_empty() {
             if self.pending_notifications.insert(entity_id) {
                 self.pending_effects
                     .push_back(Effect::Notify { emitter: entity_id });
             }
         } else {
-            for invalidator in window_invalidators.values() {
+            for invalidator in &live_invalidators {
                 invalidator.invalidate_view(entity_id, self);
             }
         }
@@ -2421,6 +2543,14 @@ impl AppContext for App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update_window_id(handle.id, update)
+    }
+
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        App::with_window(self, entity_id, f)
     }
 
     fn read_window<T, R>(

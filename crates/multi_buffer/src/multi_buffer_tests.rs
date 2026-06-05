@@ -12,7 +12,7 @@ use util::RandomCharIter;
 use util::rel_path::rel_path;
 use util::test::sample_text;
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -192,15 +192,15 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         &[
             Event::Edited {
                 edited_buffer: None,
-                is_local: true,
+                source: language::BufferEditSource::User,
             },
             Event::Edited {
                 edited_buffer: None,
-                is_local: true,
+                source: language::BufferEditSource::User,
             },
             Event::Edited {
                 edited_buffer: None,
-                is_local: true,
+                source: language::BufferEditSource::User,
             }
         ]
     );
@@ -1525,6 +1525,42 @@ async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
             .collect::<Vec<_>>(),
         &[0..4, 5..7]
     );
+}
+
+#[gpui::test]
+fn test_text_for_range_with_diff_transform_boundary_inside_multibyte_character(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("タx", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let mut snapshot = multibuffer.read(cx).snapshot(cx);
+
+    fn ascii_summary_with_byte_len(byte_len: usize) -> MBTextSummary {
+        let text = "x".repeat(byte_len);
+        MBTextSummary::from(TextSummary::from(text.as_str()))
+    }
+
+    // FR-16 shown a diff transform boundary two bytes into the leading 'タ'.
+    // Build that transform tree directly so this test stays focused on chunk iteration.
+    let mut diff_transforms = SumTree::default();
+    diff_transforms.push(
+        DiffTransform::BufferContent {
+            summary: ascii_summary_with_byte_len(2),
+            inserted_hunk_info: None,
+        },
+        (),
+    );
+    diff_transforms.push(
+        DiffTransform::BufferContent {
+            summary: ascii_summary_with_byte_len("タx".len() - 2),
+            inserted_hunk_info: None,
+        },
+        (),
+    );
+    snapshot.diff_transforms = diff_transforms;
+
+    let text = snapshot
+        .text_for_range(MultiBufferOffset(0)..snapshot.len())
+        .collect::<String>();
+    assert_eq!(text, "タx");
 }
 
 #[gpui::test]
@@ -2955,7 +2991,7 @@ impl ReferenceMultibuffer {
                     })
                     .collect::<Vec<_>>();
 
-            new_ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
+            new_ranges.sort_by_key(|nr| nr.context.start);
 
             self.set_excerpts(
                 path.unwrap(),
@@ -3899,7 +3935,7 @@ fn mutate_excerpt_ranges(
     }
 
     existing_ranges.extend(ranges_to_add);
-    existing_ranges.sort_by(|l, r| l.start.cmp(&r.start));
+    existing_ranges.sort_by_key(|r| r.start);
 }
 
 fn check_multibuffer(
@@ -6205,4 +6241,55 @@ fn test_resolving_max_anchor_for_buffer(cx: &mut TestAppContext) {
             .to_point(&snapshot);
         assert_eq!(point, Point::new(10, 0));
     })
+}
+
+#[gpui::test]
+fn test_is_valid_anchor_past_last_excerpt_for_buffer(cx: &mut TestAppContext) {
+    let buffer_a = cx.new(|cx| Buffer::local("aaa\nbbb\nccc\n", cx));
+    buffer_a.update(cx, |buffer, cx| {
+        let len = buffer.len();
+        buffer.edit([(len..len, "ddd\neee\n")], None, cx);
+    });
+    let buffer_b = cx.new(|cx| Buffer::local("xxx\n", cx));
+    for line in ["yyy\n", "zzz\n", "www\n", "vvv\n"] {
+        buffer_b.update(cx, |buffer, cx| {
+            let len = buffer.len();
+            buffer.edit([(len..len, line)], None, cx);
+        });
+    }
+
+    let path_a = PathKey::with_sort_prefix(0, rel_path("aaa.rs").into_arc());
+    let path_b = PathKey::with_sort_prefix(1, rel_path("bbb.rs").into_arc());
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path_a.clone(),
+            buffer_a.clone(),
+            vec![Point::new(1, 0)..Point::new(2, 3)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            path_b.clone(),
+            buffer_b.clone(),
+            vec![Point::new(1, 0)..Point::new(3, 3)],
+            0,
+            cx,
+        );
+    });
+
+    multibuffer.read_with(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+
+        let buffer_a_snapshot = buffer_a.read(cx).snapshot();
+        let anchor_past_excerpt = buffer_a_snapshot.anchor_after(Point::new(4, 0));
+        let mb_anchor = snapshot.anchor_in_buffer(anchor_past_excerpt).unwrap();
+
+        assert!(
+            !mb_anchor.is_valid(&snapshot),
+            "anchor past the last excerpt for its buffer should not be valid"
+        );
+    });
 }

@@ -459,7 +459,14 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     Ok(source.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("error: {error:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -601,10 +608,15 @@ fn main() -> Result<()> {
         .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
 
     for path in args.diff.chunks(2) {
-        diff_paths.push([
-            parse_path_with_position(&path[0])?,
-            parse_path_with_position(&path[1])?,
-        ]);
+        let left = parse_path_with_position(&path[0])?;
+        let right = parse_path_with_position(&path[1])?;
+        for diff_path in [&left, &right] {
+            anyhow::ensure!(
+                Path::new(diff_path).exists(),
+                "--diff path does not exist: {diff_path}"
+            );
+        }
+        diff_paths.push([left, right]);
     }
 
     let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
@@ -679,6 +691,7 @@ fn main() -> Result<()> {
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
+                    cwd: env::current_dir().ok(),
                 };
 
                 tx.send(open_request)?;
@@ -1101,7 +1114,7 @@ mod windows {
     use crate::{Detect, InstalledApp};
     use std::io;
     use std::path::{Path, PathBuf};
-    use std::process::ExitStatus;
+    use std::process::{ExitStatus, Stdio};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -1144,6 +1157,9 @@ mod windows {
                 if let Some(dir) = user_data_dir {
                     cmd.arg("--user-data-dir").arg(dir);
                 }
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
                 cmd.spawn()?;
             } else {
                 unsafe {

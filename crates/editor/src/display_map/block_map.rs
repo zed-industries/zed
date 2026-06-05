@@ -1368,48 +1368,47 @@ impl BlockMap {
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
-            // If we started out in the middle of a hunk/group, work up to the end of that group to set up the main loop below.
-            if edit_for_first_point.old.start < first_point {
-                let mut current_boundary = first_point;
-                let current_range = edit_for_first_point.new;
-                while let Some(next_point) = source_points.peek().cloned() {
-                    let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
-                    if edit_for_next_point.new.end > current_range.end {
-                        break;
-                    }
-                    source_points.next();
-                    current_boundary = next_point;
-                }
-
-                let (new_delta, spacer) = determine_spacer(
-                    &mut our_wrapper,
-                    &mut companion_wrapper,
-                    current_boundary,
-                    current_range.end.min(excerpt.target_excerpt_range.end),
-                    delta,
-                    Bias::Left,
-                );
-
-                delta = new_delta;
-                if let Some((wrap_row, height)) = spacer {
-                    result.push((
-                        BlockPlacement::Above(wrap_row),
-                        Block::Spacer {
-                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
-                            height,
-                            is_below: false,
-                        },
-                    ));
-                }
-            }
-
             while let Some(source_point) = source_points.next() {
                 let mut current_boundary = source_point;
-                let current_range = excerpt.patch.edit_for_old_position(current_boundary).new;
+                let current_edit = excerpt.patch.edit_for_old_position(current_boundary);
+                let current_range = current_edit.new;
 
                 if current_boundary.column > 0 {
                     debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
                     break;
+                }
+
+                if current_edit.old.start < current_boundary {
+                    while let Some(next_point) = source_points.peek().copied() {
+                        let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
+                        if edit_for_next_point.new.end > current_range.end {
+                            break;
+                        }
+                        current_boundary = next_point;
+                        source_points.next();
+                    }
+
+                    let (new_delta, spacer) = determine_spacer(
+                        &mut our_wrapper,
+                        &mut companion_wrapper,
+                        current_boundary,
+                        current_range.end.min(excerpt.target_excerpt_range.end),
+                        delta,
+                        Bias::Left,
+                    );
+
+                    delta = new_delta;
+                    if let Some((wrap_row, height)) = spacer {
+                        result.push((
+                            BlockPlacement::Above(wrap_row),
+                            Block::Spacer {
+                                id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                                height,
+                                is_below: false,
+                            },
+                        ));
+                    }
+                    continue;
                 }
 
                 let (delta_at_start, mut spacer_at_start) = determine_spacer(
@@ -4399,8 +4398,7 @@ mod tests {
                 let mut expected_longest_rows_in_range = vec![];
                 let mut longest_line_len_in_range = 0;
 
-                let mut row = start_row as u32;
-                for line in &expected_lines[start_row..end_row] {
+                for (row, line) in (start_row as u32..).zip(&expected_lines[start_row..end_row]) {
                     let line_char_count = line.chars().count() as isize;
                     match line_char_count.cmp(&longest_line_len_in_range) {
                         Ordering::Less => {}
@@ -4411,7 +4409,6 @@ mod tests {
                             expected_longest_rows_in_range.push(row);
                         }
                     }
-                    row += 1;
                 }
 
                 let longest_row_in_range = blocks_snapshot

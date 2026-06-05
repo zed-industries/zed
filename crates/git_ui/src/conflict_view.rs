@@ -18,7 +18,7 @@ use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, Tooltip, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
 use zed_actions::agent::{
     ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
 };
@@ -418,6 +418,12 @@ fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
     for repo in git_store.repositories().values() {
         let snapshot = repo.read(cx).snapshot();
         for (repo_path, _) in snapshot.merge.merge_heads_by_conflicted_path.iter() {
+            let is_currently_conflicted = snapshot
+                .status_for_path(repo_path)
+                .is_some_and(|entry| entry.status.is_conflicted());
+            if !is_currently_conflicted {
+                continue;
+            }
             if let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path, cx) {
                 paths.push(
                     project_path
@@ -671,5 +677,14 @@ impl StatusItemView for MergeConflictIndicator {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .show_merge_conflict_indicator = Some(false);
+        }))
     }
 }

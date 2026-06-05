@@ -138,7 +138,9 @@ impl ContextServer {
         let protocol = crate::protocol::ModelContextProtocol::new(client);
         let client_info = types::Implementation {
             name: "Zed".to_string(),
+            title: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            description: None,
         };
         let initialized_protocol = protocol.initialize(client_info).await?;
 

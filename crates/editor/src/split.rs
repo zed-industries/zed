@@ -18,7 +18,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, Settings};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -504,7 +504,9 @@ impl SplittableEditor {
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
+            editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor.start_temporary_diff_override();
             editor
@@ -532,6 +534,13 @@ impl SplittableEditor {
             cx.subscribe(&rhs_editor, |this, _, event: &SearchEvent, cx| {
                 if this.searched_side.is_none() || this.searched_side == Some(SplitSide::Right) {
                     cx.emit(event.clone());
+                }
+            }),
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let diff_view_style = EditorSettings::get_global(cx).diff_view_style;
+                if this.diff_view_style() != diff_view_style {
+                    this.toggle_split(&ToggleSplitDiff, window, cx);
+                    cx.notify();
                 }
             }),
         ];
@@ -581,9 +590,18 @@ impl SplittableEditor {
             return;
         };
         let project = workspace.read(cx).project().clone();
+        let all_paths = self.diff_paths(cx);
+        if all_paths.is_empty() && !self.rhs_multibuffer.read(cx).is_empty() {
+            return;
+        }
 
+        let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            let mut multibuffer = if is_rhs_singleton {
+                MultiBuffer::without_headers(Capability::ReadOnly)
+            } else {
+                MultiBuffer::new(Capability::ReadOnly)
+            };
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
@@ -600,6 +618,7 @@ impl SplittableEditor {
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
@@ -733,18 +752,6 @@ impl SplittableEditor {
             })
         });
 
-        let all_paths: Vec<_> = {
-            let rhs_multibuffer = self.rhs_multibuffer.read(cx);
-            let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
-            rhs_multibuffer_snapshot
-                .buffers_with_paths()
-                .filter_map(|(buffer, path)| {
-                    let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
-                    Some((path.clone(), diff))
-                })
-                .collect()
-        };
-
         self.lhs = Some(lhs);
 
         self.sync_lhs_for_paths(all_paths, cx);
@@ -804,6 +811,18 @@ impl SplittableEditor {
         });
 
         cx.notify();
+    }
+
+    fn diff_paths(&self, cx: &App) -> Vec<(PathKey, Entity<BufferDiff>)> {
+        let rhs_multibuffer = self.rhs_multibuffer.read(cx);
+        let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(cx);
+        rhs_multibuffer_snapshot
+            .buffers_with_paths()
+            .filter_map(|(buffer, path)| {
+                let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
+                Some((path.clone(), diff))
+            })
+            .collect()
     }
 
     fn activate_pane_left(
@@ -1278,6 +1297,18 @@ impl SplittableEditor {
             }
         }
     }
+
+    pub fn remove_excerpts_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<'_, SplittableEditor>,
+    ) {
+        let snapshot = self.rhs_multibuffer.read(cx).snapshot(cx);
+        let Some(path) = snapshot.path_for_buffer(buffer_id) else {
+            return;
+        };
+        self.remove_excerpts_for_path(path.clone(), cx);
+    }
 }
 
 #[cfg(test)]
@@ -1736,6 +1767,10 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).buffer_kind(cx)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+        self.rhs_editor.read(cx).active_project_path(cx)
+    }
+
     fn is_dirty(&self, cx: &App) -> bool {
         self.rhs_editor.read(cx).is_dirty(cx)
     }
@@ -1921,12 +1956,12 @@ impl SearchableItem for SplittableEditor {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
         self.focused_editor().update(cx, |editor, cx| {
-            editor.query_suggestion(ignore_settings, window, cx)
+            editor.query_suggestion(seed_query_override, window, cx)
         })
     }
 
@@ -2089,8 +2124,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
-    use gpui::Element as _;
     use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
+    use gpui::{BorrowAppContext as _, Element as _};
     use language::language_settings::SoftWrap;
     use language::{Buffer, Capability};
     use multi_buffer::{MultiBuffer, PathKey};
@@ -2118,10 +2153,16 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(style);
+                });
+            });
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs as Arc<dyn fs::Fs>, [], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
@@ -6058,6 +6099,121 @@ mod tests {
         });
 
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_spacer_blocks_revert_after_temporary_edit(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
+
+        let base_text = "
+            aaa
+            bbb
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.update_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(0, 3)..Point::new(0, 3), "\n")], None, cx);
+            buffer.text_snapshot()
+        });
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            § spacer
+            bbb
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
+
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(0, 3)..Point::new(1, 0), "")], None, cx);
+            buffer.text_snapshot()
+        });
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § spacer"
+                .unindent(),
+            &mut cx,
+        );
     }
 
     #[gpui::test]

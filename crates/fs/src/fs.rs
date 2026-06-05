@@ -1,5 +1,7 @@
 pub mod fs_watcher;
 
+pub use fs_watcher::requires_poll_watcher;
+
 use parking_lot::Mutex;
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -13,7 +15,6 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
-use std::borrow::Cow;
 #[cfg(unix)]
 use std::ffi::CString;
 use util::command::new_command;
@@ -70,133 +71,6 @@ use std::ffi::OsStr;
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
     fn remove(&self, path: &Path) -> Result<()>;
-}
-
-/// Detect whether a path requires polling instead of native file watching.
-///
-/// Returns `true` for filesystem types where inotify/FSEvents/ReadDirectoryChanges
-/// silently fail to deliver events: 9P (WSL drvfs), NFS, CIFS/SMB, FUSE (sshfs), etc.
-///
-/// Can be overridden with the `ZED_FILE_WATCHER_MODE` environment variable:
-/// - `native` — always use native OS watcher
-/// - `poll` — always use polling
-/// - `auto` (default) — auto-detect based on filesystem type
-pub fn requires_poll_watcher(path: &Path) -> bool {
-    match std::env::var("ZED_FILE_WATCHER_MODE")
-        .as_deref()
-        .unwrap_or("auto")
-    {
-        "native" => return false,
-        "poll" => return true,
-        _ => {}
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let path = effective_watch_path(path);
-        return detect_requires_poll_watcher_linux(&path);
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-pub fn effective_watch_path(path: &Path) -> PathBuf {
-    if path.exists() {
-        return path.to_path_buf();
-    }
-
-    for ancestor in path.ancestors() {
-        if ancestor.exists() {
-            return ancestor.to_path_buf();
-        }
-    }
-
-    path.to_path_buf()
-}
-
-#[cfg(target_os = "linux")]
-fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    // Check filesystem type via statfs
-    let c_path = match CString::new(path.as_os_str().as_bytes()) {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-
-    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statfs(c_path.as_ptr(), &mut stat) } != 0 {
-        return false;
-    }
-
-    // Filesystem magic numbers where inotify does not deliver events.
-    // These are defined in linux/magic.h and statfs(2).
-    const V9FS_MAGIC: i64 = 0x01021997; // Plan 9 / WSL2 interop (drvfs)
-    const NFS_SUPER_MAGIC: i64 = 0x6969;
-    const CIFS_MAGIC: i64 = 0xFF534D42u32 as i64; // CIFS/SMB
-    const SMB_SUPER_MAGIC: i64 = 0x517B;
-    const SMB2_MAGIC: i64 = 0xFE534D42u32 as i64;
-    const FUSE_SUPER_MAGIC: i64 = 0x65735546; // FUSE (includes sshfs)
-
-    let fs_type = stat.f_type;
-    if fs_type == V9FS_MAGIC
-        || fs_type == NFS_SUPER_MAGIC
-        || fs_type == CIFS_MAGIC
-        || fs_type == SMB_SUPER_MAGIC
-        || fs_type == SMB2_MAGIC
-        || fs_type == FUSE_SUPER_MAGIC
-    {
-        log::info!(
-            "Detected network/virtual filesystem (type 0x{:x}) at {}, using poll watcher",
-            fs_type,
-            path.display()
-        );
-        return true;
-    }
-
-    // Also check for WSL + /mnt/<drive>/ pattern as a fallback
-    // in case statfs returns an unexpected type for drvfs
-    if is_wsl_drvfs_path(path) {
-        log::info!(
-            "Detected WSL drvfs mount at {}, using poll watcher",
-            path.display()
-        );
-        return true;
-    }
-
-    false
-}
-
-#[cfg(target_os = "linux")]
-fn is_wsl_drvfs_path(path: &Path) -> bool {
-    // Only relevant inside WSL
-    if std::env::var_os("WSL_DISTRO_NAME").is_none() {
-        if let Ok(version) = std::fs::read_to_string("/proc/version") {
-            let v = version.to_lowercase();
-            if !v.contains("microsoft") && !v.contains("wsl") {
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }
-
-    // Windows drives are mounted at /mnt/c, /mnt/d, etc.
-    let path_str = match path.to_str() {
-        Some(s) => s,
-        None => return false,
-    };
-    if !path_str.starts_with("/mnt/") || path_str.len() < 6 {
-        return false;
-    }
-    let after_mnt = &path_str[5..];
-    after_mnt.starts_with(|c: char| c.is_ascii_alphabetic())
-        && (after_mnt.len() == 1 || after_mnt.as_bytes()[1] == b'/')
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -287,7 +161,8 @@ pub trait Fs: Send + Sync {
     ) -> Result<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
+    async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -927,10 +802,10 @@ impl Fs for RealFs {
         // We must make the path absolute or trash will make a weird abomination
         // of the zed working directory (not usually the worktree) and whatever
         // the path variable holds.
-        let path = self
-            .canonicalize(path)
-            .await
-            .context("Could not canonicalize the path of the file")?;
+        // We deliberately use `std::path::absolute` instead of `canonicalize`
+        // to avoid resolving symlinks. Otherwise trashing a symlink would trash
+        // its target and leave the link behind.
+        let path = std::path::absolute(path).context("Could not make the path absolute")?;
 
         let (tx, rx) = futures::channel::oneshot::channel();
         std::thread::Builder::new()
@@ -1197,35 +1072,17 @@ impl Fs for RealFs {
         use util::{ResultExt as _, paths::SanitizedPath};
         let executor = self.executor.clone();
 
-        let use_poll = requires_poll_watcher(path);
-        let watch_path = effective_watch_path(path);
-
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
-        let mode = if use_poll {
-            log::info!(
-                "Using poll watcher ({}ms interval) for {}",
-                fs_watcher::poll_interval().as_millis(),
-                path.display()
-            );
-            telemetry::event!("fs_watcher_poll", path = path.display().to_string());
-            fs_watcher::WatcherMode::Poll
-        } else {
-            fs_watcher::WatcherMode::Native
-        };
         let watcher: Arc<dyn Watcher> = Arc::new(fs_watcher::FsWatcher::new(
+            executor.clone(),
             tx.clone(),
             pending_paths.clone(),
-            mode,
         ));
 
-        if let Err(e) = watcher.add(&watch_path) {
-            log::warn!(
-                "Failed to watch {} using {}:\n{e}",
-                path.display(),
-                watch_path.display()
-            );
+        if let Err(e) = watcher.add(path) {
+            log::warn!("Failed to watch {}:\n{e}", path.display());
         }
 
         // Check if path is a symlink and follow the target parent
@@ -1257,6 +1114,7 @@ impl Fs for RealFs {
                     async move {
                         executor.timer(latency).await;
                         let paths = std::mem::take(&mut *pending_paths.lock());
+                        log::debug!("pending path events: {:?}", paths);
                         (!paths.is_empty()).then_some(paths)
                     }
                 }
@@ -1283,19 +1141,19 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
-        let config = new_command("git")
+        let result = new_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
             .output()
-            .await?;
+            .await;
 
-        let branch_name;
-
-        if config.status.success() && !config.stdout.is_empty() {
-            branch_name = String::from_utf8_lossy(&config.stdout);
-        } else {
-            branch_name = Cow::Borrowed(fallback_branch_name.as_str());
-        }
+        // In case the `git config` command fails, which would be the case if
+        // the user doesn't have an `init.defaultBranch` value set, we'll just
+        // default to the provided `fallback_branch_name`.
+        let branch_name = match result {
+            Ok(output) if !output.stdout.is_empty() => String::from_utf8(output.stdout)?,
+            _ => fallback_branch_name,
+        };
 
         new_command("git")
             .current_dir(abs_work_directory_path)
@@ -1307,7 +1165,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()> {
         let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
         let job_info = JobInfo {
             id: job_id,
@@ -1331,6 +1189,24 @@ impl Fs for RealFs {
         }
 
         Ok(())
+    }
+
+    /// Runs `git config` with the given arguments.
+    /// Will return `Ok` if the commands exit status is `0`, with the stdout
+    /// contents. Otherwise returns `Err` with the stderr contents.
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String> {
+        let output = new_command("git")
+            .current_dir(abs_work_directory)
+            .args([String::from("config")].into_iter().chain(args))
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8(output.stderr)?;
+            anyhow::bail!(err);
+        }
+
+        String::from_utf8(output.stdout).map_err(Into::into)
     }
 
     fn is_fake(&self) -> bool {
@@ -1449,8 +1325,8 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
-    git_event_tx: smol::channel::Sender<PathBuf>,
-    event_txs: Vec<(PathBuf, smol::channel::Sender<Vec<PathEvent>>)>,
+    git_event_tx: async_channel::Sender<PathBuf>,
+    event_txs: Vec<(PathBuf, async_channel::Sender<Vec<PathEvent>>)>,
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
@@ -1720,7 +1596,7 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, rx) = smol::channel::bounded::<PathBuf>(10);
+        let (tx, rx) = async_channel::bounded::<PathBuf>(10);
 
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -2714,7 +2590,7 @@ impl FakeFsEntry {
 
 #[cfg(feature = "test-support")]
 struct FakeWatcher {
-    tx: smol::channel::Sender<Vec<PathEvent>>,
+    tx: async_channel::Sender<Vec<PathEvent>>,
     original_path: PathBuf,
     fs_state: Arc<Mutex<FakeFsState>>,
     prefixes: Mutex<Vec<PathBuf>>,
@@ -3183,7 +3059,7 @@ impl Fs for FakeFs {
         Arc<dyn Watcher>,
     ) {
         self.simulate_random_delay().await;
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let path = path.to_path_buf();
         self.state.lock().event_txs.push((path.clone(), tx.clone()));
         let executor = self.executor.clone();
@@ -3245,8 +3121,12 @@ impl Fs for FakeFs {
         self.create_dir(&abs_work_directory_path.join(".git")).await
     }
 
-    async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(&self, _abs_work_directory: &Path, _repo_url: &str) -> Result<()> {
         anyhow::bail!("Git clone is not supported in fake Fs")
+    }
+
+    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
+        anyhow::bail!("Git config is not supported in fake Fs")
     }
 
     fn is_fake(&self) -> bool {

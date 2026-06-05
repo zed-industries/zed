@@ -15,10 +15,11 @@ test = false
 [[test]]
 name = "integration"
 required-features = ["test-support"]
-path = "tests/integration/main.rs"
+path = "tests/integration/fs_tests.rs"
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true

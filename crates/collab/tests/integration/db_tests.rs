@@ -209,8 +209,6 @@ static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
 
 async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
     db.create_user(
-        email,
-        None,
         false,
         NewUserParams {
             github_login: email[0..email.find('@').unwrap()].to_string(),

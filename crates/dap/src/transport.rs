@@ -18,7 +18,7 @@ use smol::{
 };
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{IpAddr, SocketAddr},
     process::Stdio,
     sync::Arc,
     time::Duration,
@@ -472,7 +472,7 @@ impl TransportDelegate {
 pub struct TcpTransport {
     executor: BackgroundExecutor,
     pub port: u16,
-    pub host: Ipv4Addr,
+    pub host: IpAddr,
     pub timeout: u64,
     process: Arc<Mutex<Option<Child>>>,
     _stderr_task: Option<Task<()>>,
@@ -489,8 +489,8 @@ impl TcpTransport {
         }
     }
 
-    pub async fn unused_port(host: Ipv4Addr) -> Result<u16> {
-        Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
+    pub async fn unused_port(host: IpAddr) -> Result<u16> {
+        Ok(TcpListener::bind(SocketAddr::new(host, 0))
             .await?
             .local_addr()?
             .port())
@@ -598,7 +598,7 @@ impl Transport for TcpTransport {
     > {
         let executor = self.executor.clone();
         let timeout = self.timeout;
-        let address = SocketAddrV4::new(self.host, self.port);
+        let address = SocketAddr::new(self.host, self.port);
         let process = self.process.clone();
         executor.clone().spawn(async move {
             select! {

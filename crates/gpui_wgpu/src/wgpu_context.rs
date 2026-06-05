@@ -29,6 +29,25 @@ impl WgpuContext {
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<CompositorGpuHint>,
     ) -> anyhow::Result<Self> {
+        Self::new_with_options(instance, surface, compositor_gpu, false)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn new_rejecting_software(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<CompositorGpuHint>,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_options(instance, surface, compositor_gpu, true)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn new_with_options(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        compositor_gpu: Option<CompositorGpuHint>,
+        reject_software: bool,
+    ) -> anyhow::Result<Self> {
         let device_id_filter = match std::env::var("ZED_DEVICE_ID") {
             Ok(val) => parse_pci_id(&val)
                 .context("Failed to parse device ID from `ZED_DEVICE_ID` environment variable")
@@ -44,11 +63,12 @@ impl WgpuContext {
         // Select an adapter by actually testing surface configuration with the real device.
         // This is the only reliable way to determine compatibility on hybrid GPU systems.
         let (adapter, device, queue, dual_source_blending, color_texture_format) =
-            pollster::block_on(Self::select_adapter_and_device(
+            gpui::block_on(Self::select_adapter_and_device(
                 &instance,
                 device_id_filter,
                 surface,
                 compositor_gpu.as_ref(),
+                reject_software,
             ))?;
 
         let device_lost = Arc::new(AtomicBool::new(false));
@@ -197,6 +217,7 @@ impl WgpuContext {
         device_id_filter: Option<u32>,
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<&CompositorGpuHint>,
+        reject_software: bool,
     ) -> anyhow::Result<(
         wgpu::Adapter,
         wgpu::Device,
@@ -244,18 +265,20 @@ impl WgpuContext {
                 _ => 1,
             };
 
-            let type_priority: u8 = match info.device_type {
-                wgpu::DeviceType::DiscreteGpu => 0,
-                wgpu::DeviceType::IntegratedGpu => 1,
-                wgpu::DeviceType::Other => 2,
-                wgpu::DeviceType::VirtualGpu => 3,
-                wgpu::DeviceType::Cpu => 4,
+            let type_priority: u8 = if info.device_type == wgpu::DeviceType::Cpu {
+                4
+            } else {
+                match info.device_type {
+                    wgpu::DeviceType::DiscreteGpu => 0,
+                    wgpu::DeviceType::IntegratedGpu => 1,
+                    wgpu::DeviceType::Other => 2,
+                    wgpu::DeviceType::VirtualGpu => 3,
+                    wgpu::DeviceType::Cpu => 4,
+                }
             };
 
             let backend_priority: u8 = match info.backend {
-                wgpu::Backend::Vulkan => 0,
-                wgpu::Backend::Metal => 0,
-                wgpu::Backend::Dx12 => 0,
+                wgpu::Backend::Vulkan | wgpu::Backend::Metal | wgpu::Backend::Dx12 => 0,
                 _ => 1,
             };
 
@@ -284,6 +307,16 @@ impl WgpuContext {
         // Test each adapter by creating a device and configuring the surface
         for adapter in adapters {
             let info = adapter.get_info();
+
+            if reject_software && info.device_type == wgpu::DeviceType::Cpu {
+                log::info!(
+                    "Skipping software renderer: {} ({:?})",
+                    info.name,
+                    info.backend
+                );
+                continue;
+            }
+
             log::info!("Testing adapter: {} ({:?})...", info.name, info.backend);
 
             match Self::try_adapter_with_surface(&adapter, surface).await {

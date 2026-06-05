@@ -50,16 +50,6 @@ jobs:
             echo "version=$version"
             echo "tag_suffix=$tag_suffix"
         } >> "$GITHUB_OUTPUT"
-    - name: bump_patch_version::run_bump_patch_version::verify_prior_release_exists
-      run: |
-        status=$(curl -s -o /dev/null -w '%{http_code}' "https://cloud.zed.dev/releases/$CHANNEL/$VERSION/asset?asset=zed&os=macos&arch=aarch64")
-        if [[ "$status" != "200" ]]; then
-            echo "::error::version $VERSION has not been released on $CHANNEL yet (HTTP $status) — bump the patch version only after the current version is released"
-            exit 1
-        fi
-      env:
-        CHANNEL: ${{ steps.channel.outputs.channel }}
-        VERSION: ${{ steps.channel.outputs.version }}
     - name: steps::install_cargo_edit
       uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
       with:

@@ -84,7 +84,7 @@ impl<'a> CommitAvatar<'a> {
                     .child(
                         Icon::new(IconName::Person)
                             .color(Color::Muted)
-                            .size(IconSize::Small),
+                            .size(IconSize::XSmall),
                     )
                     .into_any_element()
             }
@@ -96,6 +96,15 @@ impl<'a> CommitAvatar<'a> {
     }
 
     pub fn avatar(&'a self, window: &mut Window, cx: &mut App) -> Option<Avatar> {
+        // Bail early if the email isn't available yet. Without it,
+        // the GitHub provider skips the fast CDN path and falls back
+        // to an unauthenticated per-commit API call that is slow and
+        // rate-limited. Worse, a failed lookup gets permanently
+        // cached under the key (sha, host) — so even when the email
+        // arrives on a later render, the cached None shadows the
+        // fast path forever.
+        self.author_email.as_ref()?;
+
         let remote = self
             .remote
             .filter(|remote| remote.host_supports_avatars())?;
@@ -249,7 +258,11 @@ impl Render for CommitTooltip {
             .commit
             .message
             .as_ref()
-            .map(|_| MarkdownElement::new(self.markdown.clone(), markdown_style).into_any())
+            .map(|_| {
+                MarkdownElement::new(self.markdown.clone(), markdown_style)
+                    .scroll_handle(self.scroll_handle.clone())
+                    .into_any()
+            })
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = self
@@ -290,11 +303,10 @@ impl Render for CommitTooltip {
                 .child(
                     v_flex()
                         .w(gpui::rems(30.))
-                        .gap_4()
                         .child(
                             h_flex()
-                                .pb_1p5()
-                                .gap_x_2()
+                                .pb_1()
+                                .gap_2()
                                 .overflow_x_hidden()
                                 .flex_wrap()
                                 .child(avatar)
@@ -312,23 +324,24 @@ impl Render for CommitTooltip {
                         .child(
                             div()
                                 .id("inline-blame-commit-message")
-                                .child(message)
+                                .track_scroll(&self.scroll_handle)
+                                .py_1p5()
                                 .max_h(message_max_height)
                                 .overflow_y_scroll()
-                                .track_scroll(&self.scroll_handle),
+                                .child(message),
                         )
                         .child(
                             h_flex()
                                 .text_color(cx.theme().colors().text_muted)
                                 .w_full()
                                 .justify_between()
-                                .pt_1p5()
+                                .pt_1()
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(absolute_timestamp)
                                 .child(
                                     h_flex()
-                                        .gap_1p5()
+                                        .gap_1()
                                         .when_some(pull_request, |this, pr| {
                                             this.child(
                                                 Button::new(
@@ -338,9 +351,9 @@ impl Render for CommitTooltip {
                                                 .color(Color::Muted)
                                                 .start_icon(
                                                     Icon::new(IconName::PullRequest)
+                                                        .size(IconSize::Small)
                                                         .color(Color::Muted),
                                                 )
-                                                .style(ButtonStyle::Subtle)
                                                 .on_click(move |_, _, cx| {
                                                     cx.stop_propagation();
                                                     cx.open_url(pr.url.as_str())
@@ -353,10 +366,11 @@ impl Render for CommitTooltip {
                                                 "commit-sha-button",
                                                 short_commit_id.clone(),
                                             )
-                                            .style(ButtonStyle::Subtle)
                                             .color(Color::Muted)
                                             .start_icon(
-                                                Icon::new(IconName::FileGit).color(Color::Muted),
+                                                Icon::new(IconName::FileGit)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Muted),
                                             )
                                             .on_click(
                                                 move |_, window, cx| {

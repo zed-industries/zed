@@ -16,7 +16,7 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, Subscription, Task, WeakEntity, actions,
+    KeyContext, Render, Subscription, Task, TaskExt, WeakEntity, actions,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -1588,6 +1588,8 @@ impl PickerDelegate for DebugDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .w_full()
+                        .min_w_0()
                         .items_start()
                         .child(highlighted_location.render(window, cx))
                         .when_some(subtitle, |this, subtitle_text| {

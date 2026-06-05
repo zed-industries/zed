@@ -784,7 +784,7 @@ mod tests {
                 }],
                 len: text.len(),
             }),
-            text: SharedString::new(text.to_string()),
+            text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
         }
     }

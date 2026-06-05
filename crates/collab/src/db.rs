@@ -37,7 +37,6 @@ use worktree_settings_file::LocalSettingsKind;
 
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
-pub use tables::user::Model as User;
 pub use tables::*;
 
 #[cfg(feature = "test-support")]

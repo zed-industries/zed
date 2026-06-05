@@ -15,6 +15,7 @@ use crate::tasks::workflows::{
 };
 
 use super::{
+    deploy_docs,
     runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
@@ -69,6 +70,9 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests
             .and_not_in_merge_queue()
             .then(run_platform_tests(Platform::Mac)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(miri_scheduler()),
         should_run_tests.and_not_in_merge_queue().then(doctests()),
         should_run_tests
             .and_not_in_merge_queue()
@@ -82,7 +86,7 @@ pub(crate) fn run_tests() -> Workflow {
             .then(check_dependencies()), // could be more specific here?
         should_check_docs
             .and_not_in_merge_queue()
-            .then(check_docs()),
+            .then(deploy_docs::check_docs()),
         should_check_licences
             .and_not_in_merge_queue()
             .then(check_licenses()),
@@ -390,15 +394,24 @@ pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
     .add_with(("file", TS_QUERY_LS_FILE))
 }
 
-pub(crate) fn run_ts_query_ls() -> Step<Run> {
+pub(crate) enum RunContext {
+    ZedRepository,
+    Extension,
+}
+
+pub(crate) fn run_ts_query_ls(context: RunContext) -> Step<Run> {
     named::bash(formatdoc!(
         r#"tar -xf "$GITHUB_WORKSPACE/{TS_QUERY_LS_FILE}" -C "$GITHUB_WORKSPACE"
-        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {{
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check {directory} || {{
             echo "Found unformatted queries, please format them with ts_query_ls."
             echo "For easy use, install the Tree-sitter query extension:"
             echo "zed://extension/tree-sitter-query"
             false
-        }}"#
+        }}"#,
+        directory = match context {
+            RunContext::Extension => "languages",
+            RunContext::ZedRepository => ".",
+        }
     ))
 }
 
@@ -424,7 +437,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
             .add_step(fetch_ts_query_ls())
-            .add_step(run_ts_query_ls()),
+            .add_step(run_ts_query_ls(RunContext::ZedRepository)),
     )
 }
 
@@ -680,6 +693,29 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
     )
 }
 
+fn miri_scheduler() -> NamedJob {
+    fn install_miri() -> Step<Run> {
+        named::bash(
+            "rustup toolchain install nightly --profile minimal --component miri --component rust-src",
+        )
+    }
+
+    fn run_scheduler_tests_under_miri() -> Step<Run> {
+        named::bash("cargo +nightly -q miri test -p scheduler")
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_miri())
+            .add_step(run_scheduler_tests_under_miri())
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
+    )
+}
+
 fn doctests() -> NamedJob {
     fn run_doctests() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
@@ -711,54 +747,6 @@ fn check_licenses() -> NamedJob {
             .add_step(steps::script("./script/check-licenses"))
             .add_step(steps::script("./script/generate-licenses")),
     )
-}
-
-fn check_docs() -> NamedJob {
-    fn lychee_link_check(dir: &str) -> Step<Use> {
-        named::uses(
-            "lycheeverse",
-            "lychee-action",
-            "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
-        ) // v2.4.1
-        .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
-        .add_with(("fail", true))
-        .add_with(("jobSummary", false))
-    }
-
-    fn install_mdbook() -> Step<Use> {
-        named::uses(
-            "peaceiris",
-            "actions-mdbook",
-            "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
-        )
-        .with(("mdbook-version", "0.4.37"))
-    }
-
-    fn build_docs() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            mkdir -p target/deploy
-            mdbook build ./docs --dest-dir=../target/deploy/docs/
-        "#})
-    }
-
-    named::job(use_clang(
-        release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(Platform::Linux))
-            // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(
-                lychee_link_check("./docs/src/**/*"), // check markdown links
-            )
-            .map(steps::install_linux_dependencies)
-            .add_step(steps::script("./script/generate-action-metadata"))
-            .add_step(install_mdbook())
-            .add_step(build_docs())
-            .add_step(
-                lychee_link_check("target/deploy/docs"), // check links in generated html
-            ),
-    ))
 }
 
 pub(crate) fn check_scripts() -> NamedJob {

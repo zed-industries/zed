@@ -254,6 +254,14 @@ impl RelPath {
 #[derive(Debug)]
 pub struct StripPrefixError;
 
+impl std::fmt::Display for StripPrefixError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("prefix not found")
+    }
+}
+
+impl std::error::Error for StripPrefixError {}
+
 impl ToOwned for RelPath {
     type Owned = RelPathBuf;
 

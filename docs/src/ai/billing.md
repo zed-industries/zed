@@ -1,57 +1,83 @@
 ---
-title: Billing - Zed AI
-description: Manage Zed AI billing, payment methods, invoices, threshold billing, and sales tax information.
+title: Billing
+description: Manage billing for your Zed subscription, including payment methods, invoices, and sales tax information for individual and organization accounts.
 ---
 
 # Billing
 
-This page covers billing for Zed's [subscription plans](./subscription.md). For details on what's included in each plan and how token usage works, see [Plans and Usage](./plans-and-usage.md).
+Zed uses Stripe for payment processing. All plans that require payment do so via credit card or other supported payment methods. Individual Pro subscriptions also use Orb for invoicing and metering.
 
-We use Stripe as our payments provider, and Orb for invoicing and metering. All Pro plans require payment via credit card or other supported payment method.
-For invoice-based billing, a Business plan is required. Contact [sales@zed.dev](mailto:sales@zed.dev) for more information.
+For details on what's included in each plan and how token usage works, see [Plans & Pricing](./plans-and-usage.md).
 
-## Billing Information {#settings}
+## Individual billing {#individual}
 
-Access billing information and settings at [dashboard.zed.dev/account](https://dashboard.zed.dev/account).
+### Billing information {#settings}
+
+Access billing information and settings from your [Zed dashboard](https://dashboard.zed.dev).
 This page embeds data from Orb, our invoicing and metering partner.
 
-## Billing Cycles {#billing-cycles}
+### Billing cycles {#billing-cycles}
 
-Zed is billed on a monthly basis based on the date you initially subscribe. You'll receive _at least_ one invoice from Zed each month you're subscribed to Zed Pro, and more than one if you use more than $10 in incremental token spend within the month.
+Zed is billed on a monthly basis based on the date you initially subscribe. You'll receive _at least_ one invoice from Zed each month you're subscribed to Zed Pro, and may receive more than one invoice if you use hosted models beyond your included monthly token credit.
 
-## Threshold Billing {#threshold-billing}
+### Zed Pro threshold billing {#threshold-billing}
 
-Zed utilizes threshold billing to ensure timely collection of owed monies and prevent abuse. Every time your usage of Zed's hosted models crosses a $10 spend threshold, a new invoice is generated, and the threshold resets to $0.
+For individual Zed Pro subscriptions, Zed uses threshold billing to ensure timely payment collection. Threshold billing controls when already-allowed token usage is invoiced during the month; your [monthly spend limit](./plans-and-usage.md#usage-spend-limits) still controls when hosted model usage stops.
 
-For example,
+Threshold invoices start at $10 of pre-tax incremental token spend. For higher token usage, Zed may automatically raise your pre-tax invoicing threshold in $10 increments, up to $100, so you receive fewer mid-cycle invoices. Once raised, the invoicing threshold is not automatically lowered during the same subscription.
+
+For Zed Business billing, see [Organization billing](#organization).
+
+For example:
 
 - You subscribe on February 1. Your first invoice is $10.
-- You use $12 of incremental tokens in the month of February, with the first $10 spent on February 15. You'll receive an invoice for $10 on February 15
-- On March 1, you receive an invoice for $12: $10 (March Pro subscription) and $2 in leftover token spend, since your usage didn't cross the $10 threshold.
+- You use $12 of incremental tokens in the month of February, with the first $10 spent on February 15. You'll receive an invoice for $10 on February 15.
+- On March 1, you receive your next monthly subscription invoice, plus any remaining token spend that was not already invoiced during February.
 
-## Payment Failures {#payment-failures}
+### Payment failures {#payment-failures}
 
 If payment of an invoice fails, Zed will block usage of our hosted models until the payment is complete. Email [billing-support@zed.dev](mailto:billing-support@zed.dev) for assistance.
 
-## Invoice History {#invoice-history}
+### Invoice history {#invoice-history}
 
-You can access your invoice history by navigating to [dashboard.zed.dev/account](https://dashboard.zed.dev/account) and clicking `Invoice history` within the embedded Orb portal.
+You can access your invoice history from the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev) by clicking `Invoice history` within the embedded Orb portal.
 
-If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev)
+If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev).
 
-## Updating Billing Information {#updating-billing-info}
+## Organization billing {#organization}
 
-Email [billing-support@zed.dev](mailto:billing-support@zed.dev) for help updating payment methods, names, addresses, and tax information.
+Zed Business consolidates your team's costs. Paid Business seats and member AI usage appear on one bill, with no separate invoices per member. For a full feature overview, see [Zed Business](../business/overview.md).
 
-> Self-service billing updates will be available in a future release.
+### Billing dashboard {#dashboard}
 
-Please note that changes to billing information will **only** affect future invoices — **we cannot modify historical invoices**.
+Owners, admins, and Billing Managers can access billing information at [dashboard.zed.dev](https://dashboard.zed.dev). The dashboard shows the current plan and links to update billing details, tax ID information, and payment information. You can also access invoice history through the Orb billing portal.
 
-## Sales Tax {#sales-tax}
+Use the Billing Manager role for someone who needs billing access but does not need a paid Business seat. Billing Managers can view subscription usage, update billing details and payment methods, and access invoice history. They cannot manage members, change organization settings, cancel the subscription, or use Zed-hosted AI models and Edit Predictions through the Business subscription. For the full permissions list, see [Roles](../roles.md#role-billing-manager).
 
-Zed partners with [Sphere](https://www.getsphere.com/) to calculate indirect tax rate for invoices, based on customer location and the product being sold. Tax is listed as a separate line item on invoices, based preferentially on your billing address, followed by the card issue country known to Stripe.
+### AI usage {#ai-usage}
 
-If you have a VAT/GST ID, you can add it at during checkout. Check the box that denotes you as a business.
+AI usage across the organization is metered on a token basis at the same rates as individual Pro subscriptions. See [Plans & Pricing](./plans-and-usage.md#usage) for rate details.
 
-Please note that changes to VAT/GST IDs and address will **only** affect future invoices — **we cannot modify historical invoices**.
-Questions or issues can be directed to [billing-support@zed.dev](mailto:billing-support@zed.dev).
+Administrators can set an org-wide AI spend limit from the Data & Privacy page in the organization dashboard. The limit starts at $0, so it must be increased before members can use any hosted models. Once the limit is reached, members will see an error when attempting to use hosted models.
+
+### Invoice history {#org-invoice-history}
+
+Owners, admins, and Billing Managers can access an organization's invoice history from the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev) by clicking `Invoice history` within the embedded Orb portal.
+
+If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev).
+
+## Updating billing information {#updating-billing-info}
+
+From the _Billing_ page, owners, admins, and Billing Managers can update billing name, address, tax ID information, and payment method.
+
+Changes to billing information will **only** affect future invoices. We cannot modify historical invoices. Email [billing-support@zed.dev](mailto:billing-support@zed.dev) with any questions.
+
+## Sales tax {#sales-tax}
+
+Zed partners with [Sphere](https://www.getsphere.com/) to calculate indirect tax rates for invoices, based on customer location and the product being sold. Tax is listed as a separate line item on invoices, based preferentially on your billing address, followed by the card issue country known to Stripe.
+
+If you have a tax ID, such as a VAT or GST ID, you can add it during checkout or update it later from the Billing page. Check the box that denotes you as a business.
+
+Changes to tax IDs and addresses will **only** affect future invoices. We cannot modify historical invoices.
+
+Email [billing-support@zed.dev](mailto:billing-support@zed.dev) with any tax questions.

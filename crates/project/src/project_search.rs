@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::Context;
+use async_channel::{Receiver, Sender, bounded, unbounded};
 use collections::HashSet;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -19,7 +20,6 @@ use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
-use smol::channel::{Receiver, Sender, bounded, unbounded};
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
@@ -424,8 +424,12 @@ impl Search {
                         worktree.as_local().map(|local| local.scan_complete())
                     });
                     if let Some(scan_complete) = scan_complete {
-                        _ = results_tx.send(SearchResult::WaitingForScan).await;
-                        scan_complete.await;
+                        let mut scan_complete = pin!(scan_complete);
+                        if scan_complete.as_mut().now_or_never().is_none() {
+                            _ = results_tx.send(SearchResult::WaitingForScan).await;
+                            scan_complete.await;
+                            _ = results_tx.send(SearchResult::Searching).await;
+                        }
                     }
 
                     let (mut snapshot, worktree_settings) = worktree

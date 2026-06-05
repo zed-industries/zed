@@ -1,5 +1,4 @@
 use crate::PredictionProvider;
-use crate::metrics::ClassificationMetrics;
 use crate::paths::WORKTREES_DIR;
 use crate::qa::QaResult;
 use anyhow::{Context as _, Result};
@@ -149,74 +148,7 @@ where
     Ok(opt.unwrap_or_default())
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleScore {
-    pub delta_chr_f: f32,
-    #[serde(default)]
-    pub delta_chr_f_true_positives: usize,
-    #[serde(default)]
-    pub delta_chr_f_false_positives: usize,
-    #[serde(default)]
-    pub delta_chr_f_false_negatives: usize,
-    #[serde(default)]
-    pub delta_chr_f_precision: f64,
-    #[serde(default)]
-    pub delta_chr_f_recall: f64,
-    #[serde(default)]
-    pub delta_chr_f_beta: f64,
-    pub braces_disbalance: usize,
-    #[serde(default)]
-    pub exact_lines_tp: usize,
-    #[serde(default)]
-    pub exact_lines_fp: usize,
-    #[serde(default)]
-    pub exact_lines_fn: usize,
-    #[serde(default)]
-    pub reversal_ratio: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor_distance: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor_exact_match: Option<bool>,
-    pub wrong_editable_region: Option<bool>,
-    #[serde(default)]
-    pub has_isolated_whitespace_changes: bool,
-    #[serde(default)]
-    pub inserted_tokens: usize,
-    #[serde(default)]
-    pub deleted_tokens: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kept_rate: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recall_rate: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kept_chars: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correctly_deleted_chars: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub discarded_chars: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cumulative_logprob: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub avg_logprob: Option<f64>,
-}
-
-impl ExampleScore {
-    pub fn delta_chr_f_counts(&self) -> ClassificationMetrics {
-        ClassificationMetrics {
-            true_positives: self.delta_chr_f_true_positives,
-            false_positives: self.delta_chr_f_false_positives,
-            false_negatives: self.delta_chr_f_false_negatives,
-        }
-    }
-
-    pub fn exact_lines_counts(&self) -> ClassificationMetrics {
-        ClassificationMetrics {
-            true_positives: self.exact_lines_tp,
-            false_positives: self.exact_lines_fp,
-            false_negatives: self.exact_lines_fn,
-        }
-    }
-}
+pub type ExampleScore = edit_prediction_metrics::PredictionScore;
 
 impl Example {
     pub fn repo_name(&self) -> Result<RepoName<'_>> {

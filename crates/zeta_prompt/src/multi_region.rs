@@ -611,11 +611,10 @@ fn map_boundary_offset(
             .saturating_sub(span_common_prefix)
             .saturating_sub(span_common_suffix);
 
-        if old_changed_len == 0 {
-            new_changed_start
-        } else {
-            new_changed_start + ((old_rel - old_changed_start) * new_changed_len / old_changed_len)
-        }
+        new_changed_start
+            + ((old_rel - old_changed_start) * new_changed_len)
+                .checked_div(old_changed_len)
+                .unwrap_or(new_changed_len)
     }
 }
 

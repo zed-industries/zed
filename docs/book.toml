@@ -55,6 +55,7 @@ enable = false
 "/language-model-integration.html" = "/docs/assistant/assistant.html"
 "/model-improvement.html" = "/docs/ai/ai-improvement.html"
 "/ai/temperature.html" = "/docs/ai/agent-settings.html#model-temperature"
+"/ai/subscription.html" = "/docs/ai/plans-and-usage.html"
 
 # Core
 "/configuring-zed.html" = "/docs/reference/all-settings.html"

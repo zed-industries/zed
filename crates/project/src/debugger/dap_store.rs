@@ -30,7 +30,7 @@ use futures::{
     channel::mpsc::{self, UnboundedSender},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
@@ -47,7 +47,7 @@ use std::{
     borrow::Borrow,
     collections::BTreeMap,
     ffi::OsStr,
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
@@ -323,7 +323,7 @@ impl DapStore {
                     let port_forwarding;
                     let connection;
                     if let Some(c) = binary.connection {
-                        let host = Ipv4Addr::LOCALHOST;
+                        let host = IpAddr::V4(Ipv4Addr::LOCALHOST);
                         let port;
                         if remote.read_with(cx, |remote, _cx| remote.shares_network_interface()) {
                             port = c.port;

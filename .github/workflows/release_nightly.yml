@@ -5,29 +5,40 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
 on:
-  push:
-    tags:
-    - nightly
   schedule:
-  - cron: 0 7 * * *
+  - cron: 0 */4 * * *
+  workflow_dispatch: {}
 jobs:
-  check_style:
+  check_nightly_tag:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-mac-large
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::cargo_fmt
-      run: cargo fmt --all -- --check
-    - name: ./script/clippy
-      run: ./script/clippy
-    timeout-minutes: 60
-  run_tests_windows:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-32vcpu-windows-2022
+        fetch-tags: true
+    - id: check
+      name: release_nightly::check_nightly_tag
+      run: |
+        NIGHTLY_SHA=$(git rev-parse "nightly" 2>/dev/null || echo "")
+        if [ "$NIGHTLY_SHA" = "$GITHUB_SHA" ]; then
+            echo "Nightly tag already points to current commit. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+        else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+        fi
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    timeout-minutes: 5
+  run_tests_linux:
+    needs:
+    - check_nightly_tag
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_nightly_tag.outputs.skip != 'true'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -35,19 +46,27 @@ jobs:
         clean: false
     - name: steps::setup_cargo_config
       run: |
-        New-Item -ItemType Directory -Path "./../.cargo" -Force
-        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
-      shell: pwsh
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
-      shell: pwsh
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
-      run: ./script/setup-sccache.ps1
-      shell: pwsh
+      run: ./script/setup-sccache
       env:
         R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -55,49 +74,24 @@ jobs:
         SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
-      shell: pwsh
     - name: steps::show_sccache_stats
-      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
-      shell: pwsh
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
-        Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
-      shell: pwsh
+        rm -rf ./../.cargo
     timeout-minutes: 60
-  clippy_windows:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-32vcpu-windows-2022
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      with:
-        clean: false
-    - name: steps::setup_cargo_config
-      run: |
-        New-Item -ItemType Directory -Path "./../.cargo" -Force
-        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
-      shell: pwsh
-    - name: steps::setup_sccache
-      run: ./script/setup-sccache.ps1
-      shell: pwsh
-      env:
-        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        SCCACHE_BUCKET: sccache-zed
-    - name: steps::clippy
-      run: ./script/clippy.ps1
-      shell: pwsh
-    - name: steps::show_sccache_stats
-      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
-      shell: pwsh
-    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   bundle_linux_aarch64:
     needs:
-    - check_style
-    - run_tests_windows
-    - clippy_windows
+    - run_tests_linux
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     env:
       CARGO_INCREMENTAL: 0
@@ -126,14 +120,14 @@ jobs:
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-    - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-linux-aarch64.tar.gz
         path: target/release/zed-linux-aarch64.tar.gz
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-linux-aarch64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-linux-aarch64.gz
         path: target/zed-remote-server-linux-aarch64.gz
@@ -141,9 +135,7 @@ jobs:
     timeout-minutes: 60
   bundle_linux_x86_64:
     needs:
-    - check_style
-    - run_tests_windows
-    - clippy_windows
+    - run_tests_linux
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       CARGO_INCREMENTAL: 0
@@ -172,14 +164,14 @@ jobs:
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-    - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-linux-x86_64.tar.gz
         path: target/release/zed-linux-x86_64.tar.gz
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-linux-x86_64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-linux-x86_64.gz
         path: target/zed-remote-server-linux-x86_64.gz
@@ -187,9 +179,7 @@ jobs:
     timeout-minutes: 60
   bundle_mac_aarch64:
     needs:
-    - check_style
-    - run_tests_windows
-    - clippy_windows
+    - run_tests_linux
     runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
@@ -223,14 +213,14 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
-    - name: '@actions/upload-artifact Zed-aarch64.dmg'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-aarch64.dmg
         path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-macos-aarch64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
@@ -238,9 +228,7 @@ jobs:
     timeout-minutes: 60
   bundle_mac_x86_64:
     needs:
-    - check_style
-    - run_tests_windows
-    - clippy_windows
+    - run_tests_linux
     runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
@@ -274,14 +262,14 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
-    - name: '@actions/upload-artifact Zed-x86_64.dmg'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-x86_64.dmg
         path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-macos-x86_64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
@@ -289,9 +277,7 @@ jobs:
     timeout-minutes: 60
   bundle_windows_aarch64:
     needs:
-    - check_style
-    - run_tests_windows
-    - clippy_windows
+    - run_tests_linux
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
@@ -327,14 +313,14 @@ jobs:
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: '@actions/upload-artifact Zed-aarch64.exe'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-aarch64.exe
         path: target/Zed-aarch64.exe
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-windows-aarch64.zip'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-windows-aarch64.zip
         path: target/zed-remote-server-windows-aarch64.zip
@@ -342,9 +328,7 @@ jobs:
     timeout-minutes: 60
   bundle_windows_x86_64:
     needs:
-    - check_style
-    - run_tests_windows
-    - clippy_windows
+    - run_tests_linux
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
@@ -380,14 +364,14 @@ jobs:
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: '@actions/upload-artifact Zed-x86_64.exe'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-x86_64.exe
         path: target/Zed-x86_64.exe
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-windows-x86_64.zip'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-windows-x86_64.zip
         path: target/zed-remote-server-windows-x86_64.zip
@@ -395,8 +379,7 @@ jobs:
     timeout-minutes: 60
   build_nix_linux_x86_64:
     needs:
-    - check_style
-    - run_tests_windows
+    - run_tests_linux
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
@@ -429,8 +412,7 @@ jobs:
     continue-on-error: true
   build_nix_mac_aarch64:
     needs:
-    - check_style
-    - run_tests_windows
+    - run_tests_linux
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-mac-large
     env:
@@ -487,13 +469,20 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
+    - id: generate-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        permission-contents: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-        fetch-depth: 0
+        fetch-tags: true
     - name: release::download_workflow_artifacts
-      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         path: ./artifacts/
     - name: ls -lR ./artifacts
@@ -519,16 +508,18 @@ jobs:
       env:
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-    - name: release_nightly::update_nightly_tag_job::update_nightly_tag
-      run: |
-        if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
-          echo "Nightly tag already points to current commit. Skipping tagging."
-          exit 0
-        fi
-        git config user.name github-actions
-        git config user.email github-actions@github.com
-        git tag -f nightly
-        git push origin nightly --force
+    - name: steps::update_tag
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.updateRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'tags/nightly',
+              sha: context.sha,
+              force: true
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
     - name: release::create_sentry_release
       uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
       with:
@@ -554,6 +545,9 @@ jobs:
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
         SLACK_MESSAGE: '❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+concurrency:
+  group: release-nightly
+  cancel-in-progress: true
 defaults:
   run:
     shell: bash -euxo pipefail {0}
