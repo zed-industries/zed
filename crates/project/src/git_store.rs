@@ -145,7 +145,6 @@ struct BufferGitState {
     oid_texts: HashMap<git::Oid, Arc<str>>,
     head_text_buffer: Entity<Buffer>,
     index_text_buffer: Entity<Buffer>,
-    oid_text_buffers: HashMap<Option<git::Oid>, Entity<Buffer>>,
     index_text_buffer_language_enabled: bool,
     head_changed: bool,
     index_changed: bool,
@@ -1207,6 +1206,7 @@ impl GitStore {
                     }
                     DiffKind::Staged => {
                         diff_state.index_text_buffer_language_enabled = true;
+                        diff_state.language_changed = true;
                         diff_state.staged_diff = Some(diff.downgrade());
                     }
                     DiffKind::Uncommitted => {
@@ -3827,7 +3827,6 @@ impl BufferGitState {
             oid_texts: Default::default(),
             head_text_buffer,
             index_text_buffer,
-            oid_text_buffers: Default::default(),
             index_text_buffer_language_enabled: Default::default(),
             head_changed: Default::default(),
             index_changed: Default::default(),
@@ -4037,7 +4036,7 @@ impl BufferGitState {
             .iter()
             .filter_map(|(oid, weak)| {
                 let diff = weak.upgrade()?;
-                let base_text_buffer = self.oid_text_buffers.get(oid)?.clone();
+                let base_text_buffer = diff.read(cx).base_text_buffer().clone();
                 let base_text = match oid {
                     Some(oid) => Some(self.oid_texts.get(oid)?.clone()),
                     None => None,
@@ -4052,7 +4051,6 @@ impl BufferGitState {
                 if let Some(oid) = oid {
                     self.oid_texts.remove(oid);
                 }
-                self.oid_text_buffers.remove(oid);
             }
             alive
         });
@@ -4081,18 +4079,7 @@ impl BufferGitState {
                         .await;
                     let edited = index_text_buffer
                         .update(cx, |index_text_buffer, cx| {
-                            let edits =
-                                if index_text_buffer.version() == index_text_diff.base_version {
-                                    index_text_diff.edits
-                                } else {
-                                    // FIXME could this ever be hit?
-                                    debug_panic!("someone else edited the index text buffer");
-                                    vec![(
-                                        0..index_text_buffer.len(),
-                                        text::LineEnding::normalize_arc(new_index_text.clone()),
-                                    )]
-                                };
-                            index_text_buffer.snapshot_with_edits(edits, cx)
+                            index_text_buffer.snapshot_with_edits(index_text_diff.edits, cx)
                         })
                         .await;
                     let snapshot = edited.snapshot().clone();
@@ -4147,17 +4134,7 @@ impl BufferGitState {
                         .await;
                     let edited = head_text_buffer
                         .update(cx, |base_text_buffer, cx| {
-                            let edits = if base_text_buffer.version() == head_text_diff.base_version
-                            {
-                                head_text_diff.edits
-                            } else {
-                                debug_panic!("someone else edited the base text buffer within recaluclate diffs");
-                                vec![(
-                                    0..base_text_buffer.len(),
-                                    text::LineEnding::normalize_arc(new_head_text.clone()),
-                                )]
-                            };
-                            base_text_buffer.snapshot_with_edits(edits, cx)
+                            base_text_buffer.snapshot_with_edits(head_text_diff.edits, cx)
                         })
                         .await;
                     let snapshot = edited.snapshot().clone();
@@ -4254,9 +4231,6 @@ impl BufferGitState {
                                 head_text_buffer.fast_forward(edited_head_text, cx)
                             });
                         }
-                        if language_changed {
-                            diff.language_changed(language.clone(), language_registry.clone(), cx);
-                        }
                         diff.set_snapshot(new_staged_diff, cx)
                     });
                 }
@@ -4284,9 +4258,6 @@ impl BufferGitState {
                             head_text_buffer.update(cx, |head_text_buffer, cx| {
                                 head_text_buffer.fast_forward(edited_base_text, cx)
                             });
-                        }
-                        if language_changed {
-                            diff.language_changed(language.clone(), language_registry.clone(), cx);
                         }
                         diff.set_snapshot_with_secondary(
                             new_uncommitted_diff,
@@ -4322,12 +4293,7 @@ impl BufferGitState {
                     })
                     .await;
 
-                oid_diff.update(cx, |diff, cx| {
-                    if language_changed {
-                        diff.language_changed(language.clone(), language_registry.clone(), cx);
-                    }
-                    diff.set_snapshot(new_oid_diff, cx)
-                });
+                oid_diff.update(cx, |diff, cx| diff.set_snapshot(new_oid_diff, cx));
 
                 log::debug!(
                     "finished recalculating oid diff for buffer {} oid {:?}",

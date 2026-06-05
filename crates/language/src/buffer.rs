@@ -3317,7 +3317,7 @@ impl Buffer {
             syntax.interpolate(&new_text.snapshot);
 
             if let Some(language) = language {
-                syntax.reparse(&snapshot, registry, language);
+                syntax.reparse(&new_text.snapshot, registry, language);
             }
 
             snapshot.text = new_text.snapshot.clone();
