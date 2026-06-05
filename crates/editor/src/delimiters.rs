@@ -1,5 +1,7 @@
 use super::*;
 
+// Keep quote matching local enough to avoid pairing unrelated quotes in large files,
+// while still covering common multi-line string/template literals.
 const QUOTE_LINE_TOLERANCE: usize = 8;
 
 impl Editor {
@@ -563,22 +565,22 @@ fn remap_delimiter_selections(
     selections: &[Selection<MultiBufferOffset>],
     edits: &[(Range<MultiBufferOffset>, String)],
 ) -> Vec<Selection<MultiBufferOffset>> {
+    let mut edits = edits.iter().collect::<Vec<_>>();
+    edits.sort_by_key(|(range, _)| range.start);
+
     selections
         .iter()
         .map(|selection| Selection {
             id: selection.id,
-            start: MultiBufferOffset(remap_delimiter_offset(selection.start.0, edits)),
-            end: MultiBufferOffset(remap_delimiter_offset(selection.end.0, edits)),
+            start: MultiBufferOffset(remap_delimiter_offset(selection.start.0, &edits)),
+            end: MultiBufferOffset(remap_delimiter_offset(selection.end.0, &edits)),
             reversed: selection.reversed,
             goal: SelectionGoal::None,
         })
         .collect()
 }
 
-fn remap_delimiter_offset(offset: usize, edits: &[(Range<MultiBufferOffset>, String)]) -> usize {
-    let mut edits = edits.iter().collect::<Vec<_>>();
-    edits.sort_by_key(|(range, _)| range.start);
-
+fn remap_delimiter_offset(offset: usize, edits: &[&(Range<MultiBufferOffset>, String)]) -> usize {
     let mut delta = 0isize;
     for (range, new_text) in edits {
         let edit_start = range.start.0;

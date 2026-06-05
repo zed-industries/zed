@@ -60,6 +60,23 @@ async fn test_bracketeer_bracket_actions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_bracketeer_bracket_actions_do_not_match_after_caret(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("fooˇ(bar)");
+    cx.update_editor(|editor, window, cx| editor.swap_brackets(&SwapBrackets, window, cx));
+    cx.assert_editor_state("fooˇ(bar)");
+
+    cx.set_state("ˇ(alpha)");
+    cx.update_editor(|editor, window, cx| {
+        editor.select_bracket_content(&SelectBracketContent, window, cx)
+    });
+    cx.assert_editor_state("ˇ(alpha)");
+}
+
+#[gpui::test]
 async fn test_bracketeer_bracket_actions_deduplicate_matches(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -152,6 +169,60 @@ async fn test_bracketeer_quote_actions(cx: &mut TestAppContext) {
         editor.select_quote_content(&SelectQuoteContent, window, cx)
     });
     cx.assert_editor_state("const value = «'alpha'ˇ»;");
+}
+
+#[gpui::test]
+async fn test_bracketeer_quote_actions_do_not_match_after_caret(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state("const value = ˇ'alpha';");
+    cx.update_editor(|editor, window, cx| editor.swap_quotes(&SwapQuotes, window, cx));
+    cx.assert_editor_state("const value = ˇ'alpha';");
+
+    cx.set_state("const value = ˇ'alpha';");
+    cx.update_editor(|editor, window, cx| {
+        editor.select_quote_content(&SelectQuoteContent, window, cx)
+    });
+    cx.assert_editor_state("const value = ˇ'alpha';");
+}
+
+#[gpui::test]
+async fn test_bracketeer_quote_actions_do_not_match_before_caret(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let js_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(js_language), cx));
+
+    cx.set_state("const value = 'alpha'ˇ;");
+    cx.update_editor(|editor, window, cx| editor.swap_quotes(&SwapQuotes, window, cx));
+    cx.assert_editor_state("const value = 'alpha'ˇ;");
+
+    cx.set_state("const value = 'alpha'ˇ;");
+    cx.update_editor(|editor, window, cx| {
+        editor.select_quote_content(&SelectQuoteContent, window, cx)
+    });
+    cx.assert_editor_state("const value = 'alpha'ˇ;");
 }
 
 #[gpui::test]
