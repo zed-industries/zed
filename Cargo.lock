@@ -3479,6 +3479,7 @@ dependencies = [
 name = "collections"
 version = "0.1.0"
 dependencies = [
+ "gpui_util",
  "indexmap 2.11.4",
  "rustc-hash 2.1.1",
 ]
@@ -22363,6 +22364,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "url",
  "util",
  "uuid",
  "windows 0.61.3",

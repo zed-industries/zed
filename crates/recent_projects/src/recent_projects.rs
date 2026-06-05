@@ -73,6 +73,7 @@ struct OpenFolderEntry {
     path: PathBuf,
     branch: Option<SharedString>,
     is_active: bool,
+    connection_options: Option<RemoteConnectionOptions>,
 }
 
 #[derive(Clone, Debug)]
@@ -192,6 +193,7 @@ pub async fn delete_recent_project(workspace_id: WorkspaceId, db: &WorkspaceDb) 
 
 fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
     let project = workspace.project().read(cx);
+    let connection_options = project.remote_connection_options(cx);
     let visible_worktrees: Vec<_> = project.visible_worktrees(cx).collect();
 
     if visible_worktrees.len() <= 1 {
@@ -245,6 +247,7 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
                 path,
                 branch,
                 is_active,
+                connection_options: connection_options.clone(),
             }
         })
         .collect();
@@ -669,7 +672,6 @@ impl RecentProjects {
     ) {
         let weak = cx.entity().downgrade();
         let open_folders = get_open_folders(workspace, cx);
-        let project_connection_options = workspace.project().read(cx).remote_connection_options(cx);
         let fs = Some(workspace.app_state().fs.clone());
 
         workspace.toggle_modal(window, cx, |window, cx| {
@@ -679,7 +681,6 @@ impl RecentProjects {
                 focus_handle,
                 open_folders,
                 window_project_groups,
-                project_connection_options,
                 ProjectPickerStyle::Modal,
             );
 
@@ -695,17 +696,16 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let (open_folders, project_connection_options, fs) = workspace
+        let (open_folders, fs) = workspace
             .upgrade()
             .map(|workspace| {
                 let workspace = workspace.read(cx);
                 (
                     get_open_folders(workspace, cx),
-                    workspace.project().read(cx).remote_connection_options(cx),
                     Some(workspace.app_state().fs.clone()),
                 )
             })
-            .unwrap_or_else(|| (Vec::new(), None, None));
+            .unwrap_or_else(|| (Vec::new(), None));
 
         cx.new(|cx| {
             let delegate = RecentProjectsDelegate::new(
@@ -714,7 +714,6 @@ impl RecentProjects {
                 focus_handle,
                 open_folders,
                 window_project_groups,
-                project_connection_options,
                 ProjectPickerStyle::Popover,
             );
             let list = Self::new(delegate, fs, 20., window, cx);
@@ -844,8 +843,6 @@ pub struct RecentProjectsDelegate {
     render_paths: bool,
     create_new_window: bool,
     snap_selection_to_first_non_header_match: bool,
-    has_any_non_local_projects: bool,
-    project_connection_options: Option<RemoteConnectionOptions>,
     focus_handle: FocusHandle,
     style: ProjectPickerStyle,
     actions_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -858,7 +855,6 @@ impl RecentProjectsDelegate {
         focus_handle: FocusHandle,
         open_folders: Vec<OpenFolderEntry>,
         window_project_groups: Vec<ProjectGroupKey>,
-        project_connection_options: Option<RemoteConnectionOptions>,
         style: ProjectPickerStyle,
     ) -> Self {
         let render_paths = style == ProjectPickerStyle::Modal;
@@ -872,8 +868,6 @@ impl RecentProjectsDelegate {
             create_new_window,
             render_paths,
             snap_selection_to_first_non_header_match: true,
-            has_any_non_local_projects: project_connection_options.is_some(),
-            project_connection_options,
             focus_handle,
             style,
             actions_menu_handle: PopoverMenuHandle::default(),
@@ -882,12 +876,32 @@ impl RecentProjectsDelegate {
 
     pub fn set_workspaces(&mut self, workspaces: Vec<RecentWorkspace>) {
         self.workspaces = workspaces;
-        let has_non_local_recent = !self
-            .workspaces
+    }
+
+    fn filtered_entries_include_remote_project(&self) -> bool {
+        self.filtered_entries
             .iter()
-            .all(|workspace| matches!(workspace.location, SerializedWorkspaceLocation::Local));
-        self.has_any_non_local_projects =
-            self.project_connection_options.is_some() || has_non_local_recent;
+            .any(|entry| self.entry_is_remote_project(entry))
+    }
+
+    fn entry_is_remote_project(&self, entry: &ProjectPickerEntry) -> bool {
+        match entry {
+            ProjectPickerEntry::Header(_) => false,
+            ProjectPickerEntry::OpenFolder { index, .. } => self
+                .open_folders
+                .get(*index)
+                .is_some_and(|folder| folder.connection_options.is_some()),
+            ProjectPickerEntry::ProjectGroup(hit) => self
+                .window_project_groups
+                .get(hit.candidate_id)
+                .is_some_and(|key| key.host().is_some()),
+            ProjectPickerEntry::RecentProject(hit) => self
+                .workspaces
+                .get(hit.candidate_id)
+                .is_some_and(|workspace| {
+                    matches!(workspace.location, SerializedWorkspaceLocation::Remote(_))
+                }),
+        }
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
@@ -1244,7 +1258,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                     )
                     .into_any_element();
 
-                let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
+                let icon = icon_for_remote_connection(folder.connection_options.as_ref());
+                let show_icon = self.filtered_entries_include_remote_project();
 
                 let tooltip_path: SharedString = path.to_string_lossy().to_string().into();
                 let tooltip_branch = branch.clone();
@@ -1260,7 +1275,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .w_full()
                                 .min_w_0()
                                 .gap_2p5()
-                                .when(self.has_any_non_local_projects, |this| {
+                                .when(show_icon, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
                                 .child(
@@ -1325,7 +1340,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .map(|p| p.compact().to_string_lossy().to_string())
                     .collect();
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
-                let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
+                let icon = icon_for_project_group(key);
+                let show_icon = self.filtered_entries_include_remote_project();
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
@@ -1415,7 +1431,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .w_full()
                                 .min_w_0()
                                 .gap_2p5()
-                                .when(self.has_any_non_local_projects, |this| {
+                                .when(show_icon, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
                                 .child({
@@ -1553,6 +1569,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::Local => None,
                     SerializedWorkspaceLocation::Remote(options) => Some(options),
                 });
+                let show_icon = self.filtered_entries_include_remote_project();
 
                 Some(
                     ListItem::new(ix)
@@ -1566,7 +1583,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .min_w_0()
                                 .gap_2p5()
                                 .flex_grow_1()
-                                .when(self.has_any_non_local_projects, |this| {
+                                .when(show_icon, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
                                 .child({
@@ -1887,6 +1904,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .into_any(),
         )
     }
+}
+
+fn icon_for_project_group(key: &ProjectGroupKey) -> IconName {
+    let host = key.host();
+    icon_for_remote_connection(host.as_ref())
 }
 
 pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
@@ -2374,6 +2396,7 @@ mod tests {
             path: PathBuf::from(format!("/current/project-folder-{index}")),
             branch: None,
             is_active: false,
+            connection_options: None,
         }
     }
 
@@ -2381,6 +2404,17 @@ mod tests {
         ProjectGroupKey::new(
             None,
             PathList::new(&[PathBuf::from(format!("/this-window/project-{index}"))]),
+        )
+    }
+
+    fn remote_project_group(index: usize) -> ProjectGroupKey {
+        ProjectGroupKey::new(
+            Some(RemoteConnectionOptions::Mock(
+                remote::MockConnectionOptions { id: index as u64 },
+            )),
+            PathList::new(&[PathBuf::from(format!(
+                "/this-window/remote-project-{index}"
+            ))]),
         )
     }
 
@@ -2417,7 +2451,6 @@ mod tests {
                 cx.focus_handle(),
                 vec![open_folder(0), open_folder(1)],
                 vec![project_group(0), project_group(1)],
-                None,
                 ProjectPickerStyle::Modal,
             );
             delegate.set_workspaces(recent_workspaces());
@@ -2507,6 +2540,46 @@ mod tests {
                 .get(picker.delegate.selected_index),
             Some(ProjectPickerEntry::RecentProject(_))
         ));
+    }
+
+    #[gpui::test]
+    fn this_window_project_icons_use_each_project_group_host(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut delegate = RecentProjectsDelegate::new(
+            WeakEntity::new_invalid(),
+            false,
+            cx.update(|cx| cx.focus_handle()),
+            Vec::new(),
+            vec![project_group(0), remote_project_group(1)],
+            ProjectPickerStyle::Modal,
+        );
+        delegate.filtered_entries = vec![
+            ProjectPickerEntry::ProjectGroup(StringMatch {
+                candidate_id: 0,
+                score: 0.0,
+                positions: Vec::new(),
+                string: Default::default(),
+            }),
+            ProjectPickerEntry::ProjectGroup(StringMatch {
+                candidate_id: 1,
+                score: 0.0,
+                positions: Vec::new(),
+                string: Default::default(),
+            }),
+        ];
+
+        assert!(!delegate.entry_is_remote_project(&delegate.filtered_entries[0]));
+        assert!(delegate.entry_is_remote_project(&delegate.filtered_entries[1]));
+        assert!(delegate.filtered_entries_include_remote_project());
+        assert_eq!(
+            icon_for_project_group(&delegate.window_project_groups[0]),
+            IconName::Screen
+        );
+        assert_eq!(
+            icon_for_project_group(&delegate.window_project_groups[1]),
+            IconName::Server
+        );
     }
 
     #[gpui::test]

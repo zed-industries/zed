@@ -5679,7 +5679,7 @@ impl ProjectPanel {
             )
             .on_click(
                 cx.listener(move |project_panel, event: &gpui::ClickEvent, window, cx| {
-                    if event.is_right_click() || event.first_focus() || show_editor {
+                    if event.is_right_click() || show_editor {
                         return;
                     }
                     if event.standard_click() {

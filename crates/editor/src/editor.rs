@@ -75,6 +75,7 @@ mod selection;
 pub(crate) use actions::*;
 pub use clipboard::ClipboardSelection;
 pub use code_actions::CodeActionProvider;
+use collections::TypeIdHashMap;
 pub use completions::CompletionProvider;
 #[cfg(test)]
 pub(crate) use completions::snippet_candidate_suffixes;
@@ -994,10 +995,10 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
+    highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
-    gutter_highlights: HashMap<TypeId, GutterHighlight>,
+    gutter_highlights: TypeIdHashMap<GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -1117,7 +1118,7 @@ pub struct Editor {
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
-    addons: HashMap<TypeId, Box<dyn Addon>>,
+    addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
@@ -2192,10 +2193,10 @@ impl Editor {
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
-            highlighted_rows: HashMap::default(),
+            highlighted_rows: Default::default(),
             background_highlights: HashMap::default(),
             navigation_overlays: HashMap::default(),
-            gutter_highlights: HashMap::default(),
+            gutter_highlights: Default::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -2338,7 +2339,7 @@ impl Editor {
             breadcrumb_header: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
-            addons: HashMap::default(),
+            addons: Default::default(),
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
@@ -8006,6 +8007,7 @@ impl Editor {
                     project.restart_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
                         HashSet::default(),
+                        true,
                         cx,
                     );
                 });
