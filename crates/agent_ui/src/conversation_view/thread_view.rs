@@ -928,18 +928,11 @@ impl ThreadView {
             }));
         }));
 
-        let focus_handle = cx.focus_handle();
-        subscriptions.push(cx.on_focus(&focus_handle, window, |this, window, cx| {
-            if this.parent_session_id.is_none() {
-                this.active_editor(cx).focus_handle(cx).focus(window, cx);
-            }
-        }));
-
         let mut this = Self {
             root_thread_id,
             session_id,
             parent_session_id,
-            focus_handle,
+            focus_handle: cx.focus_handle(),
             thread,
             conversation,
             server_view,
@@ -1164,6 +1157,14 @@ impl ThreadView {
             editor
         } else {
             self.message_editor.clone()
+        }
+    }
+
+    pub(crate) fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        if self.parent_session_id.is_none() {
+            self.active_editor(cx).focus_handle(cx)
+        } else {
+            self.focus_handle(cx)
         }
     }
 

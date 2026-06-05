@@ -1536,6 +1536,10 @@ impl Focusable for DebugPanel {
 }
 
 impl Panel for DebugPanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.focus_handle(cx)
+    }
+
     fn persistent_name() -> &'static str {
         "DebugPanel"
     }
