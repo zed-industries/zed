@@ -1,6 +1,6 @@
 use agent_skills::{MAX_SKILL_DESCRIPTION_LEN, Skill, SkillIndex, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{Action as _, ClipboardItem, ScrollHandle, SharedString, prelude::*};
+use gpui::{Action as _, App, ClipboardItem, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -9,18 +9,13 @@ use std::borrow::Cow;
 
 use crate::{SettingsUiFile, SettingsWindow};
 
-pub(crate) fn render_skills_setup_page(
-    settings_window: &SettingsWindow,
-    scroll_handle: &ScrollHandle,
-    _window: &mut Window,
-    cx: &mut Context<SettingsWindow>,
-) -> AnyElement {
+/// Skills shown on the Skills page for the currently selected settings file:
+/// - User file → global skills only
+/// - Project file → project-local skills for that worktree only
+pub(crate) fn displayed_skills(settings_window: &SettingsWindow, cx: &App) -> Vec<Skill> {
     let skill_index = cx.try_global::<SkillIndex>();
 
-    // Pick skills that match the current settings file tab:
-    // - User tab → global skills only
-    // - Project tab → project-local skills for that worktree only
-    let skills: Vec<Skill> = match &settings_window.current_file {
+    match &settings_window.current_file {
         SettingsUiFile::User => skill_index
             .map(|idx| idx.global_skills.clone())
             .unwrap_or_default(),
@@ -44,7 +39,16 @@ pub(crate) fn render_skills_setup_page(
             .hidden_deleted_skill_directory_paths
             .contains(&skill.directory_path)
     })
-    .collect();
+    .collect()
+}
+
+pub(crate) fn render_skills_setup_page(
+    settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    _window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let skills: Vec<Skill> = displayed_skills(settings_window, cx);
 
     v_flex()
         .id("skills-page")

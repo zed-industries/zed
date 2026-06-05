@@ -2533,6 +2533,74 @@ impl SettingsWindow {
         };
     }
 
+    /// Changes the current settings file like [`Self::change_file`], but keeps
+    /// the currently open sub-page stack when every sub-page in it is
+    /// available in the new file's scope (e.g. switching a Skills sub-page
+    /// between the user scope and a project scope).
+    fn change_file_in_sub_page(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        if ix >= self.files.len() || self.files[ix].0 == self.current_file {
+            return;
+        }
+        self.current_file = self.files[ix].0.clone();
+
+        if let SettingsUiFile::Project((_, _)) = &self.current_file {
+            telemetry::event!("Setting Project Clicked");
+        }
+
+        self.last_copied_skill_directory_path = None;
+
+        let sub_page_stack = std::mem::take(&mut self.sub_page_stack);
+        self.build_ui(window, cx);
+
+        let file_mask = self.current_file.mask();
+        if let Some(first_sub_page) = sub_page_stack.first()
+            && sub_page_stack
+                .iter()
+                .all(|sub_page| sub_page.link.files.contains(file_mask))
+        {
+            if !self.is_nav_entry_visible(self.navbar_entry) {
+                // The previously selected page may be filtered out in the new
+                // scope (e.g. after deep-linking into a sub-page). Re-anchor
+                // the navbar to the page containing the open sub-page, which
+                // is visible because its sub-page link supports this scope.
+                let anchor_entry = self
+                    .pages
+                    .iter()
+                    .position(|page| {
+                        page.items.iter().any(|item| {
+                            matches!(item, SettingsPageItem::SubPageLink(link) if link == &first_sub_page.link)
+                        })
+                    })
+                    .and_then(|page_index| {
+                        self.navbar_entries
+                            .iter()
+                            .position(|entry| entry.is_root && entry.page_index == page_index)
+                    });
+                if let Some(anchor_entry) = anchor_entry
+                    && self.is_nav_entry_visible(anchor_entry)
+                {
+                    self.open_navbar_entry_page(anchor_entry);
+                }
+            }
+            if self.is_nav_entry_visible(self.navbar_entry) {
+                self.sub_page_stack = sub_page_stack;
+                cx.notify();
+                return;
+            }
+        }
+
+        if self.is_nav_entry_visible(self.navbar_entry) {
+            self.open_and_scroll_to_navbar_entry(self.navbar_entry, None, true, window, cx);
+        } else {
+            self.open_first_nav_page();
+        }
+    }
+
     fn render_files_header(
         &self,
         window: &mut Window,
@@ -3136,17 +3204,90 @@ impl SettingsWindow {
             .filter(move |&(item_index, _)| self.filter_table[page_idx][item_index])
     }
 
-    fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
+    fn render_sub_page_breadcrumbs(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let scope_name: SharedString = self
             .display_name(&self.current_file)
             .unwrap_or_else(|| self.current_file.setting_type().to_string())
             .into();
 
-        h_flex().min_w_0().gap_1().overflow_x_hidden().children(
-            itertools::intersperse(
-                std::iter::once(scope_name)
-                    .chain(std::iter::once(self.current_page().title.into()))
-                    .chain(
+        // Only offer scopes in which every sub-page in the stack is available.
+        let allowed_mask = self
+            .sub_page_stack
+            .iter()
+            .fold(USER | PROJECT | SERVER, |mask, sub_page| {
+                mask & sub_page.link.files
+            });
+        let allowed_file_indices: Vec<usize> = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, (file, _))| allowed_mask.contains(file.mask()))
+            .map(|(ix, _)| ix)
+            .collect();
+
+        let scope_element = if allowed_file_indices.len() > 1 {
+            let this = cx.entity();
+            DropdownMenu::new(
+                "sub-page-scope-picker",
+                scope_name,
+                ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    menu = menu.header("Scope");
+
+                    for ix in allowed_file_indices {
+                        let (file, focus_handle) = &self.files[ix];
+                        let display_name = self
+                            .display_name(file)
+                            .expect("Files should always have a name");
+
+                        menu = menu.toggleable_entry(
+                            display_name,
+                            file == &self.current_file,
+                            IconPosition::End,
+                            None,
+                            {
+                                let this = this.clone();
+                                let focus_handle = focus_handle.clone();
+                                move |window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.change_file_in_sub_page(ix, window, cx);
+                                    });
+                                    focus_handle.focus(window, cx);
+                                }
+                            },
+                        );
+                    }
+
+                    menu
+                }),
+            )
+            .style(DropdownStyle::Subtle)
+            .trigger_tooltip(Tooltip::text("Change Scope"))
+            .attach(gpui::Anchor::BottomLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            })
+            .tab_index(0)
+            .into_any_element()
+        } else {
+            Label::new(scope_name)
+                .color(Color::Muted)
+                .into_any_element()
+        };
+
+        h_flex()
+            .min_w_0()
+            .gap_1()
+            .overflow_x_hidden()
+            .child(scope_element)
+            .child(Label::new("/").color(Color::Muted))
+            .children(
+                itertools::intersperse(
+                    std::iter::once(self.current_page().title.into()).chain(
                         self.sub_page_stack
                             .iter()
                             .enumerate()
@@ -3157,10 +3298,10 @@ impl SettingsWindow {
                                     .chain(std::iter::once(page.link.title.clone()))
                             }),
                     ),
-                "/".into(),
+                    "/".into(),
+                )
+                .map(|item| Label::new(item).color(Color::Muted)),
             )
-            .map(|item| Label::new(item).color(Color::Muted)),
-        )
     }
 
     fn render_no_results(&self, cx: &App) -> impl IntoElement {
@@ -3389,7 +3530,7 @@ impl SettingsWindow {
                                     this.pop_sub_page(window, cx);
                                 })),
                         )
-                        .child(self.render_sub_page_breadcrumbs()),
+                        .child(self.render_sub_page_breadcrumbs(window, cx)),
                 )
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
@@ -5460,6 +5601,181 @@ pub mod test {
                 "Should have no duplicate project files, but found duplicates. All files: {:?}",
                 project_files
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_skills_page_scope_switch_updates_displayed_skills(cx: &mut gpui::TestAppContext) {
+        use agent_skills::{
+            ProjectSkillGroup, Skill, SkillScopeId, SkillSource, load_skills_from_directory,
+        };
+        use project::Project;
+        use serde_json::json;
+        use std::path::Path;
+
+        cx.update(|cx| {
+            register_settings(cx);
+        });
+
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state.clone(), cx);
+            app_state
+        });
+
+        let fake_fs = app_state.fs.as_fake();
+
+        fake_fs
+            .insert_tree(
+                "/global-skills",
+                json!({
+                    "global-skill": {
+                        "SKILL.md": "---\nname: global-skill\ndescription: A user level skill\n---\n\nGlobal instructions."
+                    }
+                }),
+            )
+            .await;
+
+        fake_fs
+            .insert_tree(
+                "/project",
+                json!({
+                    ".agents": {
+                        "skills": {
+                            "project-skill": {
+                                "SKILL.md": "---\nname: project-skill\ndescription: A project level skill\n---\n\nProject instructions."
+                            }
+                        }
+                    },
+                    "main.rs": "fn main() {}"
+                }),
+            )
+            .await;
+
+        let project = cx.update(|cx| {
+            Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                project::LocalProjectFlags::default(),
+                cx,
+            )
+        });
+
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree("/project", true, cx)
+            })
+            .await
+            .expect("Failed to create worktree");
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+        // Load both skills from the fake filesystem the same way the agent
+        // does, then publish them as the global skill index.
+        let fs = app_state.fs.clone();
+        let global_skills: Vec<Skill> =
+            load_skills_from_directory(&fs, Path::new("/global-skills"), SkillSource::Global)
+                .await
+                .into_iter()
+                .map(|result| result.expect("global skill should load"))
+                .collect();
+        let project_skills: Vec<Skill> = load_skills_from_directory(
+            &fs,
+            Path::new("/project/.agents/skills"),
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(worktree_id.to_usize()),
+                worktree_root_name: "project".into(),
+            },
+        )
+        .await
+        .into_iter()
+        .map(|result| result.expect("project skill should load"))
+        .collect();
+        assert_eq!(global_skills.len(), 1);
+        assert_eq!(project_skills.len(), 1);
+
+        cx.update(|cx| {
+            cx.set_global(SkillIndex {
+                global_skills,
+                project_skills: vec![ProjectSkillGroup {
+                    worktree_id: SkillScopeId(worktree_id.to_usize()),
+                    worktree_root_name: "project".into(),
+                    skills: project_skills,
+                }],
+            });
+        });
+
+        let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
+
+        cx.run_until_parked();
+
+        let (settings_window, cx) = cx
+            .add_window_view(|window, cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+
+        cx.run_until_parked();
+
+        settings_window.update_in(cx, |settings_window, window, cx| {
+            fn displayed_skill_names(settings_window: &SettingsWindow, cx: &App) -> Vec<String> {
+                crate::pages::displayed_skills(settings_window, cx)
+                    .iter()
+                    .map(|skill| skill.name.to_string())
+                    .collect()
+            }
+
+            assert_eq!(settings_window.current_file, SettingsUiFile::User);
+            assert!(
+                settings_window.navigate_to_sub_page("agent.skills", window, cx),
+                "Skills sub-page should exist"
+            );
+            assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);
+
+            let project_file_index = settings_window
+                .files
+                .iter()
+                .position(|(file, _)| file.worktree_id() == Some(worktree_id))
+                .expect("project settings file should be listed");
+            settings_window.change_file_in_sub_page(project_file_index, window, cx);
+
+            assert_eq!(
+                settings_window.current_file.worktree_id(),
+                Some(worktree_id)
+            );
+            assert_eq!(
+                settings_window.sub_page_stack.len(),
+                1,
+                "Skills sub-page should stay open when switching scope"
+            );
+            assert_eq!(settings_window.sub_page_stack[0].link.title, "Skills");
+            assert_eq!(
+                displayed_skill_names(settings_window, cx),
+                ["project-skill"]
+            );
+
+            let user_file_index = settings_window
+                .files
+                .iter()
+                .position(|(file, _)| file == &SettingsUiFile::User)
+                .expect("user settings file should be listed");
+            settings_window.change_file_in_sub_page(user_file_index, window, cx);
+
+            assert_eq!(settings_window.current_file, SettingsUiFile::User);
+            assert_eq!(settings_window.sub_page_stack.len(), 1);
+            assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);
         });
     }
 }
