@@ -216,6 +216,10 @@ pub struct X11ClientState {
 
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
+    pub(crate) dbus_service_name: Option<String>,
+    pub(crate) dbus_unique_name: Option<String>,
+    pub(crate) dbus_menu_thread: Option<std::thread::JoinHandle<()>>,
+
     pub(crate) supports_xinput_gestures: bool,
 
     pub(crate) common: LinuxCommon,
@@ -302,8 +306,54 @@ impl X11ClientStatePtr {
     }
 }
 
+impl crate::linux::dbusmenu::GlobalMenuState for X11ClientState {
+    fn linux_common(&mut self) -> &mut crate::linux::LinuxCommon {
+        &mut self.common
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
+
+impl Drop for X11Client {
+    fn drop(&mut self) {
+        // Only shut down the D-Bus menu server when the last clone drops,
+        // because `X11Client` is cheaply cloned via `Rc` and earlier drops
+        // must not tear down the shared server.
+        if Rc::strong_count(&self.0) > 1 {
+            return;
+        }
+
+        {
+            let (dbus_menu_server, dbus_menu_thread) = match self.0.try_borrow_mut() {
+                Ok(mut state) => (
+                    state.common.dbus_menu_server.clone(),
+                    state.dbus_menu_thread.take(),
+                ),
+                Err(_) => {
+                    log::warn!(
+                        "Failed to borrow X11Client inner in Drop; DBusMenu resources may leak"
+                    );
+                    let server = self
+                        .0
+                        .try_borrow()
+                        .ok()
+                        .and_then(|state| state.common.dbus_menu_server.clone());
+                    (server, None)
+                }
+            };
+
+            if let Some(dbus_menu_server) = dbus_menu_server {
+                dbus_menu_server.shutdown();
+            }
+            if let Some(thread) = dbus_menu_thread {
+                if let Err(error) = thread.join() {
+                    log::error!("Failed to join DBusMenu thread: {error:?}");
+                }
+            }
+        }
+    }
+}
 
 impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
@@ -499,7 +549,7 @@ impl X11Client {
 
         xcb_flush(&xcb_connection);
 
-        Ok(X11Client(Rc::new(RefCell::new(X11ClientState {
+        let state = Rc::new(RefCell::new(X11ClientState {
             modifiers: Modifiers::default(),
             capslock: Capslock::default(),
             last_modifiers_changed_event: Modifiers::default(),
@@ -517,7 +567,7 @@ impl X11Client {
             scale_factor,
 
             xkb_context,
-            xcb_connection,
+            xcb_connection: xcb_connection,
             xkb_device_id,
             client_side_decorations_supported,
             x_root_index,
@@ -544,12 +594,86 @@ impl X11Client {
 
             pointer_device_states,
 
+            dbus_service_name: None,
+            dbus_unique_name: None,
+            dbus_menu_thread: None,
+
             supports_xinput_gestures,
 
             clipboard,
             clipboard_item: None,
             xdnd_state: Xdnd::default(),
-        }))))
+        }));
+
+        {
+            let has_appmenu = crate::linux::dbusmenu::appmenu_registrar_present();
+            let enabled = match crate::linux::dbusmenu::global_menu_env_override() {
+                Some(true) => true,
+                Some(false) => false,
+                None => has_appmenu,
+            };
+
+            if enabled {
+                let dbus_menu_server = crate::linux::dbusmenu::DBusMenuServer::new();
+                let service_name = format!("com.zed.dbusmenu.pid{}", std::process::id());
+
+                let (unique_name_tx, unique_name_rx) = calloop::channel::channel::<String>();
+                crate::linux::dbusmenu::setup_global_menu_sources(
+                    &dbus_menu_server,
+                    &state.borrow().loop_handle,
+                    Rc::downgrade(&state),
+                    |_| {},
+                );
+
+                state
+                    .borrow()
+                    .loop_handle
+                    .insert_source(unique_name_rx, {
+                        let client = Rc::downgrade(&state);
+                        move |event, _, _| {
+                            if let calloop::channel::Event::Msg(unique_name) = event {
+                                if let Some(client) = client.upgrade() {
+                                    let mut state = client.borrow_mut();
+                                    state.dbus_unique_name = Some(unique_name.clone());
+
+                                    let window_ids: Vec<xproto::Window> =
+                                        state.windows.keys().copied().collect();
+                                    for x_window in window_ids {
+                                        let final_path =
+                                            crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH
+                                                .to_string();
+                                        set_x11_appmenu_properties(
+                                            &state.xcb_connection,
+                                            &state.atoms,
+                                            x_window,
+                                            &unique_name,
+                                            &final_path,
+                                        );
+                                    }
+                                    xcb_flush(&state.xcb_connection);
+                                }
+                            }
+                        }
+                    })
+                    .log_err();
+
+                state.borrow_mut().common.dbus_menu_server = Some(dbus_menu_server.clone());
+                state.borrow_mut().dbus_service_name = Some(service_name.clone());
+
+                let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
+                let dbus_menu_thread = dbus_menu_server.spawn_dbus_menu_thread(
+                    service_name,
+                    object_path,
+                    Some(unique_name_tx),
+                );
+
+                if let Some(thread) = dbus_menu_thread {
+                    state.borrow_mut().dbus_menu_thread = Some(thread);
+                }
+            }
+        }
+
+        Ok(X11Client(state))
     }
 
     pub fn process_x11_events(
@@ -1633,6 +1757,18 @@ impl LinuxClient for X11Client {
             ),
         )
         .log_err();
+
+        if let Some(service_name) = x11_appmenu_service_name(&state) {
+            let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
+
+            set_x11_appmenu_properties(
+                &state.xcb_connection,
+                &state.atoms,
+                x_window,
+                &service_name,
+                &object_path,
+            );
+        }
         xcb_flush(&state.xcb_connection);
 
         let window_ref = WindowRef {
@@ -2264,6 +2400,45 @@ fn check_gtk_frame_extents_supported(
         .collect();
 
     supported_atom_ids.contains(&atoms._GTK_FRAME_EXTENTS)
+}
+
+fn x11_appmenu_service_name(state: &X11ClientState) -> Option<String> {
+    state
+        .dbus_unique_name
+        .clone()
+        .or_else(|| state.dbus_service_name.clone())
+}
+
+fn set_x11_appmenu_properties(
+    xcb_connection: &XCBConnection,
+    atoms: &XcbAtoms,
+    x_window: xproto::Window,
+    service_name: &str,
+    object_path: &str,
+) {
+    check_reply(
+        || "X11 ChangeProperty for _KDE_NET_WM_APPMENU_SERVICE_NAME failed.",
+        xcb_connection.change_property8(
+            xproto::PropMode::REPLACE,
+            x_window,
+            atoms._KDE_NET_WM_APPMENU_SERVICE_NAME,
+            xproto::AtomEnum::STRING,
+            service_name.as_bytes(),
+        ),
+    )
+    .log_err();
+
+    check_reply(
+        || "X11 ChangeProperty for _KDE_NET_WM_APPMENU_OBJECT_PATH failed.",
+        xcb_connection.change_property8(
+            xproto::PropMode::REPLACE,
+            x_window,
+            atoms._KDE_NET_WM_APPMENU_OBJECT_PATH,
+            xproto::AtomEnum::STRING,
+            object_path.as_bytes(),
+        ),
+    )
+    .log_err();
 }
 
 fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {

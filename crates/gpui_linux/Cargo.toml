@@ -74,6 +74,8 @@ strum.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
+async-channel.workspace = true
+zbus = "5"
 
 # Always used
 oo7 = { version = "0.6", default-features = false, features = [
