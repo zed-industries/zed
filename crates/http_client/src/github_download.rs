@@ -97,14 +97,13 @@ pub async fn download_server_raw_binary(
         futures::io::copy(&mut BufReader::new(response.body_mut()), &mut writer)
             .await
             .with_context(|| format!("saving binary contents from {url}"))?;
-        writer
-            .writer
-            .close()
-            .await
-            .with_context(|| format!("flushing binary contents for {url}"))?;
+        let hasher = {
+            writer.close().await.with_context(|| format!("flushing binary contents for {url}"))?;
+            anyhow::Ok(writer.hasher)
+        }?;
 
         if let Some(expected_sha_256) = digest {
-            let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+            let asset_sha_256 = format!("{:x}", hasher.finalize());
             anyhow::ensure!(
                 asset_sha_256 == expected_sha_256,
                 "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
