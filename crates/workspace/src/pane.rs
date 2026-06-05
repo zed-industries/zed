@@ -2852,11 +2852,13 @@ impl Pane {
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
         let show_close_button = &settings.show_close_button;
+        let show_tab_indices = settings.tab_indices;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let tab_tooltip_content = item.tab_tooltip_content(cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
+        let tab_index = ix + 1;
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
@@ -3038,6 +3040,13 @@ impl Pane {
                 h_flex()
                     .id(("pane-tab-content", ix))
                     .gap_1()
+                    .when(show_tab_indices, |this| {
+                        this.child(
+                            Label::new(tab_index.to_string())
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
                     .children(if let Some(decorated_icon) = decorated_icon {
                         Some(decorated_icon.into_any_element())
                     } else if let Some(icon) = icon {

@@ -147,6 +147,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: false
     pub file_icons: Option<bool>,
+    /// Whether to show 1-based indices before tab titles.
+    ///
+    /// Default: false
+    pub tab_indices: Option<bool>,
     /// What to do after closing the current tab.
     ///
     /// Default: history
