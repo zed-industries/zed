@@ -71,12 +71,14 @@ use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModa
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{
     AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
+    ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use conversation_view::ConversationView;
+pub use conversation_view::open_markdown_in_workspace;
 pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
@@ -223,6 +225,8 @@ actions!(
         CopyThreadToClipboard,
         /// Loads a thread from the clipboard JSON for debugging.
         LoadThreadFromClipboard,
+        /// Reruns the rules-to-skills migration.
+        RerunRulesToSkillsMigration,
         /// Keeps the current suggestion or change.
         Keep,
         /// Rejects the current suggestion or change.
@@ -613,6 +617,22 @@ pub fn init(
     })
     .detach();
 
+    {
+        let fs = fs.clone();
+        cx.observe_new(move |workspace: &mut Workspace, _window, _cx| {
+            let fs = fs.clone();
+            workspace.register_action(
+                move |workspace: &mut Workspace,
+                      _: &RerunRulesToSkillsMigration,
+                      window: &mut Window,
+                      cx: &mut Context<Workspace>| {
+                    rerun_rules_to_skills_migration(workspace, fs.clone(), window, cx);
+                },
+            );
+        })
+        .detach();
+    }
+
     // Update command palette filter based on AI settings
     update_command_palette_filter(cx);
 
@@ -629,15 +649,10 @@ pub fn init(
     .detach();
 
     // Kick off the one-time migration of non-Default Rules to global
-    // Skills, deferred until server feature flags arrive.
-    //
-    // The migration itself is idempotent and no longer gated on a flag,
-    // but the deferral via `on_flags_ready` still matters: the migration
-    // writes to the on-disk `GlobalKeyValueStore`, which dispatches work
-    // on the `sqlezWorker` background thread. In `gpui::test` contexts,
-    // server flags are never received, so this callback never fires —
-    // which keeps that sqlite worker activity from racing with the
-    // `TestScheduler` and tripping its non-determinism panic.
+    // Skills. Test builds keep the old feature-flag deferral because
+    // server flags are never received in `gpui::test` contexts, avoiding
+    // sqlite worker activity that can race with the deterministic scheduler.
+    #[cfg(any(test, feature = "test-support"))]
     {
         let fs = fs.clone();
         cx.on_flags_ready(move |_, cx| {
@@ -645,8 +660,61 @@ pub fn init(
         })
         .detach();
     }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+    }
 
     maybe_backfill_editor_layout(fs, is_new_install, cx);
+}
+
+fn rerun_rules_to_skills_migration(
+    _workspace: &mut Workspace,
+    fs: Arc<dyn Fs>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace = cx.weak_entity();
+    window
+        .spawn(cx, async move |cx| {
+            let migration_task = cx.update(|_window, cx| {
+                rules_to_skills_migration::rerun_rules_to_skills_migration(fs, cx)
+            })?;
+            let result = migration_task.await?;
+            log::info!("Forced rules-to-skills migration result: {result:?}");
+
+            cx.update(|_window, cx| {
+                show_rules_to_skills_migration_toast(
+                    &workspace,
+                    "Rules-to-skills migration rerun. Please double-check AGENTS.md and Skills for missing or duplicated prompts.",
+                    cx,
+                );
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+}
+
+fn show_rules_to_skills_migration_toast(
+    workspace: &gpui::WeakEntity<Workspace>,
+    message: &'static str,
+    cx: &mut App,
+) {
+    if let Some(workspace) = workspace.upgrade() {
+        workspace.update(cx, |workspace, cx| {
+            struct RulesToSkillsMigrationRerunToast;
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<
+                        RulesToSkillsMigrationRerunToast,
+                    >(),
+                    message,
+                )
+                .autohide(),
+                cx,
+            );
+        });
+    }
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
@@ -860,6 +928,7 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
@@ -876,6 +945,7 @@ mod tests {
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
             tool_permissions: Default::default(),
+            sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),

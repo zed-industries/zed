@@ -275,7 +275,7 @@ Zed currently supports LLM-powered commit message generation.
 You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage}, or through the {#kb git::GenerateCommitMessage} keybinding.
 
 > Note that you need to have an LLM provider configured either via your own API keys or through Zed's hosted AI models.
-> Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
+> Visit [AI Quick Start](./ai/quick-start.md) to learn how to configure AI.
 
 You can specify your preferred model for this task by adding a `commit_message_model` field to your agent settings.
 See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
@@ -293,8 +293,20 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 
 To add custom commit instructions for the model, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
+To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
+
+```json [settings]
+{
+  "agent": {
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
+
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
-> See [the "Migrating to Skills" docs](./ai/rules.md#migrating-to-skills) in the Rules page for more information.
+> See [Migrating from Rules](./ai/instructions.md#migrating-from-rules) for more information.
 
 ## Git Integrations
 
@@ -334,7 +346,7 @@ You can configure multiple custom providers if you work with several self-hosted
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
-by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
+by creating [custom key bindings](./key-bindings.md#custom-key-bindings) for the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 

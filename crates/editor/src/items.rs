@@ -370,7 +370,7 @@ impl FollowableItem for Editor {
         };
         drop(buffer);
         self.set_selections_from_remote(vec![selection], None, window, cx);
-        self.request_autoscroll_remotely(Autoscroll::fit(), cx);
+        self.request_autoscroll_remotely(Autoscroll::focused(), cx);
     }
 }
 
@@ -767,7 +767,10 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(
+                description,
+                params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+            ))
         });
 
         // Whether the file was saved in the past but is now deleted.
@@ -783,7 +786,7 @@ impl Item for Editor {
             .child(
                 Label::new(util::truncate_and_trailoff(
                     &self.title(cx),
-                    MAX_TAB_TITLE_LEN,
+                    params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
                 ))
                 .color(label_color)
                 .when(params.preview, |this| this.italic())
@@ -1029,7 +1032,7 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.show_breadcrumbs && self.buffer().read(cx).is_singleton() {
+        if self.breadcrumbs_visible() && self.buffer().read(cx).is_singleton() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -1786,7 +1789,7 @@ impl SearchableItem for Editor {
         let text: Cow<_> = if text.len() == 1 {
             text.first().cloned().unwrap().into()
         } else {
-            let joined_chunks = text.join("");
+            let joined_chunks = text.concat();
             joined_chunks.into()
         };
 
@@ -1818,7 +1821,7 @@ impl SearchableItem for Editor {
                     let text: Cow<_> = if text.len() == 1 {
                         text.first().cloned().unwrap().into()
                     } else {
-                        let joined_chunks = text.join("");
+                        let joined_chunks = text.concat();
                         joined_chunks.into()
                     };
 

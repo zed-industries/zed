@@ -1,5 +1,8 @@
 -- This file is auto-generated. Do not modify it by hand.
 -- To regenerate, run `cargo xtask db dump-schema app --collab` from the Cloud repository.
+--
+-- WARNING: If you are modifying this file you MUST open a PR to the Cloud repository prior to merging any changes.
+-- If you are not Zed staff you MUST coordinate with a staff member to apply the schema migrations before this PR is merged.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
@@ -224,7 +227,8 @@ CREATE TABLE public.language_servers (
     id bigint NOT NULL,
     name character varying NOT NULL,
     capabilities text NOT NULL,
-    worktree_id bigint
+    worktree_id bigint,
+    language_name character varying
 );
 
 CREATE TABLE public.notification_kinds (
@@ -422,7 +426,7 @@ CREATE TABLE public.users (
     email_address character varying(255) DEFAULT NULL::character varying,
     connected_once boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
-    github_user_id integer NOT NULL,
+    github_user_id integer,
     metrics_id uuid DEFAULT gen_random_uuid() NOT NULL,
     accepted_tos_at timestamp without time zone,
     github_user_created_at timestamp without time zone,

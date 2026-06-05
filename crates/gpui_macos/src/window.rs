@@ -321,17 +321,15 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
 /// thread because it reads the active AppKit window and updates GPUI window state associated
 /// with Objective-C objects.
 pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
-    // SAFETY: The caller guarantees AppKit main-thread access. The class check ensures the
+    // SAFETY: The caller guarantees AppKit main-thread access. `is_gpui_window` ensures the
     // window has our WINDOW_STATE_IVAR before reading it.
     unsafe {
         let app = NSApplication::sharedApplication(nil);
         let key_window: id = msg_send![app, keyWindow];
         let main_window: id = msg_send![app, mainWindow];
-        let active_window = if !key_window.is_null()
-            && msg_send![key_window, isKindOfClass: WINDOW_CLASS]
-        {
+        let active_window = if !key_window.is_null() && is_gpui_window(key_window) {
             Some(key_window)
-        } else if !main_window.is_null() && msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+        } else if !main_window.is_null() && is_gpui_window(main_window) {
             Some(main_window)
         } else {
             None
@@ -1188,6 +1186,12 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_traffic_light_position(&self, position: Point<Pixels>) {
+        let mut state = self.0.lock();
+        state.traffic_light_position = Some(position);
+        state.move_traffic_light();
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.as_ref().lock().scale_factor()
     }
@@ -1820,6 +1824,14 @@ fn get_scale_factor(native_window: id) -> f32 {
     // it was rendered for real.
     // Regardless, attempt to avoid the issue here.
     if factor == 0.0 { 2. } else { factor }
+}
+
+/// Returns whether `window` is one of GPUI's managed windows.
+unsafe fn is_gpui_window(window: id) -> bool {
+    unsafe {
+        msg_send![window, isKindOfClass: WINDOW_CLASS]
+            || msg_send![window, isKindOfClass: PANEL_CLASS]
+    }
 }
 
 unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {

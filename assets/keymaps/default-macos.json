@@ -1117,7 +1117,7 @@
     },
   },
   {
-    "context": "GitCommit > Editor",
+    "context": "GitCommit > Editor && mode == auto_height",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
@@ -1208,6 +1208,12 @@
     "bindings": {
       "cmd-shift-a": "file_finder::ToggleSplitMenu",
       "cmd-shift-i": "file_finder::ToggleFilterMenu",
+    },
+  },
+  {
+    "context": "FileFinder > Picker > Editor && end_of_input",
+    "bindings": {
+      "right": "file_finder::OpenWithoutDismiss",
     },
   },
   {

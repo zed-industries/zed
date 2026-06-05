@@ -232,6 +232,11 @@ impl EntryViewState {
                     self.set_entry(index, Entry::CompletedPlan);
                 }
             }
+            AgentThreadEntry::ContextCompaction(_) => {
+                if !matches!(self.entries.get(index), Some(Entry::ContextCompaction)) {
+                    self.set_entry(index, Entry::ContextCompaction);
+                }
+            }
         };
     }
 
@@ -252,7 +257,8 @@ impl EntryViewState {
             match entry {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
-                | Entry::CompletedPlan => {}
+                | Entry::CompletedPlan
+                | Entry::ContextCompaction => {}
                 Entry::ToolCall(ToolCallEntry { content, .. }) => {
                     for view in content.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
@@ -321,6 +327,7 @@ pub enum Entry {
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
     CompletedPlan,
+    ContextCompaction,
 }
 
 impl Entry {
@@ -329,14 +336,17 @@ impl Entry {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
-            Self::CompletedPlan => None,
+            Self::CompletedPlan | Self::ContextCompaction => None,
         }
     }
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Self::AssistantMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
+            Self::AssistantMessage(_)
+            | Self::ToolCall(_)
+            | Self::CompletedPlan
+            | Self::ContextCompaction => None,
         }
     }
 
@@ -363,7 +373,10 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
+            Self::UserMessage(_)
+            | Self::ToolCall(_)
+            | Self::CompletedPlan
+            | Self::ContextCompaction => None,
         }
     }
 
@@ -378,7 +391,10 @@ impl Entry {
     pub fn has_content(&self) -> bool {
         match self {
             Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
-            Self::UserMessage(_) | Self::AssistantMessage(_) | Self::CompletedPlan => false,
+            Self::UserMessage(_)
+            | Self::AssistantMessage(_)
+            | Self::CompletedPlan
+            | Self::ContextCompaction => false,
         }
     }
 }
@@ -395,7 +411,7 @@ impl Focusable for Entry {
             Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
-            Self::CompletedPlan => cx.focus_handle(),
+            Self::CompletedPlan | Self::ContextCompaction => cx.focus_handle(),
         }
     }
 }

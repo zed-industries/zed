@@ -15,7 +15,7 @@ use project::Project;
 use project::git_store::RepositoryEvent;
 use ui::{
     Button, CommonAnimationExt as _, Divider, HighlightedLabel, IconButton, KeyBinding, ListItem,
-    ListItemSpacing, Tooltip, prelude::*,
+    ListItemSpacing, ListSubHeader, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::paths::PathExt;
@@ -76,10 +76,13 @@ impl WorktreePicker {
         cx: &mut Context<Self>,
     ) -> Self {
         let project_ref = project.read(cx);
-        let project_worktree_paths: HashSet<PathBuf> = project_ref
+
+        let active_worktree_paths: HashSet<PathBuf> = project_ref
             .visible_worktrees(cx)
             .map(|wt| wt.read(cx).abs_path().to_path_buf())
             .collect();
+
+        let project_worktree_paths = active_worktree_paths.clone();
 
         let has_multiple_repositories = project_ref.repositories(cx).len() > 1;
         let repository = project_ref.active_repository(cx);
@@ -115,6 +118,7 @@ impl WorktreePicker {
             focus_handle: cx.focus_handle(),
             show_footer,
             modifiers: Modifiers::default(),
+            active_worktree_paths,
             hovered_delete_index: None,
             deleting_worktree_paths: HashSet::default(),
         };
@@ -163,6 +167,7 @@ impl WorktreePicker {
                     picker.delegate.all_worktrees = all_worktrees;
                     picker.delegate.default_branch =
                         default_branch.and_then(|branch| RemoteBranchName::parse(&branch));
+                    picker.delegate.refresh_project_worktree_paths(window, cx);
                     picker.refresh(window, cx);
                 })?;
 
@@ -264,6 +269,7 @@ enum WorktreeEntry {
         default_branch: RemoteBranchName,
     },
     Separator,
+    SectionHeader(SharedString),
     Worktree {
         worktree: GitWorktree,
         positions: Vec<usize>,
@@ -303,6 +309,7 @@ struct WorktreePickerDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Vec<GitWorktree>,
     project_worktree_paths: HashSet<PathBuf>,
+    active_worktree_paths: HashSet<PathBuf>,
     selected_index: usize,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -459,6 +466,33 @@ impl WorktreePickerDelegate {
 
     fn can_delete_worktree(&self, worktree: &GitWorktree) -> bool {
         !worktree.is_main && !self.project_worktree_paths.contains(&worktree.path)
+    }
+
+    fn refresh_project_worktree_paths(&mut self, window: &mut Window, cx: &mut App) {
+        let mut paths = self.active_worktree_paths.clone();
+
+        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten()
+            && let Some(workspace) = self.workspace.upgrade()
+        {
+            let group_key = workspace.read(cx).project_group_key(cx);
+            if let Some(group_workspaces) = multi_workspace
+                .read(cx)
+                .workspaces_for_project_group(&group_key, cx)
+            {
+                for group_workspace in group_workspaces {
+                    for worktree in group_workspace
+                        .read(cx)
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                    {
+                        paths.insert(worktree.read(cx).abs_path().to_path_buf());
+                    }
+                }
+            }
+        }
+
+        self.project_worktree_paths = paths;
     }
 
     fn is_force_delete_hovering_index(&self, index: usize) -> bool {
@@ -689,7 +723,10 @@ impl PickerDelegate for WorktreePickerDelegate {
     }
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
-        !matches!(self.matches.get(ix), Some(WorktreeEntry::Separator))
+        !matches!(
+            self.matches.get(ix),
+            Some(WorktreeEntry::Separator | WorktreeEntry::SectionHeader(_))
+        )
     }
 
     fn update_matches(
@@ -730,24 +767,47 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .find(|wt| wt.is_main)
                     .map(|wt| wt.path.clone());
 
-                let mut sorted = repo_worktrees;
                 let project_paths = &self.project_worktree_paths;
 
-                sorted.sort_by(|a, b| {
-                    let a_is_current = project_paths.contains(&a.path);
-                    let b_is_current = project_paths.contains(&b.path);
-                    b_is_current.cmp(&a_is_current).then_with(|| {
-                        a.directory_name(main_worktree_path.as_deref())
-                            .cmp(&b.directory_name(main_worktree_path.as_deref()))
-                    })
-                });
+                let sort_by_name = |a: &GitWorktree, b: &GitWorktree| {
+                    a.directory_name(main_worktree_path.as_deref())
+                        .cmp(&b.directory_name(main_worktree_path.as_deref()))
+                };
+
+                let (mut open_here, mut others): (Vec<_>, Vec<_>) = repo_worktrees
+                    .into_iter()
+                    .partition(|worktree| project_paths.contains(&worktree.path));
+                open_here.sort_by(sort_by_name);
+                others.sort_by(sort_by_name);
 
                 matches.push(WorktreeEntry::Separator);
-                for worktree in sorted {
-                    matches.push(WorktreeEntry::Worktree {
-                        worktree,
-                        positions: Vec::new(),
-                    });
+
+                if open_here.len() > 1 {
+                    matches.push(WorktreeEntry::SectionHeader("This Window".into()));
+                    for worktree in open_here {
+                        matches.push(WorktreeEntry::Worktree {
+                            worktree,
+                            positions: Vec::new(),
+                        });
+                    }
+
+                    if !others.is_empty() {
+                        matches.push(WorktreeEntry::Separator);
+                    }
+
+                    for worktree in others {
+                        matches.push(WorktreeEntry::Worktree {
+                            worktree,
+                            positions: Vec::new(),
+                        });
+                    }
+                } else {
+                    for worktree in open_here.into_iter().chain(others) {
+                        matches.push(WorktreeEntry::Worktree {
+                            worktree,
+                            positions: Vec::new(),
+                        });
+                    }
                 }
             }
 
@@ -835,7 +895,7 @@ impl PickerDelegate for WorktreePickerDelegate {
         };
 
         match entry {
-            WorktreeEntry::Separator => return,
+            WorktreeEntry::Separator | WorktreeEntry::SectionHeader(_) => return,
             WorktreeEntry::CreateFromCurrentBranch => {
                 if self.creation_blocked_reason(cx).is_some() {
                     return;
@@ -882,7 +942,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                     return;
                 }
 
-                let is_current = self.project_worktree_paths.contains(&worktree.path);
+                let is_current = self.active_worktree_paths.contains(&worktree.path);
 
                 if !is_current {
                     if secondary {
@@ -971,6 +1031,11 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .child(Divider::horizontal())
                     .into_any_element(),
             ),
+            WorktreeEntry::SectionHeader(label) => Some(
+                ListSubHeader::new(label.clone())
+                    .inset(true)
+                    .into_any_element(),
+            ),
             WorktreeEntry::CreateFromCurrentBranch => {
                 let branch_label = if self.has_multiple_repositories {
                     "current branches".to_string()
@@ -1023,7 +1088,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 let path = worktree.path.compact().to_string_lossy().to_string();
                 let sha = worktree.sha.chars().take(7).collect::<String>();
 
-                let is_current = self.project_worktree_paths.contains(&worktree.path);
+                let is_current = self.active_worktree_paths.contains(&worktree.path);
                 let is_deleting = self.deleting_worktree_paths.contains(&worktree.path);
                 let can_delete = self.can_delete_worktree(worktree);
 
@@ -1553,13 +1618,13 @@ mod tests {
         let workspace = window_handle
             .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
             .unwrap();
-        let worktree_picker = window_handle
-            .update(cx, |_multi_workspace, window, cx| {
-                cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
-            })
-            .unwrap();
 
-        let cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        let worktree_picker = cx.update(|window, cx| {
+            cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
+        });
+
         cx.run_until_parked();
 
         (fs, worktree_picker, repository, worktree_path, cx)
@@ -1889,5 +1954,104 @@ mod tests {
             !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
             "worktree should be removed by explicit force delete"
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_worktrees_are_grouped_under_section_header(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    ".git": {},
+                    "file.txt": "buffer_text",
+                },
+                "worktrees": {},
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/root/project/.git").as_ref(),
+            &[("file.txt", "buffer_text".to_string())],
+            "deadbeef",
+        );
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let second_worktree_path = PathBuf::from(path!("/root/worktrees/second-wt"));
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "second-wt".to_string(),
+                        base_sha: Some("deadbeef".to_string()),
+                    },
+                    second_worktree_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        // Open the second worktree as a visible worktree of the active project so
+        // that two worktrees of the same repo are open in this window.
+        project
+            .update(cx, |project, cx| {
+                project.create_worktree(&second_worktree_path, true, cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let worktree_picker = cx.update(|window, cx| {
+            cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
+        });
+        cx.run_until_parked();
+
+        let project_path = PathBuf::from(path!("/root/project"));
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                let matches = &picker.delegate.matches;
+
+                let header_index = matches
+                    .iter()
+                    .position(|entry| {
+                        matches!(entry, WorktreeEntry::SectionHeader(label) if label.as_ref() == "This Window")
+                    })
+                    .expect("section header should be present when multiple worktrees are open");
+
+                let grouped_paths: Vec<&Path> = matches[header_index + 1..]
+                    .iter()
+                    .map_while(|entry| match entry {
+                        WorktreeEntry::Worktree { worktree, .. } => Some(worktree.path.as_path()),
+                        _ => None,
+                    })
+                    .collect();
+
+                assert!(
+                    grouped_paths.contains(&project_path.as_path()),
+                    "main worktree should be grouped under the header"
+                );
+                assert!(
+                    grouped_paths.contains(&second_worktree_path.as_path()),
+                    "second open worktree should be grouped under the header"
+                );
+            })
+        });
     }
 }
