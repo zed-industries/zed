@@ -386,7 +386,7 @@ impl TitleBar {
         let quality_label: SharedString = quality_label.into();
 
         h_flex()
-            .gap_0p5()
+            .gap_1()
             .pr_1p5()
             .child(
                 h_flex()
