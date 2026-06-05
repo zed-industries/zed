@@ -62,7 +62,7 @@ use theme_settings::ThemeSettings;
 use ui::{
     Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
     IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label, LabelSize, ListItem,
-    ListItemSpacing, ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate,
+    ListItemSpacing, ProjectEmptyState, ScrollableHandle, Scrollbars, StickyCandidate,
     Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
@@ -7131,16 +7131,9 @@ impl Render for ProjectPanel {
                 )
                 .custom_scrollbars(
                     {
-                        let mut scrollbars =
-                            Scrollbars::for_settings::<ProjectPanelScrollbarProxy>()
-                                .tracked_scroll_handle(&self.scroll_handle);
-                        if horizontal_scroll {
-                            scrollbars = scrollbars.with_track_along(
-                                ScrollAxes::Horizontal,
-                                cx.theme().colors().panel_background,
-                            );
-                        }
-                        scrollbars.notify_content()
+                        Scrollbars::for_settings::<ProjectPanelScrollbarProxy>()
+                            .tracked_scroll_handle(&self.scroll_handle)
+                            .notify_content()
                     },
                     window,
                     cx,
