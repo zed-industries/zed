@@ -2674,7 +2674,6 @@ mod tests {
 
         let recent_projects = multi_workspace
             .update(cx, {
-                let remote_key = remote_key.clone();
                 move |multi_workspace, window, cx| {
                     multi_workspace.test_add_project_group(ProjectGroup {
                         key: remote_key.clone(),
