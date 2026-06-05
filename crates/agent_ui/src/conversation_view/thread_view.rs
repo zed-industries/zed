@@ -12,7 +12,6 @@ use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
 use agent_settings::UserAgentsMd;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use feature_flags::AcpBetaFeatureFlag;
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -1067,6 +1066,7 @@ impl ThreadView {
             MessageEditorEvent::LostFocus => {}
             MessageEditorEvent::SlashAutocompleteOpened => {}
             MessageEditorEvent::InputAttempted { .. } => {}
+            MessageEditorEvent::Edited => {}
         }
     }
 
@@ -1207,6 +1207,7 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Edited) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
                 path,
@@ -4163,18 +4164,14 @@ impl ThreadView {
         let usage = thread.token_usage()?;
         let show_split = self.supports_split_token_display(cx);
 
-        let cost_label = if cx.has_flag::<AcpBetaFeatureFlag>() {
-            thread.cost().map(|cost| {
-                let precision = if cost.amount > 0.0 && cost.amount < 0.01 {
-                    4
-                } else {
-                    2
-                };
-                format!("{:.prec$} {}", cost.amount, cost.currency, prec = precision)
-            })
-        } else {
-            None
-        };
+        let cost_label = thread.cost().map(|cost| {
+            let precision = if cost.amount > 0.0 && cost.amount < 0.01 {
+                4
+            } else {
+                2
+            };
+            format!("{:.prec$} {}", cost.amount, cost.currency, prec = precision)
+        });
 
         let progress_color = |ratio: f32| -> Hsla {
             if ratio >= 0.85 {

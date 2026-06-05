@@ -2829,6 +2829,10 @@ mod test {
             ˇ»line five"},
             Mode::HelixNormal,
         );
+
+        cx.set_state("oneˇ\ntwo\nthree", Mode::HelixNormal);
+        cx.simulate_keystrokes("d u x");
+        cx.assert_state("«one\nˇ»two\nthree", Mode::HelixNormal);
     }
 
     #[gpui::test]
