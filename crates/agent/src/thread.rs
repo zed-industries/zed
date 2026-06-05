@@ -2637,18 +2637,17 @@ impl Thread {
         let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
         event_stream.send_context_compaction(compaction_id.clone());
 
-        let compaction_output = futures::select! {
-            result = model.compact(request.clone(), cx).fuse() => result,
-            _ = cancellation_rx.changed().fuse() => {
-                if *cancellation_rx.borrow() {
-                    log::debug!("Compaction cancelled before request started");
-                    return Ok(ControlFlow::Break(()));
+        if let Some(compaction) = model.compact(request.clone(), cx) {
+            let compaction_output = futures::select! {
+                result = compaction.fuse() => result,
+                _ = cancellation_rx.changed().fuse() => {
+                    if *cancellation_rx.borrow() {
+                        log::debug!("Compaction cancelled before request started");
+                        return Ok(ControlFlow::Break(()));
+                    }
+                    return Ok(ControlFlow::Continue(()));
                 }
-                return Ok(ControlFlow::Continue(()));
-            }
-        }?;
-
-        if let Some(compaction_output) = compaction_output {
+            }?;
             if compaction_output.output.is_empty() {
                 log::warn!("Compaction produced an empty output");
                 return Err(anyhow::anyhow!("Compaction produced an empty output"));

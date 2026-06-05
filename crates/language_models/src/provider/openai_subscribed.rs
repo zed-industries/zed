@@ -569,14 +569,13 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         &self,
         mut request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<Option<LanguageModelCompactionOutput>, LanguageModelCompletionError>,
+    ) -> Option<
+        BoxFuture<'static, Result<LanguageModelCompactionOutput, LanguageModelCompletionError>>,
     > {
         if !self.model.supports_native_compaction()
             || native_compaction_unsupported(&self.telemetry_id())
         {
-            return async { Ok(None) }.boxed();
+            return None;
         }
 
         if !self.model.supports_priority() {
@@ -656,13 +655,13 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     )
                     .await
                     {
-                        Ok(response) => Ok(Some(LanguageModelCompactionOutput {
+                        Ok(response) => Ok(LanguageModelCompactionOutput {
                             output: response.output,
                             token_usage: response.usage.map(token_usage_from_response_usage),
-                        })),
+                        }),
                         Err(error) if is_unsupported_compaction_error(&error) => {
                             mark_native_compaction_unsupported(&model_telemetry_id);
-                            Ok(None)
+                            Err(LanguageModelCompletionError::from(error))
                         }
                         Err(error) => Err(LanguageModelCompletionError::from(error)),
                     }
@@ -670,7 +669,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 .await
         });
 
-        async move { future.await }.boxed()
+        Some(async move { future.await }.boxed())
     }
 }
 

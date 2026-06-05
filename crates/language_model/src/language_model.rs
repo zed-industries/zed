@@ -137,11 +137,10 @@ pub trait LanguageModel: Send + Sync {
         &self,
         _request: LanguageModelRequest,
         _cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<Option<LanguageModelCompactionOutput>, LanguageModelCompletionError>,
+    ) -> Option<
+        BoxFuture<'static, Result<LanguageModelCompactionOutput, LanguageModelCompletionError>>,
     > {
-        async { Ok(None) }.boxed()
+        None
     }
 
     fn stream_completion_text(

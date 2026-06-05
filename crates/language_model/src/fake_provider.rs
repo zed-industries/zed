@@ -343,13 +343,12 @@ impl LanguageModel for FakeLanguageModel {
         &self,
         request: LanguageModelRequest,
         _: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<Option<LanguageModelCompactionOutput>, LanguageModelCompletionError>,
+    ) -> Option<
+        BoxFuture<'static, Result<LanguageModelCompactionOutput, LanguageModelCompletionError>>,
     > {
+        let output = self.compaction_output.lock().clone()?;
         self.compaction_requests.lock().push(request);
-        let output = self.compaction_output.lock().clone();
-        async move { Ok(output) }.boxed()
+        Some(async move { Ok(output) }.boxed())
     }
 
     fn stream_completion(
