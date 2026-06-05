@@ -1504,9 +1504,15 @@ impl MarkdownElement {
             };
             self.push_metadata_cell(builder, content_range, markdown_end, row_index, false, cx, {
                 let value = &row.value;
+                let raw_text_style = self.style.code_block.text.to_owned();
                 move |builder| match value {
-                    MetadataValue::Scalar(text) | MetadataValue::Raw(text) => {
+                    MetadataValue::Scalar(text) => {
                         builder.push_text(text, value_range);
+                    }
+                    MetadataValue::Raw(text) => {
+                        builder.push_text_style(raw_text_style);
+                        builder.push_text(text, value_range);
+                        builder.pop_text_style();
                     }
                     MetadataValue::List(items) => {
                         builder.push_image_child(
