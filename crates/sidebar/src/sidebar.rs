@@ -2391,18 +2391,10 @@ impl Sidebar {
             .child(gradient_overlay())
             .child(
                 h_flex()
+                    .gap_px()
+                    .pr_1p5()
                     .child(gradient_overlay())
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .child(self.render_new_thread_button(
-                        ix,
-                        id_prefix,
-                        key,
-                        has_active_draft,
-                        &group_name,
-                        cx,
-                    ))
+                    .child(self.render_new_thread_button(ix, id_prefix, key, &group_name, cx))
                     .child(self.render_project_header_ellipsis_menu(
                         ix,
                         id_prefix,
@@ -2411,7 +2403,10 @@ impl Sidebar {
                         has_threads,
                         &group_name,
                         cx,
-                    )),
+                    ))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    }),
             )
             .on_mouse_down(gpui::MouseButton::Right, {
                 let menu_handle = self
