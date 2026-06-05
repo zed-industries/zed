@@ -1,12 +1,13 @@
 use agent_skills::{MAX_SKILL_DESCRIPTION_LEN, Skill, SkillIndex, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{Action as _, App, ClipboardItem, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, ClipboardItem, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
 
 use std::borrow::Cow;
 
+use crate::pages::SkillCreatorOpenMode;
 use crate::{SettingsUiFile, SettingsWindow};
 
 /// Skills shown on the Skills page for the currently selected settings file:
@@ -63,8 +64,6 @@ pub(crate) fn render_skills_setup_page(
                     _ => "No skills available for this context.",
                 };
 
-                let original_window = settings_window.original_window;
-
                 this.px_8().items_center().justify_center().child(
                     v_flex()
                         .items_center()
@@ -74,46 +73,53 @@ pub(crate) fn render_skills_setup_page(
                             Button::new("open-skill-creator", "Create a Skill")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Outlined)
-                                .end_icon(
-                                    Icon::new(IconName::ArrowUpRight)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .on_click(cx.listener(move |_this, _event, window, cx| {
-                                    let Some(original_window) = original_window else {
-                                        return;
-                                    };
-                                    original_window
-                                        .update(cx, |_workspace, original_window, cx| {
-                                            original_window.dispatch_action(
-                                                zed_actions::assistant::OpenSkillCreator
-                                                    .boxed_clone(),
-                                                cx,
-                                            );
-                                        })
-                                        .log_err();
-                                    window.remove_window();
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.open_skill_creator_sub_page(
+                                        SkillCreatorOpenMode::Form,
+                                        window,
+                                        cx,
+                                    );
                                 })),
                         ),
                 )
             } else {
-                this.track_scroll(scroll_handle)
-                    .overflow_y_scroll()
-                    .children(skills.iter().enumerate().flat_map(|(i, skill)| {
-                        let mut elements: Vec<AnyElement> =
-                            vec![render_skill_row(skill, settings_window, cx)];
+                this.child(
+                    h_flex().px_8().pb_2().justify_end().child(
+                        Button::new("open-skill-creator", "Create Skill")
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::Outlined)
+                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                this.open_skill_creator_sub_page(
+                                    SkillCreatorOpenMode::Form,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
+                )
+                .child(
+                    v_flex()
+                        .id("skills-list")
+                        .flex_1()
+                        .min_h_0()
+                        .track_scroll(scroll_handle)
+                        .overflow_y_scroll()
+                        .children(skills.iter().enumerate().flat_map(|(i, skill)| {
+                            let mut elements: Vec<AnyElement> =
+                                vec![render_skill_row(skill, settings_window, cx)];
 
-                        if i + 1 < skills.len() {
-                            elements.push(
-                                div()
-                                    .px_8()
-                                    .child(Divider::horizontal().flex_grow_1())
-                                    .into_any_element(),
-                            );
-                        }
+                            if i + 1 < skills.len() {
+                                elements.push(
+                                    div()
+                                        .px_8()
+                                        .child(Divider::horizontal().flex_grow_1())
+                                        .into_any_element(),
+                                );
+                            }
 
-                        elements
-                    }))
+                            elements
+                        })),
+                )
             }
         })
         .into_any_element()

@@ -420,6 +420,13 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenSettings, cx| {
         open_settings_editor(None, None, None, cx);
     });
+    cx.on_action(|_: &zed_actions::assistant::OpenSkillCreator, cx| {
+        open_skill_creator(pages::SkillCreatorOpenMode::Form, None, cx);
+    });
+    cx.on_action(|_: &zed_actions::assistant::CreateSkillFromUrl, cx| {
+        let initial_url = pages::skill_url_from_clipboard(cx);
+        open_skill_creator(pages::SkillCreatorOpenMode::Url { initial_url }, None, cx);
+    });
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
@@ -449,7 +456,24 @@ pub fn init(cx: &mut App) {
                             .then_some(tree.read(cx).id())
                     });
                 open_settings_editor(None, target_worktree_id, window_handle, cx);
-            });
+            })
+            .register_action(
+                |_, _: &zed_actions::assistant::OpenSkillCreator, window, cx| {
+                    let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                    open_skill_creator(pages::SkillCreatorOpenMode::Form, window_handle, cx);
+                },
+            )
+            .register_action(
+                |_, _: &zed_actions::assistant::CreateSkillFromUrl, window, cx| {
+                    let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                    let initial_url = pages::skill_url_from_clipboard(cx);
+                    open_skill_creator(
+                        pages::SkillCreatorOpenMode::Url { initial_url },
+                        window_handle,
+                        cx,
+                    );
+                },
+            );
     })
     .detach();
 }
@@ -635,8 +659,6 @@ fn open_settings_editor_at_target(
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
-    telemetry::event!("Settings Viewed");
-
     fn select_target_file(
         target_file: SettingsFileTarget,
         settings_window: &mut SettingsWindow,
@@ -699,6 +721,40 @@ fn open_settings_editor_at_target(
         cx.notify();
     }
 
+    let path = path.map(ToOwned::to_owned);
+    open_settings_editor_with(workspace_handle, cx, move |settings_window, window, cx| {
+        if let Some(target_file) = target_file {
+            select_target_file(target_file, settings_window, window, cx);
+        }
+        if let Some(path) = path {
+            open_path(&path, settings_window, window, cx);
+        } else if target_file.is_some() {
+            cx.notify();
+        }
+    });
+}
+
+/// Opens the settings window at the Skills page with the skill creator
+/// sub-page on top, so dismissing the creator lands on the skills list.
+pub fn open_skill_creator(
+    open_mode: pages::SkillCreatorOpenMode,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
+    cx: &mut App,
+) {
+    open_settings_editor_with(workspace_handle, cx, |settings_window, window, cx| {
+        settings_window.navigate_to_skill_creator(open_mode, window, cx);
+    });
+}
+
+/// Opens the settings window (or activates the existing one) and runs
+/// `callback` with it once it's available.
+fn open_settings_editor_with(
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
+    cx: &mut App,
+    callback: impl FnOnce(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) + 'static,
+) {
+    telemetry::event!("Settings Viewed");
+
     let existing_window = cx
         .windows()
         .into_iter()
@@ -710,21 +766,13 @@ fn open_settings_editor_at_target(
                 settings_window.original_window = workspace_handle;
 
                 window.activate_window();
-                if let Some(target_file) = target_file {
-                    select_target_file(target_file, settings_window, window, cx);
-                }
-                if let Some(path) = path {
-                    open_path(path, settings_window, window, cx);
-                } else if target_file.is_some() {
-                    cx.notify();
-                }
+                callback(settings_window, window, cx);
             })
             .ok();
         return;
     }
 
     // We have to defer this to get the workspace off the stack.
-    let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
         let current_rem_size: f32 = theme_settings::ThemeSettings::get_global(cx)
             .ui_font_size(cx)
@@ -773,12 +821,7 @@ fn open_settings_editor_at_target(
                 let settings_window =
                     cx.new(|cx| SettingsWindow::new(workspace_handle, window, cx));
                 settings_window.update(cx, |settings_window, cx| {
-                    if let Some(target_file) = target_file {
-                        select_target_file(target_file, settings_window, window, cx);
-                    }
-                    if let Some(path) = path {
-                        open_path(&path, settings_window, window, cx);
-                    }
+                    callback(settings_window, window, cx);
                 });
 
                 settings_window
@@ -845,6 +888,9 @@ pub struct SettingsWindow {
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
+    /// State backing the skill creator sub-page, created when the sub-page is
+    /// pushed and dropped when it is popped.
+    skill_creator_page: Option<(Entity<pages::SkillCreatorPage>, Subscription)>,
 }
 
 struct SearchDocument {
@@ -1472,6 +1518,7 @@ impl PartialEq for SettingItem {
 #[derive(Clone, PartialEq, Default)]
 enum SubPageType {
     Language,
+    SkillCreator,
     #[default]
     Other,
 }
@@ -1819,6 +1866,7 @@ impl SettingsWindow {
             list_state,
             last_copied_link_path: None,
             last_copied_skill_directory_path: None,
+            skill_creator_page: None,
         };
 
         this.fetch_files(window, cx);
@@ -3973,6 +4021,99 @@ impl SettingsWindow {
         self.push_sub_page(sub_page_link, section_header.into(), window, cx);
     }
 
+    pub(crate) fn skill_creator_page(&self) -> Option<Entity<pages::SkillCreatorPage>> {
+        self.skill_creator_page
+            .as_ref()
+            .map(|(page, _)| page.clone())
+    }
+
+    /// Push the skill creator as a sub-page, creating its backing state. If
+    /// the creator is already the active sub-page, the open mode is applied
+    /// to the existing form instead (e.g. a second URL import retargets it).
+    pub fn open_skill_creator_sub_page(
+        &mut self,
+        open_mode: pages::SkillCreatorOpenMode,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let creator_is_active_sub_page = self
+            .sub_page_stack
+            .last()
+            .is_some_and(|sub_page| sub_page.link.r#type == SubPageType::SkillCreator);
+        if creator_is_active_sub_page && let Some((page, _)) = &self.skill_creator_page {
+            let page = page.clone();
+            page.update(cx, |page, cx| page.apply_open_mode(open_mode, window, cx));
+            return;
+        }
+
+        let page = cx.new(|cx| {
+            pages::SkillCreatorPage::new(self.original_window, &self.current_file, window, cx)
+        });
+        let subscription =
+            cx.subscribe_in(
+                &page,
+                window,
+                |this, _page, event: &pages::SkillCreatorEvent, window, cx| match event {
+                    pages::SkillCreatorEvent::Dismissed | pages::SkillCreatorEvent::Saved => {
+                        if this.sub_page_stack.last().is_some_and(|sub_page| {
+                            sub_page.link.r#type == SubPageType::SkillCreator
+                        }) {
+                            this.pop_sub_page(window, cx);
+                        }
+                    }
+                },
+            );
+        self.skill_creator_page = Some((page.clone(), subscription));
+
+        let sub_page_link = SubPageLink {
+            title: "Create Skill".into(),
+            r#type: SubPageType::SkillCreator,
+            description: None,
+            json_path: None,
+            in_json: false,
+            files: USER | PROJECT,
+            render: pages::render_skill_creator_page,
+        };
+        self.push_sub_page(sub_page_link, "Agent".into(), window, cx);
+
+        page.update(cx, |page, cx| {
+            page.apply_open_mode(open_mode, window, cx);
+        });
+        // `push_sub_page` moves focus to the content container; put it on the
+        // form's first field instead.
+        let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
+        window.focus(&name_editor_focus_handle, cx);
+    }
+
+    /// Navigate to the Skills page (so the creator's back button lands on
+    /// the skills list) and open the skill creator sub-page on top of it.
+    pub fn navigate_to_skill_creator(
+        &mut self,
+        open_mode: pages::SkillCreatorOpenMode,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        self.sub_page_stack.clear();
+        let skills_page_index = self.pages.iter().position(|page| {
+            page.items.iter().any(|item| {
+                matches!(
+                    item,
+                    SettingsPageItem::SubPageLink(link) if link.json_path == Some("agent.skills")
+                )
+            })
+        });
+        if let Some(page_index) = skills_page_index
+            && let Some(navbar_entry_index) = self
+                .navbar_entries
+                .iter()
+                .position(|entry| entry.page_index == page_index && entry.is_root)
+        {
+            self.open_and_scroll_to_navbar_entry(navbar_entry_index, None, false, window, cx);
+        }
+        self.navigate_to_sub_page("agent.skills", window, cx);
+        self.open_skill_creator_sub_page(open_mode, window, cx);
+    }
+
     /// Navigate to a sub-page by its json_path.
     /// Returns true if the sub-page was found and pushed, false otherwise.
     pub fn navigate_to_sub_page(
@@ -4046,7 +4187,11 @@ impl SettingsWindow {
 
     fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.regex_validation_error = None;
-        self.sub_page_stack.pop();
+        if let Some(popped) = self.sub_page_stack.pop()
+            && popped.link.r#type == SubPageType::SkillCreator
+        {
+            self.skill_creator_page = None;
+        }
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -4202,7 +4347,7 @@ impl Render for SettingsWindow {
     }
 }
 
-fn all_projects(
+pub(crate) fn all_projects(
     window: Option<&WindowHandle<MultiWorkspace>>,
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
@@ -4857,6 +5002,7 @@ pub mod test {
                 regex_validation_error: None,
                 last_copied_link_path: None,
                 last_copied_skill_directory_path: None,
+                skill_creator_page: None,
             }
         }
     }
@@ -4985,6 +5131,7 @@ pub mod test {
             regex_validation_error: None,
             last_copied_link_path: None,
             last_copied_skill_directory_path: None,
+            skill_creator_page: None,
         };
 
         settings_window.build_filter_table();

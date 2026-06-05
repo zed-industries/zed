@@ -1,35 +1,30 @@
 use agent_skills::{
     AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE,
-    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, global_skills_dir, parse_skill_file_content,
-    slugify_skill_name, validate_description, validate_name,
+    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, SkillsUpdatedHook, global_skills_dir,
+    parse_skill_file_content, slugify_skill_name, validate_description, validate_name,
 };
 use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{
-    App, Bounds, Entity, FocusHandle, Focusable, ScrollHandle, Subscription, Task, TextStyle,
-    Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions, actions, point,
+    App, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Task, TextStyle,
+    WindowHandle, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
-use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
+use language::{Buffer, language_settings::SoftWrap};
 use notifications::status_toast::StatusToast;
-use platform_title_bar::PlatformTitleBar;
-use release_channel::ReleaseChannel;
 use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use theme_settings::ThemeSettings;
-use ui::{
-    Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
-    WithScrollbar, prelude::*,
-};
+use ui::{Banner, Divider, SwitchField, WithScrollbar, prelude::*};
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
-use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
-use worktree::WorktreeId;
+use workspace::MultiWorkspace;
+
+use crate::{SettingsUiFile, SettingsWindow, all_projects};
 
 actions!(
     skill_creator,
@@ -40,14 +35,11 @@ const URL_FIELD_TAB_INDEX: isize = 1;
 const NAME_FIELD_TAB_INDEX: isize = 2;
 const DESCRIPTION_FIELD_TAB_INDEX: isize = 3;
 const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
-const SCOPE_FIELD_TAB_INDEX: isize = 5;
-const BODY_FIELD_TAB_INDEX: isize = 6;
-const CANCEL_BUTTON_TAB_INDEX: isize = 7;
-const SAVE_BUTTON_TAB_INDEX: isize = 8;
+const BODY_FIELD_TAB_INDEX: isize = 5;
+const CANCEL_BUTTON_TAB_INDEX: isize = 6;
+const SAVE_BUTTON_TAB_INDEX: isize = 7;
 const URL_IMPORT_DEBOUNCE: Duration = Duration::from_millis(100);
 const URL_IMPORT_ERROR_BODY_MAX_LEN: usize = 2048;
-
-pub fn init(_cx: &mut App) {}
 
 #[derive(Clone, Debug, Default)]
 pub enum SkillCreatorOpenMode {
@@ -63,6 +55,14 @@ pub enum SkillCreatorOpenMode {
     Install {
         content: String,
     },
+}
+
+/// Events emitted by the skill creator page so the surrounding
+/// [`SettingsWindow`] can pop the sub-page when the form is dismissed or a
+/// skill is saved.
+pub(crate) enum SkillCreatorEvent {
+    Dismissed,
+    Saved,
 }
 
 #[derive(Clone, Debug)]
@@ -84,22 +84,12 @@ struct ImportedSkill {
 enum ScopeChoice {
     Global,
     Project {
-        worktree_id: WorktreeId,
         root_name: SharedString,
         abs_path: Arc<std::path::Path>,
     },
 }
 
 impl ScopeChoice {
-    fn key(&self) -> SharedString {
-        match self {
-            ScopeChoice::Global => "global".into(),
-            ScopeChoice::Project { worktree_id, .. } => {
-                SharedString::from(format!("project-{}", worktree_id.to_usize()))
-            }
-        }
-    }
-
     /// Absolute path of the `.agents/skills` directory this scope writes to.
     fn skills_dir(&self) -> PathBuf {
         match self {
@@ -111,135 +101,64 @@ impl ScopeChoice {
     }
 }
 
-/// Collect the user-visible worktrees from the originating workspace and
-/// turn them into project-scope choices. Returns an empty `Vec` if the
-/// workspace can't be read (e.g. it was already dropped).
-fn project_scopes_from_workspace(
-    workspace: &Option<WeakEntity<Workspace>>,
+/// Resolve the scope the new skill will be saved to from the settings file
+/// selected in the settings window: a project settings file maps to that
+/// project's worktree, anything else maps to the global scope.
+fn scope_for_settings_file(
+    current_file: &SettingsUiFile,
+    original_window: Option<&WindowHandle<MultiWorkspace>>,
     cx: &App,
-) -> Vec<ScopeChoice> {
-    let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) else {
-        return Vec::new();
-    };
-    let workspace = workspace.read(cx);
-    let root_paths = workspace.root_paths(cx);
-    workspace
-        .visible_worktrees(cx)
-        .zip(root_paths)
-        .map(|(worktree, abs_path)| {
-            let worktree = worktree.read(cx);
-            ScopeChoice::Project {
-                worktree_id: worktree.id(),
-                root_name: SharedString::from(worktree.root_name_str().to_string()),
-                abs_path,
+) -> ScopeChoice {
+    if let SettingsUiFile::Project((worktree_id, _)) = current_file {
+        for project in all_projects(original_window, cx) {
+            if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id, cx) {
+                let worktree = worktree.read(cx);
+                return ScopeChoice::Project {
+                    root_name: SharedString::from(worktree.root_name_str().to_string()),
+                    abs_path: worktree.abs_path(),
+                };
             }
-        })
-        .collect()
-}
-
-/// Open the skills library window. If one is already open, brings it to the
-/// foreground.
-pub fn open_skill_creator(
-    workspace: Option<WeakEntity<Workspace>>,
-    language_registry: Arc<LanguageRegistry>,
-    fs: Arc<dyn Fs>,
-    open_mode: SkillCreatorOpenMode,
-    on_saved: Option<Rc<dyn Fn(&mut App)>>,
-    cx: &mut App,
-) -> Task<Result<WindowHandle<SkillCreator>>> {
-    cx.spawn(async move |cx| {
-        let open_mode_for_existing = open_mode.clone();
-        let on_saved_for_existing = on_saved.clone();
-        let existing = cx.update(|cx| {
-            let handle = cx
-                .windows()
-                .into_iter()
-                .find_map(|window| window.downcast::<SkillCreator>());
-            if let Some(handle) = handle {
-                handle
-                    .update(cx, |this, window, cx| {
-                        window.activate_window();
-                        this.on_saved = on_saved_for_existing.clone();
-                        this.apply_open_mode(open_mode_for_existing.clone(), window, cx);
-                    })
-                    .ok();
-                Some(handle)
-            } else {
-                None
-            }
-        });
-        if let Some(window) = existing {
-            return Ok(window);
         }
-
-        let window_size = gpui::size(px(900.), px(1050.));
-        // Allow the window to be resized noticeably smaller than the
-        // default so that the form scrolls inside the available space.
-        let window_min_size = gpui::size(px(500.), px(420.));
-
-        cx.update(|cx| {
-            let app_id = ReleaseChannel::global(cx).app_id();
-            let http_client = cx.http_client();
-            let bounds = Bounds::centered(None, window_size, cx);
-            let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
-                Ok(val) if val == "server" => gpui::WindowDecorations::Server,
-                Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-                _ => match WorkspaceSettings::get_global(cx).window_decorations {
-                    settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
-                    settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
-                },
-            };
-            cx.open_window(
-                WindowOptions {
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("New Skill".into()),
-                        appears_transparent: true,
-                        traffic_light_position: Some(point(px(12.0), px(12.0))),
-                    }),
-                    app_id: Some(app_id.to_owned()),
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_background: cx.theme().window_background_appearance(),
-                    window_decorations: Some(window_decorations),
-                    window_min_size: Some(window_min_size),
-                    kind: gpui::WindowKind::Floating,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let skill_creator = cx.new(|cx| {
-                        SkillCreator::new(
-                            workspace,
-                            language_registry,
-                            fs,
-                            http_client,
-                            on_saved,
-                            window,
-                            cx,
-                        )
-                    });
-                    skill_creator.update(cx, |this, cx| {
-                        this.apply_open_mode(open_mode, window, cx);
-                    });
-                    skill_creator
-                },
-            )
-        })
-    })
+    }
+    ScopeChoice::Global
 }
 
-pub struct SkillCreator {
+/// Returns the clipboard contents when they look like a GitHub skill URL,
+/// used to pre-fill the URL import field.
+pub(crate) fn skill_url_from_clipboard(cx: &App) -> Option<String> {
+    cx.read_from_clipboard()
+        .and_then(|clipboard| clipboard.text())
+        .map(|text| text.trim().to_string())
+        .filter(|text| is_supported_skill_url(text))
+}
+
+/// Renders the skill creator sub-page pushed by
+/// [`SettingsWindow::open_skill_creator_sub_page`].
+pub(crate) fn render_skill_creator_page(
+    settings_window: &SettingsWindow,
+    _scroll_handle: &ScrollHandle,
+    _window: &mut Window,
+    _cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let Some(page) = settings_window.skill_creator_page() else {
+        return gpui::Empty.into_any_element();
+    };
+    page.into_any_element()
+}
+
+pub struct SkillCreatorPage {
     focus_handle: FocusHandle,
-    title_bar: Option<Entity<PlatformTitleBar>>,
-    workspace: Option<WeakEntity<Workspace>>,
+    original_window: Option<WindowHandle<MultiWorkspace>>,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
-    on_saved: Option<Rc<dyn Fn(&mut App)>>,
     url_editor: Entity<InputField>,
     name_editor: Entity<InputField>,
     description_editor: Entity<InputField>,
     body_editor: Entity<Editor>,
     description_length: usize,
-    scopes: Vec<ScopeChoice>,
-    selected_scope_key: SharedString,
+    /// Where the skill will be saved, derived from the settings file selected
+    /// in the settings window when the sub-page was opened.
+    scope: ScopeChoice,
     disable_model_invocation: bool,
     name_error: Option<&'static str>,
     description_error: Option<&'static str>,
@@ -247,14 +166,13 @@ pub struct SkillCreator {
     save_error: Option<SharedString>,
     url_import_status: UrlImportStatus,
     saving: bool,
-    // Held so that dropping the entity (e.g. the window closing) cancels
-    // an in-flight save. Detaching the task instead would let
-    // `write_skill_to_disk` complete after the UI is gone, silently
-    // creating a SKILL.md on disk with no toast and no error feedback.
+    /// Holds the in-flight save so navigating away cancels the
+    /// pending write instead of leaving a detached task running with no
+    /// way to report success or failure.
     save_task: Option<Task<()>>,
-    // Held so replacing it or switching back to the form cancels a pending debounced import.
+    /// Debounce timer between typing in the URL field and kicking off a fetch.
     url_import_debounce_task: Option<Task<()>>,
-    // Held so replacing it or switching back to the form cancels an in-flight import.
+    /// In-flight URL fetch; dropping it cancels the request.
     url_import_task: Option<Task<()>>,
     scroll_handle: ScrollHandle,
     cancel_button_focus_handle: FocusHandle,
@@ -262,29 +180,22 @@ pub struct SkillCreator {
     _subscriptions: Vec<Subscription>,
 }
 
-impl SkillCreator {
-    fn new(
-        workspace: Option<WeakEntity<Workspace>>,
-        language_registry: Arc<LanguageRegistry>,
-        fs: Arc<dyn Fs>,
-        http_client: Arc<dyn HttpClient>,
-        on_saved: Option<Rc<dyn Fn(&mut App)>>,
+impl EventEmitter<SkillCreatorEvent> for SkillCreatorPage {}
+
+impl SkillCreatorPage {
+    pub(crate) fn new(
+        original_window: Option<WindowHandle<MultiWorkspace>>,
+        current_file: &SettingsUiFile,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
-        let project_scopes = project_scopes_from_workspace(&workspace, cx);
+        let app_state = workspace::AppState::global(cx);
+        let fs = app_state.fs.clone();
+        let language_registry = app_state.languages.clone();
+        let http_client = cx.http_client();
 
-        // Default to first project scope (project-level) when available;
-        // otherwise fall back to Global.
-        let mut scopes: Vec<ScopeChoice> = Vec::with_capacity(project_scopes.len() + 1);
-        scopes.push(ScopeChoice::Global);
-        scopes.extend(project_scopes);
-        let selected_scope_key = scopes
-            .iter()
-            .find(|scope| matches!(scope, ScopeChoice::Project { .. }))
-            .map(|scope| scope.key())
-            .unwrap_or_else(|| ScopeChoice::Global.key());
+        let focus_handle = cx.focus_handle();
+        let scope = scope_for_settings_file(current_file, original_window.as_ref(), cx);
 
         let url_editor = cx.new(|cx| {
             InputField::new(
@@ -303,7 +214,7 @@ impl SkillCreator {
                 .tab_stop(true)
         });
         // Focus the name field on open. Without this, no element inside
-        // the window has focus, so dispatching the `Cancel` action from
+        // the form has focus, so dispatching the `Cancel` action from
         // the Cancel button (which walks the focused element's dispatch
         // path looking for `on_action` handlers) silently does nothing
         // until the user manually clicks into one of the editors. The
@@ -408,22 +319,15 @@ impl SkillCreator {
 
         Self {
             focus_handle,
-            title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|cx| PlatformTitleBar::new("skill-creator-title-bar", cx)))
-            } else {
-                None
-            },
-            workspace,
+            original_window,
             fs,
             http_client,
-            on_saved,
             url_editor,
             name_editor,
             description_editor,
             body_editor,
             description_length: 0,
-            scopes,
-            selected_scope_key,
+            scope,
             disable_model_invocation: false,
             name_error: None,
             description_error: None,
@@ -439,6 +343,10 @@ impl SkillCreator {
             save_button_focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
+    }
+
+    pub(crate) fn name_editor_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.name_editor.focus_handle(cx)
     }
 
     fn handle_url_input_event(
@@ -544,16 +452,9 @@ impl SkillCreator {
         validate_name(&self.current_name(cx)).is_ok()
             && validate_description(&self.current_description(cx)).is_ok()
             && !self.current_body(cx).trim().is_empty()
-            && self.selected_scope().is_some()
     }
 
-    fn selected_scope(&self) -> Option<&ScopeChoice> {
-        self.scopes
-            .iter()
-            .find(|scope| scope.key() == self.selected_scope_key)
-    }
-
-    fn apply_open_mode(
+    pub(crate) fn apply_open_mode(
         &mut self,
         open_mode: SkillCreatorOpenMode,
         window: &mut Window,
@@ -759,18 +660,12 @@ impl SkillCreator {
             return;
         }
 
-        let Some(scope) = self.selected_scope().cloned() else {
-            self.save_error = Some("Select a scope to save this skill to.".into());
-            cx.notify();
-            return;
-        };
-
+        let scope = self.scope.clone();
         let name = self.current_name(cx);
         let description = self.current_description(cx);
         let body = self.current_body(cx);
         let disable_model_invocation = self.disable_model_invocation;
         let fs = self.fs.clone();
-        let workspace = self.workspace.clone();
         let scope_description: SharedString = match &scope {
             ScopeChoice::Global => "your global skills".into(),
             ScopeChoice::Project { root_name, .. } => root_name.clone(),
@@ -791,30 +686,44 @@ impl SkillCreator {
             )
             .await;
 
-            this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, _window, cx| {
                 this.saving = false;
                 this.save_task = None;
                 match result {
                     Ok(_) => {
-                        if let Some(on_saved) = &this.on_saved {
-                            on_saved(cx);
+                        // Nudge the agent to rescan skill directories so the
+                        // new skill shows up in the skill index (and thus the
+                        // Skills settings page) right away.
+                        if let Some(hook) = cx.try_global::<SkillsUpdatedHook>() {
+                            let hook = hook.0.clone();
+                            hook(cx);
                         }
-                        if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
-                            workspace.update(cx, |workspace, cx| {
-                                let message =
-                                    format!("Saved skill \"{name}\" to {scope_description}");
-                                let status_toast = StatusToast::new(message, cx, |this, _cx| {
-                                    this.icon(
-                                        Icon::new(IconName::Check)
-                                            .size(IconSize::Small)
-                                            .color(Color::Success),
-                                    )
-                                    .dismiss_button(true)
-                                });
-                                workspace.toggle_status_toast(status_toast, cx);
-                            });
+
+                        if let Some(original_window) = this.original_window {
+                            original_window
+                                .update(cx, |multi_workspace, _window, cx| {
+                                    multi_workspace.workspace().clone().update(
+                                        cx,
+                                        |workspace, cx| {
+                                            let message = format!(
+                                                "Saved skill \"{name}\" to {scope_description}"
+                                            );
+                                            let status_toast =
+                                                StatusToast::new(message, cx, |this, _cx| {
+                                                    this.icon(
+                                                        Icon::new(IconName::Check)
+                                                            .size(IconSize::Small)
+                                                            .color(Color::Success),
+                                                    )
+                                                    .dismiss_button(true)
+                                                });
+                                            workspace.toggle_status_toast(status_toast, cx);
+                                        },
+                                    );
+                                })
+                                .log_err();
                         }
-                        window.remove_window();
+                        cx.emit(SkillCreatorEvent::Saved);
                     }
                     Err(err) => {
                         this.save_error = Some(SharedString::from(err.to_string()));
@@ -827,25 +736,16 @@ impl SkillCreator {
         self.save_task = Some(task);
     }
 
-    fn cancel(&mut self, _: &Cancel, window: &mut Window, _cx: &mut Context<Self>) {
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
         // Block dismissal while a save is in flight. Otherwise the
-        // detached I/O could complete after the window is gone, leaving
+        // detached I/O could complete after the form is gone, leaving
         // a SKILL.md on disk with no success or error feedback. The
-        // user can still force-close the window via the platform
-        // chrome, in which case dropping `self.save_task` cancels the
-        // pending write.
+        // user can still navigate back via the breadcrumbs, in which
+        // case dropping `self.save_task` cancels the pending write.
         if self.saving {
             return;
         }
-        window.remove_window();
-    }
-
-    fn select_scope(&mut self, key: SharedString, cx: &mut Context<Self>) {
-        if self.scopes.iter().any(|scope| scope.key() == key) {
-            self.selected_scope_key = key;
-            self.save_error = None;
-            cx.notify();
-        }
+        cx.emit(SkillCreatorEvent::Dismissed);
     }
 
     fn toggle_disable_model_invocation(&mut self, cx: &mut Context<Self>) {
@@ -910,7 +810,7 @@ impl SkillCreator {
             )
             .child(self.render_optional_params(cx))
             .child(Divider::horizontal())
-            .child(self.render_scope_field(window, cx))
+            .child(self.render_scope_field())
             .child(Divider::horizontal())
             .child(
                 v_flex()
@@ -922,54 +822,27 @@ impl SkillCreator {
             )
     }
 
-    fn render_scope_field(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let scopes = self.scopes.clone();
-        let selected = self.selected_scope().cloned();
-        let selected_label: SharedString = match selected.as_ref() {
-            Some(ScopeChoice::Global) => "Global".into(),
-            Some(ScopeChoice::Project { root_name, .. }) => {
+    /// The scope is fixed to the settings file selected in the settings
+    /// window (visible in the breadcrumb), so this only shows where the
+    /// skill will be saved.
+    fn render_scope_field(&self) -> impl IntoElement {
+        let scope_label: SharedString = match &self.scope {
+            ScopeChoice::Global => "Global".into(),
+            ScopeChoice::Project { root_name, .. } => {
                 SharedString::from(format!("{root_name} (project)"))
             }
-            None => "Select a scope\u{2026}".into(),
         };
         let sep = std::path::MAIN_SEPARATOR;
-        let scope_hint: SharedString = match selected.as_ref() {
-            Some(ScopeChoice::Global) => SharedString::from(format!(
+        let scope_hint: SharedString = match &self.scope {
+            ScopeChoice::Global => SharedString::from(format!(
                 "Available across every Zed project. \
                 Saved to {GLOBAL_SKILLS_DIR_DISPLAY}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}."
             )),
-            Some(ScopeChoice::Project { root_name, .. }) => SharedString::from(format!(
+            ScopeChoice::Project { root_name, .. } => SharedString::from(format!(
                 "Only available when this project is open. \
                 Saved to {root_name}{sep}{AGENTS_DIR_NAME}{sep}{SKILLS_DIR_NAME}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}."
             )),
-            None => "Choose where this skill should live.".into(),
         };
-
-        let selected_label = h_flex()
-            .child(Label::new(selected_label))
-            .into_any_element();
-
-        let weak = cx.weak_entity();
-
-        let menu = ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
-            for scope in &scopes {
-                let key = scope.key();
-                let weak = weak.clone();
-                let entry_label: SharedString = match scope {
-                    ScopeChoice::Global => "Global".into(),
-                    ScopeChoice::Project { root_name, .. } => {
-                        SharedString::from(format!("{root_name} (project)"))
-                    }
-                };
-                menu = menu.entry(entry_label, None, move |_window, cx| {
-                    weak.update(cx, |this, cx| {
-                        this.select_scope(key.clone(), cx);
-                    })
-                    .log_err();
-                });
-            }
-            menu
-        });
 
         h_flex()
             .min_w_0()
@@ -983,13 +856,7 @@ impl SkillCreator {
                     .child(Label::new("Scope"))
                     .child(Label::new(scope_hint).color(Color::Muted)),
             )
-            .child(
-                DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
-                    .tab_index(SCOPE_FIELD_TAB_INDEX)
-                    .style(DropdownStyle::Outlined)
-                    .trigger_size(ButtonSize::Medium)
-                    .full_width(false),
-            )
+            .child(Label::new(scope_label).color(Color::Muted))
     }
 
     fn render_optional_params(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1138,19 +1005,6 @@ impl SkillCreator {
             )
     }
 
-    fn render_header(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let needs_traffic_light_clearance = cfg!(target_os = "macos");
-
-        h_flex()
-            .w_full()
-            .h_11()
-            .px_4()
-            .when(needs_traffic_light_clearance, |this| this.pl(px(84.)))
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .child(Headline::new("Skill Creator").size(HeadlineSize::XSmall))
-    }
-
     fn focus_next_field(
         &mut self,
         _: &FocusNextField,
@@ -1186,69 +1040,57 @@ impl SkillCreator {
     }
 }
 
-impl Focusable for SkillCreator {
+impl Focusable for SkillCreatorPage {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for SkillCreator {
+impl Render for SkillCreatorPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme_settings::setup_ui_font(window, cx);
-        let theme = cx.theme().clone();
-
-        client_side_decorations(
-            v_flex()
-                .id("skill-creator")
-                .key_context("SkillCreator")
-                .track_focus(&self.focus_handle)
-                .on_action(
-                    |action_sequence: &ActionSequence, window: &mut Window, cx: &mut App| {
-                        for action in &action_sequence.0 {
-                            window.dispatch_action(action.boxed_clone(), cx);
-                        }
-                    },
-                )
-                .on_action(cx.listener(Self::save_skill))
-                .on_action(cx.listener(Self::cancel))
-                .on_action(cx.listener(Self::focus_next_field))
-                .on_action(cx.listener(Self::focus_previous_field))
-                .on_action(cx.listener(Self::on_menu_next))
-                .on_action(cx.listener(Self::on_menu_prev))
-                .size_full()
-                .overflow_hidden()
-                .font(ui_font)
-                .text_color(theme.colors().text)
-                .bg(theme.colors().panel_background)
-                .children(self.title_bar.clone())
-                .child(self.render_header(window, cx))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .vertical_scrollbar_for(&self.scroll_handle, window, cx)
-                        .child(
-                            v_flex()
-                                .id("skill-creator-form")
-                                .tab_index(0)
-                                .tab_group()
-                                .tab_stop(false)
-                                .size_full()
-                                .overflow_y_scroll()
-                                .track_scroll(&self.scroll_handle)
-                                .gap_4()
-                                .p_4()
-                                .child(self.render_url_import())
-                                .child(Divider::horizontal())
-                                .child(self.render_form_fields(window, cx)),
-                        ),
-                )
-                .child(self.render_footer(window, cx)),
-            window,
-            cx,
-            Tiling::default(),
-        )
+        v_flex()
+            .id("skill-creator")
+            .key_context("SkillCreator")
+            .track_focus(&self.focus_handle)
+            .on_action(
+                |action_sequence: &ActionSequence, window: &mut Window, cx: &mut App| {
+                    for action in &action_sequence.0 {
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    }
+                },
+            )
+            .on_action(cx.listener(Self::save_skill))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::focus_next_field))
+            .on_action(cx.listener(Self::focus_previous_field))
+            .on_action(cx.listener(Self::on_menu_next))
+            .on_action(cx.listener(Self::on_menu_prev))
+            .size_full()
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+                    .child(
+                        v_flex()
+                            .id("skill-creator-form")
+                            .tab_index(0)
+                            .tab_group()
+                            .tab_stop(false)
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll_handle)
+                            .gap_4()
+                            .px_8()
+                            .py_4()
+                            .child(self.render_url_import())
+                            .child(Divider::horizontal())
+                            .child(self.render_form_fields(window, cx)),
+                    ),
+            )
+            .child(self.render_footer(window, cx))
     }
 }
 
@@ -1342,7 +1184,7 @@ fn github_fetch_error(status: StatusCode, body: &[u8]) -> anyhow::Error {
     anyhow!(message)
 }
 
-pub fn is_supported_skill_url(input: &str) -> bool {
+pub(crate) fn is_supported_skill_url(input: &str) -> bool {
     github_raw_url(input).is_ok()
 }
 
@@ -1680,8 +1522,8 @@ mod tests {
 
     // Name and description validation rules are unit-tested in
     // `agent_skills`, which owns `validate_name` / `validate_description`
-    // / `MAX_SKILL_DESCRIPTION_LEN`. The tests below cover this crate's
-    // own surface area: SKILL.md formatting and disk-writing.
+    // / `MAX_SKILL_DESCRIPTION_LEN`. The tests below cover the skill
+    // creator's own surface area: SKILL.md formatting and disk-writing.
 
     #[test]
     fn format_skill_file_round_trips_through_parser() {

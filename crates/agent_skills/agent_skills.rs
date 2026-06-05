@@ -2,9 +2,10 @@ use anyhow::{Context as _, Result};
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{Global, SharedString};
+use gpui::{App, Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use url::Url;
 use util::paths::component_matches_ignore_ascii_case;
@@ -194,6 +195,14 @@ pub struct ProjectSkillGroup {
 }
 
 impl Global for SkillIndex {}
+
+/// Callback invoked after a skill is created or modified by the UI (e.g. the
+/// settings window's skill creator), set by the agent UI at startup. It gives
+/// the agent a chance to rescan skill directories and republish the
+/// [`SkillIndex`] without UI crates needing to depend on the agent UI.
+pub struct SkillsUpdatedHook(pub Rc<dyn Fn(&mut App)>);
+
+impl Global for SkillsUpdatedHook {}
 
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
