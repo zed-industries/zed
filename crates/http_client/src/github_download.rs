@@ -97,13 +97,12 @@ pub async fn download_server_raw_binary(
         futures::io::copy(&mut BufReader::new(response.body_mut()), &mut writer)
             .await
             .with_context(|| format!("saving binary contents from {url}"))?;
-        let hasher = {
-            writer.close().await.with_context(|| format!("flushing binary contents for {url}"))?;
-            anyhow::Ok(writer.hasher)
-        }?;
+        let asset_sha_256 = writer
+            .finish()
+            .await
+            .with_context(|| format!("flushing binary contents for {url}"))?;
 
         if let Some(expected_sha_256) = digest {
-            let asset_sha_256 = format!("{:x}", hasher.finalize());
             anyhow::ensure!(
                 asset_sha_256 == expected_sha_256,
                 "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
@@ -320,6 +319,22 @@ async fn extract_gz(
 struct HashingWriter<W: AsyncWrite + Unpin> {
     writer: W,
     hasher: Sha256,
+}
+
+impl<W: AsyncWrite + Unpin> HashingWriter<W> {
+    /// Closes and drops the inner writer, returning the hex SHA-256 digest of
+    /// everything written.
+    ///
+    /// Taking `self` by value guarantees the writer is dropped before this
+    /// returns. For file writers this releases the OS handle, which Windows
+    /// requires before an ancestor directory can be renamed or deleted; note
+    /// that closing alone is not enough, as `async_fs::File` holds its handle
+    /// until dropped.
+    async fn finish(mut self) -> std::io::Result<String> {
+        self.writer.close().await?;
+        drop(self.writer);
+        Ok(format!("{:x}", self.hasher.finalize()))
+    }
 }
 
 impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
