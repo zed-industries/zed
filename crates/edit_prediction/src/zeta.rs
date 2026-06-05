@@ -1,7 +1,7 @@
 use crate::{
-    CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
-    ZedUpdateRequiredError, buffer_path_with_id_fallback,
+    CloudRequestTimeoutError, CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionStore, ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     data_collection::UncommittedDiffResult,
     prediction::EditPredictionResult,
@@ -491,6 +491,11 @@ fn handle_api_response<T>(
             Ok(data)
         }
         Err(err) => {
+            if err.is::<CloudRequestTimeoutError>() {
+                this.update(cx, |this, cx| this.back_off_requests_after_timeout(cx))
+                    .ok();
+            }
+
             if err.is::<ZedUpdateRequiredError>() {
                 cx.update(|cx| {
                     this.update(cx, |this, _cx| {

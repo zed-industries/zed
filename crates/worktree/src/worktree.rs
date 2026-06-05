@@ -4508,6 +4508,10 @@ impl BackgroundScanner {
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
+                } else if let Ok(path) = abs_path.strip_prefix(&root_path)
+                    && let Ok(path) = RelPath::new(path, PathStyle::local())
+                {
+                    path
                 } else if let Some(path) = snapshot.external_canonical_to_relative.iter().find_map(
                     |(canonical, relative)| {
                         abs_path

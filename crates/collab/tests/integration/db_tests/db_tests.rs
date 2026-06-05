@@ -15,19 +15,8 @@ test_both_dbs!(
 
 async fn test_add_contacts(db: &Arc<Database>) {
     let mut user_ids = Vec::new();
-    for i in 0..3 {
-        user_ids.push(
-            db.create_user(
-                false,
-                NewUserParams {
-                    github_login: format!("user{i}"),
-                    github_user_id: i,
-                },
-            )
-            .await
-            .unwrap()
-            .user_id,
-        );
+    for _ in 0..3 {
+        user_ids.push(db.create_user(false).await.unwrap().user_id);
     }
 
     let user_1 = user_ids[0];
@@ -174,26 +163,8 @@ test_both_dbs!(
 async fn test_project_count(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
-    let user1 = db
-        .create_user(
-            true,
-            NewUserParams {
-                github_login: "admin".into(),
-                github_user_id: 0,
-            },
-        )
-        .await
-        .unwrap();
-    let user2 = db
-        .create_user(
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 1,
-            },
-        )
-        .await
-        .unwrap();
+    let user1 = db.create_user(true).await.unwrap();
+    let user2 = db.create_user(false).await.unwrap();
 
     let room_id = RoomId::from_proto(
         db.create_room(user1.user_id, ConnectionId { owner_id, id: 0 }, "")
@@ -268,7 +239,7 @@ async fn test_upsert_shared_thread(db: &Arc<Database>) {
     use collab::db::SharedThreadId;
     use uuid::Uuid;
 
-    let user_id = new_test_user(db, "user1@example.com").await;
+    let user_id = new_test_user(db).await;
 
     let thread_id = SharedThreadId(Uuid::new_v4());
     let title = "My Test Thread";
@@ -285,7 +256,7 @@ async fn test_upsert_shared_thread(db: &Arc<Database>) {
     assert_eq!(thread.title, title);
     assert_eq!(thread.data, data);
     assert_eq!(thread.user_id, user_id);
-    assert_eq!(username, "user1");
+    assert_eq!(username, "Unknown");
 }
 
 test_both_dbs!(
@@ -298,7 +269,7 @@ async fn test_upsert_shared_thread_updates_existing(db: &Arc<Database>) {
     use collab::db::SharedThreadId;
     use uuid::Uuid;
 
-    let user_id = new_test_user(db, "user1@example.com").await;
+    let user_id = new_test_user(db).await;
 
     let thread_id = SharedThreadId(Uuid::new_v4());
 
@@ -339,8 +310,8 @@ async fn test_cannot_update_another_users_shared_thread(db: &Arc<Database>) {
     use collab::db::SharedThreadId;
     use uuid::Uuid;
 
-    let user1_id = new_test_user(db, "user1@example.com").await;
-    let user2_id = new_test_user(db, "user2@example.com").await;
+    let user1_id = new_test_user(db).await;
+    let user2_id = new_test_user(db).await;
 
     let thread_id = SharedThreadId(Uuid::new_v4());
 

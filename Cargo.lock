@@ -271,6 +271,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proptest",
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
@@ -306,9 +307,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d197653697b91b3a2cfb579d061a3388cda9fdc79cb6f9393da65cbad46baf8"
+checksum = "5efba6592048ef8a9ac97de8d79b2d9933d8ac4d94f7a2de102348fed0c61103"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -328,9 +329,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e4fbf6733a900814fb921b2aac06612e15b42020b76a356fbc1192e725cebc"
+checksum = "4d176a10d4cb06e0262a738c3c5bf21ff0968db13a666e31cbca94a3d3d72e7c"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -338,9 +339,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d419a87e28240978e4bfdf2a5b91bccb95ae8d5b06e10721bb07c449b9f43dd"
+checksum = "c290bfa00c6b52339db66f8e9cf711d5f08530800529f7d619ff24d6cba253d0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -3194,6 +3195,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "parking_lot",
+ "serde",
  "serde_json",
  "thiserror 2.0.17",
  "yawc",
@@ -3373,7 +3375,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git_graph",
  "git_hosting_providers",
  "git_ui",
  "gpui",
@@ -3478,6 +3479,7 @@ dependencies = [
 name = "collections"
 version = "0.1.0"
 dependencies = [
+ "gpui_util",
  "indexmap 2.11.4",
  "rustc-hash 2.1.1",
 ]
@@ -5380,8 +5382,8 @@ dependencies = [
 
 [[package]]
 name = "dugong"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.1",
@@ -5391,8 +5393,8 @@ dependencies = [
 
 [[package]]
 name = "dugong-graphlib"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "hashbrown 0.16.1",
  "rustc-hash 2.1.1",
@@ -5524,6 +5526,7 @@ dependencies = [
  "debug_adapter_extension",
  "dirs",
  "edit_prediction",
+ "edit_prediction_context",
  "edit_prediction_metrics",
  "extension",
  "flate2",
@@ -7280,40 +7283,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "git_graph"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel 2.5.0",
- "collections",
- "db",
- "editor",
- "fs",
- "git",
- "git_ui",
- "gpui",
- "language",
- "language_model",
- "menu",
- "picker",
- "project",
- "project_panel",
- "rand 0.9.4",
- "release_channel",
- "remote_connection",
- "search",
- "serde_json",
- "settings",
- "smallvec",
- "task",
- "theme",
- "theme_settings",
- "time",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "git_hosting_providers"
 version = "0.1.0"
 dependencies = [
@@ -7342,6 +7311,7 @@ dependencies = [
  "agent_settings",
  "anyhow",
  "askpass",
+ "async-channel 2.5.0",
  "buffer_diff",
  "call",
  "collections",
@@ -7374,9 +7344,11 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.4",
+ "release_channel",
  "remote",
  "remote_connection",
  "schemars 1.0.4",
+ "search",
  "serde",
  "serde_json",
  "settings",
@@ -9765,6 +9737,7 @@ dependencies = [
  "clock",
  "cloud_api_client",
  "cloud_api_types",
+ "cloud_llm_client",
  "collections",
  "component",
  "convert_case 0.11.0",
@@ -10582,8 +10555,8 @@ dependencies = [
 
 [[package]]
 name = "manatee"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "indexmap 2.11.4",
  "nalgebra",
@@ -10877,8 +10850,8 @@ dependencies = [
 
 [[package]]
 name = "merman"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "merman-core",
  "merman-render",
@@ -10887,8 +10860,8 @@ dependencies = [
 
 [[package]]
 name = "merman-core"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "chrono",
  "euclid",
@@ -10913,8 +10886,8 @@ dependencies = [
 
 [[package]]
 name = "merman-render"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -15396,7 +15369,7 @@ dependencies = [
 [[package]]
 name = "roughr-merman"
 version = "0.12.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "derive_builder",
  "euclid",
@@ -16563,6 +16536,7 @@ dependencies = [
  "agent_skills",
  "anyhow",
  "audio",
+ "cloud_api_types",
  "codestral",
  "component",
  "copilot",
@@ -16728,6 +16702,7 @@ dependencies = [
  "log",
  "menu",
  "node_runtime",
+ "notifications",
  "platform_title_bar",
  "pretty_assertions",
  "project",
@@ -18621,6 +18596,7 @@ dependencies = [
  "chrono",
  "client",
  "cloud_api_types",
+ "command_palette_hooks",
  "db",
  "fs",
  "git_ui",
@@ -22389,6 +22365,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "url",
  "util",
  "uuid",
  "windows 0.61.3",
@@ -22827,7 +22804,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22887,7 +22864,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git_graph",
  "git_hosting_providers",
  "git_ui",
  "go_to_line",

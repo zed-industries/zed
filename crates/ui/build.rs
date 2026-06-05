@@ -1,7 +1,7 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
-    println!("cargo::rustc-check-cfg=cfg(macos_sdk_26)");
+    println!("cargo::rustc-check-cfg=cfg(macos_sdk_26_or_later)");
 
     #[cfg(target_os = "macos")]
     {
@@ -22,7 +22,7 @@ fn main() {
         if let Some(major) = major_version
             && major >= 26
         {
-            println!("cargo:rustc-cfg=macos_sdk_26");
+            println!("cargo:rustc-cfg=macos_sdk_26_or_later");
         }
     }
 }

@@ -1864,6 +1864,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
             HashSet::default(),
+            true,
             cx,
         );
     });
@@ -2981,7 +2982,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
     });
     let mut events = cx.events(&project);
 
@@ -3099,7 +3100,12 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
 
     // The diagnostics are cleared.
@@ -3154,7 +3160,12 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -3972,7 +3983,12 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
     let mut events = cx.events(&project);
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
 
@@ -7423,6 +7439,74 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
             (path!("dir/two.rs").to_string(), vec![6..9]),
             (path!("dir/three.rs").to_string(), vec![37..40]),
             (path!("dir/four.rs").to_string(), vec![25..28, 36..39])
+        ])
+    );
+}
+
+#[gpui::test]
+async fn test_search_multiline_crlf(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "crlf.rs": "alpha\r\nbeta\r\ngamma",
+            "lf.rs": "alpha\nbeta\ngamma",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    // A query with CRLF line endings should match buffers regardless of their
+    // on-disk line endings (buffers always store normalized `\n`).
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "alpha\r\nbeta",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/crlf.rs").to_string(), vec![0..10]),
+            (path!("dir/lf.rs").to_string(), vec![0..10]),
+        ])
+    );
+
+    // The reverse: a query with LF line endings should match a file that is
+    // stored with CRLF line endings on disk.
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "alpha\nbeta",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/crlf.rs").to_string(), vec![0..10]),
+            (path!("dir/lf.rs").to_string(), vec![0..10]),
         ])
     );
 }

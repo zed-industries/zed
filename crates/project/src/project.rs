@@ -3951,10 +3951,16 @@ impl Project {
         &mut self,
         buffers: Vec<Entity<Buffer>>,
         only_restart_servers: HashSet<LanguageServerSelector>,
+        clear_stopped: bool,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.restart_language_servers_for_buffers(buffers, only_restart_servers, cx)
+            lsp_store.restart_language_servers_for_buffers(
+                buffers,
+                only_restart_servers,
+                clear_stopped,
+                cx,
+            )
         })
     }
 

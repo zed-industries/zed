@@ -264,6 +264,7 @@ pub(crate) struct WaylandClientState {
     pending_activation: Option<PendingActivation>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     pub common: LinuxCommon,
+    ime_enabled: Option<bool>,
 }
 
 pub struct DragState {
@@ -319,6 +320,7 @@ impl WaylandClientStatePtr {
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+        state.ime_enabled = Some(true);
         let Some(text_input) = state.text_input.take() else {
             return;
         };
@@ -344,11 +346,17 @@ impl WaylandClientStatePtr {
     pub fn disable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+        state.ime_enabled = Some(false);
         state.composing = false;
         if let Some(text_input) = &state.text_input {
             text_input.disable();
             text_input.commit();
         }
+    }
+
+    pub fn ime_enabled(&self) -> Option<bool> {
+        let client = self.get_client();
+        client.borrow().ime_enabled
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
@@ -723,6 +731,7 @@ impl WaylandClient {
             cursor,
             pending_activation: None,
             event_loop: Some(event_loop),
+            ime_enabled: None,
         }));
 
         WaylandSource::new(conn, event_queue)
