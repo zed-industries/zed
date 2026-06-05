@@ -190,8 +190,7 @@ impl ExtensionBuilder {
                 futures::future::try_join_all(tasks).await?;
             }
             CompilationConcurrency::Bounded(max_concurrency) => {
-                let mut stream =
-                    futures::stream::iter(tasks).buffer_unordered(max_concurrency.get());
+                let mut stream = futures::stream::iter(tasks).buffered(max_concurrency.get());
 
                 while let Some(result) = stream.next().await {
                     result?;
