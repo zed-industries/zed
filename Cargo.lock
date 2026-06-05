@@ -16555,7 +16555,6 @@ dependencies = [
  "language",
  "log",
  "menu",
- "notifications",
  "paths",
  "picker",
  "platform_title_bar",

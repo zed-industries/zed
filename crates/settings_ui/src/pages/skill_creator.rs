@@ -13,7 +13,6 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, language_settings::SoftWrap};
-use notifications::status_toast::StatusToast;
 use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -142,7 +141,6 @@ pub(crate) fn render_skill_creator_page(
 
 pub struct SkillCreatorPage {
     focus_handle: FocusHandle,
-    original_window: Option<WindowHandle<MultiWorkspace>>,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     url_editor: Entity<InputField>,
@@ -303,7 +301,6 @@ impl SkillCreatorPage {
 
         Self {
             focus_handle,
-            original_window,
             fs,
             http_client,
             url_editor,
@@ -653,10 +650,6 @@ impl SkillCreatorPage {
         let body = self.current_body(cx);
         let disable_model_invocation = self.disable_model_invocation;
         let fs = self.fs.clone();
-        let scope_description: SharedString = match &scope {
-            ScopeChoice::Global => "your global skills".into(),
-            ScopeChoice::Project { root_name, .. } => root_name.clone(),
-        };
 
         self.saving = true;
         self.save_error = None;
@@ -686,30 +679,6 @@ impl SkillCreatorPage {
                             hook(cx);
                         }
 
-                        if let Some(original_window) = this.original_window {
-                            original_window
-                                .update(cx, |multi_workspace, _window, cx| {
-                                    multi_workspace.workspace().clone().update(
-                                        cx,
-                                        |workspace, cx| {
-                                            let message = format!(
-                                                "Saved skill \"{name}\" to {scope_description}"
-                                            );
-                                            let status_toast =
-                                                StatusToast::new(message, cx, |this, _cx| {
-                                                    this.icon(
-                                                        Icon::new(IconName::Check)
-                                                            .size(IconSize::Small)
-                                                            .color(Color::Success),
-                                                    )
-                                                    .dismiss_button(true)
-                                                });
-                                            workspace.toggle_status_toast(status_toast, cx);
-                                        },
-                                    );
-                                })
-                                .log_err();
-                        }
                         cx.emit(SkillCreatorEvent::Saved);
                     }
                     Err(err) => {
