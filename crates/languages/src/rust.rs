@@ -258,6 +258,7 @@ impl RustLspAdapter {
             AssetKind::TarBz2 => "tar.bz2",
             AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
+            AssetKind::Raw => unreachable!("raw binaries are only used for ACP registry agents"),
         };
 
         #[cfg(target_os = "linux")]
@@ -822,6 +823,7 @@ impl LspInstaller for RustLspAdapter {
             let server_path = match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
                 AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+                AssetKind::Raw => unreachable!("raw binaries are only used for ACP registry agents"),
             };
 
             let binary = LanguageServerBinary {
@@ -1399,6 +1401,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
             AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path, // Tar and gzip extract in place.
             AssetKind::Zip => path.join("rust-analyzer.exe"),             // zip contains a .exe
+            AssetKind::Raw => unreachable!("raw binaries are only used for ACP registry agents"),
         };
 
         anyhow::Ok(Some(LanguageServerBinary {

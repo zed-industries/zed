@@ -903,9 +903,26 @@ fn asset_kind_for_archive_url(archive_url: &str) -> Result<AssetKind> {
         Ok(AssetKind::TarGz)
     } else if archive_path.ends_with(".tar.bz2") || archive_path.ends_with(".tbz2") {
         Ok(AssetKind::TarBz2)
-    } else {
+    } else if archive_path.ends_with(".tar.xz") || archive_path.ends_with(".txz") {
         bail!("unsupported archive type in URL: {archive_url}");
+    } else if archive_path.ends_with(".gz") {
+        Ok(AssetKind::Gz)
+    } else {
+        Ok(AssetKind::Raw)
     }
+}
+
+fn registry_binary_filename(cmd: &str) -> Result<String> {
+    let filename = cmd
+        .strip_prefix("./")
+        .or_else(|| cmd.strip_prefix(".\\"))
+        .unwrap_or(cmd);
+    anyhow::ensure!(!filename.is_empty(), "command must not be empty: {cmd}");
+    anyhow::ensure!(
+        !filename.contains(".."),
+        "command path cannot contain '..': {cmd}"
+    );
+    Ok(filename.to_string())
 }
 
 struct GithubReleaseArchive {
@@ -1189,14 +1206,33 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
                 let asset_kind = asset_kind_for_archive_url(archive_url)?;
 
+                let download_destination = if asset_kind == AssetKind::Raw {
+                    fs.create_dir(&version_dir).await?;
+                    let filename = registry_binary_filename(&target_config.cmd)?;
+                    version_dir.join(filename)
+                } else {
+                    version_dir.clone()
+                };
+
                 ::http_client::github_download::download_server_binary(
                     &*http_client,
                     archive_url,
                     sha256.as_deref(),
-                    &version_dir,
+                    &download_destination,
                     asset_kind,
                 )
                 .await?;
+
+                if asset_kind == AssetKind::Raw {
+                    util::fs::make_file_executable(&download_destination)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "making registry binary executable at {}",
+                                download_destination.display()
+                            )
+                        })?;
+                }
             }
 
             let cmd = &target_config.cmd;
@@ -1766,6 +1802,18 @@ mod tests {
             error,
             Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string()),
         );
+    }
+
+    #[test]
+    fn detects_raw_binary_registry_urls() {
+        assert!(matches!(
+            asset_kind_for_archive_url("https://x.ai/cli/grok-0.2.20-macos-aarch64"),
+            Ok(AssetKind::Raw)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://x.ai/cli/grok-0.2.20-windows-x86_64.exe"),
+            Ok(AssetKind::Raw)
+        ));
     }
 
     #[test]

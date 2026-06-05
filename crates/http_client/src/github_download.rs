@@ -126,7 +126,7 @@ fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
                 .with_context(|| format!("creating staging directory in {parent:?}"))?;
             Ok(dir.keep())
         }
-        AssetKind::Gz => {
+        AssetKind::Gz | AssetKind::Raw => {
             let path = tempfile::Builder::new()
                 .prefix(".tmp-github-download-")
                 .tempfile_in(parent)
@@ -146,7 +146,7 @@ async fn cleanup_staging_path(staging_path: &Path, asset_kind: AssetKind) {
                 log::warn!("failed to remove staging directory {staging_path:?}: {err:?}");
             }
         }
-        AssetKind::Gz => {
+        AssetKind::Gz | AssetKind::Raw => {
             if let Err(err) = async_fs::remove_file(staging_path).await {
                 log::warn!("failed to remove staging file {staging_path:?}: {err:?}");
             }
@@ -172,6 +172,7 @@ async fn stream_response_archive(
         AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
         AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, response).await?,
         AssetKind::Gz => extract_gz(destination_path, url, response).await?,
+        AssetKind::Raw => extract_raw(destination_path, url, response).await?,
         AssetKind::Zip => {
             util::archive::extract_zip(destination_path, response).await?;
         }
@@ -189,6 +190,7 @@ async fn stream_file_archive(
         AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
         AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, file_archive).await?,
         AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
+        AssetKind::Raw => extract_raw(destination_path, url, file_archive).await?,
         #[cfg(not(windows))]
         AssetKind::Zip => {
             util::archive::extract_seekable_zip(destination_path, file_archive).await?;
@@ -253,6 +255,22 @@ async fn extract_gz(
     futures::io::copy(&mut decompressed_bytes, &mut file)
         .await
         .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+    Ok(())
+}
+
+async fn extract_raw(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let mut file = async_fs::File::create(destination_path)
+        .await
+        .with_context(|| {
+            format!("creating a file {destination_path:?} for a download from {url}")
+        })?;
+    futures::io::copy(&mut BufReader::new(from), &mut file)
+        .await
+        .with_context(|| format!("downloading {url} to {destination_path:?}"))?;
     Ok(())
 }
 

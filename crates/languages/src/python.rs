@@ -471,6 +471,7 @@ impl LspInstaller for TyLspAdapter {
                     .join(Self::build_asset_name()?.0)
                     .join("ty"),
                 AssetKind::Zip => destination_path.clone().join("ty.exe"),
+                AssetKind::Raw => unreachable!("raw binaries are only used for ACP registry agents"),
             };
 
             let binary = LanguageServerBinary {
@@ -564,6 +565,7 @@ impl LspInstaller for TyLspAdapter {
                     path.join(Self::build_asset_name()?.0).join("ty")
                 }
                 AssetKind::Zip => path.join("ty.exe"),
+                AssetKind::Raw => unreachable!("raw binaries are only used for ACP registry agents"),
             };
 
             anyhow::Ok(LanguageServerBinary {
@@ -2612,6 +2614,7 @@ impl LspInstaller for RuffLspAdapter {
                     .join(Self::build_asset_name()?.0)
                     .join("ruff"),
                 AssetKind::Zip => destination_path.clone().join("ruff.exe"),
+                AssetKind::Raw => unreachable!("raw binaries are only used for ACP registry agents"),
             };
 
             let binary = LanguageServerBinary {
@@ -2705,6 +2708,7 @@ impl LspInstaller for RuffLspAdapter {
                     path.join(Self::build_asset_name()?.0).join("ruff")
                 }
                 AssetKind::Zip => path.join("ruff.exe"),
+                AssetKind::Raw => unreachable!("raw binaries are only used for ACP registry agents"),
             };
 
             anyhow::Ok(LanguageServerBinary {
