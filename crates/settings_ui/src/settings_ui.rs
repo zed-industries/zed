@@ -4050,6 +4050,7 @@ impl SettingsWindow {
             .sub_page_stack
             .last()
             .is_some_and(|sub_page| sub_page.link.r#type == SubPageType::SkillCreator);
+
         if creator_is_active_sub_page && let Some((page, _)) = &self.skill_creator_page {
             let page = page.clone();
             page.update(cx, |page, cx| page.apply_open_mode(open_mode, window, cx));
@@ -4059,6 +4060,7 @@ impl SettingsWindow {
         let page = cx.new(|cx| {
             pages::SkillCreatorPage::new(self.original_window, &self.current_file, window, cx)
         });
+
         let subscription =
             cx.subscribe_in(
                 &page,
@@ -4073,6 +4075,7 @@ impl SettingsWindow {
                     }
                 },
             );
+
         self.skill_creator_page = Some((page.clone(), subscription));
 
         let sub_page_link = SubPageLink {
@@ -4084,13 +4087,17 @@ impl SettingsWindow {
             files: USER | PROJECT,
             render: pages::render_skill_creator_page,
         };
+
         self.push_sub_page(sub_page_link, "Agent".into(), window, cx);
 
+        let creating_from_url = !matches!(open_mode, pages::SkillCreatorOpenMode::Url { .. });
         page.update(cx, |page, cx| {
             page.apply_open_mode(open_mode, window, cx);
         });
-        let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
-        window.focus(&name_editor_focus_handle, cx);
+        if creating_from_url {
+            let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
+            window.focus(&name_editor_focus_handle, cx);
+        }
     }
 
     pub fn navigate_to_skill_creator(
