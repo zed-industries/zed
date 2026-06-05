@@ -1,6 +1,6 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
-    events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    MacWindowCycleShortcut, events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
     set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
@@ -184,6 +184,7 @@ pub(crate) struct MacPlatformState {
     keyboard_mapper: Rc<MacKeyboardMapper>,
     /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
     cursor_visible: Arc<AtomicBool>,
+    window_cycle_shortcut: MacWindowCycleShortcut,
 }
 
 impl MacPlatform {
@@ -198,6 +199,11 @@ impl MacPlatform {
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
+        let window_cycle_shortcut = if headless {
+            MacWindowCycleShortcut::default()
+        } else {
+            MacWindowCycleShortcut::new()
+        };
 
         Self(Mutex::new(MacPlatformState {
             headless,
@@ -221,6 +227,7 @@ impl MacPlatform {
             menus: None,
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
+            window_cycle_shortcut,
         }))
     }
 
@@ -627,15 +634,23 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let (cursor_visible, foreground_executor, background_executor, renderer_context) = {
+        let (
+            cursor_visible,
+            foreground_executor,
+            background_executor,
+            renderer_context,
+            window_cycle_shortcut,
+        ) = {
             let guard = self.0.lock();
             (
                 guard.cursor_visible.clone(),
                 guard.foreground_executor.clone(),
                 guard.background_executor.clone(),
                 guard.renderer_context.clone(),
+                guard.window_cycle_shortcut.clone(),
             )
         };
+
 
         Ok(Box::new(MacWindow::open(
             handle,
@@ -644,6 +659,7 @@ impl Platform for MacPlatform {
             foreground_executor,
             background_executor,
             renderer_context,
+            window_cycle_shortcut,
         )))
     }
 

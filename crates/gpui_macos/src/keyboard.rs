@@ -1235,28 +1235,28 @@ fn get_key_equivalents(layout_id: &str) -> Option<HashMap<char, char>> {
             ('~', '>'),
         ],
         "com.apple.keylayout.Spanish-ISO" => &[
-            ('"', '¨'),
+            ('"', '^'),
             ('#', '·'),
             ('&', '/'),
+            ('\'', '`'),
             ('(', ')'),
             (')', '='),
             ('*', '('),
-            ('.', 'ç'),
-            ('/', '.'),
-            (':', 'º'),
-            (';', '´'),
-            ('<', '¿'),
-            ('>', 'Ç'),
+            ('/', '\''),
+            (':', '¿'),
+            (';', '¡'),
+            ('<', ';'),
+            ('=', '*'),
+            ('>', ':'),
             ('@', '"'),
             ('[', 'ñ'),
-            ('\'', '`'),
-            ('\\', '\''),
-            (']', ';'),
+            ('\\', 'ç'),
+            (']', '´'),
             ('^', '&'),
             ('`', '<'),
             ('{', 'Ñ'),
-            ('|', '"'),
-            ('}', '`'),
+            ('|', 'Ç'),
+            ('}', '¨'),
             ('~', '>'),
         ],
         "com.apple.keylayout.Swedish" => &[
@@ -1499,4 +1499,41 @@ fn get_key_equivalents(layout_id: &str) -> Option<HashMap<char, char>> {
     };
 
     Some(HashMap::from_iter(mappings.iter().cloned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::Modifiers;
+
+    use super::*;
+
+    #[test]
+    fn spanish_iso_maps_apostrophe_to_backtick() {
+        let mapper = MacKeyboardMapper::new("com.apple.keylayout.Spanish-ISO");
+        let mapped = mapper.map_key_equivalent(
+            Keystroke {
+                modifiers: Modifiers::none(),
+                key: "'".into(),
+                key_char: None,
+            },
+            true,
+        );
+
+        assert_eq!(mapped.inner().key, "`");
+    }
+
+    #[test]
+    fn spanish_iso_mapping_still_applies_with_command_pressed() {
+        let mapper = MacKeyboardMapper::new("com.apple.keylayout.Spanish-ISO");
+        let mapped = mapper.map_key_equivalent(
+            Keystroke {
+                modifiers: Modifiers::command(),
+                key: "'".into(),
+                key_char: None,
+            },
+            true,
+        );
+
+        assert_eq!(mapped.inner().key, "`");
+    }
 }
