@@ -32,9 +32,10 @@ pub struct SymbolPath(pub SharedString);
 
 /// Result of [`Outline::search`]. Real fuzzy matches are `Match`; `Ancestor`
 /// rows are synthetic entries pointing at parent items, included so callers can
-/// show the full path of each match but treat those synthetic ancestors
-/// differently from an entry that actually matched (e.g. they are not eligible
-/// for auto-selection).
+/// show the full path of each match (Even when the ancestor has been filtered
+/// out due to not matching) but treat those synthetic ancestors differently
+/// from an entry that actually matched (e.g. they are not eligible for
+/// auto-selection).
 #[derive(Clone, Debug)]
 pub enum OutlineSearchEntry {
     Match(StringMatch),
