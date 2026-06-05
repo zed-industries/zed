@@ -5,6 +5,8 @@ use gpui::{Action as _, ClipboardItem, ScrollHandle, SharedString, prelude::*};
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
 
+use std::borrow::Cow;
+
 use crate::{SettingsUiFile, SettingsWindow};
 
 pub(crate) fn render_skills_setup_page(
@@ -308,16 +310,22 @@ fn render_skill_row(
         .into_any_element()
 }
 
-fn truncated_skill_description(description: &str) -> &str {
+fn truncated_skill_description(description: &str) -> Cow<'_, str> {
     if description.len() <= MAX_SKILL_DESCRIPTION_LEN {
-        return description;
+        return Cow::Borrowed(description);
     }
 
     let mut end = MAX_SKILL_DESCRIPTION_LEN;
     while !description.is_char_boundary(end) {
         end -= 1;
     }
-    &description[..end]
+    let hidden_bytes = description.len() - end;
+    let truncated = &description[..end];
+    if hidden_bytes > 100 {
+        Cow::Owned(format!("{truncated}... ({hidden_bytes} bytes not shown)"))
+    } else {
+        Cow::Owned(format!("{truncated}..."))
+    }
 }
 
 #[cfg(test)]
@@ -331,7 +339,28 @@ mod tests {
 
         let truncated = truncated_skill_description(&description);
 
-        assert_eq!(truncated.len(), MAX_SKILL_DESCRIPTION_LEN - 1);
-        assert!(truncated.ends_with('a'));
+        assert!(truncated.starts_with(&"a".repeat(MAX_SKILL_DESCRIPTION_LEN - 1)));
+        assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn truncated_skill_description_leaves_short_descriptions_untouched() {
+        let description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN);
+        assert_eq!(truncated_skill_description(&description), description);
+    }
+
+    #[test]
+    fn truncated_skill_description_reports_hidden_bytes_over_100() {
+        let description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 101);
+        let truncated = truncated_skill_description(&description);
+        assert!(truncated.ends_with("... (101 bytes not shown)"));
+    }
+
+    #[test]
+    fn truncated_skill_description_omits_byte_count_at_or_under_100() {
+        let description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 100);
+        let truncated = truncated_skill_description(&description);
+        assert!(truncated.ends_with("..."));
+        assert!(!truncated.contains("not shown"));
     }
 }
