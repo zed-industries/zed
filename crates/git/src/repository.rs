@@ -4430,6 +4430,118 @@ mod tests {
         assert_eq!(repo.load_committed_text(repo_path("link.txt")).await, None);
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_load_text_uses_git_mode_for_worktree_only_symlink(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        smol::fs::write(repo_dir.path().join("agents.md"), "regular contents\n")
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("target.txt"), "target\n")
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(
+            vec![repo_path("agents.md"), repo_path("target.txt")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Replace the committed regular file with a symlink on disk, leaving it unstaged.
+        smol::fs::remove_file(repo_dir.path().join("agents.md"))
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink("target.txt", repo_dir.path().join("agents.md")).unwrap();
+
+        // git still records a regular file, so both return its contents despite the on-disk symlink
+        assert_eq!(
+            repo.load_index_text(repo_path("agents.md"))
+                .await
+                .as_deref(),
+            Some("regular contents\n")
+        );
+        assert_eq!(
+            repo.load_committed_text(repo_path("agents.md"))
+                .await
+                .as_deref(),
+            Some("regular contents\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_load_text_uses_git_mode_for_git_only_symlink(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        smol::fs::write(repo_dir.path().join("target.txt"), "target\n")
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink("target.txt", repo_dir.path().join("agents.md")).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(
+            vec![repo_path("agents.md"), repo_path("target.txt")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Replace the committed symlink with a regular file on disk, leaving it unstaged.
+        smol::fs::remove_file(repo_dir.path().join("agents.md"))
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("agents.md"), "now regular\n")
+            .await
+            .unwrap();
+
+        // git still records a symlink, so both are skipped despite the on-disk file
+        assert_eq!(repo.load_index_text(repo_path("agents.md")).await, None);
+        assert_eq!(repo.load_committed_text(repo_path("agents.md")).await, None);
+    }
+
     #[gpui::test]
     async fn test_checkpoint_basic(cx: &mut TestAppContext) {
         disable_git_global_config();
