@@ -31,6 +31,7 @@ log.workspace = true
 markup5ever_rcdom.workspace = true
 mermaid_render = { path = "../mermaid_render" }
 pulldown-cmark.workspace = true
+serde_yaml_ng.workspace = true
 settings.workspace = true
 stacksafe.workspace = true
 sum_tree.workspace = true

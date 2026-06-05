@@ -104,6 +104,15 @@
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
     "unit": "binary",
   },
+  // Settings for Markdown-related features.
+  "markdown": {
+    // Settings for Markdown preview rendering.
+    "preview": {
+      // Whether to render YAML frontmatter as a table in Markdown previews.
+      // When disabled, frontmatter is hidden from the preview.
+      "render_frontmatter": true,
+    },
+  },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //
   // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:

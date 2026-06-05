@@ -20,7 +20,7 @@ use markdown::{
 };
 use project::Project;
 use project::search::SearchQuery;
-use settings::{SeedQuerySetting, Settings};
+use settings::{RegisterSetting, SeedQuerySetting, Settings, SettingsStore};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
@@ -39,12 +39,44 @@ use crate::{ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ScrollUp,
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Settings for Markdown preview rendering.
+#[derive(Clone, Copy, Debug, RegisterSetting)]
+pub struct MarkdownPreviewSettings {
+    pub render_frontmatter: bool,
+}
+
+impl Settings for MarkdownPreviewSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let render_frontmatter = content
+            .markdown
+            .as_ref()
+            .and_then(|markdown| markdown.preview.as_ref())
+            .and_then(|preview| preview.render_frontmatter)
+            .unwrap_or(true);
+        Self { render_frontmatter }
+    }
+}
+
+fn markdown_preview_options(cx: &App) -> MarkdownOptions {
+    MarkdownOptions {
+        parse_html: true,
+        render_mermaid_diagrams: true,
+        parse_heading_slugs: true,
+        // Always recognize frontmatter so it's stripped from the body; whether
+        // it's drawn is controlled by the `render_frontmatter` setting.
+        parse_metadata_blocks: true,
+        render_metadata_blocks: MarkdownPreviewSettings::get_global(cx).render_frontmatter,
+        ..Default::default()
+    }
+}
+
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     markdown: Entity<Markdown>,
     _markdown_subscription: Subscription,
+    _settings_subscription: Subscription,
     active_source_index: Option<usize>,
     scroll_handle: ScrollHandle,
     image_cache: Entity<RetainAllImageCache>,
@@ -219,13 +251,7 @@ impl MarkdownPreviewView {
                     SharedString::default(),
                     Some(language_registry),
                     None,
-                    MarkdownOptions {
-                        parse_html: true,
-                        render_mermaid_diagrams: true,
-                        parse_heading_slugs: true,
-                        render_metadata_blocks: true,
-                        ..Default::default()
-                    },
+                    markdown_preview_options(cx),
                     cx,
                 )
             });
@@ -239,6 +265,11 @@ impl MarkdownPreviewView {
                         this.sync_active_root_block(cx);
                     },
                 ),
+                _settings_subscription: cx.observe_global::<SettingsStore>(|this, cx| {
+                    let options = markdown_preview_options(cx);
+                    this.markdown
+                        .update(cx, |markdown, cx| markdown.set_options(options, cx));
+                }),
                 markdown,
                 active_source_index: None,
                 scroll_handle: ScrollHandle::new(),

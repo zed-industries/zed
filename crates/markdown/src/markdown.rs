@@ -41,13 +41,13 @@ use gpui::{
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
-    MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMetadataBlock, parse_links_only,
-    parse_markdown_with_options,
+    MarkdownEvent, MarkdownTag, MarkdownTagEnd, MetadataValue, ParsedMetadataBlock,
+    parse_links_only, parse_markdown_with_options,
 };
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{Checkbox, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
+use ui::{Checkbox, Chip, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -346,13 +346,33 @@ pub struct Markdown {
     active_search_highlight: Option<usize>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
+    /// Recognize frontmatter so it is stripped from the document body even when
+    /// it isn't rendered. Whether it's drawn is controlled by
+    /// `render_metadata_blocks`.
+    pub parse_metadata_blocks: bool,
     pub render_metadata_blocks: bool,
+}
+
+fn locate_metadata_span(
+    source: &str,
+    content_range: &Range<usize>,
+    cursor: &mut usize,
+    needle: &str,
+) -> Range<usize> {
+    if !needle.is_empty()
+        && let Some(offset) = source[*cursor..content_range.end].find(needle)
+    {
+        let start = *cursor + offset;
+        *cursor = start + needle.len();
+        return start..start + needle.len();
+    }
+    content_range.clone()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -677,6 +697,14 @@ impl Markdown {
         self.parse(cx);
     }
 
+    pub fn set_options(&mut self, options: MarkdownOptions, cx: &mut Context<Self>) {
+        if self.options == options {
+            return;
+        }
+        self.options = options;
+        self.parse(cx);
+    }
+
     pub fn request_autoscroll_to_source_index(
         &mut self,
         source_index: usize,
@@ -850,7 +878,8 @@ impl Markdown {
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
         let should_parse_heading_slugs = self.options.parse_heading_slugs;
-        let should_parse_metadata_blocks = self.options.render_metadata_blocks;
+        let should_parse_metadata_blocks =
+            self.options.parse_metadata_blocks || self.options.render_metadata_blocks;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
 
@@ -1419,50 +1448,8 @@ impl MarkdownElement {
         cx: &App,
     ) {
         let content_range = &metadata_block.content_range;
-        if let Some(rows) = metadata_block.rows.as_deref() {
-            builder.push_div(
-                div()
-                    .grid()
-                    .grid_cols(2)
-                    .w_full()
-                    .mb_2()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_sm()
-                    .overflow_hidden(),
-                content_range,
-                markdown_end,
-            );
-
-            for (row_index, row) in rows.iter().enumerate() {
-                self.push_metadata_cell(
-                    builder,
-                    source,
-                    row.key.clone(),
-                    content_range,
-                    markdown_end,
-                    MetadataCellStyle {
-                        row_index,
-                        is_key: true,
-                    },
-                    cx,
-                );
-                self.push_metadata_cell(
-                    builder,
-                    source,
-                    row.value.clone(),
-                    content_range,
-                    markdown_end,
-                    MetadataCellStyle {
-                        row_index,
-                        is_key: false,
-                    },
-                    cx,
-                );
-            }
-
-            builder.pop_div();
-        } else {
+        let Some(rows) = metadata_block.rows.as_deref() else {
+            // Not a valid YAML mapping: render the raw content as a code block.
             let mut metadata_block = div().w_full().rounded_md();
             metadata_block.style().refine(&self.style.code_block);
             builder.push_text_style(self.style.code_block.text.to_owned());
@@ -1473,18 +1460,79 @@ impl MarkdownElement {
             builder.pop_div();
             builder.pop_code_block();
             builder.pop_text_style();
+            return;
+        };
+
+        builder.push_div(
+            div()
+                .grid()
+                .grid_cols(2)
+                .w_full()
+                .mb_2()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_sm()
+                .overflow_hidden(),
+            content_range,
+            markdown_end,
+        );
+
+        // Recover precise source ranges for rendered text by scanning forward
+        // through the block, so selection and search highlights land on the
+        // right source offsets. Values without a verbatim source span (e.g.
+        // block scalars) fall back to the whole block range.
+        let mut cursor = content_range.start;
+        for (row_index, row) in rows.iter().enumerate() {
+            let key_range = locate_metadata_span(source, content_range, &mut cursor, &row.key);
+            self.push_metadata_cell(builder, content_range, markdown_end, row_index, true, cx, {
+                let key = row.key.clone();
+                move |builder| {
+                    builder.push_text_style(TextStyleRefinement {
+                        color: Some(cx.theme().colors().text_muted),
+                        font_weight: Some(FontWeight::SEMIBOLD),
+                        ..Default::default()
+                    });
+                    builder.push_text(&key, key_range);
+                    builder.pop_text_style();
+                }
+            });
+            let value_range = match &row.value {
+                MetadataValue::Scalar(text) | MetadataValue::Raw(text) => {
+                    locate_metadata_span(source, content_range, &mut cursor, text)
+                }
+                MetadataValue::List(_) => content_range.clone(),
+            };
+            self.push_metadata_cell(builder, content_range, markdown_end, row_index, false, cx, {
+                let value = &row.value;
+                move |builder| match value {
+                    MetadataValue::Scalar(text) | MetadataValue::Raw(text) => {
+                        builder.push_text(text, value_range);
+                    }
+                    MetadataValue::List(items) => {
+                        builder.push_image_child(
+                            h_flex()
+                                .flex_wrap()
+                                .gap_1()
+                                .children(items.iter().map(|item| Chip::new(item.clone()))),
+                        );
+                    }
+                }
+            });
         }
+
+        builder.pop_div();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_metadata_cell(
         &self,
         builder: &mut MarkdownElementBuilder,
-        source: &str,
-        text_range: Range<usize>,
         block_range: &Range<usize>,
         markdown_end: usize,
-        cell_style: MetadataCellStyle,
+        row_index: usize,
+        is_key: bool,
         cx: &App,
+        push_content: impl FnOnce(&mut MarkdownElementBuilder),
     ) {
         builder.push_div(
             div()
@@ -1494,27 +1542,15 @@ impl MarkdownElement {
                 .px_2()
                 .py_1()
                 .border_color(cx.theme().colors().border)
-                .when(cell_style.row_index > 0, |this| this.border_t_1())
-                .when(!cell_style.is_key, |this| this.border_l_1())
-                .when(cell_style.is_key, |this| {
+                .when(row_index > 0, |this| this.border_t_1())
+                .when(!is_key, |this| this.border_l_1())
+                .when(is_key, |this| {
                     this.bg(cx.theme().colors().panel_background)
                 }),
             block_range,
             markdown_end,
         );
-
-        let text_style = if cell_style.is_key {
-            TextStyleRefinement {
-                color: Some(cx.theme().colors().text_muted),
-                font_weight: Some(FontWeight::SEMIBOLD),
-                ..Default::default()
-            }
-        } else {
-            TextStyleRefinement::default()
-        };
-        builder.push_text_style(text_style);
-        builder.push_text(&source[text_range.clone()], text_range);
-        builder.pop_text_style();
+        push_content(builder);
         builder.pop_div();
     }
 
@@ -1909,13 +1945,21 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_mermaid_diagrams,
+            render_metadata_blocks,
+            mermaid_state,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
                 markdown.images_by_source_offset.clone(),
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
+                markdown.options.render_metadata_blocks,
                 markdown.mermaid_state.clone(),
             )
         };
@@ -2279,13 +2323,17 @@ impl Element for MarkdownElement {
                             if let Some(metadata_block) =
                                 parsed_markdown.metadata_blocks.get(&range.start)
                             {
-                                self.push_metadata_block(
-                                    &mut builder,
-                                    &parsed_markdown.source,
-                                    metadata_block,
-                                    markdown_end,
-                                    cx,
-                                );
+                                if render_metadata_blocks {
+                                    self.push_metadata_block(
+                                        &mut builder,
+                                        &parsed_markdown.source,
+                                        metadata_block,
+                                        markdown_end,
+                                        cx,
+                                    );
+                                }
+                                // Consume the block's inner events regardless, so the
+                                // raw frontmatter never leaks into the document body.
                                 rendered_metadata_block = true;
                             }
                         }
@@ -2892,11 +2940,6 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
         Alignment::Right => Some(TextAlign::Right),
         Alignment::None => None,
     }
-}
-
-struct MetadataCellStyle {
-    row_index: usize,
-    is_key: bool,
 }
 
 struct MarkdownElementBuilder {
@@ -3817,7 +3860,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_frontmatter_falls_back_to_code_block_for_nested_yaml(cx: &mut TestAppContext) {
+    fn test_frontmatter_renders_list_values_as_chips(cx: &mut TestAppContext) {
         let rendered = render_markdown_with_options(
             "---\ntags:\n  - zed\n---\nBody",
             None,
@@ -3827,7 +3870,24 @@ mod tests {
             },
             cx,
         );
-        assert_eq!(rendered.text_for_range(0..26), "tags:\n  - zed\nBody");
+        // The key and body render as text; list items become chips (which are
+        // not part of the selectable text), and the raw YAML never leaks.
+        assert_eq!(rendered.text_for_range(0..26), "tags\nBody");
+    }
+
+    #[gpui::test]
+    fn test_frontmatter_hidden_when_not_rendered(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "---\ntitle: Post\n---\nBody",
+            None,
+            MarkdownOptions {
+                parse_metadata_blocks: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        // Recognized but not rendered: the frontmatter is stripped from the body.
+        assert_eq!(rendered.text_for_range(0..24), "Body");
     }
 
     fn render_markdown_with_code_span_link(
