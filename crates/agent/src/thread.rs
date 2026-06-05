@@ -2224,6 +2224,62 @@ impl Thread {
         self.run_turn(cx)
     }
 
+    /// Force a manual context compaction using the summary strategy,
+    /// regardless of the current token usage or context window size. Backs the
+    /// always-available `/compact` slash command in the Zed agent. Returns an
+    /// event stream mirroring a normal turn so the UI can render the
+    /// compaction progress followed by a terminal stop event.
+    pub fn compact(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        self.model()
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+
+        // Flush any pending message and cancel an in-flight turn before we
+        // start, mirroring `run_turn` so a stray completion can't race with the
+        // compaction we're about to perform.
+        self.flush_pending_message(cx);
+        self.cancel(cx).detach();
+
+        let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
+        let event_stream = ThreadEventStream(events_tx);
+        let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
+        self.running_turn = Some(RunningTurn {
+            event_stream: event_stream.clone(),
+            tools: BTreeMap::default(),
+            cancellation_tx,
+            streaming_tool_inputs: HashMap::default(),
+            _task: cx.spawn(async move |this, cx| {
+                let result = Self::perform_forced_compaction(
+                    &this,
+                    &event_stream,
+                    cancellation_rx.clone(),
+                    cx,
+                )
+                .await;
+
+                // If we were cancelled, `cancel()` already took `running_turn`
+                // (possibly for a new turn), so leave it alone.
+                if *cancellation_rx.borrow() {
+                    return;
+                }
+
+                match result {
+                    Ok(_) => event_stream.send_stop(acp::StopReason::EndTurn),
+                    Err(error) => {
+                        log::error!("Manual compaction failed: {:?}", error);
+                        event_stream.send_error(error);
+                    }
+                }
+
+                _ = this.update(cx, |this, _| this.running_turn.take());
+            }),
+        });
+
+        Ok(events_rx)
+    }
+
     pub fn push_acp_user_block(
         &mut self,
         id: UserMessageId,
@@ -2603,13 +2659,11 @@ impl Thread {
     async fn perform_compaction_if_needed(
         this: &WeakEntity<Self>,
         event_stream: &ThreadEventStream,
-        mut cancellation_rx: watch::Receiver<bool>,
+        cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
-            let Some(insertion_ix) = this.compaction_message_target_ix() else {
-                return None;
-            };
+            let insertion_ix = this.compaction_message_target_ix()?;
             let model = this.model.clone()?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
@@ -2619,6 +2673,60 @@ impl Thread {
             return Ok(ControlFlow::Continue(()));
         };
 
+        Self::stream_compaction(
+            this,
+            event_stream,
+            cancellation_rx,
+            model,
+            request,
+            insertion_ix,
+            cx,
+        )
+        .await
+    }
+
+    /// Force a context compaction regardless of token usage or context window
+    /// size, inserting a summary at the end of the thread. Backs the
+    /// always-available `/compact` slash command in the Zed agent. Always uses
+    /// the summary strategy (never provider-native compaction).
+    async fn perform_forced_compaction(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<ControlFlow<()>> {
+        let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
+            let insertion_ix = this.forced_compaction_target_ix()?;
+            let model = this.model.clone()?;
+            let request = this.build_compaction_request(insertion_ix, &model, cx);
+            this.current_request_token_usage = TokenUsage::default();
+            Some((model, request, insertion_ix))
+        })?
+        else {
+            return Ok(ControlFlow::Continue(()));
+        };
+
+        Self::stream_compaction(
+            this,
+            event_stream,
+            cancellation_rx,
+            model,
+            request,
+            insertion_ix,
+            cx,
+        )
+        .await
+    }
+
+    async fn stream_compaction(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        mut cancellation_rx: watch::Receiver<bool>,
+        model: Arc<dyn LanguageModel>,
+        request: LanguageModelRequest,
+        insertion_ix: usize,
+        cx: &mut AsyncApp,
+    ) -> Result<ControlFlow<()>> {
         log::debug!("Running compaction");
         let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
         event_stream.send_context_compaction(compaction_id.clone());
@@ -3762,6 +3870,21 @@ impl Thread {
             _ => self.messages.len(),
         };
         Some(insertion_ix)
+    }
+
+    /// Insertion point for a manually-triggered compaction. Unlike
+    /// [`Self::compaction_message_target_ix`], this ignores the token
+    /// threshold and the minimum-context-window guard because the user
+    /// explicitly asked to compact. Returns `None` only when there is nothing
+    /// to summarize (no messages, or the thread already ends in a compaction).
+    fn forced_compaction_target_ix(&self) -> Option<usize> {
+        if matches!(
+            self.messages.last().map(|message| &**message),
+            None | Some(Message::Compaction(_))
+        ) {
+            return None;
+        }
+        Some(self.messages.len())
     }
 
     fn build_compaction_request(
@@ -5727,6 +5850,66 @@ mod tests {
                     Message::Compaction(CompactionInfo::Summary(summary)) if summary.as_ref() == "compacted old context"
                 ));
                 assert!(matches!(&*thread.messages[3], Message::User(_)));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_manual_compact_forces_summary(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        // A context window below the minimum and no recorded token usage would
+        // both disable *automatic* compaction. `/compact` must force it anyway,
+        // and without requiring the handoff feature flag.
+        model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                // Auto-compaction would be a no-op here.
+                assert_eq!(thread.compaction_message_target_ix(), None);
+            });
+        });
+
+        let _events = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.compact(cx)))
+            .unwrap();
+        cx.run_until_parked();
+
+        let compaction_request = model.pending_completions().pop().unwrap();
+        assert_eq!(
+            compaction_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        let compaction_texts = request_texts_after_system(&compaction_request.messages);
+        assert_eq!(compaction_texts.len(), 3);
+        assert_eq!(compaction_texts[0], "old user");
+        assert_eq!(compaction_texts[1], "old assistant");
+        assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
+
+        model.send_completion_stream_text_chunk(&compaction_request, "summary of old context");
+        model.end_completion_stream(&compaction_request);
+        cx.run_until_parked();
+
+        // The compaction summary is appended to the thread, and no follow-up
+        // model turn is requested — `/compact` only compacts.
+        assert!(model.pending_completions().is_empty());
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _cx| {
+                assert!(matches!(&*thread.messages[0], Message::User(_)));
+                assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+                assert!(matches!(
+                    &*thread.messages[2],
+                    Message::Compaction(CompactionInfo::Summary(summary)) if summary.as_ref() == "summary of old context"
+                ));
+                // Re-running `/compact` with nothing new to summarize is a
+                // no-op: the thread already ends in a compaction.
+                assert_eq!(thread.forced_compaction_target_ix(), None);
             });
         });
     }

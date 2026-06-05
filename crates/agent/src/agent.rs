@@ -1401,8 +1401,17 @@ impl NativeAgent {
         project_state: Option<&ProjectState>,
         cx: &App,
     ) -> Vec<acp::AvailableCommand> {
+        // `/compact` is a built-in command of the Zed agent. It's always
+        // available — independent of project state, MCP prompts, or skills —
+        // and other (e.g. ACP) agents bring their own `/compact` if they have
+        // one, so this list only governs the native agent.
+        let compact_command = acp::AvailableCommand::new(
+            "compact",
+            "Summarize the conversation so far to free up context",
+        );
+
         let Some(state) = project_state else {
-            return vec![];
+            return vec![compact_command];
         };
         let registry = state.context_server_registry.read(cx);
 
@@ -1449,7 +1458,9 @@ impl NativeAgent {
             Some(command)
         });
 
-        mcp_commands.collect()
+        std::iter::once(compact_command)
+            .chain(mcp_commands)
+            .collect()
     }
 
     pub fn load_thread(
@@ -1756,6 +1767,37 @@ impl NativeAgent {
                     thread.resume(cx)
                 }
             })?;
+
+            cx.update(|cx| {
+                NativeAgentConnection::handle_thread_events(
+                    response_stream,
+                    acp_thread.downgrade(),
+                    cx,
+                )
+            })
+            .await
+        })
+    }
+
+    /// Run a summary-based context compaction in response to the built-in
+    /// `/compact` slash command. Unlike a skill or MCP prompt, this doesn't
+    /// add any user message to the model context — it just compacts the
+    /// existing conversation and streams the resulting summary back to the UI.
+    fn send_compact_command(
+        &self,
+        session_id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        cx.spawn(async move |this, cx| {
+            let (acp_thread, thread) = this.update(cx, |this, _cx| {
+                let session = this
+                    .sessions
+                    .get(&session_id)
+                    .context("Failed to get session")?;
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
+            })??;
+
+            let response_stream = thread.update(cx, |thread, cx| thread.compact(cx))?;
 
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
@@ -2422,6 +2464,19 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
+            // `/compact` is a built-in command of the Zed agent (see
+            // `build_available_commands_for_project`). It takes precedence
+            // over MCP prompts and skills of the same name and forces a
+            // summary-based context compaction.
+            if parsed_command.prompt_name == "compact"
+                && parsed_command.explicit_server_id.is_none()
+                && parsed_command.skill_scope.is_none()
+            {
+                return self
+                    .0
+                    .update(cx, |agent, cx| agent.send_compact_command(session_id, cx));
+            }
+
             // Skill scope qualifiers (`/:<name>` and
             // `/<worktree>:<name>`) use a colon separator that can't
             // collide with MCP's `/<server>.<name>` grammar. The popup
