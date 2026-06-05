@@ -426,7 +426,7 @@ CREATE TABLE public.users (
     email_address character varying(255) DEFAULT NULL::character varying,
     connected_once boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
-    github_user_id integer NOT NULL,
+    github_user_id integer,
     metrics_id uuid DEFAULT gen_random_uuid() NOT NULL,
     accepted_tos_at timestamp without time zone,
     github_user_created_at timestamp without time zone,

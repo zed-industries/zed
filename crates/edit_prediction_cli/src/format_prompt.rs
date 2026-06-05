@@ -34,7 +34,7 @@ pub async fn run_format_prompt(
         example,
         app_state.clone(),
         example_progress,
-        ContextRetrievalType::Lsp,
+        vec![ContextRetrievalType::Lsp],
         false,
         cx.clone(),
     )

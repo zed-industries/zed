@@ -6242,7 +6242,7 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    if event.click_count() > 1 || event.modifiers().secondary() {
+                    if event.modifiers().secondary() {
                         this.open_solo_diff(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
