@@ -7859,7 +7859,7 @@ fn network_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("no_proxy"),
                     pick: |settings_content| settings_content.no_proxy.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.no_proxy = value;
                     },
                 }),
