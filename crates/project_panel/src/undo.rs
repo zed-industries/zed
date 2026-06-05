@@ -138,7 +138,7 @@ use gpui::{AppContext, AsyncApp, SharedString, Task, WeakEntity};
 use project::{ProjectPath, WorktreeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::VecDeque, sync::Arc};
-use ui::App;
+use ui::{App, Severity};
 use workspace::{
     Workspace,
     notifications::{NotificationId, simple_message_notification::MessageNotification},
@@ -550,7 +550,11 @@ impl Inner {
                     NotificationId::Named(SharedString::new_static("project_panel_undo"));
 
                 workspace.show_notification(notification_id, cx, move |cx| {
-                    cx.new(|cx| MessageNotification::new(error, cx).with_title(title))
+                    cx.new(|cx| {
+                        MessageNotification::new(error, cx)
+                            .severity(Severity::Error)
+                            .with_title(title)
+                    })
                 })
             })
             .ok();
