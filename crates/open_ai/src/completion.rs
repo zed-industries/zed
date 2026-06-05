@@ -241,13 +241,17 @@ pub fn into_open_ai_response(
     let service_tier = service_tier_for(speed);
 
     let mut input_items = Vec::new();
+    let history_start_ix = if let Some((compaction_ix, compaction_output)) =
+        latest_compaction_output_for_provider(&messages, provider_id)
+    {
+        input_items.extend(compaction_output.iter().cloned().map(ResponseInput::Raw));
+        compaction_ix + 1
+    } else {
+        0
+    };
+
     let mut replayed_reasoning_item_indexes = HashMap::default();
-    for (index, message) in messages.into_iter().enumerate() {
-        append_compaction_details_to_response_items(
-            message.compaction_details.as_deref(),
-            provider_id,
-            &mut input_items,
-        );
+    for (index, message) in messages.into_iter().enumerate().skip(history_start_ix) {
         append_message_to_response_items(
             message,
             index,
@@ -330,34 +334,40 @@ pub fn into_open_ai_response(
     }
 }
 
-fn append_compaction_details_to_response_items(
-    compaction_details: Option<&serde_json::Value>,
+fn latest_compaction_output_for_provider<'a>(
+    messages: &'a [LanguageModelRequestMessage],
     provider_id: &str,
-    input_items: &mut Vec<ResponseInput>,
-) {
+) -> Option<(usize, &'a Vec<Value>)> {
+    messages.iter().enumerate().rev().find_map(|(ix, message)| {
+        compaction_output_for_provider(message.compaction_details.as_deref(), provider_id)
+            .map(|output| (ix, output))
+    })
+}
+
+fn compaction_output_for_provider<'a>(
+    compaction_details: Option<&'a serde_json::Value>,
+    provider_id: &str,
+) -> Option<&'a Vec<Value>> {
     let Some(compaction_details) = compaction_details else {
-        return;
+        return None;
     };
 
-    // `compaction_details` is built by `CompactionInfo::ProviderNative` as
-    // `{ "provider", "output" }`; only replay output produced by the provider
-    // handling the active request, and reject any other shape.
     let Value::Object(details) = compaction_details else {
         log::warn!("OpenAI native compaction details had an unexpected shape");
-        return;
+        return None;
     };
     if details.get("provider").and_then(Value::as_str) != Some(provider_id) {
-        return;
+        return None;
     }
-    let Some(items) = details
+    let Some(output) = details
         .get("output")
         .or_else(|| details.get("items"))
         .and_then(Value::as_array)
     else {
         log::warn!("OpenAI compaction details did not contain an output array");
-        return;
+        return None;
     };
-    input_items.extend(items.iter().cloned().map(ResponseInput::Raw));
+    Some(output)
 }
 
 fn is_reasoning_input_item(item: &ResponseInput) -> bool {
@@ -1331,6 +1341,29 @@ mod tests {
         )
     }
 
+    fn text_message(role: Role, text: &str) -> LanguageModelRequestMessage {
+        LanguageModelRequestMessage {
+            role,
+            content: vec![MessageContent::Text(text.into())],
+            cache: false,
+            reasoning_details: None,
+            compaction_details: None,
+        }
+    }
+
+    fn compaction_message(provider: &str, encrypted_content: &str) -> LanguageModelRequestMessage {
+        LanguageModelRequestMessage {
+            role: Role::User,
+            content: Vec::new(),
+            cache: false,
+            reasoning_details: None,
+            compaction_details: Some(Arc::new(json!({
+                "provider": provider,
+                "output": [{"type": "compaction", "encrypted_content": encrypted_content}],
+            }))),
+        }
+    }
+
     #[test]
     fn into_open_ai_response_prepends_native_compaction_items() {
         let request = LanguageModelRequest {
@@ -1370,6 +1403,38 @@ mod tests {
                     "type": "message",
                     "role": "user",
                     "content": [{"type": "input_text", "text": "after compaction"}],
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_uses_latest_compaction_output_and_subsequent_messages() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                text_message(Role::User, "before first compaction"),
+                compaction_message("openai", "old-compact"),
+                text_message(Role::User, "between compactions"),
+                compaction_message("other-provider", "ignored-provider"),
+                text_message(Role::Assistant, "still before latest openai compaction"),
+                compaction_message("openai", "latest-compact"),
+                text_message(Role::User, "after latest compaction"),
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response_for_test(
+            request, "gpt-5", "openai", true, true, None, None, true,
+        );
+
+        assert_eq!(
+            serde_json::to_value(&response.input).unwrap(),
+            json!([
+                {"type": "compaction", "encrypted_content": "latest-compact"},
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "after latest compaction"}],
                 },
             ])
         );
