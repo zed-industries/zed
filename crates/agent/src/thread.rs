@@ -2850,6 +2850,11 @@ impl Thread {
                     // places the boundary directly before it. On the next request
                     // `extend_request_history_until` drops everything before this boundary
                     // and replays these opaque items in their place.
+                    log::debug!(
+                        "{} performed native (server-side) compaction; recording boundary with {} item(s)",
+                        provider.0,
+                        items.len()
+                    );
                     let compaction_id =
                         acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
                     event_stream.send_context_compaction(compaction_id);

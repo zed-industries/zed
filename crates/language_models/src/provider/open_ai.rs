@@ -894,11 +894,15 @@ impl LanguageModel for OpenAiLanguageModel {
             let native_compaction_enabled = self.uses_native_compaction()
                 && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>());
             if native_compaction_enabled {
-                request.context_management =
-                    vec![ContextManagement::compaction(native_compaction_threshold(
-                        self.model.max_token_count(),
-                        self.model.max_output_tokens(),
-                    ))];
+                let compact_threshold = native_compaction_threshold(
+                    self.model.max_token_count(),
+                    self.model.max_output_tokens(),
+                );
+                log::debug!(
+                    "Requesting OpenAI native compaction for {} (compact_threshold={compact_threshold})",
+                    self.telemetry_id()
+                );
+                request.context_management = vec![ContextManagement::compaction(compact_threshold)];
             }
             let completions = self.stream_response(request, cx);
             async move {
