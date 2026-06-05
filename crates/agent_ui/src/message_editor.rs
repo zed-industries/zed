@@ -2282,6 +2282,7 @@ mod tests {
             description: "Deploy the app".into(),
             source: "".into(),
             skill_file_path: skill_file_path.clone(),
+            warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
             acp::PromptCapabilities::default(),
@@ -2304,6 +2305,7 @@ mod tests {
             description: "desc".into(),
             source: source.into(),
             skill_file_path: PathBuf::from(format!("/tmp/{source}-{name}/SKILL.md")),
+            warning: None,
         };
 
         // Global skills carry an empty scope (so the popup inserts
