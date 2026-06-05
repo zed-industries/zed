@@ -140,6 +140,8 @@ pub enum IconName {
     FolderOpen,
     FolderOpenAdd,
     FolderSearch,
+    FolderShare,
+    FolderShared,
     Font,
     FontSize,
     FontWeight,
