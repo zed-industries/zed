@@ -3235,13 +3235,15 @@ impl SettingsWindow {
                 "sub-page-scope-picker",
                 scope_name,
                 ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    menu = menu.header("Scope");
+
                     for ix in allowed_file_indices {
                         let (file, focus_handle) = &self.files[ix];
                         let display_name = self
                             .display_name(file)
                             .expect("Files should always have a name");
 
-                        menu = menu.header("Scope").toggleable_entry(
+                        menu = menu.toggleable_entry(
                             display_name,
                             file == &self.current_file,
                             IconPosition::End,
