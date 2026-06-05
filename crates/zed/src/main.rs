@@ -304,6 +304,23 @@ fn main() {
         return;
     }
 
+    if args.run_database_migrations {
+        match db::run_app_database_migrations(db::database_dir(), *release_channel::RELEASE_CHANNEL)
+        {
+            Ok(db_path) => {
+                println!(
+                    "Database migrations completed successfully for {}",
+                    db_path.display()
+                );
+            }
+            Err(error) => {
+                eprintln!("Database migrations failed: {error:#}");
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
     rayon::ThreadPoolBuilder::new()
         .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)
@@ -1684,6 +1701,10 @@ struct Args {
     /// clipboard`
     #[arg(long)]
     system_specs: bool,
+
+    /// Run database migrations and exit.
+    #[arg(long, hide = true)]
+    run_database_migrations: bool,
 
     /// Used for the MCP Server, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.

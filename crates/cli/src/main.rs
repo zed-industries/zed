@@ -123,6 +123,9 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Run database migrations and exit.
+    #[arg(long)]
+    run_database_migrations: bool,
     /// Open the project in a dev container.
     ///
     /// Automatically triggers "Reopen in Dev Container" if a `.devcontainer/`
@@ -512,6 +515,18 @@ fn main() -> Result<()> {
             &format!("{} --system-specs", path.display()),
         ];
         anyhow::bail!(msg.join("\n"));
+    }
+
+    if args.run_database_migrations {
+        let mut command = std::process::Command::new(app.path());
+        command.arg("--run-database-migrations");
+        if let Some(dir) = user_data_dir.as_deref() {
+            command.arg("--user-data-dir").arg(dir);
+        }
+        let status = command
+            .status()
+            .context("failed to run database migrations")?;
+        std::process::exit(status.code().unwrap_or(1));
     }
 
     #[cfg(all(

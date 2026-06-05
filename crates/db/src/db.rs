@@ -57,6 +57,61 @@ impl Migrator for AppMigrator {
     }
 }
 
+pub fn run_app_database_migrations(db_dir: &Path, scope: impl DbScope) -> anyhow::Result<PathBuf> {
+    run_database_migrations::<AppMigrator>(db_dir, scope)
+}
+
+pub fn run_database_migrations<M: Migrator>(
+    db_dir: &Path,
+    scope: impl DbScope,
+) -> anyhow::Result<PathBuf> {
+    let db_path = db_path(db_dir, scope);
+    if let Some(parent) = db_path.parent() {
+        create_dir_all(parent).context("Could not create db directory")?;
+    }
+
+    let connection = sqlez::connection::Connection::open_file(db_path.to_string_lossy().as_ref());
+    anyhow::ensure!(
+        connection.persistent(),
+        "could not open database {}",
+        db_path.display()
+    );
+
+    connection
+        .exec(CONNECTION_INITIALIZE_QUERY)
+        .with_context(|| {
+            format!(
+                "Db connection initialize query failed to prepare: {CONNECTION_INITIALIZE_QUERY}"
+            )
+        })?()
+    .with_context(|| {
+        format!("Db connection initialize query failed to execute: {CONNECTION_INITIALIZE_QUERY}")
+    })?;
+    connection
+        .exec(DB_INITIALIZE_QUERY)
+        .with_context(|| format!("Db initialize query failed to prepare: {DB_INITIALIZE_QUERY}"))?(
+    )
+    .with_context(|| format!("Db initialize query failed to execute: {DB_INITIALIZE_QUERY}"))?;
+
+    let foreign_keys_enabled = connection.select_row::<i32>("PRAGMA foreign_keys")?()?
+        .map(|enabled| enabled != 0)
+        .unwrap_or(false);
+
+    connection.exec("PRAGMA foreign_keys = OFF;")?()?;
+    let migration_result =
+        connection.with_savepoint("strict_database_migration", || M::migrate(&connection));
+    let restore_foreign_keys_result = if foreign_keys_enabled {
+        connection.exec("PRAGMA foreign_keys = ON;")?()
+    } else {
+        Ok(())
+    };
+
+    migration_result?;
+    restore_foreign_keys_result?;
+
+    Ok(db_path)
+}
+
 impl AppDatabase {
     /// Opens the production database and runs all inventory-registered
     /// migrations in dependency order.
@@ -299,7 +354,7 @@ mod tests {
     use sqlez::domain::Domain;
     use sqlez_macros::sql;
 
-    use crate::open_db;
+    use crate::{open_db, run_database_migrations};
 
     // Test bad migration panics
     #[gpui::test]
@@ -321,6 +376,64 @@ mod tests {
             .tempdir()
             .unwrap();
         let _bad_db = open_db::<BadDB>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
+    }
+
+    #[test]
+    fn test_run_database_migrations_succeeds() -> anyhow::Result<()> {
+        enum GoodDB {}
+
+        impl Domain for GoodDB {
+            const NAME: &str = "strict_db_success_test";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE strict_success_test(value TEXT);)];
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbMigrationTests")
+            .tempdir()?;
+        let db_path = run_database_migrations::<GoodDB>(
+            tempdir.path(),
+            release_channel::ReleaseChannel::Dev,
+        )?;
+        let connection =
+            sqlez::connection::Connection::open_file(db_path.to_string_lossy().as_ref());
+        anyhow::ensure!(
+            connection.persistent(),
+            "could not open database {}",
+            db_path.display()
+        );
+        let table_name = connection.select_row::<String>(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'strict_success_test'",
+        )?()?;
+
+        assert_eq!(table_name.as_deref(), Some("strict_success_test"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_database_migrations_returns_errors() -> anyhow::Result<()> {
+        enum BadDB {}
+
+        impl Domain for BadDB {
+            const NAME: &str = "strict_db_failure_test";
+            const MIGRATIONS: &[&str] = &[
+                sql!(CREATE TABLE strict_failure_test(value TEXT);),
+                sql!(CREATE TABLE strict_failure_test(value TEXT);),
+            ];
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbMigrationTests")
+            .tempdir()?;
+        let Err(error) =
+            run_database_migrations::<BadDB>(tempdir.path(), release_channel::ReleaseChannel::Dev)
+        else {
+            anyhow::bail!("strict migration runner unexpectedly succeeded");
+        };
+
+        assert!(format!("{error:#}").contains("strict_failure_test"));
+
+        Ok(())
     }
 
     /// Test that DB exists but corrupted (causing recreate)
