@@ -232,6 +232,7 @@ pub enum IconName {
     SignalMedium,
     Slash,
     Sliders,
+    Sourcehut,
     Space,
     Sparkle,
     Split,
