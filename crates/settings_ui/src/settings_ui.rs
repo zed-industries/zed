@@ -6016,6 +6016,96 @@ pub mod test {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_open_skill_creator_action_opens_settings_window_at_sub_page(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use project::Project;
+
+        cx.update(|cx| {
+            register_settings(cx);
+            release_channel::init("0.0.0".parse().unwrap(), cx);
+            crate::init(cx);
+        });
+
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state.clone(), cx);
+            app_state
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/project", serde_json::json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let project = cx.update(|cx| {
+            Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                project::LocalProjectFlags::default(),
+                cx,
+            )
+        });
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree("/project", true, cx)
+            })
+            .await
+            .expect("Failed to create worktree");
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+
+        cx.run_until_parked();
+
+        // Dispatch the action the way the command palette does: on the
+        // workspace window.
+        multi_workspace.update_in(cx, |_multi_workspace, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::assistant::OpenSkillCreator), cx);
+        });
+
+        cx.run_until_parked();
+
+        let settings_window = cx
+            .update(|_, cx| {
+                cx.windows()
+                    .into_iter()
+                    .find_map(|window| window.downcast::<SettingsWindow>())
+            })
+            .expect("dispatching agent::OpenSkillCreator should open the settings window");
+
+        settings_window
+            .read_with(cx, |settings_window, _| {
+                let titles: Vec<_> = settings_window
+                    .sub_page_stack
+                    .iter()
+                    .map(|sub_page| sub_page.link.title.to_string())
+                    .collect();
+                assert_eq!(
+                    titles,
+                    ["Skills", "Create Skill"],
+                    "skill creator should be pushed on top of the skills page"
+                );
+            })
+            .unwrap();
+    }
 }
 
 #[cfg(test)]

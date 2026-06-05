@@ -1,7 +1,7 @@
 use agent_skills::{
-    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE,
-    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, SkillsUpdatedHook, global_skills_dir,
-    parse_skill_file_content, slugify_skill_name, validate_description, validate_name,
+    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME,
+    SKILLS_DIR_NAME, SkillMetadata, SkillsUpdatedHook, global_skills_dir, parse_skill_file_content,
+    slugify_skill_name, validate_description, validate_name,
 };
 use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -80,7 +80,7 @@ struct ImportedSkill {
     disable_model_invocation: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum ScopeChoice {
     Global,
     Project {
@@ -138,11 +138,20 @@ pub(crate) fn render_skill_creator_page(
     settings_window: &SettingsWindow,
     _scroll_handle: &ScrollHandle,
     _window: &mut Window,
-    _cx: &mut Context<SettingsWindow>,
+    cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let Some(page) = settings_window.skill_creator_page() else {
         return gpui::Empty.into_any_element();
     };
+    // The scope follows the settings file selected in the settings window
+    // (shown in the breadcrumb), so re-resolve it on every render in case
+    // the file selection changed while the creator was open.
+    let scope = scope_for_settings_file(
+        &settings_window.current_file,
+        settings_window.original_window.as_ref(),
+        cx,
+    );
+    page.update(cx, |page, cx| page.set_scope(scope, cx));
     page.into_any_element()
 }
 
@@ -157,7 +166,8 @@ pub struct SkillCreatorPage {
     body_editor: Entity<Editor>,
     description_length: usize,
     /// Where the skill will be saved, derived from the settings file selected
-    /// in the settings window when the sub-page was opened.
+    /// in the settings window. Kept in sync by `render_skill_creator_page`
+    /// whenever the file selection (breadcrumb scope) changes.
     scope: ScopeChoice,
     disable_model_invocation: bool,
     name_error: Option<&'static str>,
@@ -347,6 +357,13 @@ impl SkillCreatorPage {
 
     pub(crate) fn name_editor_focus_handle(&self, cx: &App) -> FocusHandle {
         self.name_editor.focus_handle(cx)
+    }
+
+    fn set_scope(&mut self, scope: ScopeChoice, cx: &mut Context<Self>) {
+        if self.scope != scope {
+            self.scope = scope;
+            cx.notify();
+        }
     }
 
     fn handle_url_input_event(
