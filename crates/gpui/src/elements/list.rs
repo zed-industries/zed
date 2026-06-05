@@ -744,11 +744,13 @@ impl ListState {
 
     /// Returns whether the item is entirely above the viewport, or `None` if
     /// the list has not measured enough layout to know.
+    ///
+    /// A zero-height viewport still yields a definitive answer: callers may
+    /// size sibling UI based on this query (potentially squeezing the list
+    /// itself to zero height), so returning `None` in that case would make
+    /// the answer oscillate from frame to frame.
     pub fn item_is_above_viewport(&self, ix: usize) -> Option<bool> {
-        let viewport_bounds = self.viewport_bounds();
-        if viewport_bounds.size.height == px(0.0) {
-            return None;
-        }
+        let viewport_bounds = self.0.borrow().last_layout_bounds?;
 
         let scroll_top = self.logical_scroll_top();
         if ix < scroll_top.item_ix {
@@ -763,11 +765,11 @@ impl ListState {
 
     /// Returns whether the item is entirely below the viewport, or `None` if
     /// the list has not measured enough layout to know.
+    ///
+    /// See [`Self::item_is_above_viewport`] for why a zero-height viewport
+    /// still yields a definitive answer.
     pub fn item_is_below_viewport(&self, ix: usize) -> Option<bool> {
-        let viewport_bounds = self.viewport_bounds();
-        if viewport_bounds.size.height == px(0.0) {
-            return None;
-        }
+        let viewport_bounds = self.0.borrow().last_layout_bounds?;
 
         let scroll_top = self.logical_scroll_top();
         if ix < scroll_top.item_ix {
@@ -1769,6 +1771,37 @@ mod test {
             cx.new(|_| TestListView(state.clone())).into_any_element()
         });
 
+        assert_eq!(state.item_is_above_viewport(3), Some(false));
+        assert_eq!(state.item_is_below_viewport(3), Some(true));
+    }
+
+    #[gpui::test]
+    fn test_item_viewport_queries_remain_stable_with_zero_height_viewport(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.)).measure_all();
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+
+        assert_eq!(state.item_is_above_viewport(3), Some(false));
+        assert_eq!(state.item_is_below_viewport(3), Some(true));
+
+        // Squeeze the list to zero height, e.g. because a sibling element
+        // (sized based on the queries above) consumed all the space. The
+        // answers must remain definitive rather than becoming `None`,
+        // otherwise the sibling's size can oscillate between frames.
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(0.)), |_, cx| {
+            cx.new(|_| TestListView(state.clone())).into_any_element()
+        });
+
+        assert_eq!(state.item_is_above_viewport(1), Some(true));
+        assert_eq!(state.item_is_below_viewport(1), Some(false));
         assert_eq!(state.item_is_above_viewport(3), Some(false));
         assert_eq!(state.item_is_below_viewport(3), Some(true));
     }
