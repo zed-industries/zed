@@ -354,8 +354,6 @@ impl ChatGptModel {
     }
 
     fn supports_native_compaction(&self) -> bool {
-        // Every model the Codex backend serves is in the GPT-5 family, which
-        // supports server-side compaction.
         true
     }
 
