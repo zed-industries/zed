@@ -2625,7 +2625,14 @@ impl Thread {
                 return None;
             };
             let model = this.model.clone()?;
-            let request = this.build_compaction_request(insertion_ix, &model, cx);
+            let request = LanguageModelRequest {
+                thread_id: Some(this.id.to_string()),
+                prompt_id: Some(this.prompt_id.to_string()),
+                intent: Some(CompletionIntent::ThreadContextSummarization),
+                temperature: AgentSettings::temperature_for_model(&model, cx),
+                messages: this.build_request_messages_until(Vec::new(), insertion_ix, cx),
+                ..Default::default()
+            };
             this.current_request_token_usage = TokenUsage::default();
             Some((model, request, insertion_ix))
         })?
@@ -3824,22 +3831,6 @@ impl Thread {
             _ => self.messages.len(),
         };
         Some(insertion_ix)
-    }
-
-    fn build_compaction_request(
-        &self,
-        insertion_ix: usize,
-        model: &Arc<dyn LanguageModel>,
-        cx: &App,
-    ) -> LanguageModelRequest {
-        LanguageModelRequest {
-            thread_id: Some(self.id.to_string()),
-            prompt_id: Some(self.prompt_id.to_string()),
-            intent: Some(CompletionIntent::ThreadContextSummarization),
-            temperature: AgentSettings::temperature_for_model(model, cx),
-            messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
-            ..Default::default()
-        }
     }
 
     fn retained_user_request_messages_before(
