@@ -48,7 +48,7 @@ use client::{
     ChannelId, Client, ErrorExt, ParticipantIndex, Status, TypedEnvelope, User, UserStore,
     proto::{self, ErrorCode, PanelId, PeerId},
 };
-use collections::{HashMap, HashSet, hash_map};
+use collections::{HashMap, HashSet, TypeIdHashMap, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use fs::Fs;
 use futures::{
@@ -819,7 +819,7 @@ type BuildProjectItemForPathFn =
 
 #[derive(Clone, Default)]
 struct ProjectItemRegistry {
-    build_project_item_fns_by_type: HashMap<TypeId, BuildProjectItemFn>,
+    build_project_item_fns_by_type: TypeIdHashMap<BuildProjectItemFn>,
     build_project_item_for_path_fns: Vec<BuildProjectItemForPathFn>,
 }
 
@@ -947,7 +947,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
 }
 
 #[derive(Default)]
-pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
+pub struct FollowableViewRegistry(TypeIdHashMap<FollowableViewDescriptor>);
 
 struct FollowableViewDescriptor {
     from_state_proto: fn(
@@ -1020,7 +1020,7 @@ struct SerializableItemDescriptor {
 #[derive(Default)]
 struct SerializableItemRegistry {
     descriptors_by_kind: HashMap<Arc<str>, SerializableItemDescriptor>,
-    descriptors_by_type: HashMap<TypeId, SerializableItemDescriptor>,
+    descriptors_by_type: TypeIdHashMap<SerializableItemDescriptor>,
 }
 
 impl Global for SerializableItemRegistry {}
