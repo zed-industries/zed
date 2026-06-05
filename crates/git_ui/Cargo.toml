@@ -14,13 +14,15 @@ path = "src/git_ui.rs"
 
 [features]
 test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
+call = ["dep:call"]
 
 [dependencies]
 agent_settings.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
+async-channel.workspace = true
 buffer_diff.workspace = true
-call.workspace = true
+call = { workspace = true, optional = true }
 collections.workspace = true
 component.workspace = true
 db.workspace = true
@@ -48,15 +50,18 @@ project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 rand.workspace = true
+release_channel.workspace = true
 remote_connection.workspace = true
 remote.workspace = true
 schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 strum.workspace = true
 sysinfo.workspace = true
+task.workspace = true
 telemetry.workspace = true
 terminal.workspace = true
 theme.workspace = true
@@ -78,7 +83,10 @@ windows.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
+db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+git = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true

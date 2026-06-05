@@ -405,7 +405,15 @@ impl Render for LanguageServerPrompt {
                                 wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                 border: false,
                             })
-                            .on_url_click(|link, _, cx| cx.open_url(&link)),
+                            .on_url_click(|link, window, cx| {
+                                if let Some(workspace) = Workspace::for_window(window, cx) {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.open_url_or_file(&link, None, window, cx);
+                                    });
+                                } else {
+                                    cx.open_url(&link);
+                                }
+                            }),
                     )
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.entity();

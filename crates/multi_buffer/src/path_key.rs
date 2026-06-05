@@ -599,18 +599,17 @@ impl MultiBuffer {
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
+            cx.emit(Event::Edited {
+                edited_buffer: None,
+                source: BufferEditSource::User,
+            });
+            cx.emit(Event::BufferRangesUpdated {
+                buffer,
+                path_key: path_key.clone(),
+                ranges: new_ranges,
+            });
+            cx.notify();
         }
-
-        cx.emit(Event::Edited {
-            edited_buffer: None,
-            source: BufferEditSource::User,
-        });
-        cx.emit(Event::BufferRangesUpdated {
-            buffer,
-            path_key: path_key.clone(),
-            ranges: new_ranges,
-        });
-        cx.notify();
 
         added_new_excerpt
     }

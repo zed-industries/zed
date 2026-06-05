@@ -348,11 +348,7 @@ impl AgentSettingsContent {
             .get_or_insert_default()
             .0;
 
-        if write_paths.iter().any(|granted| path.starts_with(granted)) {
-            return;
-        }
-        write_paths.retain(|granted| !granted.starts_with(&path));
-        write_paths.push(path);
+        util::paths::insert_subtree(write_paths, path);
     }
 }
 
