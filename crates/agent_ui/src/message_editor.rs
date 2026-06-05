@@ -207,6 +207,7 @@ pub enum MessageEditorEvent {
     Cancel,
     Focus,
     LostFocus,
+    Edited,
     /// Emitted when the user opens slash-command autocomplete in this
     /// editor. Used by `ThreadView` to fire the global-skills scan
     /// trigger; see `NativeAgent::ensure_skills_scan_started`.
@@ -558,6 +559,7 @@ impl MessageEditor {
                 if let EditorEvent::Edited { .. } = event
                     && !editor.read(cx).read_only(cx)
                 {
+                    cx.emit(MessageEditorEvent::Edited);
                     editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
                         this.mention_set
