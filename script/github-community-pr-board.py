@@ -178,9 +178,7 @@ def recompute_signals(pr, project, project_item):
 
     set_field_optional(project, project_item, "Size", compute_size_bucket(total_changes))
     set_field_optional(project, project_item, "Contributor", compute_contributor(pr_labels))
-
-    has_linked = github_pr_has_closing_issue(pr["node_id"])
-    set_field_optional(project, project_item, "Issue Linked", "Has issue" if has_linked else "No issue")
+    set_field_optional(project, project_item, "Issue Linked", github_pr_issue_type(pr["node_id"]))
 
 
 def refresh_signals_if_on_board(pr, project_number):
@@ -404,21 +402,49 @@ def github_list_project_items(project_id):
         cursor = page["pageInfo"]["endCursor"]
 
 
-def github_pr_has_closing_issue(pr_node_id):
-    """Return True if the PR closes at least one issue on merge."""
+def github_pr_issue_type(pr_node_id):
+    """Return the Issue Linked field value for a PR.
+
+    Reads `closingIssuesReferences` (authoritative source for what GitHub
+    will close on merge, covers both `Closes #N` keywords and Development
+    sidebar links) and maps the linked issues' types to one of: 'Crash',
+    'Bug', 'Feature', 'Docs', or 'No issue'.
+
+    When a PR closes multiple issues with different types, returns the
+    most urgent one by the priority Crash > Bug > Feature > Docs.
+    """
     data = github_graphql(
         """
         query($prId: ID!) {
           node(id: $prId) {
             ... on PullRequest {
-              closingIssuesReferences(first: 1) { totalCount }
+              closingIssuesReferences(first: 20) {
+                totalCount
+                nodes { issueType { name } }
+              }
             }
           }
         }
         """,
         {"prId": pr_node_id},
     )
-    return data["node"]["closingIssuesReferences"]["totalCount"] > 0
+    refs = data["node"]["closingIssuesReferences"]
+    if refs["totalCount"] == 0:
+        return "No issue"
+    type_names = {
+        n["issueType"]["name"] for n in refs["nodes"] if n.get("issueType")
+    }
+    for priority in ("Crash", "Bug", "Feature", "Docs"):
+        if priority in type_names:
+            return priority
+    # Org-wide guardrails should ensure every issue has a recognized type,
+    # so reaching this branch means something slipped through. Log it and
+    # fall back so the PR doesn't carry stale data.
+    print(
+        f"Warning: PR has {refs['totalCount']} linked issue(s) but none with "
+        f"a recognized type (saw: {type_names or 'no type set'})"
+    )
+    return "No issue"
 
 
 def github_find_project_item(project_id, content_node_id):
