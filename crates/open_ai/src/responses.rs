@@ -421,12 +421,17 @@ pub enum ResponseOutputItem {
 /// server-side compaction (`context_management`) is enabled. Its
 /// `encrypted_content` is opaque and must be replayed verbatim as an input item
 /// on subsequent turns to preserve the compacted context.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct ResponseCompactionItem {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
     pub encrypted_content: Option<String>,
+    /// Any other fields OpenAI puts on the compaction item. Captured so the item
+    /// round-trips byte-for-byte on replay even if the API adds fields we don't
+    /// model; the item must be sent back unchanged.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

@@ -30,7 +30,8 @@ use ui_input::InputField;
 use util::ResultExt;
 
 pub use open_ai::completion::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, ResponsesRequestConfig, into_open_ai,
+    into_open_ai_response,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = OPEN_AI_PROVIDER_ID;
@@ -233,6 +234,12 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 }
 
+/// Overrides the computed native-compaction `compact_threshold` with a fixed
+/// token count. Intended for manual testing: set it low (e.g. `2000`) to make
+/// OpenAI compact after a message or two instead of near the context limit.
+static NATIVE_COMPACTION_THRESHOLD_ENV_VAR: LazyLock<EnvVar> =
+    env_var!("ZED_NATIVE_COMPACTION_THRESHOLD");
+
 /// Token threshold at which we ask OpenAI to run server-side compaction. We
 /// reserve room for a full-length response so compaction triggers before the
 /// model would otherwise run out of context. Shared by the OpenAI and
@@ -241,6 +248,13 @@ pub(crate) fn native_compaction_threshold(
     max_token_count: u64,
     max_output_tokens: Option<u64>,
 ) -> u64 {
+    if let Some(override_threshold) = NATIVE_COMPACTION_THRESHOLD_ENV_VAR
+        .value
+        .as_ref()
+        .and_then(|value| value.parse().ok())
+    {
+        return override_threshold;
+    }
     let reserved = max_output_tokens.unwrap_or(max_token_count / 4);
     max_token_count.saturating_sub(reserved).max(1)
 }
@@ -312,6 +326,15 @@ fn is_unsupported_compaction_error(error: &RequestError) -> bool {
 /// `context_management` if the model rejects native compaction. On rejection we
 /// record the model (keyed by telemetry id) so subsequent turns skip native
 /// compaction and use summary compaction instead.
+///
+/// Note the rejected turn itself runs with neither native nor summary
+/// compaction: `uses_native_compaction()` was still true when the request was
+/// built, so the agent skipped its summary pass, and the retry here strips
+/// `context_management` entirely. That turn therefore sends the full,
+/// uncompacted history, which can itself overflow the context window if we were
+/// near the limit. We accept this one-turn degradation because the model is now
+/// marked unsupported, so the *next* turn's `compaction_message_target_ix`
+/// summary pass brings the window back under control.
 pub(crate) async fn stream_response_with_compaction_fallback(
     client: &dyn HttpClient,
     provider_name: &str,
@@ -338,6 +361,9 @@ pub(crate) async fn stream_response_with_compaction_fallback(
             log::warn!(
                 "{model_telemetry_id} rejected native compaction; retrying without it and falling back to summary compaction"
             );
+            // Remember this model can't compact so future turns fall back to
+            // summary compaction (see the function-level note on the one-turn
+            // gap this leaves).
             mark_native_compaction_unsupported(model_telemetry_id);
             request.context_management.clear();
             stream_response(
@@ -516,13 +542,15 @@ mod tests {
     fn native_compaction_request() -> ResponseRequest {
         let mut request = into_open_ai_response(
             LanguageModelRequest::default(),
-            "gpt-5",
-            "openai",
-            true,
-            true,
-            None,
-            None,
-            true,
+            ResponsesRequestConfig {
+                model_id: "gpt-5",
+                provider_id: "openai",
+                supports_parallel_tool_calls: true,
+                supports_prompt_cache_key: true,
+                max_output_tokens: None,
+                default_reasoning_effort: None,
+                supports_none_reasoning_effort: true,
+            },
         );
         request.stream = false;
         request.context_management = vec![ContextManagement::compaction(1000)];
@@ -850,15 +878,18 @@ impl LanguageModel for OpenAiLanguageModel {
         if self.model.uses_responses_api() {
             let mut request = into_open_ai_response(
                 request,
-                self.model.id(),
-                PROVIDER_ID.0.as_ref(),
-                self.model.supports_parallel_tool_calls(),
-                self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
-                default_thinking_reasoning_effort(&self.model),
-                self.model
-                    .supported_reasoning_efforts()
-                    .contains(&open_ai::ReasoningEffort::None),
+                ResponsesRequestConfig {
+                    model_id: self.model.id(),
+                    provider_id: PROVIDER_ID.0.as_ref(),
+                    supports_parallel_tool_calls: self.model.supports_parallel_tool_calls(),
+                    supports_prompt_cache_key: self.model.supports_prompt_cache_key(),
+                    max_output_tokens: self.max_output_tokens(),
+                    default_reasoning_effort: default_thinking_reasoning_effort(&self.model),
+                    supports_none_reasoning_effort: self
+                        .model
+                        .supported_reasoning_efforts()
+                        .contains(&open_ai::ReasoningEffort::None),
+                },
             );
             let native_compaction_enabled = self.uses_native_compaction()
                 && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>());

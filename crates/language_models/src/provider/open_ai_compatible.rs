@@ -23,7 +23,8 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::provider::open_ai::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, ResponsesRequestConfig, into_open_ai,
+    into_open_ai_response,
 };
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
@@ -396,19 +397,23 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             }
             .boxed()
         } else {
-            // `provider_id` (3rd arg) is only used to match native-compaction
-            // items on replay; keep it equal to this provider's `provider_id()`.
+            // `provider_id` is only used to match native-compaction items on
+            // replay; keep it equal to this provider's `provider_id()`.
             let request = into_open_ai_response(
                 request,
-                &self.model.name,
-                self.provider_id.0.as_ref(),
-                self.model.capabilities.parallel_tool_calls,
-                self.model.capabilities.prompt_cache_key,
-                self.max_output_tokens(),
-                self.model
-                    .reasoning_effort
-                    .filter(|effort| *effort != open_ai::ReasoningEffort::None),
-                self.model.reasoning_effort == Some(open_ai::ReasoningEffort::None),
+                ResponsesRequestConfig {
+                    model_id: &self.model.name,
+                    provider_id: self.provider_id.0.as_ref(),
+                    supports_parallel_tool_calls: self.model.capabilities.parallel_tool_calls,
+                    supports_prompt_cache_key: self.model.capabilities.prompt_cache_key,
+                    max_output_tokens: self.max_output_tokens(),
+                    default_reasoning_effort: self
+                        .model
+                        .reasoning_effort
+                        .filter(|effort| *effort != open_ai::ReasoningEffort::None),
+                    supports_none_reasoning_effort: self.model.reasoning_effort
+                        == Some(open_ai::ReasoningEffort::None),
+                },
             );
             let completions = self.stream_response(request, cx);
             async move {

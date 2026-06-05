@@ -27,7 +27,8 @@ use util::ResultExt;
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, ResponsesRequestConfig, into_open_ai,
+    into_open_ai_response,
 };
 
 fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
@@ -709,17 +710,19 @@ impl LanguageModel for OpenCodeLanguageModel {
                     .model
                     .supported_reasoning_effort_levels()
                     .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
-                // `provider_id` (3rd arg) is only used to match native-compaction
-                // items on replay; keep it equal to this provider's `provider_id()`.
+                // `provider_id` is only used to match native-compaction items on
+                // replay; keep it equal to this provider's `provider_id()`.
                 let response_request = into_open_ai_response(
                     request,
-                    self.model.id(),
-                    PROVIDER_ID.0.as_ref(),
-                    false,
-                    false,
-                    self.model.max_output_tokens(self.subscription),
-                    None,
-                    supports_none_reasoning_effort,
+                    ResponsesRequestConfig {
+                        model_id: self.model.id(),
+                        provider_id: PROVIDER_ID.0.as_ref(),
+                        supports_parallel_tool_calls: false,
+                        supports_prompt_cache_key: false,
+                        max_output_tokens: self.model.max_output_tokens(self.subscription),
+                        default_reasoning_effort: None,
+                        supports_none_reasoning_effort,
+                    },
                 );
                 let stream =
                     self.stream_openai_response(response_request, http_client, extra_headers, cx);

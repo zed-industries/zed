@@ -30,8 +30,9 @@ use url::form_urlencoded;
 use util::ResultExt as _;
 
 use crate::provider::open_ai::{
-    OpenAiResponseEventMapper, into_open_ai_response, native_compaction_threshold,
-    native_compaction_unsupported, stream_response_with_compaction_fallback,
+    OpenAiResponseEventMapper, ResponsesRequestConfig, into_open_ai_response,
+    native_compaction_threshold, native_compaction_unsupported,
+    stream_response_with_compaction_fallback,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
@@ -483,15 +484,18 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // omitted from the serialized request body entirely.
         let mut responses_request = into_open_ai_response(
             request,
-            self.model.id(),
-            PROVIDER_ID.0.as_ref(),
-            self.model.supports_parallel_tool_calls(),
-            self.model.supports_prompt_cache_key(),
-            /*max_output_tokens*/ None,
-            self.model.default_reasoning_effort(),
-            self.model
-                .supported_reasoning_efforts()
-                .contains(&ReasoningEffort::None),
+            ResponsesRequestConfig {
+                model_id: self.model.id(),
+                provider_id: PROVIDER_ID.0.as_ref(),
+                supports_parallel_tool_calls: self.model.supports_parallel_tool_calls(),
+                supports_prompt_cache_key: self.model.supports_prompt_cache_key(),
+                max_output_tokens: None,
+                default_reasoning_effort: self.model.default_reasoning_effort(),
+                supports_none_reasoning_effort: self
+                    .model
+                    .supported_reasoning_efforts()
+                    .contains(&ReasoningEffort::None),
+            },
         );
         responses_request.store = Some(false);
 

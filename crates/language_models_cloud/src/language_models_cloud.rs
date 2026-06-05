@@ -42,7 +42,8 @@ use thiserror::Error;
 use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, ResponsesRequestConfig, into_open_ai,
+    into_open_ai_response,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
@@ -468,17 +469,19 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                             .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
                     });
 
-                // `provider_id` (3rd arg) is only used to match native-compaction
-                // items on replay; keep it equal to this provider's `provider_id()`.
+                // `provider_id` is only used to match native-compaction items on
+                // replay; keep it equal to this provider's `provider_id()`.
                 let mut request = into_open_ai_response(
                     request,
-                    &self.model.id.0,
-                    PROVIDER_ID.0.as_ref(),
-                    self.model.supports_parallel_tool_calls,
-                    true,
-                    None,
-                    None,
-                    supports_none_reasoning_effort,
+                    ResponsesRequestConfig {
+                        model_id: &self.model.id.0,
+                        provider_id: PROVIDER_ID.0.as_ref(),
+                        supports_parallel_tool_calls: self.model.supports_parallel_tool_calls,
+                        supports_prompt_cache_key: true,
+                        max_output_tokens: None,
+                        default_reasoning_effort: None,
+                        supports_none_reasoning_effort,
+                    },
                 );
 
                 if enable_thinking && let Some(effort) = effort {
