@@ -4516,6 +4516,11 @@ impl EditorElement {
     ) {
         let colors = cx.theme().colors();
 
+        let visible_start =
+            DisplayPoint::new(start_row, 0).to_offset(&snapshot.display_snapshot, Bias::Left);
+        let visible_end = DisplayPoint::new(DisplayRow(start_row.0 + row_infos.len() as u32), 0)
+            .to_offset(&snapshot.display_snapshot, Bias::Right);
+
         let word_highlights = display_hunks
             .into_iter()
             .filter_map(|(hunk, _)| match hunk {
@@ -4526,6 +4531,7 @@ impl EditorElement {
             })
             .filter(|(_, status)| status.is_modified())
             .flat_map(|(word_diffs, _)| word_diffs)
+            .filter(|word_diff| word_diff.start < visible_end && word_diff.end > visible_start)
             .flat_map(|word_diff| {
                 let display_ranges = snapshot
                     .display_snapshot
