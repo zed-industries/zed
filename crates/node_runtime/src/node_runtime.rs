@@ -310,6 +310,7 @@ impl NodeRuntime {
             .iter()
             .map(|p| p.as_str())
             .chain([
+                "--no-package-lock",
                 "--save-exact",
                 "--fetch-retry-mintimeout",
                 "2000",
