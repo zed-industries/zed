@@ -2479,10 +2479,7 @@ impl Sidebar {
         )
         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
         .icon_size(IconSize::Small)
-        .when(has_active_draft, |this| this.icon_color(Color::Accent))
-        .when(!has_active_draft && !is_menu_open, |this| {
-            this.visible_on_hover(group_name)
-        });
+        .when(!is_menu_open, |this| this.visible_on_hover(group_name));
 
         let open_workspaces = self
             .multi_workspace
@@ -2605,6 +2602,11 @@ impl Sidebar {
                     menu
                 },
             ))
+        })
+        .anchor(gpui::Anchor::TopRight)
+        .offset(gpui::Point {
+            x: px(0.),
+            y: px(1.),
         })
         .into_any_element()
     }
