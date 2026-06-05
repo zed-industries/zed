@@ -1822,7 +1822,17 @@ impl Editor {
                                     let pane = if split {
                                         workspace.adjacent_pane(window, cx)
                                     } else {
-                                        workspace.active_pane().clone()
+                                        workspace
+                                            .panes()
+                                            .iter()
+                                            .find(|p| {
+                                                p.read(cx).active_item().is_some_and(|item| {
+                                                    item.project_entry_ids(cx).first().copied()
+                                                        == target_buffer.read(cx).entry_id(cx)
+                                                })
+                                            })
+                                            .cloned()
+                                            .unwrap_or_else(|| workspace.active_pane().clone())
                                     };
 
                                     let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
