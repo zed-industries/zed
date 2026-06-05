@@ -11,7 +11,6 @@ use gpui::{
     rems,
 };
 use language::{Outline, OutlineItem, OutlineSearchEntry};
-use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use theme::ActiveTheme;
@@ -354,9 +353,7 @@ impl PickerDelegate for OutlineViewDelegate {
                                 .filter(|m| !m.positions.is_empty())
                                 .map(|m| (ix, m.score))
                         })
-                        .max_by(|(ix_a, a), (ix_b, b)| {
-                            OrderedFloat(*a).cmp(&OrderedFloat(*b)).then(ix_b.cmp(ix_a))
-                        })
+                        .max_by(|(ix_a, a), (ix_b, b)| a.total_cmp(b).then(ix_b.cmp(ix_a)))
                         .map(|(ix, _)| ix)
                         .unwrap_or(0)
                 };

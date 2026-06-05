@@ -7,9 +7,10 @@ use std::ops::Range;
 #[derive(Debug)]
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,
+    /// Candidates contain the full path of each item, used for matching.
     candidates: Vec<StringMatchCandidate>,
-    /// For each item, the byte offset within `candidates[i].string` where the
-    /// item's own leaf text starts. Anything before this offset is ancestor
+    /// leaf_offsets stores the byte offset within that full path where the
+    /// item's own text starts. Anything before this offset is ancestor
     /// path text used purely as match context.
     leaf_offsets: Vec<usize>,
 }
@@ -30,9 +31,10 @@ pub struct OutlineItem<T> {
 pub struct SymbolPath(pub SharedString);
 
 /// Result of [`Outline::search`]. Real fuzzy matches are `Match`; `Ancestor`
-/// rows are synthetic entries pointing at parent items, included so callers
-/// can render tree context above each match without those rows competing for
-/// auto-selection.
+/// rows are synthetic entries pointing at parent items, included so callers can
+/// show the full path of each match but treat those synthetic ancestors
+/// differently from an entry that actually matched (e.g. they are not eligible
+/// for auto-selection).
 #[derive(Clone, Debug)]
 pub enum OutlineSearchEntry {
     Match(StringMatch),
@@ -259,14 +261,17 @@ impl<T> Outline<T> {
 /// Interleaves synthetic [`OutlineSearchEntry::Ancestor`] rows before each match so callers
 /// can render the parent chain as tree context above the match.
 ///
-/// `matches` must be sorted ascending by `candidate_id` (which is what [`Outline::search`]
-/// produces). `depth_at` returns the tree depth for the item at a given candidate index.
-/// Ancestors that already appear earlier in the output — either as their own match or as an
-/// ancestor of an earlier match — are not duplicated.
+/// `matches` must be sorted ascending by `candidate_id` (which is what
+/// [`Outline::search`] produces), this is so that we preserve the tree strucure
+/// of the outline. `depth_at` returns the tree depth for the item at a given
+/// candidate index. Ancestors that already appear earlier in the output —
+/// either as their own match or as an ancestor of an earlier match — are not
+/// duplicated.
 fn expand_tree(
     depth_at: impl Fn(usize) -> usize,
     matches: Vec<StringMatch>,
 ) -> Vec<OutlineSearchEntry> {
+    debug_assert!(matches.is_sorted_by_key(|m| m.candidate_id));
     let mut out = Vec::with_capacity(matches.len());
     let mut prev_item_ix = 0;
     for string_match in matches {
