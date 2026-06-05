@@ -65,7 +65,7 @@ use test::build_editor_with_project;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    rel_path::rel_path,
+    rel_path::{RelPath, rel_path},
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
 };
 use workspace::{

@@ -15,6 +15,7 @@ pub mod actions;
 pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
+pub mod file_path_nav;
 pub mod code_context_menus;
 mod code_lens;
 pub mod display_map;
@@ -10659,8 +10660,11 @@ impl Editor {
         let buffer = multibuffer.buffer(*buffer_id)?;
 
         let buffer = buffer.read(cx);
-        // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
-        let mut breadcrumbs = if is_singleton {
+        // When file_path_nav is enabled, the filename is already shown by FilePathNav in the
+        // breadcrumb prefix. In a multi-buffer layout the filename is never included here.
+        let file_path_nav_active =
+            is_singleton && EditorSettings::get_global(cx).toolbar.file_path_nav;
+        let mut breadcrumbs = if is_singleton && !file_path_nav_active {
             let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
                 buffer
                     .snapshot()
