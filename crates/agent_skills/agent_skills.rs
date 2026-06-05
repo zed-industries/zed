@@ -196,10 +196,7 @@ pub struct ProjectSkillGroup {
 
 impl Global for SkillIndex {}
 
-/// Callback invoked after a skill is created or modified by the UI (e.g. the
-/// settings window's skill creator), set by the agent UI at startup. It gives
-/// the agent a chance to rescan skill directories and republish the
-/// [`SkillIndex`] without UI crates needing to depend on the agent UI.
+/// Rescan skill agent skill directories when skills are created or modified via UI
 pub struct SkillsUpdatedHook(pub Rc<dyn Fn(&mut App)>);
 
 impl Global for SkillsUpdatedHook {}
@@ -213,7 +210,7 @@ pub struct SkillMetadata {
     pub disable_model_invocation: bool,
 }
 
-/// Minimal skill info for system prompt (not full content).
+/// Minimal skill info for system prompt.
 ///
 /// `Serialize` is required for handlebars rendering of the system prompt
 /// template (see `ProjectContext` in `prompt_store`). `PartialEq, Eq` lets

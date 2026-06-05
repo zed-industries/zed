@@ -3395,10 +3395,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The legacy Rules action is rerouted to the skills settings page so
-        // the existing keyboard shortcut (still bound to `OpenRulesLibrary` in
-        // the default keymaps) and any persisted user keymap entries keep
-        // working.
         window.dispatch_action(
             Box::new(zed_actions::OpenSettingsAt {
                 path: "agent.skills".to_string(),
@@ -3408,8 +3404,7 @@ impl AgentPanel {
         );
     }
 
-    /// Refresh the native agent's view of available skills, e.g. after a
-    /// skill was created from the settings UI's skill creator.
+    /// Refresh the native agent's view of available skills
     pub fn refresh_skills(&mut self, cx: &mut Context<Self>) {
         if !self.has_open_project(cx) {
             return;

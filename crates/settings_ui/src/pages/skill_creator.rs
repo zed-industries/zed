@@ -198,11 +198,7 @@ impl SkillCreatorPage {
                 .tab_index(NAME_FIELD_TAB_INDEX)
                 .tab_stop(true)
         });
-        // Focus the name field on open. Without this, no element inside
-        // the form has focus, so dispatching the `Cancel` action from
-        // the Cancel button (which walks the focused element's dispatch
-        // path looking for `on_action` handlers) silently does nothing
-        // until the user manually clicks into one of the editors.
+        // Focus the name field on open.
         window.focus(&name_editor.focus_handle(cx), cx);
 
         let description_editor = cx.new(|cx| {
@@ -671,9 +667,7 @@ impl SkillCreatorPage {
                 this.save_task = None;
                 match result {
                     Ok(_) => {
-                        // Nudge the agent to rescan skill directories so the
-                        // new skill shows up in the skill index (and thus the
-                        // Skills settings page) right away.
+                        // Rescan skill directories so new skills show up in Settings page right away
                         if let Some(hook) = cx.try_global::<SkillsUpdatedHook>() {
                             let hook = hook.0.clone();
                             hook(cx);
@@ -693,11 +687,7 @@ impl SkillCreatorPage {
     }
 
     fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        // Block dismissal while a save is in flight. Otherwise the
-        // detached I/O could complete after the form is gone, leaving
-        // a SKILL.md on disk with no success or error feedback. The
-        // user can still navigate back via the breadcrumbs, in which
-        // case dropping `self.save_task` cancels the pending write.
+        // Block dismissal while a save is in flight
         if self.saving {
             return;
         }
