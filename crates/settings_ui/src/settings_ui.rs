@@ -2533,6 +2533,45 @@ impl SettingsWindow {
         };
     }
 
+    /// Changes the current settings file like [`Self::change_file`], but keeps
+    /// the currently open sub-page stack when every sub-page in it is
+    /// available in the new file's scope (e.g. switching a Skills sub-page
+    /// between the user scope and a project scope).
+    fn change_file_in_sub_page(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        if ix >= self.files.len() || self.files[ix].0 == self.current_file {
+            return;
+        }
+        self.current_file = self.files[ix].0.clone();
+
+        if let SettingsUiFile::Project((_, _)) = &self.current_file {
+            telemetry::event!("Setting Project Clicked");
+        }
+
+        self.last_copied_skill_directory_path = None;
+
+        let sub_page_stack = std::mem::take(&mut self.sub_page_stack);
+        self.build_ui(window, cx);
+
+        let file_mask = self.current_file.mask();
+        let sub_pages_valid_in_new_file = sub_page_stack
+            .iter()
+            .all(|sub_page| sub_page.link.files.contains(file_mask));
+        let nav_entry_visible = self.is_nav_entry_visible(self.navbar_entry);
+
+        if sub_pages_valid_in_new_file && nav_entry_visible {
+            self.sub_page_stack = sub_page_stack;
+        } else if nav_entry_visible {
+            self.open_and_scroll_to_navbar_entry(self.navbar_entry, None, true, window, cx);
+        } else {
+            self.open_first_nav_page();
+        }
+    }
+
     fn render_files_header(
         &self,
         window: &mut Window,
@@ -3136,17 +3175,88 @@ impl SettingsWindow {
             .filter(move |&(item_index, _)| self.filter_table[page_idx][item_index])
     }
 
-    fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
+    fn render_sub_page_breadcrumbs(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let scope_name: SharedString = self
             .display_name(&self.current_file)
             .unwrap_or_else(|| self.current_file.setting_type().to_string())
             .into();
 
-        h_flex().min_w_0().gap_1().overflow_x_hidden().children(
-            itertools::intersperse(
-                std::iter::once(scope_name)
-                    .chain(std::iter::once(self.current_page().title.into()))
-                    .chain(
+        // Only offer scopes in which every sub-page in the stack is available.
+        let allowed_mask = self
+            .sub_page_stack
+            .iter()
+            .fold(USER | PROJECT | SERVER, |mask, sub_page| {
+                mask & sub_page.link.files
+            });
+        let allowed_file_indices: Vec<usize> = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, (file, _))| allowed_mask.contains(file.mask()))
+            .map(|(ix, _)| ix)
+            .collect();
+
+        let scope_element = if allowed_file_indices.len() > 1 {
+            let this = cx.entity();
+            DropdownMenu::new(
+                "sub-page-scope-picker",
+                scope_name,
+                ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    for ix in allowed_file_indices {
+                        let (file, focus_handle) = &self.files[ix];
+                        let display_name = self
+                            .display_name(file)
+                            .expect("Files should always have a name");
+
+                        menu = menu.toggleable_entry(
+                            display_name,
+                            file == &self.current_file,
+                            IconPosition::Start,
+                            None,
+                            {
+                                let this = this.clone();
+                                let focus_handle = focus_handle.clone();
+                                move |window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.change_file_in_sub_page(ix, window, cx);
+                                    });
+                                    focus_handle.focus(window, cx);
+                                }
+                            },
+                        );
+                    }
+
+                    menu
+                }),
+            )
+            .style(DropdownStyle::Subtle)
+            .trigger_tooltip(Tooltip::text("Change Scope"))
+            .attach(gpui::Anchor::BottomLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            })
+            .tab_index(0)
+            .into_any_element()
+        } else {
+            Label::new(scope_name)
+                .color(Color::Muted)
+                .into_any_element()
+        };
+
+        h_flex()
+            .min_w_0()
+            .gap_1()
+            .overflow_x_hidden()
+            .child(scope_element)
+            .child(Label::new("/").color(Color::Muted))
+            .children(
+                itertools::intersperse(
+                    std::iter::once(self.current_page().title.into()).chain(
                         self.sub_page_stack
                             .iter()
                             .enumerate()
@@ -3157,10 +3267,10 @@ impl SettingsWindow {
                                     .chain(std::iter::once(page.link.title.clone()))
                             }),
                     ),
-                "/".into(),
+                    "/".into(),
+                )
+                .map(|item| Label::new(item).color(Color::Muted)),
             )
-            .map(|item| Label::new(item).color(Color::Muted)),
-        )
     }
 
     fn render_no_results(&self, cx: &App) -> impl IntoElement {
@@ -3389,7 +3499,7 @@ impl SettingsWindow {
                                     this.pop_sub_page(window, cx);
                                 })),
                         )
-                        .child(self.render_sub_page_breadcrumbs()),
+                        .child(self.render_sub_page_breadcrumbs(window, cx)),
                 )
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
