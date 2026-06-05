@@ -352,7 +352,7 @@ impl RelativeLineNumbers {
 
 // Toolbar related settings
 #[with_fallible_options]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct ToolbarContent {
     /// Whether to display breadcrumbs in the editor toolbar.
     ///
@@ -375,6 +375,16 @@ pub struct ToolbarContent {
     ///
     /// Default: false
     pub code_actions: Option<bool>,
+    /// Font size (in pixels) for breadcrumb text. When unset, the UI font size is used.
+    /// Lower this to make the breadcrumb bar more compact without shrinking the rest of the UI.
+    ///
+    /// Default: null
+    pub breadcrumb_font_size: Option<f32>,
+    /// Height (in pixels) of the breadcrumb toolbar row. When unset, the default height is used.
+    /// Lower this together with `breadcrumb_font_size` for a more compact toolbar.
+    ///
+    /// Default: null
+    pub breadcrumb_height: Option<f32>,
 }
 
 /// Scrollbar related settings

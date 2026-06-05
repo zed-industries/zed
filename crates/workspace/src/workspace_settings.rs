@@ -37,6 +37,8 @@ pub struct WorkspaceSettings {
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
+    /// Height (px) of the breadcrumb toolbar row; `None` uses the default height.
+    pub breadcrumb_height: Option<f32>,
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -136,6 +138,11 @@ impl Settings for WorkspaceSettings {
                         .unwrap_or(250),
                 ),
             },
+            breadcrumb_height: content
+                .editor
+                .toolbar
+                .as_ref()
+                .and_then(|toolbar| toolbar.breadcrumb_height),
         }
     }
 }

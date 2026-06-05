@@ -1,9 +1,10 @@
-use crate::ItemHandle;
+use crate::{ItemHandle, WorkspaceSettings};
 use gpui::{
     AnyView, App, Context, Div, Entity, EntityId, EventEmitter, Global, KeyContext,
-    ParentElement as _, Render, Styled, Window,
+    ParentElement as _, Render, Styled, Window, px,
 };
 use language::LanguageRegistry;
+use settings::Settings as _;
 use std::sync::Arc;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
@@ -117,6 +118,9 @@ impl Render for Toolbar {
         let has_left_items = self.left_items().count() > 0;
         let has_right_items = self.right_items().count() > 0;
 
+        // When set, overrides the default 32px row height for a more compact toolbar.
+        let row_height = WorkspaceSettings::get_global(cx).breadcrumb_height;
+
         v_flex()
             .group("toolbar")
             .relative()
@@ -137,7 +141,10 @@ impl Render for Toolbar {
                         .when(has_left_items, |this| {
                             this.child(
                                 h_flex()
-                                    .min_h_8()
+                                    .map(|this| match row_height {
+                                        Some(height) => this.min_h(px(height)),
+                                        None => this.min_h_8(),
+                                    })
                                     .flex_auto()
                                     .justify_start()
                                     .overflow_x_hidden()
@@ -147,7 +154,10 @@ impl Render for Toolbar {
                         .when(has_right_items, |this| {
                             this.child(
                                 h_flex()
-                                    .h_8()
+                                    .map(|this| match row_height {
+                                        Some(height) => this.h(px(height)),
+                                        None => this.h_8(),
+                                    })
                                     .flex_row_reverse()
                                     .when(has_left_items, |this| this.flex_none())
                                     .justify_end()

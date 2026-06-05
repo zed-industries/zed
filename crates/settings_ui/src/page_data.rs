@@ -2449,7 +2449,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn toolbar_section() -> [SettingsPageItem; 6] {
+    fn toolbar_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Toolbar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2567,6 +2567,54 @@ fn editor_page() -> SettingsPage {
                             .toolbar
                             .get_or_insert_default()
                             .code_actions = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Breadcrumb Font Size",
+                description: "Font size (px) for breadcrumb text. When unset, the UI font size is used.",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.breadcrumb_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .breadcrumb_font_size
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .breadcrumb_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Breadcrumb Height",
+                description: "Height (px) of the breadcrumb toolbar row. When unset, the default height is used.",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.breadcrumb_height"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .breadcrumb_height
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .breadcrumb_height = value;
                     },
                 }),
                 metadata: None,

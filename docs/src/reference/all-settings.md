@@ -1602,7 +1602,9 @@ When trusted, project settings are synchronized automatically, language and MCP 
     "quick_actions": true,
     "selections_menu": true,
     "agent_review": true,
-    "code_actions": false
+    "code_actions": false,
+    "breadcrumb_font_size": null,
+    "breadcrumb_height": null
   }
 }
 ```

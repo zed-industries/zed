@@ -496,6 +496,12 @@
     "agent_review": true,
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false,
+    // Font size (in pixels) for breadcrumb text. When null, the UI font size is used.
+    // Lower this to make the breadcrumb bar more compact without shrinking the rest of the UI.
+    "breadcrumb_font_size": null,
+    // Height (in pixels) of the breadcrumb toolbar row. When null, the default height is used.
+    // Lower this together with "breadcrumb_font_size" for a more compact toolbar.
+    "breadcrumb_height": null,
   },
   // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
   "use_system_window_tabs": false,

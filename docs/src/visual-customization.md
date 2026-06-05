@@ -255,7 +255,9 @@ TBD: Centered layout related settings
     "quick_actions": true, // Whether to show quick action buttons.
     "selections_menu": true, // Whether to show the Selections menu
     "agent_review": true, // Whether to show agent review buttons
-    "code_actions": false // Whether to show code action buttons
+    "code_actions": false, // Whether to show code action buttons
+    "breadcrumb_font_size": null, // Breadcrumb text size in px; null uses the UI font size
+    "breadcrumb_height": null // Breadcrumb row height in px; null uses the default
   }
 ```
 

@@ -6657,7 +6657,13 @@ pub fn render_breadcrumb_text(
 ) -> gpui::AnyElement {
     const MAX_SEGMENTS: usize = 12;
 
-    let element = h_flex().flex_grow_1().text_ui(cx);
+    // Breadcrumb text uses the UI font size by default, but can be overridden via
+    // `toolbar.breadcrumb_font_size` to make the breadcrumb bar more compact.
+    let element = h_flex().flex_grow_1();
+    let element = match EditorSettings::get_global(cx).toolbar.breadcrumb_font_size {
+        Some(font_size) => element.text_size(px(font_size)),
+        None => element.text_ui(cx),
+    };
 
     let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
     let suffix_start_ix = cmp::max(

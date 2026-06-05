@@ -82,13 +82,15 @@ pub struct StickyScroll {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Toolbar {
     pub breadcrumbs: bool,
     pub quick_actions: bool,
     pub selections_menu: bool,
     pub agent_review: bool,
     pub code_actions: bool,
+    /// Font size (px) for breadcrumb text. `None` uses the UI font size.
+    pub breadcrumb_font_size: Option<f32>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -220,6 +222,7 @@ impl Settings for EditorSettings {
                 selections_menu: toolbar.selections_menu.unwrap(),
                 agent_review: toolbar.agent_review.unwrap(),
                 code_actions: toolbar.code_actions.unwrap(),
+                breadcrumb_font_size: toolbar.breadcrumb_font_size,
             },
             scrollbar: Scrollbar {
                 show: scrollbar.show.map(ui_scrollbar_settings_from_raw).unwrap(),

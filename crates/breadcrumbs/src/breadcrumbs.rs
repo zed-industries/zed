@@ -50,7 +50,8 @@ impl Render for Breadcrumbs {
         let element = h_flex()
             .id("breadcrumb-container")
             .flex_grow_1()
-            .h_8()
+            // Fill the toolbar row so a custom `breadcrumb_height` can make it compact.
+            .h_full()
             .overflow_x_scroll()
             .text_ui(cx);
 
