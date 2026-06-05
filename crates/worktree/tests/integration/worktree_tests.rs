@@ -477,6 +477,82 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_renaming_subdir_under_symlinked_root_keeps_children(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/target",
+        json!({
+            "file1.txt": "",
+            "file2.log": "",
+            "subdir-a": {
+                "config.ini": "",
+            },
+            "subdir-b": {
+                "nested": {
+                    "note.md": "",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.create_symlink("/link".as_ref(), "/target".into())
+        .await
+        .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/link"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.rename(
+        Path::new("/link/subdir-a"),
+        Path::new("/link/subdir-aa"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("subdir-a")).is_none()
+                && tree
+                    .entry_for_path(rel_path("subdir-aa/config.ini"))
+                    .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("file1.txt"),
+                rel_path("file2.log"),
+                rel_path("subdir-aa"),
+                rel_path("subdir-aa/config.ini"),
+                rel_path("subdir-b"),
+                rel_path("subdir-b/nested"),
+                rel_path("subdir-b/nested/note.md"),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());

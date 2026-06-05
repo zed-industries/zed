@@ -2,6 +2,7 @@ use anyhow::Result;
 use edit_prediction::cursor_excerpt;
 use edit_prediction_types::{
     EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
+    EditPredictionRequestTrigger,
 };
 use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
@@ -222,6 +223,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         log::debug!("Codestral: Refresh called (debounce: {})", debounce);
