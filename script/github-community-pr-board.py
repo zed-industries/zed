@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Route community PRs to the correct review track on a GitHub Project board,
-and surface signal fields (Size, Issue Linked, Contributor) that the
+and surface signal fields (Size, Issue Linked, Contributor, Upvotes) that the
 board's views can filter and sort on.
 
 Reads the event payload dispatched by the GitHub Actions workflow and:
@@ -168,17 +168,19 @@ def compute_contributor(pr_labels):
 
 
 def recompute_signals(pr, project, project_item):
-    """Recompute Size, Contributor, and Issue Linked on a board item.
+    """Recompute Size, Contributor, Issue Linked, and Upvotes on a board item.
 
     Best-effort: missing fields/options are logged and skipped so the
     project's field set can be rolled out independently.
     """
     pr_labels = {label["name"] for label in pr.get("labels", [])}
     total_changes = pr.get("additions", 0) + pr.get("deletions", 0)
+    author_login = (pr.get("user") or {}).get("login")
 
     set_field_optional(project, project_item, "Size", compute_size_bucket(total_changes))
     set_field_optional(project, project_item, "Contributor", compute_contributor(pr_labels))
     set_field_optional(project, project_item, "Issue Linked", github_pr_issue_type(pr["node_id"]))
+    set_number_field_optional(project, project_item, "Upvotes", github_pr_upvotes(pr["node_id"], author_login))
 
 
 def refresh_signals_if_on_board(pr, project_number):
@@ -220,6 +222,7 @@ def refresh_all_board_items(project_number):
             "labels": [{"name": n} for n in label_names],
             "additions": content["additions"],
             "deletions": content["deletions"],
+            "user": {"login": (content.get("author") or {}).get("login")},
         }
         print(f"--- Refreshing PR #{pr['number']} ---")
         try:
@@ -323,6 +326,11 @@ def github_fetch_project(project_number):
               id
               fields(first: 50) {
                 nodes {
+                  ... on ProjectV2Field {
+                    id
+                    name
+                    dataType
+                  }
                   ... on ProjectV2SingleSelectField {
                     id
                     name
@@ -383,6 +391,7 @@ def github_list_project_items(project_id):
                           isDraft
                           additions
                           deletions
+                          author { login }
                           labels(first: 50) { nodes { name } }
                         }
                       }
@@ -400,6 +409,51 @@ def github_list_project_items(project_id):
         if not page["pageInfo"]["hasNextPage"]:
             return
         cursor = page["pageInfo"]["endCursor"]
+
+
+def github_pr_upvotes(pr_node_id, author_login):
+    """Return the count of unique positive reactors on the PR.
+
+    Counts users (not bots) who left at least one of THUMBS_UP, HEART,
+    HOORAY, or ROCKET on the PR itself. Each user is counted once even if
+    they reacted with multiple positive emojis. The PR author is excluded
+    so self-reactions don't inflate the count.
+
+    Caps at 100 reactors per emoji — above that the exact count stops
+    mattering for ranking purposes.
+    """
+    data = github_graphql(
+        """
+        query($prId: ID!) {
+          node(id: $prId) {
+            ... on PullRequest {
+              reactionGroups {
+                content
+                reactors(first: 100) {
+                  nodes {
+                    __typename
+                    ... on User { login }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """,
+        {"prId": pr_node_id},
+    )
+    positive_contents = {"THUMBS_UP", "HEART", "HOORAY", "ROCKET"}
+    reactors = set()
+    for group in data["node"]["reactionGroups"] or []:
+        if group["content"] not in positive_contents:
+            continue
+        for node in group["reactors"]["nodes"]:
+            if node.get("__typename") != "User":
+                continue
+            login = node.get("login")
+            if login and login != author_login:
+                reactors.add(login)
+    return len(reactors)
 
 
 def github_pr_issue_type(pr_node_id):
@@ -576,6 +630,41 @@ def set_field_optional(project, item_id, field_name, option_name):
         },
     )
     print(f"Set '{field_name}' to '{option_name}'")
+
+
+def set_number_field_optional(project, item_id, field_name, value):
+    """Set a number field, logging and skipping if the field doesn't exist
+    on the project yet. Mirror of `set_field_optional` for non-select fields.
+    """
+    field = None
+    for f in project["fields"]["nodes"]:
+        if f.get("name") == field_name:
+            field = f
+            break
+    if not field:
+        print(f"Field '{field_name}' not on project, skipping")
+        return
+    github_graphql(
+        """
+        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId
+            itemId: $itemId
+            fieldId: $fieldId
+            value: { number: $value }
+          }) {
+            projectV2Item { id }
+          }
+        }
+        """,
+        {
+            "projectId": project["id"],
+            "itemId": item_id,
+            "fieldId": field["id"],
+            "value": value,
+        },
+    )
+    print(f"Set '{field_name}' to {value}")
 
 
 def github_clear_field(project, item_id, field_name):
