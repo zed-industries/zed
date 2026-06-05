@@ -5106,12 +5106,21 @@ impl GitPanel {
         v_flex().flex_1().size_full().overflow_hidden().map(|this| {
             if let Some(history) = self.render_commit_history(window, cx) {
                 this.child(history)
+            } else if self.commit_history_load_finished {
+                this.child(
+                    v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .child(Label::new("No commits yet").color(Color::Muted)),
+                )
             } else {
                 this.child(
-                    h_flex()
+                    v_flex()
                         .flex_1()
+                        .items_center()
                         .justify_center()
-                        .child(Label::new("Loading Commit History…").color(Color::Muted)),
+                        .child(Label::new("Loading Commit History...").color(Color::Muted)),
                 )
             }
         })
