@@ -2688,9 +2688,19 @@ fn matching(
             Some('/') => {}
             _ => {
                 if opening_range.contains(&offset) {
-                    return closing_range.start.to_display_point(map);
+                    return (closing_range.end - 1).to_display_point(map);
                 } else if closing_range.contains(&offset) {
-                    return opening_range.start.to_display_point(map);
+                    let mut target = opening_range.start;
+                    for (ch, char_offset) in map.buffer_chars_at(opening_range.start) {
+                        if char_offset >= opening_range.end {
+                            break;
+                        }
+                        if !ch.is_whitespace() {
+                            target = char_offset;
+                            break;
+                        }
+                    }
+                    return target.to_display_point(map);
                 }
             }
         }
@@ -2738,7 +2748,8 @@ fn matching(
             {
                 let distance = open_range.start.saturating_sub(offset);
                 if distance < closest_distance {
-                    closest_pair_destination = Some(close_range.start);
+                    let offset_into_open = offset.saturating_sub(open_range.start);
+                    closest_pair_destination = Some(close_range.end - 1 - offset_into_open);
                     closest_distance = distance;
                 }
             }
@@ -2748,7 +2759,8 @@ fn matching(
             {
                 let distance = close_range.start.saturating_sub(offset);
                 if distance < closest_distance {
-                    closest_pair_destination = Some(open_range.start);
+                    let offset_into_close = offset.saturating_sub(close_range.start);
+                    closest_pair_destination = Some(open_range.end - 1 - offset_into_close);
                     closest_distance = distance;
                 }
             }
