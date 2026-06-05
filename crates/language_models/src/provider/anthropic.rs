@@ -6,7 +6,7 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
     ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
@@ -32,6 +32,8 @@ pub struct AnthropicSettings {
     pub api_url: String,
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
+    /// User-configured headers added to every Anthropic request.
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -41,6 +43,9 @@ pub struct AnthropicLanguageModelProvider {
 
 const API_KEY_ENV_VAR_NAME: &str = "ANTHROPIC_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] =
+    &["X-Api-Key", "Anthropic-Version", "Anthropic-Beta"];
 
 pub struct State {
     api_key_state: ApiKeyState,
@@ -105,10 +110,18 @@ impl State {
                 "cannot fetch Anthropic models without an API key"
             )));
         };
+        let extra_headers = AnthropicLanguageModelProvider::settings(cx)
+            .custom_headers
+            .clone();
 
         cx.spawn(async move |this, cx| {
-            let models =
-                anthropic::list_models(http_client.as_ref(), &api_url, api_key.as_ref()).await?;
+            let models = anthropic::list_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_ref(),
+                &extra_headers,
+            )
+            .await?;
 
             this.update(cx, |this, cx| {
                 this.fetched_models = models;
@@ -375,9 +388,12 @@ impl AnthropicModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = AnthropicLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let beta_headers = self.model.beta_headers();
@@ -394,6 +410,7 @@ impl AnthropicModel {
                 &api_key,
                 request,
                 beta_headers,
+                &extra_headers,
             );
             request.await.map_err(Into::into)
         }

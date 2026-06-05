@@ -44,7 +44,7 @@ pub struct SystemPromptTemplate<'a> {
     /// platform equivalent), if present and non-empty.
     pub user_agents_md: Option<SharedString>,
     /// Whether agent-run terminal commands are wrapped in an OS-level
-    /// sandbox for this conversation. When `true`, the rendered prompt
+    /// sandbox for this thread. When `true`, the rendered prompt
     /// describes the sandbox's read/write/network rules and the
     /// per-command flags the model can request to relax them. When
     /// `false`, the prompt omits the sandbox section entirely.
@@ -193,14 +193,15 @@ mod tests {
         assert!(rendered.contains("`/tmp/alpha`"));
         assert!(rendered.contains("`/tmp/beta`"));
         assert!(rendered.contains("allow_network: true"));
-        assert!(rendered.contains("allow_fs_write: true"));
+        assert!(rendered.contains("fs_write_paths"));
+        assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("allow_git_access: true"));
         assert!(rendered.contains("unsandboxed: true"));
         assert!(rendered.contains("file contents under `.git` directories"));
         assert!(rendered.contains("Git metadata directories needed by opened worktrees"));
         assert!(rendered.contains("inherited SSH agent socket"));
         assert!(rendered.contains("cannot send network packets to other machines"));
-        assert!(rendered.contains("remain in effect for the entire duration"));
+        assert!(rendered.contains("for the rest of the thread"));
     }
 
     #[test]
