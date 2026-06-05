@@ -1408,12 +1408,12 @@ pub struct Workspace {
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
-    // Shared with the parent `MultiWorkspace` and any sibling workspaces: holds
-    // the id of the single workspace currently presented in this OS window.
-    // `MultiWorkspace` is the only writer; workspaces only read it to decide
-    // whether they may write the shared window's title and edited indicator. We
-    // use this instead of going through the `multi_workspace` field to avoid
-    // reading it as we might end up in a double lease otherwise.
+    /// Shared with the parent `MultiWorkspace` and any sibling workspaces: holds
+    /// the id of the single workspace currently presented in this OS window.
+    /// `MultiWorkspace` is the only writer; workspaces only read it to decide
+    /// whether they may write the shared window's title and edited indicator. We
+    /// use this instead of going through the `multi_workspace` field to avoid
+    /// reading it as we might end up in a double lease otherwise.
     active_workspace_id: Option<Rc<Cell<EntityId>>>,
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,

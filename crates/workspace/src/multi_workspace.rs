@@ -289,12 +289,12 @@ pub struct MultiWorkspace {
     retained_workspaces: Vec<Entity<Workspace>>,
     project_groups: Vec<ProjectGroupState>,
     active_workspace: Entity<Workspace>,
-    // Source of truth for which workspace is presented in this window, shared
-    // with each member `Workspace` so they can tell whether they own the
-    // platform window's title and edited indicator. This only exists to prevent
-    // Workspaces from having to read their parent MultiWorkspace to check
-    // chrome ownership, as that might cause a double lease. Kept in sync with
-    // `active_workspace`.
+    /// Source of truth for which workspace is presented in this window, shared
+    /// with each member `Workspace` so they can tell whether they own the
+    /// platform window's title and edited indicator. This only exists to prevent
+    /// Workspaces from having to read their parent MultiWorkspace to check
+    /// chrome ownership, as that might cause a double lease. Kept in sync with
+    /// `active_workspace`.
     active_workspace_id: Rc<Cell<EntityId>>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
