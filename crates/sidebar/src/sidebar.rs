@@ -3073,7 +3073,7 @@ impl Sidebar {
             .border_b_1()
             .border_color(color.border.opacity(0.5))
             .child(header_element)
-            .shadow_xs()
+            .shadow_sm()
             .into_any_element();
 
         Some(element)
