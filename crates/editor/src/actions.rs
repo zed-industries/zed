@@ -398,6 +398,15 @@ actions!(
 );
 
 actions!(
+    markdown,
+    [
+        /// Toggles a block quote (`> `) prefix on the selected lines (or the
+        /// current line) while in Markdown files.
+        ToggleBlockQuote,
+    ]
+);
+
+actions!(
     editor,
     [
         /// Accepts the full edit prediction.
