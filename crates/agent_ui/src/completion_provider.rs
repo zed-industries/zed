@@ -313,7 +313,7 @@ fn skill_completion_icon_path(
 fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
     if let Some(warning) = &skill.warning {
         CompletionDocumentation::WarningAndMultiLinePlainText {
-            warning: "Warning".into(),
+            warning: "".into(),
             plain_text: Some(warning.clone()),
         }
     } else {

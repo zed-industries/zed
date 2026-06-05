@@ -1094,26 +1094,22 @@ impl CompletionsMenu {
                                 warning,
                                 ..
                             }) => {
-                                if warning.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(
-                                        h_flex()
-                                            .ml_4()
-                                            .gap_0p5()
-                                            .child(
-                                                Icon::new(IconName::Warning)
-                                                    .size(IconSize::XSmall)
-                                                    .color(Color::Warning),
-                                            )
-                                            .child(
-                                                Label::new(warning.trim().to_string())
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Warning),
-                                            )
-                                            .into_any_element(),
-                                    )
+                                let warning = warning.trim();
+                                let mut label = h_flex().ml_4().gap_0p5().child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Warning),
+                                );
+
+                                if !warning.is_empty() {
+                                    label = label.child(
+                                        Label::new(warning.to_string())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Warning),
+                                    );
                                 }
+
+                                Some(label.into_any_element())
                             }
                             _ => None,
                         };
