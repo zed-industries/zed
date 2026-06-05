@@ -345,9 +345,7 @@ impl Model {
     }
 
     /// Whether this model supports OpenAI's standalone `/responses/compact`
-    /// endpoint. OpenAI publishes no per-model capability list for this, so we
-    /// gate to the GPT-5 family and codex models and fall back at runtime if the
-    /// endpoint rejects compaction.
+    /// endpoint.
     pub fn supports_native_compaction(&self) -> bool {
         match self {
             Self::Five

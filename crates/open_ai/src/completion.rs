@@ -190,11 +190,7 @@ pub fn into_open_ai(
 }
 
 /// Identity and capability flags needed to translate a [`LanguageModelRequest`]
-/// into a Responses API [`ResponseRequest`]. Grouped into a struct so the two
-/// adjacent string ids (`model_id`/`provider_id`) and the capability booleans
-/// can't be silently transposed at the many call sites — a swapped
-/// `provider_id`, in particular, would silently drop replayed native-compaction
-/// items.
+/// into a Responses API [`ResponseRequest`].
 pub struct ResponsesRequestConfig<'a> {
     pub model_id: &'a str,
     /// The provider that will send this request. Used to match provider-native

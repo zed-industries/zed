@@ -469,8 +469,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                             .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
                     });
 
-                // `provider_id` is only used to match native-compaction items on
-                // replay; keep it equal to this provider's `provider_id()`.
                 let mut request = into_open_ai_response(
                     request,
                     ResponsesRequestConfig {

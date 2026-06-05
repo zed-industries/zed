@@ -656,8 +656,6 @@ pub async fn stream_response(
                                     }
                                 }
                             }
-                            // Compaction items are opaque; they are surfaced via the
-                            // `OutputItemDone` event pushed below, with no intermediate delta.
                             ResponseOutputItem::Compaction(_) | ResponseOutputItem::Unknown => {}
                         }
 
