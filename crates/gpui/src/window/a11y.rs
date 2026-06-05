@@ -107,6 +107,10 @@ pub(crate) type A11yActionListener =
 /// Manages the AccessKit tree that is built each frame and the mappings
 /// needed to dispatch incoming action requests back to the right elements.
 pub(crate) struct A11y {
+    /// Whether accessibility has been [forcibly disabled] for this window.
+    ///
+    /// [forcibly disabled]: crate::Application::new_inaccessible
+    force_disabled: bool,
     /// Whether a11y features have been requested by the system.
     ///
     /// Updated by AccessKit using callbacks provided to the adapter. Can change
@@ -131,8 +135,9 @@ pub(crate) struct A11y {
 }
 
 impl A11y {
-    pub(crate) fn new(active_flag: Arc<AtomicBool>) -> Self {
+    pub(crate) fn new(active_flag: Arc<AtomicBool>, force_disabled: bool) -> Self {
         Self {
+            force_disabled,
             active_flag,
             active_this_frame: false,
             nodes: A11yNodeBuilder::new(),
@@ -147,7 +152,7 @@ impl A11y {
     /// See the docs for [`Self::active_flag`] and [`Self::active_this_frame`]
     /// for more commentary.
     pub(crate) fn sync_active_flag(&mut self) {
-        self.active_this_frame = self.active_flag.load(Ordering::SeqCst);
+        self.active_this_frame = !self.force_disabled && self.active_flag.load(Ordering::SeqCst);
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -164,7 +169,21 @@ impl A11y {
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
-        self.nodes.finalize()
+        let tree_update = self.nodes.finalize();
+
+        // Zed currently doesn't set any a11y APIs on *any* UI elements, so a
+        // tree with nodes other than the root indicates a bug in the
+        // `TreeUpdate`-producing logic.
+        //
+        // Remove this when adding aria attributes.
+        if tree_update.nodes.len() > 1 {
+            log::warn!(
+                "expected an empty a11y tree update (only the root node), but got {} nodes; Zed has no accessible UI elements yet",
+                tree_update.nodes.len()
+            );
+        }
+
+        tree_update
     }
 }
 

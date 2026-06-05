@@ -56,6 +56,13 @@ pub enum SkillCreatorOpenMode {
     Url {
         initial_url: Option<String>,
     },
+    /// Review and install a skill whose full `SKILL.md` contents are
+    /// supplied inline, e.g. from a `zed://skill` share link. The form is
+    /// pre-filled with the parsed skill so the recipient can review it and
+    /// pick a scope before saving.
+    Install {
+        content: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -557,6 +564,33 @@ impl SkillCreator {
             SkillCreatorOpenMode::Url { initial_url } => {
                 self.open_url_import(initial_url, window, cx);
             }
+            SkillCreatorOpenMode::Install { content } => {
+                self.open_install_review(content, window, cx);
+            }
+        }
+    }
+
+    /// Pre-fill the form with a skill supplied inline (from a share link) so
+    /// the recipient can review it before saving. Unlike URL import, this
+    /// doesn't touch the URL editor or perform any network request.
+    fn open_install_review(
+        &mut self,
+        content: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.url_import_debounce_task = None;
+        self.url_import_task = None;
+        self.url_import_status = UrlImportStatus::Idle;
+
+        match parse_imported_skill(&content, "") {
+            Ok(imported) => self.apply_imported_skill(imported, window, cx),
+            Err(err) => {
+                self.save_error = Some(SharedString::from(format!(
+                    "Couldn't read shared skill: {err}"
+                )));
+                cx.notify();
+            }
         }
     }
 
@@ -651,44 +685,12 @@ impl SkillCreator {
         let fetch_task = cx.background_spawn(fetch_imported_skill_from_url(http_client, url));
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = fetch_task.await;
-            let skill_creator = this.clone();
             this.update_in(cx, |this, window, cx| {
                 this.url_import_debounce_task = None;
                 this.url_import_task = None;
                 match result {
                     Ok(imported) => {
-                        this.url_import_status = UrlImportStatus::Idle;
-                        this.save_error = None;
-
-                        let name_editor = this.name_editor.clone();
-                        let description_editor = this.description_editor.clone();
-                        let body_editor = this.body_editor.clone();
-                        window.defer(cx, move |window, cx| {
-                            name_editor.update(cx, |input, cx| {
-                                input.set_text(&imported.name, window, cx);
-                            });
-                            description_editor.update(cx, |input, cx| {
-                                input.set_text(&imported.description, window, cx);
-                            });
-                            body_editor.update(cx, |editor, cx| {
-                                editor.set_text(imported.body.clone(), window, cx);
-                            });
-                            skill_creator
-                                .update(cx, |this, cx| {
-                                    this.disable_model_invocation =
-                                        imported.disable_model_invocation;
-                                    this.url_import_status = UrlImportStatus::Idle;
-                                    this.url_import_debounce_task = None;
-                                    this.url_import_task = None;
-                                    this.save_error = None;
-                                    this.recompute_name_error(cx);
-                                    this.recompute_description_error(cx);
-                                    this.recompute_body_error(cx);
-                                    cx.notify();
-                                })
-                                .log_err();
-                            window.focus(&name_editor.focus_handle(cx), cx);
-                        });
+                        this.apply_imported_skill(imported, window, cx);
                     }
                     Err(err) => {
                         this.url_import_status =
@@ -701,6 +703,49 @@ impl SkillCreator {
         });
         self.url_import_task = Some(task);
         cx.notify();
+    }
+
+    /// Populate the form fields from a parsed skill (shared by URL import and
+    /// share-link install). Deferred so the programmatic `set_text` calls run
+    /// before focus moves to the name field.
+    fn apply_imported_skill(
+        &mut self,
+        imported: ImportedSkill,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.url_import_status = UrlImportStatus::Idle;
+        self.save_error = None;
+
+        let name_editor = self.name_editor.clone();
+        let description_editor = self.description_editor.clone();
+        let body_editor = self.body_editor.clone();
+        let skill_creator = cx.weak_entity();
+        window.defer(cx, move |window, cx| {
+            name_editor.update(cx, |input, cx| {
+                input.set_text(&imported.name, window, cx);
+            });
+            description_editor.update(cx, |input, cx| {
+                input.set_text(&imported.description, window, cx);
+            });
+            body_editor.update(cx, |editor, cx| {
+                editor.set_text(imported.body.clone(), window, cx);
+            });
+            skill_creator
+                .update(cx, |this, cx| {
+                    this.disable_model_invocation = imported.disable_model_invocation;
+                    this.url_import_status = UrlImportStatus::Idle;
+                    this.url_import_debounce_task = None;
+                    this.url_import_task = None;
+                    this.save_error = None;
+                    this.recompute_name_error(cx);
+                    this.recompute_description_error(cx);
+                    this.recompute_body_error(cx);
+                    cx.notify();
+                })
+                .log_err();
+            window.focus(&name_editor.focus_handle(cx), cx);
+        });
     }
 
     fn save_skill(&mut self, _: &SaveSkill, window: &mut Window, cx: &mut Context<Self>) {
@@ -853,7 +898,7 @@ impl SkillCreator {
         // than squeezing the body editor below its minimum height.
         v_flex()
             .id("skill-creator-form-fields")
-            .flex_grow()
+            .flex_grow_1()
             .flex_shrink_0()
             .gap_4()
             .child(
@@ -869,7 +914,7 @@ impl SkillCreator {
             .child(Divider::horizontal())
             .child(
                 v_flex()
-                    .flex_grow()
+                    .flex_grow_1()
                     .flex_shrink_0()
                     .gap_2()
                     .child(Label::new("Skill Content"))

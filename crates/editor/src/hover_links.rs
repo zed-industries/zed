@@ -409,6 +409,11 @@ pub fn show_link_definition(
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
+    // Record the requested position so a mouse move on the same point short-circuits
+    // instead of re-querying, even when the server returns no `originSelectionRange`
+    // (which would otherwise leave `symbol_range` empty).
+    hovered_link_state.last_trigger_point = trigger_point.clone();
+
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             // LSP document links take priority: the server explicitly
@@ -1066,6 +1071,8 @@ mod tests {
     use multi_buffer::MultiBufferOffset;
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use util::{assert_set_eq, path};
     use workspace::item::Item;
 
@@ -1236,6 +1243,70 @@ mod tests {
             struct «Aˇ»;
             let variable = A;
         "});
+    }
+
+    #[gpui::test]
+    async fn test_go_to_definition_link_dedup(cx: &mut gpui::TestAppContext) {
+        // Jiggling the mouse over an already-queried position must not re-issue a
+        // definition request, even when the server replies with a bare `Location`
+        // and no `originSelectionRange` (issue #56193).
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn ˇtest() { do_work(); }
+            fn do_work() { test(); }
+        "});
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let _requests = cx.set_request_handler::<GotoDefinition, _, _>({
+            let request_count = request_count.clone();
+            move |url, _, _| {
+                let request_count = request_count.clone();
+                async move {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    // Bare `Location`, no `originSelectionRange` (like phpactor).
+                    Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                        uri: url,
+                        range: lsp::Range::default(),
+                    })))
+                }
+            }
+        });
+
+        let first_point = cx.pixel_position(indoc! {"
+            fn test() { do_wˇork(); }
+            fn do_work() { test(); }
+        "});
+        let second_point = cx.pixel_position(indoc! {"
+            fn test() { do_woˇrk(); }
+            fn do_work() { test(); }
+        "});
+
+        cx.simulate_mouse_move(first_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        // Jiggle within the same character: no new request.
+        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            2,
+            "expected one definition request per distinct position"
+        );
     }
 
     #[gpui::test]

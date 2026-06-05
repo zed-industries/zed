@@ -1,15 +1,19 @@
 ---
 title: AI Agent Tools - Zed
-description: Built-in tools for Zed's AI agent including file editing, code search, terminal commands, web search, and diagnostics.
+description: Built-in tools for Zed's AI agent including file editing, code search, terminal commands, web search, skills, and diagnostics.
 ---
 
 # Tools
 
 Zed's built-in agent has access to these tools for reading, searching, and editing your codebase. These tools are used in the [Agent Panel](./agent-panel.md) during conversations with AI agents.
 
+The exact tool list can vary by [Agent Profile](./agent-profiles.md), selected model provider, and Zed version.
+
 You can configure permissions for tool actions, including situations where they are automatically approved, automatically denied, or require your confirmation on a case-by-case basis. See [Tool Permissions](./tool-permissions.md) for the list of permission-gated tools and details.
 
 To add custom tools beyond these built-in ones, see [MCP servers](./mcp.md).
+
+To choose which built-in tools and MCP tools are available in a Zed Agent thread, use [Agent Profiles](./agent-profiles.md). Profiles control tool availability; tool permissions control allow, deny, and confirm behavior.
 
 ## Read & Search Tools
 
@@ -44,6 +48,8 @@ Lists files and directories in a given path, providing an overview of filesystem
 ### `read_file`
 
 Reads the content of a specified file in the project, allowing access to file contents.
+
+## Web Tools
 
 ### `search_web`
 
@@ -88,6 +94,12 @@ Executes shell commands and returns the combined output, creating a new shell pr
 **Example:** After editing a Rust file, run `cargo test --package my_crate 2>&1 | tail -30` to confirm the changes don't break existing tests. Or run `git diff --stat` to review which files have been modified before wrapping up a task.
 
 ## Other Tools
+
+### `skill`
+
+Loads instructions from an available [Skill](./skills.md) so the agent can follow project-specific or workflow-specific guidance. Skills can also be invoked by you directly with slash commands.
+
+**Example:** When a repository has a skill for release-note writing, the agent can load that skill before drafting release notes so it follows the local format.
 
 ### `spawn_agent`
 

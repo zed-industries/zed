@@ -66,6 +66,7 @@ mod config;
 mod diagnostics;
 mod edit_prediction;
 mod input;
+mod markdown_actions;
 mod navigation;
 mod rewrap;
 mod selection;
@@ -93,6 +94,7 @@ pub(crate) use edit_prediction::{
     EditPredictionKeybindAction, EditPredictionKeybindSurface, edit_prediction_edit_text,
 };
 pub use edit_prediction_types::Direction;
+pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
     DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
@@ -705,6 +707,40 @@ impl MinimapVisibility {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct BreadcrumbsVisibility {
+    setting_configuration: bool,
+    toggle_override: bool,
+}
+
+impl BreadcrumbsVisibility {
+    fn from_settings(cx: &App) -> Self {
+        Self::new(EditorSettings::get_global(cx).toolbar.breadcrumbs)
+    }
+
+    fn new(setting_configuration: bool) -> Self {
+        Self {
+            setting_configuration,
+            toggle_override: false,
+        }
+    }
+
+    fn settings_visibility(&self) -> bool {
+        self.setting_configuration
+    }
+
+    fn visible(&self) -> bool {
+        self.setting_configuration ^ self.toggle_override
+    }
+
+    fn toggle_visibility(&self) -> Self {
+        Self {
+            setting_configuration: self.setting_configuration,
+            toggle_override: !self.toggle_override,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferSerialization {
     All,
@@ -931,7 +967,7 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
-    show_breadcrumbs: bool,
+    breadcrumbs_visibility: BreadcrumbsVisibility,
     show_gutter: bool,
     show_scrollbars: ScrollbarAxes,
     minimap_visibility: MinimapVisibility,
@@ -1759,8 +1795,10 @@ impl Editor {
         self.sticky_headers_task = cx.spawn(async move |this, cx| {
             let sticky_headers = background_task.await;
             this.update(cx, |this, cx| {
-                this.sticky_headers = Some(sticky_headers);
-                cx.notify();
+                if this.sticky_headers.as_ref() != Some(&sticky_headers) {
+                    this.sticky_headers = Some(sticky_headers);
+                    cx.notify();
+                }
             })
             .ok();
         });
@@ -2130,7 +2168,7 @@ impl Editor {
             },
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
             offset_content: !matches!(mode, EditorMode::SingleLine),
-            show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
+            breadcrumbs_visibility: BreadcrumbsVisibility::from_settings(cx),
             show_gutter: full_mode,
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
@@ -3045,6 +3083,8 @@ impl Editor {
         self.use_modal_editing
     }
 
+    /// Inserted text is normalized to LF line endings before being applied.
+    /// Normalize before measuring inserted text for post-edit offsets.
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
     where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -4769,7 +4809,13 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             this.insert("", window, cx);
             linked_edits.apply_with_left_expansion(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -4792,7 +4838,13 @@ impl Editor {
             let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
             this.insert("", window, cx);
             linked_edits.apply(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -4977,7 +5029,13 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -5106,7 +5164,7 @@ impl Editor {
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
                 let settings = buffer.language_settings_at(selection.start, cx);
-                let tab_size = settings.tab_size.get();
+                let tab_size = settings.tab_size;
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -5120,17 +5178,7 @@ impl Editor {
                 for row in rows.iter_rows() {
                     let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
-                        let deletion_len = match indent_size.kind {
-                            IndentKind::Space => {
-                                let columns_to_prev_tab_stop = indent_size.len % tab_size;
-                                if columns_to_prev_tab_stop == 0 {
-                                    tab_size
-                                } else {
-                                    columns_to_prev_tab_stop
-                                }
-                            }
-                            IndentKind::Tab => 1,
-                        };
+                        let deletion_len = indent_size.outdent_len(tab_size);
                         let start = if has_multiple_rows
                             || deletion_len > selection.start.column
                             || indent_size.len < selection.start.column
@@ -7298,7 +7346,13 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -7326,7 +7380,13 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -8444,7 +8504,13 @@ impl Editor {
                     (selection.range(), uuid.to_string())
                 });
             this.edit(edits, cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -9231,7 +9297,7 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 edited_buffer,
-                is_local,
+                source,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
@@ -9242,7 +9308,7 @@ impl Editor {
                 self.refresh_matching_bracket_highlights(&snapshot, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
                 self.refresh_sticky_headers(&snapshot, cx);
-                if *is_local && self.has_active_edit_prediction() {
+                if source.is_local() && self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
 
@@ -9463,16 +9529,21 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, window, cx);
+        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
-        let old_show_breadcrumbs = self.show_breadcrumbs;
+        let old_breadcrumbs_visible = self.breadcrumbs_visible();
 
         {
             let editor_settings = EditorSettings::get_global(cx);
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
-            self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+            if self.breadcrumbs_visibility.settings_visibility()
+                != editor_settings.toolbar.breadcrumbs
+            {
+                self.breadcrumbs_visibility =
+                    BreadcrumbsVisibility::new(editor_settings.toolbar.breadcrumbs);
+            }
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
         }
 
@@ -9480,7 +9551,7 @@ impl Editor {
             cx.emit(EditorEvent::CursorShapeChanged);
         }
 
-        if old_show_breadcrumbs != self.show_breadcrumbs {
+        if old_breadcrumbs_visible != self.breadcrumbs_visible() {
             cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 

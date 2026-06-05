@@ -4786,9 +4786,9 @@ impl OutlinePanel {
             };
 
             v_flex()
-                .flex_shrink()
+                .flex_shrink_1()
                 .size_full()
-                .child(list_contents.size_full().flex_shrink())
+                .child(list_contents.size_full().flex_shrink_1())
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettingsScrollbarProxy>()
                         .tracked_scroll_handle(&self.scroll_handle.clone())

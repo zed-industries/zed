@@ -237,6 +237,7 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(extension_auto_bump::extension_auto_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
+        WorkflowFile::zed(nix_build::nix_build),
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),

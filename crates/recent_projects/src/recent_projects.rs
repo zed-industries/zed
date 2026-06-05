@@ -995,7 +995,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1020,7 +1020,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1273,6 +1273,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             h_flex()
                                 .id("open_folder_item")
                                 .w_full()
+                                .min_w_0()
                                 .gap_2p5()
                                 .when(show_icon, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
@@ -1428,6 +1429,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             h_flex()
                                 .id("open_project_info_container")
                                 .w_full()
+                                .min_w_0()
                                 .gap_2p5()
                                 .when(show_icon, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
@@ -1577,8 +1579,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .child(
                             h_flex()
                                 .id("project_info_container")
+                                .w_full()
+                                .min_w_0()
                                 .gap_2p5()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .when(show_icon, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
