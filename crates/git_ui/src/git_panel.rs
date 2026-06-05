@@ -214,17 +214,15 @@ fn git_panel_context_menu(
                 Some(Box::new(ToggleTreeView)),
                 move |window, cx| window.dispatch_action(Box::new(ToggleTreeView), cx),
             )
-            .when(!state.tree_view, |this| {
-                this.entry(
-                    if state.sort_by_path {
-                        "Sort by Status"
-                    } else {
-                        "Sort by Path"
-                    },
-                    Some(Box::new(ToggleSortByPath)),
-                    move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
-                )
-            })
+            .entry(
+                if state.sort_by_path {
+                    "Sort by Status"
+                } else {
+                    "Sort by Path"
+                },
+                Some(Box::new(ToggleSortByPath)),
+                move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
+            )
     })
 }
 
@@ -3662,7 +3660,7 @@ impl GitPanel {
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
-        let group_by_status = is_tree_view || !sort_by_path;
+        let group_by_status = !sort_by_path;
 
         if let Some(active_repo) = self.active_repository.as_ref() {
             let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
@@ -3823,12 +3821,14 @@ impl GitPanel {
                         continue;
                     }
 
-                    push_entry(
-                        self,
-                        GitListEntry::Header(GitHeaderEntry { header: section }),
-                        true,
-                        Some(&mut tree_state.logical_indices),
-                    );
+                    if section != Section::Tracked || !sort_by_path {
+                        push_entry(
+                            self,
+                            GitListEntry::Header(GitHeaderEntry { header: section }),
+                            true,
+                            Some(&mut tree_state.logical_indices),
+                        );
+                    }
 
                     for (entry, is_visible) in
                         tree_state.build_tree_entries(section, entries, &mut seen_directories)
@@ -8514,6 +8514,116 @@ mod tests {
                 .expect("selected entry should be a status entry");
             assert_eq!(selected_entry.repo_path, repo_path("src/a/foo.rs"));
         });
+    }
+
+    #[gpui::test]
+    async fn test_tree_view_sort_by_path_combines_tracked_and_untracked(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                    "utils.rs": "pub fn util() {}",
+                },
+                "tests": {
+                    "test.rs": "fn test() {}",
+                },
+                "new_file.txt": "new content",
+                "conflict.txt": "conflicted content",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("src/main.rs", StatusCode::Modified.worktree()),
+                ("src/utils.rs", FileStatus::Untracked),
+                ("tests/test.rs", StatusCode::Modified.worktree()),
+                ("new_file.txt", FileStatus::Untracked),
+                (
+                    "conflict.txt",
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }
+                    .into(),
+                ),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.tree_view = Some(true);
+                    git_panel.sort_by_path = Some(true);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Directory(GitTreeDirEntry { key: TreeKey { section: Section::Tracked, ref path }, .. }),
+                TreeStatus(GitTreeStatusEntry { entry: GitStatusEntry { status: FileStatus::Tracked(..), .. }, .. }),
+                TreeStatus(GitTreeStatusEntry { entry: GitStatusEntry { status: FileStatus::Untracked, .. }, .. }),
+                Directory(GitTreeDirEntry { key: TreeKey { section: Section::Tracked, .. }, .. }),
+                TreeStatus(GitTreeStatusEntry { entry: GitStatusEntry { status: FileStatus::Tracked(..), .. }, .. }),
+                TreeStatus(GitTreeStatusEntry { entry: GitStatusEntry { status: FileStatus::Unmerged(..), .. }, .. }),
+                TreeStatus(GitTreeStatusEntry { entry: GitStatusEntry { status: FileStatus::Untracked, .. }, .. }),
+            ] if *path == repo_path("src"),
+        );
+
+        assert_entry_paths(
+            &entries,
+            &[
+                None,
+                Some("src/main.rs"),
+                Some("src/utils.rs"),
+                None,
+                Some("tests/test.rs"),
+                Some("conflict.txt"),
+                Some("new_file.txt"),
+            ],
+        );
     }
 
     #[gpui::test]
