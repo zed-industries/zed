@@ -3598,7 +3598,7 @@ impl Window {
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
                 inset: 0,
-                _padding: 0,
+                spread_radius: ScaledPixels(0.),
             });
         }
     }
@@ -3634,7 +3634,7 @@ impl Window {
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
                 inset: 1,
-                _padding: 0,
+                spread_radius: shadow.spread_radius.scale(scale_factor),
             });
         }
     }

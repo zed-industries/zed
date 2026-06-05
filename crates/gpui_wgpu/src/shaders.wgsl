@@ -961,7 +961,10 @@ struct Shadow {
     color: Hsla,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
-    _padding: u32, // align to 8 bytes
+    // Only used for inset shadows: shrinks the virtual rect the gaussian
+    // blurs against, making the shadow reach further inward. Zero for outer
+    // shadows (they apply spread to bounds before reaching the shader).
+    spread_radius: f32,
 }
 @group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
 
@@ -1002,13 +1005,14 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     }
 
     let shadow = b_shadows[input.shadow_id];
-    let half_size = shadow.bounds.size / 2.0;
+    var half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
-    // For inset shadows, shift the blur center by the offset so the shadow
-    // is heavier on one side (e.g. dark top-left, light bottom-right).
     var center_to_point = input.position.xy - center;
     if (shadow.inset != 0u) {
+        // Shift the blur center by the offset so the shadow is heavier on one side.
         center_to_point -= shadow.offset;
+        // Shrink the virtual rect so the shadow reaches further inward.
+        half_size -= vec2<f32>(shadow.spread_radius);
     }
 
     let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);

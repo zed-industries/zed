@@ -94,6 +94,36 @@ impl Render for InsetShadowExample {
                         inset: true,
                     }])),
             )
+            // Inset shadows with spread radius
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_6()
+                    .child(row_label("Spread"))
+                    .child(card("spread 0").shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.15),
+                        offset: point(px(0.), px(4.)),
+                        blur_radius: px(3.),
+                        spread_radius: px(0.),
+                        inset: true,
+                    }]))
+                    .child(card("spread 2").shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.15),
+                        offset: point(px(0.), px(4.)),
+                        blur_radius: px(3.),
+                        spread_radius: px(2.),
+                        inset: true,
+                    }]))
+                    .child(card("spread 4").shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.15),
+                        offset: point(px(0.), px(4.)),
+                        blur_radius: px(3.),
+                        spread_radius: px(4.),
+                        inset: true,
+                    }])),
+            )
             // Outer shadows for comparison
             .child(
                 div()

@@ -536,7 +536,10 @@ pub struct Shadow {
     pub color: Hsla,
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
-    pub _padding: u32, // align to 8 bytes
+    // Only used for inset shadows: shrinks the virtual rect the gaussian
+    // blurs against, making the shadow reach further inward. Zero for outer
+    // shadows (they apply spread to bounds before reaching the shader).
+    pub spread_radius: ScaledPixels,
 }
 
 impl From<Shadow> for Primitive {

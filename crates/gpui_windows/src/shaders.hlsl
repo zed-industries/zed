@@ -859,7 +859,10 @@ struct Shadow {
     Bounds content_mask;
     Hsla color;
     uint inset;
-    uint _padding; // align to 8 bytes
+    // Only used for inset shadows: shrinks the virtual rect the gaussian
+    // blurs against, making the shadow reach further inward. Zero for outer
+    // shadows (they apply spread to bounds before reaching the shader).
+    float spread_radius;
 };
 
 struct ShadowVertexOutput {
@@ -908,11 +911,12 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 
     float2 half_size = shadow.bounds.size / 2.;
     float2 center = shadow.bounds.origin + half_size;
-    // For inset shadows, shift the blur center by the offset so the shadow
-    // is heavier on one side (e.g. dark top-left, light bottom-right).
     float2 point0 = input.position.xy - center;
     if (shadow.inset != 0u) {
+        // Shift the blur center by the offset so the shadow is heavier on one side.
         point0 -= shadow.offset;
+        // Shrink the virtual rect so the shadow reaches further inward.
+        half_size -= float2(shadow.spread_radius, shadow.spread_radius);
     }
     float corner_radius = pick_corner_radius(point0, shadow.corner_radii);
 
