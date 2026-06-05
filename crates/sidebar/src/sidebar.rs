@@ -6188,7 +6188,6 @@ impl Sidebar {
             .when(is_hovered && !is_renaming, |this| {
                 let rename_button = IconButton::new(("rename-thread", ix), IconName::Pencil)
                     .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
                     .tooltip({
                         let focus_handle = focus_handle.clone();
                         move |_window, cx| {
@@ -6231,7 +6230,6 @@ impl Sidebar {
                         Some(DraftKind::WithContent) => Some(
                             IconButton::new("discard_thread", IconName::Close)
                                 .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
                                 .tooltip(Tooltip::text("Discard Draft"))
                                 .on_click({
                                     let thread_workspace = thread_workspace.clone();
@@ -6249,7 +6247,6 @@ impl Sidebar {
                         None => Some(
                             IconButton::new("archive-thread", IconName::Archive)
                                 .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |_window, cx| {
