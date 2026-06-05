@@ -1071,7 +1071,7 @@ impl Item for Editor {
     ) -> Option<gpui::AnyElement> {
         use crate::file_path_nav::FilePathNav;
 
-        if self.show_breadcrumbs
+        if self.breadcrumbs_visible()
             && EditorSettings::get_global(cx).toolbar.file_path_nav
             && self.buffer.read(cx).is_singleton()
         {
