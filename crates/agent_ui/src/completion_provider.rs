@@ -299,6 +299,26 @@ pub struct AvailableSkill {
     /// worktree root name for project-local skills.
     pub source: SharedString,
     pub skill_file_path: PathBuf,
+    pub warning: Option<SharedString>,
+}
+
+fn skill_completion_icon_path(
+    _skill: &AvailableSkill,
+    uri: &MentionUri,
+    cx: &mut App,
+) -> SharedString {
+    uri.icon_path(cx)
+}
+
+fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
+    if let Some(warning) = &skill.warning {
+        CompletionDocumentation::WarningAndMultiLinePlainText {
+            warning: "".into(),
+            plain_text: Some(warning.clone()),
+        }
+    } else {
+        CompletionDocumentation::MultiLinePlainText(skill.description.to_string().into())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -467,7 +487,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
-        let icon_path = uri.icon_path(cx);
+        let icon_path = skill_completion_icon_path(&skill, &uri, cx);
         let crease_text: SharedString = uri.name().into();
         let source_highlight_id = cx
             .theme()
@@ -479,9 +499,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             replace_range: source_range.clone(),
             new_text,
             label,
-            documentation: Some(CompletionDocumentation::MultiLinePlainText(
-                skill.description.into(),
-            )),
+            documentation: Some(skill_completion_documentation(&skill)),
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             match_start: None,
@@ -1325,7 +1343,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         };
                                         let new_text = format!("{} ", uri.as_link());
                                         let new_text_len = new_text.len();
-                                        let icon_path = uri.icon_path(cx);
+                                        let icon_path = skill_completion_icon_path(skill, &uri, cx);
                                         let crease_text: SharedString = uri.name().into();
                                         let confirm = confirm_completion_callback(
                                             crease_text,
@@ -1368,11 +1386,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     replace_range: source_range.clone(),
                                     new_text,
                                     label,
-                                    documentation: Some(
-                                        CompletionDocumentation::MultiLinePlainText(
-                                            skill.description.into(),
-                                        ),
-                                    ),
+                                    documentation: Some(skill_completion_documentation(&skill)),
                                     source: project::CompletionSource::Custom,
                                     icon_path: Some(icon_path),
                                     match_start: None,

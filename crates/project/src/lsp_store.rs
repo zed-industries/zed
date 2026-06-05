@@ -14603,6 +14603,11 @@ pub enum CompletionDocumentation {
         single_line: SharedString,
         plain_text: Option<SharedString>,
     },
+    /// A warning label shown alongside multiple lines of plain text documentation.
+    WarningAndMultiLinePlainText {
+        warning: SharedString,
+        plain_text: Option<SharedString>,
+    },
 }
 
 impl CompletionDocumentation {
@@ -14615,6 +14620,9 @@ impl CompletionDocumentation {
             CompletionDocumentation::MultiLineMarkdown(s) => s.clone(),
             CompletionDocumentation::SingleLineAndMultiLinePlainText { single_line, .. } => {
                 single_line.clone()
+            }
+            CompletionDocumentation::WarningAndMultiLinePlainText { warning, .. } => {
+                warning.clone()
             }
         }
     }

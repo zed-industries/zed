@@ -51,6 +51,24 @@ pub const MAX_SKILL_DESCRIPTIONS_SIZE: usize = 50 * 1024;
 /// The name of the skill definition file
 pub const SKILL_FILE_NAME: &str = "SKILL.md";
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SkillLoadWarning {
+    DescriptionTooLong { actual_len: usize, max_len: usize },
+}
+
+impl SkillLoadWarning {
+    pub fn message(&self) -> String {
+        match self {
+            Self::DescriptionTooLong {
+                actual_len,
+                max_len,
+            } => format!(
+                "Skill description is {actual_len} bytes, exceeding the {max_len}-byte limit. The skill was loaded, but long descriptions may consume more model-context tokens."
+            ),
+        }
+    }
+}
+
 /// Represents a loaded skill with all its metadata and content.
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -61,6 +79,8 @@ pub struct Skill {
     pub directory_path: PathBuf,
     /// Absolute path to the SKILL.md file
     pub skill_file_path: PathBuf,
+    /// Non-fatal issues found while loading this skill.
+    pub load_warnings: Vec<SkillLoadWarning>,
     /// When `true`, this skill is hidden from the model's catalog and the
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
@@ -242,7 +262,7 @@ pub fn parse_skill_frontmatter(
     content: &str,
     source: SkillSource,
 ) -> Result<Skill> {
-    let (metadata, _body) = parse_skill_file_content(content)?;
+    let (metadata, _body, load_warnings) = parse_skill_file_content_for_loading(content)?;
 
     let directory_path = skill_file_path
         .parent()
@@ -255,6 +275,7 @@ pub fn parse_skill_frontmatter(
         source,
         directory_path,
         skill_file_path: skill_file_path.to_path_buf(),
+        load_warnings,
         disable_model_invocation: metadata.disable_model_invocation,
         embedded_body: None,
     })
@@ -281,6 +302,36 @@ pub fn parse_skill_file_content(content: &str) -> Result<(SkillMetadata, &str)> 
     validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
 
     Ok((metadata, body))
+}
+
+fn parse_skill_file_content_for_loading(
+    content: &str,
+) -> Result<(SkillMetadata, &str, Vec<SkillLoadWarning>)> {
+    let (metadata, body) = extract_skill_frontmatter(content)?;
+
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    let load_warnings =
+        validate_description_for_loading(&metadata.description).map_err(anyhow::Error::msg)?;
+
+    Ok((metadata, body, load_warnings))
+}
+
+fn validate_description_for_loading(
+    description: &str,
+) -> Result<Vec<SkillLoadWarning>, &'static str> {
+    if description.trim().is_empty() {
+        return Err("Skill description cannot be empty");
+    }
+
+    let mut warnings = Vec::new();
+    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+        warnings.push(SkillLoadWarning::DescriptionTooLong {
+            actual_len: description.len(),
+            max_len: MAX_SKILL_DESCRIPTION_LEN,
+        });
+    }
+
+    Ok(warnings)
 }
 
 fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
@@ -359,8 +410,9 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
 /// by [`validate_name`].
 pub const MAX_SKILL_NAME_LEN: usize = 64;
 
-/// Maximum length (in bytes) for a valid skill description. Mirrors the
-/// upper bound enforced by [`validate_description`].
+/// Maximum recommended length (in bytes) for a skill description. The
+/// create-skill UI enforces this as a hard limit, while the loader emits a
+/// warning and still loads longer descriptions.
 ///
 /// Byte-based rather than char-based because that's what `.len()` returns
 /// and what every caller currently measures; the UI also surfaces this
@@ -468,8 +520,8 @@ pub fn validate_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Validate a skill description against the rules enforced by both the
-/// loader and the create-skill UI.
+/// Validate a skill description against the strict rules enforced by the
+/// create-skill UI and imported/shared skill parsing.
 pub fn validate_description(description: &str) -> Result<(), &'static str> {
     if description.trim().is_empty() {
         return Err("Skill description cannot be empty");
@@ -627,10 +679,11 @@ pub fn read_skill_body_from_content(
     skill_file_path: &Path,
     content: &str,
 ) -> Result<String, SkillLoadError> {
-    let (_metadata, body) = parse_skill_file_content(content).map_err(|e| SkillLoadError {
-        path: skill_file_path.to_path_buf(),
-        message: e.to_string(),
-    })?;
+    let (_metadata, body, _load_warnings) =
+        parse_skill_file_content_for_loading(content).map_err(|e| SkillLoadError {
+            path: skill_file_path.to_path_buf(),
+            message: e.to_string(),
+        })?;
 
     Ok(body.trim().to_string())
 }
@@ -663,6 +716,7 @@ fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
         source: SkillSource::BuiltIn,
         directory_path: synthetic_dir,
         skill_file_path: synthetic_path,
+        load_warnings: Vec::new(),
         disable_model_invocation: metadata.disable_model_invocation,
         embedded_body: Some(body.trim()),
     })
@@ -1314,8 +1368,8 @@ Content.
     }
 
     #[test]
-    fn test_parse_description_too_long() {
-        let long_desc = "a".repeat(1025);
+    fn test_parse_description_too_long_loads_with_warning() {
+        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
             r#"---
 name: test
@@ -1326,11 +1380,38 @@ Content.
 "#
         );
 
-        let result = parse_skill_frontmatter(
+        let skill = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             &content,
             SkillSource::Global,
+        )
+        .expect("long descriptions should load with a warning");
+
+        assert_eq!(skill.description, long_desc);
+        assert_eq!(skill.load_warnings.len(), 1);
+        assert_eq!(
+            skill.load_warnings[0],
+            SkillLoadWarning::DescriptionTooLong {
+                actual_len: MAX_SKILL_DESCRIPTION_LEN + 1,
+                max_len: MAX_SKILL_DESCRIPTION_LEN,
+            }
         );
+    }
+
+    #[test]
+    fn test_parse_skill_file_content_rejects_description_too_long() {
+        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
+        let content = format!(
+            r#"---
+name: test
+description: {long_desc}
+---
+
+Content.
+"#
+        );
+
+        let result = parse_skill_file_content(&content);
         assert!(result.is_err());
         let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} bytes");
         assert!(result.unwrap_err().to_string().contains(&expected));
@@ -1740,6 +1821,7 @@ description: A skill with no body content
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/test-skill"),
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         };
@@ -1877,6 +1959,27 @@ description: A skill with no body content
         // Trimmed: no leading blank line after the closing `---`, and no
         // trailing whitespace.
         assert_eq!(body, "# Instructions\n\nDo the thing.");
+    }
+
+    #[gpui::test]
+    async fn test_read_skill_body_accepts_description_too_long(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "long-description": {
+                    "SKILL.md": format!("---\nname: long-description\ndescription: {long_desc}\n---\n\nBody")
+                }
+            }),
+        )
+        .await;
+
+        let body = read_skill_body(fs.as_ref(), Path::new("/skills/long-description/SKILL.md"))
+            .await
+            .expect("body should load despite description-length warning");
+
+        assert_eq!(body, "Body");
     }
 
     #[gpui::test]
@@ -2028,8 +2131,8 @@ description: A skill with no body content
         // "é" is 2 bytes in UTF-8. A string of MAX/2 + 1 "é" characters has
         // only ~MAX/2 + 1 chars but exceeds MAX bytes, so it must be
         // rejected by a byte-based validator (and accepted by a char-based
-        // one). This regression-tests the byte semantics that the loader
-        // and UI both rely on.
+        // one). This regression-tests the byte semantics that strict
+        // validation and load-time warnings both rely on.
         let chars = MAX_SKILL_DESCRIPTION_LEN / 2 + 1;
         let description = "é".repeat(chars);
         assert!(description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN);

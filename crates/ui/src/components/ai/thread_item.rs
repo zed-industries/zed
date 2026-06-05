@@ -271,7 +271,7 @@ impl RenderOnce for ThreadItem {
         let gradient_overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
             .width(px(64.0))
             .right(px(-10.0))
-            .gradient_stop(0.75)
+            .gradient_stop(0.7)
             .group_name("thread-item");
 
         let separator_color = Color::Custom(color.text_muted.opacity(0.4));

@@ -143,6 +143,17 @@ pub struct IncreaseBufferFontSize {
 pub struct OpenSettingsAt {
     /// A path to a specific setting (e.g. `theme.mode`)
     pub path: String,
+    /// The settings file to select before opening `path`. When omitted, the
+    /// existing settings file selection is preserved.
+    #[serde(default)]
+    pub target: Option<OpenSettingsAtTarget>,
+}
+
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenSettingsAtTarget {
+    User,
+    Project { worktree_id: usize },
 }
 
 /// Resets the buffer font size to the default value.

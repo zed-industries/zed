@@ -11547,8 +11547,11 @@ pub enum EditorEvent {
     RestoreRequested {
         hunks: Vec<MultiBufferDiffHunk>,
     },
+    /// Emitted when an underlying buffer changes, including edits made through another editor.
     BufferEdited,
+    /// Emitted when this editor creates, undoes, or redoes an edit transaction.
     Edited {
+        /// The transaction that changed the editor's buffer.
         transaction_id: clock::Lamport,
     },
     Reparsed(BufferId),

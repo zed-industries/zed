@@ -609,12 +609,12 @@ impl AgentSessionList for AcpSessionList {
         })
     }
 
-    fn supports_delete(&self, cx: &App) -> bool {
-        self.supports_delete && cx.has_flag::<AcpBetaFeatureFlag>()
+    fn supports_delete(&self) -> bool {
+        self.supports_delete
     }
 
     fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
-        if !self.supports_delete(cx) {
+        if !self.supports_delete() {
             return Task::ready(Err(anyhow::anyhow!("delete_session not supported")));
         }
 
@@ -2484,10 +2484,7 @@ pub mod test_support {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use feature_flags::FeatureFlag as _;
-
     use super::*;
-    use gpui::UpdateGlobal as _;
     use settings::Settings as _;
 
     #[test]
@@ -2788,25 +2785,6 @@ mod tests {
         );
     }
 
-    fn set_acp_beta_override(cx: &mut App, value: &str) {
-        let store = settings::SettingsStore::test(cx);
-        cx.set_global(store);
-        settings::SettingsStore::update_global(cx, |store, _| {
-            store.register_setting::<feature_flags::FeatureFlagsSettings>();
-        });
-        feature_flags::FeatureFlagStore::init(cx);
-
-        let value = value.to_string();
-        settings::SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |content| {
-                content
-                    .feature_flags
-                    .get_or_insert_default()
-                    .insert(AcpBetaFeatureFlag::NAME.to_string(), value);
-            });
-        });
-    }
-
     async fn connect_session_list_test_agent(
         sessions: Vec<acp::SessionInfo>,
         cx: &mut gpui::TestAppContext,
@@ -2889,31 +2867,6 @@ mod tests {
                 additional_directories: vec![std::path::PathBuf::from("/workspace-a")],
             }
         );
-    }
-
-    #[gpui::test]
-    async fn session_delete_support_requires_beta_flag_and_capability(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let connection = connect_session_delete_test_agent(deleted_sessions, cx).await;
-        let session_list = AcpSessionList::new(connection.clone(), true);
-        let missing_capability = AcpSessionList::new(connection, false);
-
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-
-            assert_eq!(
-                session_list.supports_delete(cx),
-                cx.has_flag::<AcpBetaFeatureFlag>()
-            );
-            assert!(!missing_capability.supports_delete(cx));
-
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-            assert!(session_list.supports_delete(cx));
-            assert!(!missing_capability.supports_delete(cx));
-        });
     }
 
     async fn connect_session_delete_test_agent(
@@ -3022,11 +2975,6 @@ mod tests {
         let session_list = AcpSessionList::new(connection, true);
         let session_id = acp::SessionId::new("session-to-delete");
 
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
         cx.update(|cx| session_list.delete_session(&session_id, cx))
             .await
             .expect("delete_session failed");
@@ -3046,11 +2994,6 @@ mod tests {
         let session_list = AcpSessionList::new(connection, false);
         let session_id = acp::SessionId::new("session-to-delete");
 
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
         let error = cx
             .update(|cx| session_list.delete_session(&session_id, cx))
             .await
@@ -3066,36 +3009,6 @@ mod tests {
                 .expect("deleted sessions lock should not be poisoned")
                 .is_empty()
         );
-    }
-
-    #[gpui::test]
-    async fn logout_support_requires_agent_capability(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| set_acp_beta_override(cx, "off"));
-        assert!(!cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()));
-
-        let fs = fs::FakeFs::new(cx.executor());
-        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
-        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
-        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
-
-        assert!(!harness.connection.supports_logout());
-        let unsupported_logout = cx.update(|cx| harness.connection.logout(cx));
-        let error = unsupported_logout
-            .await
-            .expect_err("logout should be rejected when the agent does not advertise support");
-        assert_eq!(error.to_string(), "Logout is not supported by this agent.");
-        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 0);
-
-        Rc::get_mut(&mut harness.connection)
-            .expect("test harness should own the only ACP connection handle")
-            .agent_capabilities
-            .auth = acp::AgentAuthCapabilities::new().logout(acp::LogoutCapabilities::new());
-
-        assert!(harness.connection.supports_logout());
-        cx.update(|cx| harness.connection.logout(cx))
-            .await
-            .expect("logout should be sent when the agent advertises support");
-        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 1);
     }
 
     #[cfg(not(windows))]
