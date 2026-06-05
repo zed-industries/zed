@@ -2557,6 +2557,399 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_multi_registration_inlay_hint(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        },
+    );
+
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+    let server_id = fake_server.server.server_id();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    let inlay_hint_provider = |cx: &mut gpui::TestAppContext| {
+        lsp_store.read_with(cx, |lsp_store, _| {
+            lsp_store
+                .language_server_for_id(server_id)
+                .unwrap()
+                .capabilities()
+                .inlay_hint_provider
+                .clone()
+        })
+    };
+
+    assert!(
+        inlay_hint_provider(cx).is_none(),
+        "expected no inlay hint provider before any registration",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "inlay-hint-a".to_string(),
+                    method: "textDocument/inlayHint".to_string(),
+                    register_options: serde_json::to_value(lsp::InlayHintOptions {
+                        resolve_provider: Some(true),
+                        ..Default::default()
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        inlay_hint_provider(cx).is_some(),
+        "expected inlay hint provider after first registration",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "inlay-hint-b".to_string(),
+                    method: "textDocument/inlayHint".to_string(),
+                    register_options: serde_json::to_value(lsp::InlayHintOptions {
+                        resolve_provider: Some(false),
+                        ..Default::default()
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        inlay_hint_provider(cx).is_some(),
+        "expected inlay hint provider after second registration",
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "inlay-hint-a".to_string(),
+                    method: "textDocument/inlayHint".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        inlay_hint_provider(cx).is_some(),
+        "expected inlay hint provider to remain active after unregistering one of two registrations",
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "inlay-hint-b".to_string(),
+                    method: "textDocument/inlayHint".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        inlay_hint_provider(cx).is_none(),
+        "expected inlay hint provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_multi_registration_code_lens(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        },
+    );
+
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+    let server_id = fake_server.server.server_id();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    let code_lens_provider = |cx: &mut gpui::TestAppContext| {
+        lsp_store.read_with(cx, |lsp_store, _| {
+            lsp_store
+                .language_server_for_id(server_id)
+                .unwrap()
+                .capabilities()
+                .code_lens_provider
+                .clone()
+        })
+    };
+
+    assert!(
+        code_lens_provider(cx).is_none(),
+        "expected no code lens provider before any registration",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "code-lens-a".to_string(),
+                    method: "textDocument/codeLens".to_string(),
+                    register_options: serde_json::to_value(lsp::CodeLensOptions {
+                        resolve_provider: Some(true),
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "code-lens-b".to_string(),
+                    method: "textDocument/codeLens".to_string(),
+                    register_options: serde_json::to_value(lsp::CodeLensOptions {
+                        resolve_provider: Some(false),
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        code_lens_provider(cx).is_some(),
+        "expected code lens provider after two registrations",
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "code-lens-a".to_string(),
+                    method: "textDocument/codeLens".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        code_lens_provider(cx).is_some(),
+        "expected code lens provider to remain active after unregistering one of two registrations",
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "code-lens-b".to_string(),
+                    method: "textDocument/codeLens".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        code_lens_provider(cx).is_none(),
+        "expected code lens provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_multi_registration_document_symbol(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        },
+    );
+
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+    let server_id = fake_server.server.server_id();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    let document_symbol_provider = |cx: &mut gpui::TestAppContext| {
+        lsp_store.read_with(cx, |lsp_store, _| {
+            lsp_store
+                .language_server_for_id(server_id)
+                .unwrap()
+                .capabilities()
+                .document_symbol_provider
+                .clone()
+        })
+    };
+
+    assert!(
+        document_symbol_provider(cx).is_none(),
+        "expected no document symbol provider before any registration",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "document-symbol-a".to_string(),
+                    method: "textDocument/documentSymbol".to_string(),
+                    register_options: None,
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "document-symbol-b".to_string(),
+                    method: "textDocument/documentSymbol".to_string(),
+                    register_options: serde_json::to_value(lsp::DocumentSymbolOptions {
+                        label: Some("custom".to_string()),
+                        work_done_progress_options: Default::default(),
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        document_symbol_provider(cx).is_some(),
+        "expected document symbol provider after two registrations",
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "document-symbol-a".to_string(),
+                    method: "textDocument/documentSymbol".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        document_symbol_provider(cx).is_some(),
+        "expected document symbol provider to remain active after unregistering one of two registrations",
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "document-symbol-b".to_string(),
+                    method: "textDocument/documentSymbol".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(
+        document_symbol_provider(cx).is_none(),
+        "expected document symbol provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
 async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
