@@ -256,7 +256,7 @@ TBD: Centered layout related settings
     "selections_menu": true, // Whether to show the Selections menu
     "agent_review": true, // Whether to show agent review buttons
     "code_actions": false, // Whether to show code action buttons
-    "file_path_nav": true // Whether to show clickable file path segments in the breadcrumbs
+    "file_path_nav": false // Whether to show clickable file path segments in the breadcrumbs
   }
 ```
 
