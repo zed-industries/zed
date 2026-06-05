@@ -518,7 +518,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers = openai_subcription_headers(creds.account_id.as_deref());
+            let extra_headers = openai_subscription_headers(creds.account_id.as_deref());
 
             let access_token = creds.access_token.clone();
             request_limiter
@@ -599,7 +599,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-            let extra_headers = openai_subcription_headers(creds.account_id.as_deref());
+            let extra_headers = openai_subscription_headers(creds.account_id.as_deref());
             let access_token = creds.access_token.clone();
             request_limiter
                 .run(async move {
@@ -627,7 +627,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
     }
 }
 
-fn openai_subcription_headers(account_id: Option<&str>) -> CustomHeaders {
+fn openai_subscription_headers(account_id: Option<&str>) -> CustomHeaders {
     let mut header_pairs = vec![
         (
             HeaderName::from_static("originator"),
