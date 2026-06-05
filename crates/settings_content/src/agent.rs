@@ -311,6 +311,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub use_modifier_to_send: Option<bool>,
+    /// Command to run automatically in new terminal threads in the agent panel,
+    /// e.g. `claude`. The command runs in the shell, so when it exits the user
+    /// is dropped back into the shell.
+    ///
+    /// Default: none
+    pub terminal_command: Option<String>,
     /// Minimum number of lines of height the agent message editor should have.
     ///
     /// Default: 4

@@ -1933,12 +1933,14 @@ impl AgentPanel {
         }
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
         let working_directory = self.terminal_working_directory(workspace, cx);
+        let initial_command = AgentSettings::get_global(cx).terminal_command.clone();
         self.spawn_terminal(
             TerminalId::new(),
             working_directory,
             None,
             None,
             None,
+            initial_command,
             true,
             true,
             source,
@@ -1992,6 +1994,7 @@ impl AgentPanel {
         custom_title: Option<SharedString>,
         initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
+        initial_command: Option<String>,
         select: bool,
         focus: bool,
         source: AgentThreadSource,
@@ -2025,6 +2028,14 @@ impl AgentPanel {
                 }
             };
             this.update_in(cx, |this, window, cx| {
+                if let Some(command) = initial_command {
+                    let command = command.trim();
+                    if !command.is_empty() {
+                        terminal.update(cx, |terminal, _| {
+                            terminal.input(format!("{command}\r").into_bytes());
+                        });
+                    }
+                }
                 let terminal_view = cx.new(|cx| {
                     TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
                 });
@@ -2320,6 +2331,7 @@ impl AgentPanel {
             metadata.custom_title.clone(),
             initial_title,
             Some(metadata.created_at),
+            None,
             true,
             focus,
             source,
@@ -5124,12 +5136,14 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let initial_command = AgentSettings::get_global(cx).terminal_command.clone();
         self.spawn_terminal(
             terminal_id,
             working_directory,
             None,
             None,
             None,
+            initial_command,
             true,
             false,
             source,
