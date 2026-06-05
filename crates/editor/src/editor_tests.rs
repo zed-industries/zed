@@ -961,6 +961,46 @@ fn test_toggle_breadcrumb_does_not_change_settings(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_file_path_nav_breadcrumb_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    use workspace::item::Item;
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "fn main() {}".into())
+        .await;
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    // Off (the default): no clickable file-path prefix is added to the breadcrumb.
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().file_path_nav = Some(false);
+    });
+    cx.run_until_parked();
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(editor.breadcrumb_prefix(window, cx).is_none());
+    });
+
+    // Opt in: the clickable file-path prefix is shown.
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().file_path_nav = Some(true);
+    });
+    cx.run_until_parked();
+    _ = editor.update(cx, |editor, window, cx| {
+        assert!(editor.breadcrumb_prefix(window, cx).is_some());
+    });
+}
+
+#[gpui::test]
 async fn test_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
