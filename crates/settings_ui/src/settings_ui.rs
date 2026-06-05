@@ -3212,10 +3212,10 @@ impl SettingsWindow {
                             .display_name(file)
                             .expect("Files should always have a name");
 
-                        menu = menu.toggleable_entry(
+                        menu = menu.header("Scope").toggleable_entry(
                             display_name,
                             file == &self.current_file,
-                            IconPosition::Start,
+                            IconPosition::End,
                             None,
                             {
                                 let this = this.clone();
