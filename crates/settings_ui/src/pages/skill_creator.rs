@@ -48,18 +48,11 @@ pub enum SkillCreatorOpenMode {
     Url {
         initial_url: Option<String>,
     },
-    /// Review and install a skill whose full `SKILL.md` contents are
-    /// supplied inline, e.g. from a `zed://skill` share link. The form is
-    /// pre-filled with the parsed skill so the recipient can review it and
-    /// pick a scope before saving.
     Install {
         content: String,
     },
 }
 
-/// Events emitted by the skill creator page so the surrounding
-/// [`SettingsWindow`] can pop the sub-page when the form is dismissed or a
-/// skill is saved.
 pub(crate) enum SkillCreatorEvent {
     Dismissed,
     Saved,
@@ -101,9 +94,6 @@ impl ScopeChoice {
     }
 }
 
-/// Resolve the scope the new skill will be saved to from the settings file
-/// selected in the settings window: a project settings file maps to that
-/// project's worktree, anything else maps to the global scope.
 fn scope_for_settings_file(
     current_file: &SettingsUiFile,
     original_window: Option<&WindowHandle<MultiWorkspace>>,
@@ -123,8 +113,6 @@ fn scope_for_settings_file(
     ScopeChoice::Global
 }
 
-/// Returns the clipboard contents when they look like a GitHub skill URL,
-/// used to pre-fill the URL import field.
 pub(crate) fn skill_url_from_clipboard(cx: &App) -> Option<String> {
     cx.read_from_clipboard()
         .and_then(|clipboard| clipboard.text())
@@ -143,9 +131,6 @@ pub(crate) fn render_skill_creator_page(
     let Some(page) = settings_window.skill_creator_page() else {
         return gpui::Empty.into_any_element();
     };
-    // The scope follows the settings file selected in the settings window
-    // (shown in the breadcrumb), so re-resolve it on every render in case
-    // the file selection changed while the creator was open.
     let scope = scope_for_settings_file(
         &settings_window.current_file,
         settings_window.original_window.as_ref(),
@@ -165,9 +150,6 @@ pub struct SkillCreatorPage {
     description_editor: Entity<InputField>,
     body_editor: Entity<Editor>,
     description_length: usize,
-    /// Where the skill will be saved, derived from the settings file selected
-    /// in the settings window. Kept in sync by `render_skill_creator_page`
-    /// whenever the file selection (breadcrumb scope) changes.
     scope: ScopeChoice,
     disable_model_invocation: bool,
     name_error: Option<&'static str>,
@@ -176,13 +158,8 @@ pub struct SkillCreatorPage {
     save_error: Option<SharedString>,
     url_import_status: UrlImportStatus,
     saving: bool,
-    /// Holds the in-flight save so navigating away cancels the
-    /// pending write instead of leaving a detached task running with no
-    /// way to report success or failure.
     save_task: Option<Task<()>>,
-    /// Debounce timer between typing in the URL field and kicking off a fetch.
     url_import_debounce_task: Option<Task<()>>,
-    /// In-flight URL fetch; dropping it cancels the request.
     url_import_task: Option<Task<()>>,
     scroll_handle: ScrollHandle,
     cancel_button_focus_handle: FocusHandle,
@@ -227,8 +204,7 @@ impl SkillCreatorPage {
         // the form has focus, so dispatching the `Cancel` action from
         // the Cancel button (which walks the focused element's dispatch
         // path looking for `on_action` handlers) silently does nothing
-        // until the user manually clicks into one of the editors. The
-        // name editor is also the natural first field to type into.
+        // until the user manually clicks into one of the editors.
         window.focus(&name_editor.focus_handle(cx), cx);
 
         let description_editor = cx.new(|cx| {
@@ -259,8 +235,6 @@ impl SkillCreatorPage {
             editor
         });
 
-        // Attach Markdown language to the body editor asynchronously, since
-        // `language_for_name` returns a Task.
         cx.spawn_in(window, {
             let body_editor = body_editor.downgrade();
             let language_registry = language_registry.clone();
@@ -623,9 +597,6 @@ impl SkillCreatorPage {
         cx.notify();
     }
 
-    /// Populate the form fields from a parsed skill (shared by URL import and
-    /// share-link install). Deferred so the programmatic `set_text` calls run
-    /// before focus moves to the name field.
     fn apply_imported_skill(
         &mut self,
         imported: ImportedSkill,
@@ -667,7 +638,6 @@ impl SkillCreatorPage {
     }
 
     fn save_skill(&mut self, _: &SaveSkill, window: &mut Window, cx: &mut Context<Self>) {
-        // Surface any field-level errors before attempting to save.
         self.recompute_name_error(cx);
         self.recompute_description_error(cx);
         self.recompute_body_error(cx);
@@ -808,11 +778,6 @@ impl SkillCreatorPage {
     }
 
     fn render_form_fields(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // `flex_grow` lets the form fields absorb extra vertical space when
-        // the window is tall; `flex_shrink_0` keeps them at their natural
-        // (content + body min-height) size when the window is short, which
-        // causes the surrounding scroll container to start scrolling rather
-        // than squeezing the body editor below its minimum height.
         v_flex()
             .id("skill-creator-form-fields")
             .flex_grow_1()
@@ -913,10 +878,6 @@ impl SkillCreatorPage {
         let saving = self.saving;
         let main_action = if saving { "Saving…" } else { "Save Skill" };
 
-        // Draw a faint outline around whichever button currently holds
-        // keyboard focus, so tabbing to Cancel/Save is clearly visible. The
-        // ring border is always present (transparent when unfocused) so
-        // focusing a button never shifts the surrounding layout.
         let focus_ring = |focus_handle: &FocusHandle| {
             let focused = focus_handle.is_focused(window) && window.last_input_was_keyboard();
             let border_color = if focused {
@@ -1001,9 +962,6 @@ impl SkillCreatorPage {
         window.focus_prev(cx);
     }
 
-    // When focus is on a non-editor tab stop (dropdown button, switch),
-    // Tab dispatches the global `menu::SelectNext` rather than our
-    // custom `FocusNextField`. Catching it here keeps the cycle moving.
     fn on_menu_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_next(cx);
     }
@@ -1800,9 +1758,7 @@ mod tests {
             message.contains("not a skill directory"),
             "error should explain the conflict is a non-directory, got: {message}"
         );
-        // Path separator differs between platforms (`/` on Unix, `\` on
-        // Windows), so reconstruct the expected `Display` form rather than
-        // hard-coding a separator.
+        // Path separator differs between platforms
         let expected_path = Path::new("/skills").join("draft-pr");
         let expected_path = expected_path.display().to_string();
         assert!(

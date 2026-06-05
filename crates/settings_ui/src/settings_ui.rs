@@ -734,8 +734,6 @@ fn open_settings_editor_at_target(
     });
 }
 
-/// Opens the settings window at the Skills page with the skill creator
-/// sub-page on top, so dismissing the creator lands on the skills list.
 pub fn open_skill_creator(
     open_mode: pages::SkillCreatorOpenMode,
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
@@ -746,8 +744,6 @@ pub fn open_skill_creator(
     });
 }
 
-/// Opens the settings window (or activates the existing one) and runs
-/// `callback` with it once it's available.
 fn open_settings_editor_with(
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
@@ -888,8 +884,6 @@ pub struct SettingsWindow {
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
-    /// State backing the skill creator sub-page, created when the sub-page is
-    /// pushed and dropped when it is popped.
     skill_creator_page: Option<(Entity<pages::SkillCreatorPage>, Subscription)>,
 }
 
@@ -3581,39 +3575,39 @@ impl SettingsWindow {
                         )
                         .child(self.render_sub_page_breadcrumbs(window, cx)),
                 )
-                .when(current_sub_page.link.in_json, |this| {
-                    this.child(
-                        div().flex_shrink_0().child(
-                            Button::new("open-in-settings-file", "Edit in settings.json")
-                                .tab_index(0_isize)
-                                .style(ButtonStyle::OutlinedGhost)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Edit in settings.json",
-                                    &OpenCurrentFile,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_current_settings_file(window, cx);
-                                })),
-                        ),
-                    )
-                })
-                .when(is_skills_page, |this| {
-                    this.child(
-                        div().flex_shrink_0().child(
-                            Button::new("open-skill-creator", "Create Skill")
-                                .tab_index(0_isize)
-                                .style(ButtonStyle::OutlinedGhost)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_skill_creator_sub_page(
-                                        pages::SkillCreatorOpenMode::Form,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        ),
-                    )
-                })
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .when(current_sub_page.link.in_json, |this| {
+                            this.child(
+                                Button::new("open-in-settings-file", "Edit in settings.json")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Edit in settings.json",
+                                        &OpenCurrentFile,
+                                        &self.focus_handle,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_current_settings_file(window, cx);
+                                    })),
+                            )
+                        })
+                        .when(is_skills_page, |this| {
+                            this.child(
+                                Button::new("open-skill-creator", "Create Skill")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_skill_creator_sub_page(
+                                            pages::SkillCreatorOpenMode::Form,
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                        }),
+                )
                 .into_any_element();
 
             let active_page_render_fn = &current_sub_page.link.render;
@@ -4044,9 +4038,8 @@ impl SettingsWindow {
             .map(|(page, _)| page.clone())
     }
 
-    /// Push the skill creator as a sub-page, creating its backing state. If
-    /// the creator is already the active sub-page, the open mode is applied
-    /// to the existing form instead (e.g. a second URL import retargets it).
+    /// If the creator is already the active sub-page, the open mode is applied
+    /// to the existing form instead
     pub fn open_skill_creator_sub_page(
         &mut self,
         open_mode: pages::SkillCreatorOpenMode,
@@ -4096,14 +4089,10 @@ impl SettingsWindow {
         page.update(cx, |page, cx| {
             page.apply_open_mode(open_mode, window, cx);
         });
-        // `push_sub_page` moves focus to the content container; put it on the
-        // form's first field instead.
         let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
         window.focus(&name_editor_focus_handle, cx);
     }
 
-    /// Navigate to the Skills page (so the creator's back button lands on
-    /// the skills list) and open the skill creator sub-page on top of it.
     pub fn navigate_to_skill_creator(
         &mut self,
         open_mode: pages::SkillCreatorOpenMode,
@@ -4125,11 +4114,6 @@ impl SettingsWindow {
                 .iter()
                 .position(|entry| entry.page_index == page_index && entry.is_root)
         {
-            // Select the navbar entry directly rather than via
-            // `open_and_scroll_to_navbar_entry`: that helper focuses the
-            // navbar entry on the next frame, and the navbar's `on_focus`
-            // subscription re-opens the entry's page, which clears the
-            // sub-page stack and would discard the sub-pages pushed below.
             self.open_navbar_entry_page(navbar_entry_index);
         }
         self.navigate_to_sub_page("agent.skills", window, cx);
@@ -6008,9 +5992,6 @@ pub mod test {
 
         cx.run_until_parked();
 
-        // The same code path the `agent::OpenSkillCreator` /
-        // `agent::CreateSkillFromUrl` command palette actions go through once
-        // the settings window is open.
         settings_window.update_in(cx, |settings_window, window, cx| {
             settings_window.navigate_to_skill_creator(
                 pages::SkillCreatorOpenMode::Form,

@@ -30,8 +30,8 @@ use zed_actions::{
         ResolveConflictsWithAgent, ReviewBranchDiff,
     },
     assistant::{
-        FocusAgent, OpenGlobalAgentsMdRules, OpenProjectAgentsMdRules, OpenRulesLibrary,
-        OpenSkillCreator, Toggle, ToggleFocus,
+        FocusAgent, OpenGlobalAgentsMdRules, OpenProjectAgentsMdRules, OpenRulesLibrary, Toggle,
+        ToggleFocus,
     },
 };
 
@@ -3395,12 +3395,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The legacy Rules action is rerouted to the skill creator so the
-        // existing keyboard shortcut (still bound to `OpenRulesLibrary` in
+        // The legacy Rules action is rerouted to the skills settings page so
+        // the existing keyboard shortcut (still bound to `OpenRulesLibrary` in
         // the default keymaps) and any persisted user keymap entries keep
-        // working. The skill creator itself lives in the settings window,
-        // so the action is re-dispatched and handled by `settings_ui`.
-        window.dispatch_action(Box::new(OpenSkillCreator), cx);
+        // working.
+        window.dispatch_action(
+            Box::new(zed_actions::OpenSettingsAt {
+                path: "agent.skills".to_string(),
+                target: None,
+            }),
+            cx,
+        );
     }
 
     /// Refresh the native agent's view of available skills, e.g. after a
@@ -5633,15 +5638,7 @@ impl AgentPanel {
                                 )
                                 .separator()
                                 .header("Context")
-                                .entry("Skills", None, |window, cx| {
-                                    window.dispatch_action(
-                                        Box::new(zed_actions::OpenSettingsAt {
-                                            path: "agent.skills".to_string(),
-                                            target: None,
-                                        }),
-                                        cx,
-                                    );
-                                });
+                                .action("Skills", Box::new(OpenRulesLibrary::default()));
 
                             if project_agents_md_path.is_some() || global_agents_md_loaded {
                                 if global_agents_md_loaded {
@@ -9286,12 +9283,12 @@ mod tests {
         cx.run_until_parked();
 
         assert!(
-            cx.debug_bounds("MENU_ITEM-Create Skill…").is_some(),
-            "Create Skill… menu item should be visible"
+            cx.debug_bounds("MENU_ITEM-Skills").is_some(),
+            "Skills menu item should be visible"
         );
         assert!(
             cx.debug_bounds("KEY_BINDING-l").is_some(),
-            "Create Skill… menu item should show the OpenRulesLibrary shortcut"
+            "Skills menu item should show the OpenRulesLibrary shortcut"
         );
     }
 

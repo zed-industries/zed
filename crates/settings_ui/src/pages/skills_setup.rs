@@ -73,6 +73,11 @@ pub(crate) fn render_skills_setup_page(
                             Button::new("open-skill-creator-empty", "Create a Skill")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Outlined)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(cx.listener(move |this, _event, window, cx| {
                                     this.open_skill_creator_sub_page(
                                         SkillCreatorOpenMode::Form,

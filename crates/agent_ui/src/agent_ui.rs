@@ -556,9 +556,7 @@ pub fn init(
 ) {
     agent::ThreadStore::init_global(cx);
     prompt_store::init(cx);
-    // After a skill is saved from the settings UI's skill creator, refresh
-    // every agent panel's skills so the new skill is picked up (and the
-    // skill index republished) without waiting for the file watcher.
+
     cx.set_global(agent_skills::SkillsUpdatedHook(std::rc::Rc::new(|cx| {
         let workspaces: Vec<_> = workspace::AppState::global(cx)
             .workspace_store
@@ -566,6 +564,7 @@ pub fn init(
             .workspaces()
             .cloned()
             .collect();
+
         for workspace in workspaces {
             workspace
                 .update(cx, |workspace, cx| {
@@ -576,6 +575,7 @@ pub fn init(
                 .ok();
         }
     })));
+
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
         // we're not running inside of the eval.
