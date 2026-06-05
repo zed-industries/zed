@@ -4919,6 +4919,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
+    "folder_disclosure": "off",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,

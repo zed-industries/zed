@@ -43,8 +43,8 @@ use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
-    update_settings_file,
+    DockSide, FolderDisclosure, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics,
+    ShowIndentGuides, update_settings_file,
 };
 use smallvec::SmallVec;
 use std::{
@@ -5853,6 +5853,29 @@ impl ProjectPanel {
                                     .when_some(symlink_element, |this, el| this.child(el))
                                     .into_any_element(),
                             )
+                        },
+                    )
+                    .when_some(
+                        match settings.folder_disclosure {
+                            FolderDisclosure::Off => None,
+                            FolderDisclosure::Compact => Some((px(12.), IconSize::XSmall)),
+                            FolderDisclosure::Comfortable => Some((px(18.), IconSize::Small)),
+                        }
+                        .filter(|_| settings.folder_icons),
+                        |this, (width, chevron_size)| {
+                            // Reserve a fixed disclosure column so folder and file icons stay
+                            // aligned, showing the chevron only for directories (JetBrains-style).
+                            this.child(h_flex().flex_none().w(width).justify_center().children(
+                                kind.is_dir().then(|| {
+                                    Icon::new(if details.is_expanded {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    })
+                                    .size(chevron_size)
+                                    .color(Color::Muted)
+                                }),
+                            ))
                         },
                     )
                     .child(if let Some(icon) = &icon {

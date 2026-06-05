@@ -774,6 +774,9 @@
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the project panel.
     "folder_icons": true,
+    // Disclosure chevron next to the folder icon for directories (JetBrains-style).
+    // "off", "compact", or "comfortable". No effect when "folder_icons" is false.
+    "folder_disclosure": "off",
     // Whether to show the git status in the project panel.
     "git_status": true,
     // Amount of indentation for nested items.

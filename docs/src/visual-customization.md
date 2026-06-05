@@ -459,6 +459,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "entry_spacing": "comfortable", // Vertical spacing (comfortable, standard)
     "file_icons": true,             // Show/hide file icons
     "folder_icons": true,           // Show/hide folder icons
+    "folder_disclosure": "off",     // Folder chevron: "off", "compact", "comfortable"
     "git_status": true,             // Indicate new/updated files
     "indent_size": 20,              // Pixels for each successive indent
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer

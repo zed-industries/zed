@@ -719,6 +719,13 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub folder_icons: Option<bool>,
+    /// Disclosure chevron shown alongside the folder icon for directories
+    /// (JetBrains-style), so their expanded/collapsed state is visible at a glance.
+    /// `compact` and `comfortable` control how much room the chevron takes.
+    /// Has no effect when `folder_icons` is false (chevrons are already shown).
+    ///
+    /// Default: off
+    pub folder_disclosure: Option<FolderDisclosure>,
     /// Whether to show the git status in the project panel.
     ///
     /// Default: true
@@ -814,6 +821,31 @@ pub enum ProjectPanelEntrySpacing {
     Comfortable,
     /// The standard spacing of entries.
     Standard,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderDisclosure {
+    /// No disclosure chevron.
+    #[default]
+    Off,
+    /// A compact disclosure chevron.
+    Compact,
+    /// A roomier disclosure chevron.
+    Comfortable,
 }
 
 #[derive(
