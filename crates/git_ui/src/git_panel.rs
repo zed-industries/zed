@@ -3192,12 +3192,10 @@ impl GitPanel {
                 path_arg,
             ];
 
-            cx.spawn_in(window, async move |git_panel, cx| {
-                git_panel.update(cx, |git_panel, cx| {
-                    git_panel.project.read(cx).git_config(path, args, cx)
-                })
-            })
-            .detach();
+            self.project
+                .read(cx)
+                .git_config(path, args, cx)
+                .detach_and_log_err(cx);
         }
     }
 
