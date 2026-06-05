@@ -1764,20 +1764,29 @@ mod resolve_worktree_tests {
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/olivetti/zed",
+                None,
+                Some("zed".into()),
+            ),
+            (
+                "/home/bob/zed",
+                "/home/bob/worktrees/olivetti/zed",
+                Some("olivetti"),
                 Some("olivetti".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            ("/home/bob/zed", "/home/bob/zed2", None, Some("zed2".into())),
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/zed/selectric",
+                None,
                 Some("selectric".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed", None),
+            ("/home/bob/zed", "/home/bob/zed", None, None),
         ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
+        for (main_worktree_path, linked_worktree_path, fallback, expected) in examples {
             let short_name = linked_worktree_short_name(
                 Path::new(main_worktree_path),
                 Path::new(linked_worktree_path),
+                fallback,
             );
             assert_eq!(
                 short_name, expected,

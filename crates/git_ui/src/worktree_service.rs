@@ -813,12 +813,7 @@ async fn do_create_worktree(
         match result {
             Ok(Ok(worktrees)) => {
                 for worktree in worktrees {
-                    if let Some(name) = worktree
-                        .path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .and_then(|n| n.to_str())
-                    {
+                    if let Some(name) = worktree.directory_name() {
                         existing_worktree_names.push(name.to_string());
                     }
                     existing_worktree_paths.insert(worktree.path.clone());

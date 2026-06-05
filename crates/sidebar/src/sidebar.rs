@@ -622,7 +622,11 @@ fn workspace_menu_worktree_labels(
                     snapshot
                         .main_worktree_abs_path()
                         .and_then(|main_worktree_path| {
-                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                            project::linked_worktree_short_name(
+                                main_worktree_path,
+                                root_path,
+                                snapshot.branch_or_sha(),
+                            )
                         })
                         .unwrap_or_else(|| folder_name.clone())
                 } else {

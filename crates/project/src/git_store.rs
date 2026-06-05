@@ -4377,6 +4377,32 @@ impl RepositorySnapshot {
         }
     }
 
+    /// Returns the current branch name, or the short HEAD SHA when detached.
+    pub fn branch_or_sha(&self) -> Option<&str> {
+        self.branch
+            .as_ref()
+            .map(|branch| branch.name())
+            .or_else(|| {
+                self.head_commit.as_ref().map(|commit| commit.short_sha())
+            })
+    }
+
+    pub fn path_for_new_linked_worktree(
+        &self,
+        worktree_name: &str,
+        worktree_directory_setting: &str,
+    ) -> Result<PathBuf> {
+        let repository_anchor = self
+            .main_worktree_abs_path()
+            .unwrap_or(self.common_dir_abs_path.as_ref());
+        let directory = worktrees_directory_for_repo(
+            repository_anchor,
+            worktree_directory_setting,
+            self.path_style,
+        )?;
+        self.path_style.join_path(&directory, worktree_name)
+    }
+
     /// The main worktree is the original checkout that other worktrees were
     /// created from.
     ///
@@ -6997,28 +7023,6 @@ impl Repository {
             .then_some(&self.work_directory_abs_path)
     }
 
-    pub fn path_for_new_linked_worktree(
-        &self,
-        branch_name: &str,
-        worktree_directory_setting: &str,
-    ) -> Result<PathBuf> {
-        let repository_anchor = self
-            .snapshot
-            .main_worktree_abs_path()
-            .unwrap_or(self.common_dir_abs_path.as_ref());
-        let project_name = repository_anchor
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
-        let directory = worktrees_directory_for_repo(
-            repository_anchor,
-            worktree_directory_setting,
-            self.path_style,
-        )?;
-        let directory = self.path_style.join_path(&directory, branch_name)?;
-        self.path_style.join_path(&directory, project_name)
-    }
-
     pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
         let id = self.id;
         self.send_job("worktrees", None, move |repo, _| async move {
@@ -8546,6 +8550,7 @@ pub fn repo_identity_path(common_dir: &Path) -> &Path {
 pub fn linked_worktree_short_name(
     main_worktree_path: &Path,
     linked_worktree_path: &Path,
+    fallback: Option<&str>,
 ) -> Option<SharedString> {
     if main_worktree_path == linked_worktree_path {
         return None;
@@ -8553,16 +8558,12 @@ pub fn linked_worktree_short_name(
 
     let project_name = main_worktree_path.file_name()?.to_str()?;
     let directory_name = linked_worktree_path.file_name()?.to_str()?;
-    let name = if directory_name != project_name {
-        directory_name.to_string()
+    let name = if directory_name == project_name {
+        fallback.unwrap_or(directory_name)
     } else {
-        linked_worktree_path
-            .parent()?
-            .file_name()?
-            .to_str()?
-            .to_string()
+        directory_name
     };
-    Some(name.into())
+    Some(name.to_string().into())
 }
 
 fn get_permalink_in_rust_registry_src(
@@ -8956,14 +8957,37 @@ mod tests {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
         let directory =
             worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Posix).unwrap();
-        let directory = PathStyle::Posix
-            .join_path(&directory, "nimble-sky")
-            .unwrap();
-        let path = PathStyle::Posix.join_path(&directory, "lsp-tests").unwrap();
+        let path = PathStyle::Posix.join_path(&directory, "nimble-sky").unwrap();
 
         assert_eq!(
             path,
-            PathBuf::from("/home/user/dev/worktrees/lsp-tests/nimble-sky/lsp-tests")
+            PathBuf::from("/home/user/dev/worktrees/lsp-tests/nimble-sky")
+        );
+    }
+
+    #[test]
+    fn test_path_for_new_linked_worktree() {
+        let snapshot = RepositorySnapshot::empty(
+            RepositoryId(0),
+            Arc::from(Path::new("/home/user/dev/lsp-tests")),
+            None,
+            None,
+            None,
+            PathStyle::Posix,
+        );
+
+        assert_eq!(
+            snapshot
+                .path_for_new_linked_worktree("nimble-sky", "../worktrees")
+                .unwrap(),
+            PathBuf::from("/home/user/dev/worktrees/lsp-tests/nimble-sky")
+        );
+
+        assert_eq!(
+            snapshot
+                .path_for_new_linked_worktree("nimble-sky", ".worktrees")
+                .unwrap(),
+            PathBuf::from("/home/user/dev/lsp-tests/.worktrees/nimble-sky")
         );
     }
 

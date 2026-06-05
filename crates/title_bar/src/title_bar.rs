@@ -205,6 +205,7 @@ impl Render for TitleBar {
                         linked_worktree_short_name(
                             main_worktree_path,
                             repo.work_directory_abs_path.as_ref(),
+                            repo.branch_or_sha(),
                         )
                     })
                     .or_else(|| {
