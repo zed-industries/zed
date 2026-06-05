@@ -390,6 +390,7 @@ pub struct Repository {
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
+    open_error: Option<String>,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
@@ -494,6 +495,7 @@ pub enum GitStoreEvent {
     RepositoryAdded,
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
+    RepositoryOpenError(RepositoryId, anyhow::Error),
     JobsUpdated,
     ConflictsUpdated,
     GlobalConfigurationUpdated,
@@ -570,6 +572,7 @@ impl GitStore {
                                         is_trusted,
                                         cx,
                                     );
+                                    repo.open_error = None;
                                     repo.schedule_scan(None, cx);
                                 })
                             }
@@ -4543,6 +4546,10 @@ impl MergeDetails {
 }
 
 impl Repository {
+    pub fn error(&self) -> Option<&str> {
+        self.open_error.as_deref()
+    }
+
     pub fn is_trusted(&self) -> bool {
         match self.repository_state.peek() {
             Some(Ok(RepositoryState::Local(state))) => state.backend.is_trusted(),
@@ -4589,7 +4596,7 @@ impl Repository {
                     cx,
                 )
                 .await
-                .map_err(|err| err.to_string())
+                .map_err(|err| format!("{:#}", err))
             })
             .shared();
         self.job_sender.close_channel();
@@ -4656,6 +4663,7 @@ impl Repository {
             pending_ops: Default::default(),
             repository_state: Task::ready(Err("not yet initialized".into())).shared(),
             _worker_task: Task::ready(()),
+            open_error: None,
             commit_message_buffer: None,
             askpass_delegates: Default::default(),
             paths_needing_status_update: Default::default(),
@@ -4708,6 +4716,7 @@ impl Repository {
             job_sender,
             _worker_task: worker_task,
             repository_state,
+            open_error: None,
             askpass_delegates: Default::default(),
             latest_askpass_id: 0,
             active_jobs: Default::default(),
@@ -7966,8 +7975,24 @@ impl Repository {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
         let worker_task = cx.spawn(async move |this, cx| {
-            let Some(state) = state.await.log_err() else {
-                return;
+            let state = match state.await {
+                Ok(state) => state,
+                Err(err) => {
+                    this.update(cx, |repo, cx| {
+                        repo.open_error = Some(err.clone());
+                        let id = repo.id;
+                        if let Some(git_store) = repo.git_store.upgrade() {
+                            let error = anyhow::anyhow!(err);
+                            git_store.update(cx, |_, cx| {
+                                cx.emit(GitStoreEvent::RepositoryOpenError(id, error));
+                            });
+                        } else {
+                            log::warn!("git_store dropped before repository open error could be emitted for repository {id:?}");
+                        }
+                    })
+                    .log_err();
+                    return;
+                }
             };
             if let Some(git_hosting_provider_registry) =
                 cx.update(|cx| GitHostingProviderRegistry::try_global(cx))
@@ -9341,6 +9366,45 @@ mod tests {
             coalesced,
             repo_paths(&["submodule/a.txt", "submodule/nested/b.txt", "top_level.rs"])
         );
+    }
+
+    #[gpui::test]
+    async fn test_repository_open_error_is_stored(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_open_repo_error(
+            Path::new("/project/.git"),
+            "fatal: not a git repository".to_string(),
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should detect the repository even when it fails to open")
+        });
+        repository.read_with(cx, |repository, _| {
+            let error = repository
+                .error()
+                .expect("open_error should be set when the repository fails to open");
+            assert!(
+                error.contains("fatal: not a git repository"),
+                "open_error should contain the underlying failure message, got: {error}"
+            );
+        });
     }
 }
 

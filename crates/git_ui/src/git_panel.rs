@@ -830,6 +830,21 @@ impl GitPanel {
                             })
                             .ok();
                     }
+                    GitStoreEvent::RepositoryOpenError(id, error) => {
+                        let is_active = this
+                            .active_repository
+                            .as_ref()
+                            .map(|repo| repo.read(cx).id == *id)
+                            .unwrap_or(false);
+                        if is_active {
+                            this.schedule_update(window, cx);
+                        }
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_error(error, cx);
+                            })
+                            .ok();
+                    }
                     GitStoreEvent::RepositoryUpdated(_, _, _) => {}
                     GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
                 },
@@ -5502,10 +5517,16 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match (self.git_access, &self.active_repository) {
-            (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
-            (_, None) => self.render_uninitialized_ui(cx),
-            (_, Some(_)) => self.render_no_changes_ui(cx),
+        let has_open_error = self
+            .active_repository
+            .as_ref()
+            .map_or(false, |repo| repo.read(cx).error().is_some());
+
+        let content: AnyElement = match (self.git_access, has_open_error, &self.active_repository) {
+            (GitAccess::No, _, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+            (_, _, None) => self.render_uninitialized_ui(cx),
+            (_, true, Some(_)) => self.render_open_error_ui(cx),
+            (_, _, Some(_)) => self.render_no_changes_ui(cx),
         };
 
         v_flex()
@@ -5535,6 +5556,27 @@ impl GitPanel {
                         }),
                 )
             })
+            .into_any_element()
+    }
+
+    fn render_open_error_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .px_4()
+            .gap_1()
+            .child(Label::new("Could not open repository.").color(Color::Muted))
+            .child(
+                Label::new("Check the Zed log for details.")
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            )
+            .child(
+                Button::new("open_log", "Open Zed Log")
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Outlined)
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(workspace::OpenLog.boxed_clone(), cx);
+                    })),
+            )
             .into_any_element()
     }
 
@@ -9185,6 +9227,172 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_shows_generic_open_error(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+        fs.set_open_repo_error(
+            Path::new(path!("/root/project/.git")),
+            "fatal: not a git repository".to_string(),
+        );
+
+        let project =
+            Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.read_with(cx, |panel, cx| {
+            let repository = panel
+                .active_repository
+                .as_ref()
+                .expect("panel should have an active repository even when it fails to open");
+            let error = repository
+                .read(cx)
+                .error()
+                .expect("active repository should expose the open error so the panel can render the error UI");
+            assert!(
+                error.contains("fatal: not a git repository"),
+                "open error should contain the underlying failure message, got: {error}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_shows_unsafe_repo_ui(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+        // Simulate the error git emits when the .git directory is owned by a different user
+        fs.set_open_repo_error(
+            Path::new(path!("/root/project/.git")),
+            "fatal: detected dubious ownership in repository at '/root/project'".to_string(),
+        );
+
+        let project =
+            Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                matches!(panel.git_access, GitAccess::No),
+                "`git_access` should be `No` when the repo is owned by a different user"
+            );
+        });
+
+        // When the repo is owned by a different user, `has_active_repo` should be set
+        // to something and `git_access` should be `No`, which takes priority over `open_error`
+        // causing the unsafe repository UI (with the "Trust Directory" button) to be shown.
+        panel.read_with(cx, |panel, _cx| {
+            let has_active_repo = panel.active_repository.is_some();
+            let is_no_access = matches!(panel.git_access, GitAccess::No);
+            assert!(
+                has_active_repo && is_no_access,
+                "panel should have an active repository with GitAccess::No so that \
+                 render_unsafe_repo_ui is chosen over render_open_error_ui; \
+                 got git_access=No:{is_no_access}, active_repository=Some:{has_active_repo}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_editor_style_uses_buffer_font_size(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(20.0.into());
+                });
+            });
+        });
+
+        cx.add_window(|window, cx| {
+            let style = panel_editor_style(true, window, cx);
+
+            assert_eq!(style.text.font_size.to_pixels(window.rem_size()), px(20.0));
+
+            Editor::single_line(window, cx)
         });
     }
 }
