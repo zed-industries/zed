@@ -1043,6 +1043,17 @@ impl SplittableEditor {
         let Some(lhs) = self.lhs.take() else {
             return;
         };
+
+        // Detach the stale lhs editor from the shared scroll anchor while the split companion still exists,
+        // so its anchor can be converted to lhs native before rhs tears down split specific state.
+        lhs.editor.update(cx, |editor, cx| {
+            let lhs_snapshot = editor.display_map.update(cx, |dm, cx| dm.snapshot(cx));
+            editor
+                .scroll_manager
+                .unshare_scroll_anchor(&lhs_snapshot, cx);
+            editor.set_on_local_selections_changed(None);
+        });
+
         self.rhs_editor.update(cx, |rhs, cx| {
             let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
             let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
@@ -1063,9 +1074,6 @@ impl SplittableEditor {
             rhs.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
             });
-        });
-        lhs.editor.update(cx, |editor, _cx| {
-            editor.set_on_local_selections_changed(None);
         });
         cx.notify();
     }
@@ -1319,19 +1327,108 @@ impl SplittableEditor {
         use crate::display_map::Block;
         use crate::display_map::DisplayRow;
 
+        let rhs_snapshot = self
+            .rhs_editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+
+        let Some(lhs) = self.lhs.as_ref() else {
+            assert!(
+                rhs_snapshot.companion_snapshot().is_none(),
+                "rhs display snapshot should not have a companion when unsplit"
+            );
+
+            let shared_scroll_anchor = self
+                .rhs_editor
+                .read(cx)
+                .scroll_manager
+                .shared_scroll_anchor(cx);
+            if let Some(display_map_id) = shared_scroll_anchor.display_map_id {
+                assert_eq!(
+                    display_map_id, rhs_snapshot.display_map_id,
+                    "unsplit editor should not retain a scroll anchor native to a torn-down split companion"
+                );
+            }
+
+            let _ = self
+                .rhs_editor
+                .read(cx)
+                .scroll_manager
+                .native_anchor(&rhs_snapshot, cx);
+            return;
+        };
+
         self.debug_print(cx);
         self.check_excerpt_invariants(quiesced, cx);
 
-        let lhs = self.lhs.as_ref().unwrap();
+        let lhs_snapshot = lhs
+            .editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+
+        let lhs_companion = lhs_snapshot
+            .companion_snapshot()
+            .expect("lhs display snapshot should have rhs companion while split");
+        assert_eq!(
+            lhs_companion.display_map_id, rhs_snapshot.display_map_id,
+            "lhs display snapshot companion should point to rhs display map"
+        );
+        assert!(
+            lhs_companion.companion_snapshot().is_none(),
+            "embedded companion snapshot should not recursively contain another companion"
+        );
+
+        let rhs_companion = rhs_snapshot
+            .companion_snapshot()
+            .expect("rhs display snapshot should have lhs companion while split");
+        assert_eq!(
+            rhs_companion.display_map_id, lhs_snapshot.display_map_id,
+            "rhs display snapshot companion should point to lhs display map"
+        );
+        assert!(
+            rhs_companion.companion_snapshot().is_none(),
+            "embedded companion snapshot should not recursively contain another companion"
+        );
+
+        let lhs_scroll_anchor_entity_id = lhs
+            .editor
+            .read(cx)
+            .scroll_manager
+            .scroll_anchor_entity()
+            .entity_id();
+        let rhs_scroll_anchor_entity_id = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .scroll_anchor_entity()
+            .entity_id();
+        assert_eq!(
+            lhs_scroll_anchor_entity_id, rhs_scroll_anchor_entity_id,
+            "split editors should share a scroll anchor entity"
+        );
+
+        let shared_scroll_anchor = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .shared_scroll_anchor(cx);
+        if let Some(display_map_id) = shared_scroll_anchor.display_map_id {
+            assert!(
+                display_map_id == lhs_snapshot.display_map_id
+                    || display_map_id == rhs_snapshot.display_map_id,
+                "shared scroll anchor should be native to one side of the split"
+            );
+        }
+        let _ = lhs
+            .editor
+            .read(cx)
+            .scroll_manager
+            .native_anchor(&lhs_snapshot, cx);
+        let _ = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .native_anchor(&rhs_snapshot, cx);
 
         if quiesced {
-            let lhs_snapshot = lhs
-                .editor
-                .update(cx, |editor, cx| editor.display_snapshot(cx));
-            let rhs_snapshot = self
-                .rhs_editor
-                .update(cx, |editor, cx| editor.display_snapshot(cx));
-
             let lhs_max_row = lhs_snapshot.max_point().row();
             let rhs_max_row = rhs_snapshot.max_point().row();
             assert_eq!(lhs_max_row, rhs_max_row, "mismatch in display row count");
@@ -2406,11 +2503,29 @@ mod tests {
                     }
                 }
                 75..=79 => {
-                    log::info!("unsplit and resplit");
+                    log::info!("unsplit, scroll stale lhs, and resplit");
+                    let Some(lhs_editor) = editor.update(cx, |editor, _cx| {
+                        editor.lhs.as_ref().map(|lhs| lhs.editor.clone())
+                    }) else {
+                        continue;
+                    };
+                    let lhs_max_row = lhs_editor.update(cx, |editor, cx| {
+                        editor.display_snapshot(cx).max_point().row().0
+                    });
                     editor.update_in(cx, |editor, window, cx| {
                         editor.unsplit(window, cx);
                     });
                     cx.run_until_parked();
+
+                    if lhs_max_row > 0 {
+                        lhs_editor.update_in(cx, |editor, window, cx| {
+                            editor.set_scroll_position(gpui::Point::new(0., 1.), window, cx);
+                        });
+                        editor.update(cx, |editor, cx| {
+                            editor.check_invariants(false, cx);
+                        });
+                    }
+
                     editor.update_in(cx, |editor, window, cx| {
                         editor.split(window, cx);
                     });

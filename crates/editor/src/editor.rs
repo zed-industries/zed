@@ -66,6 +66,7 @@ mod config;
 mod diagnostics;
 mod edit_prediction;
 mod input;
+mod markdown_actions;
 mod navigation;
 mod rewrap;
 mod selection;
@@ -73,6 +74,7 @@ mod selection;
 pub(crate) use actions::*;
 pub use clipboard::ClipboardSelection;
 pub use code_actions::CodeActionProvider;
+use collections::TypeIdHashMap;
 pub use completions::CompletionProvider;
 #[cfg(test)]
 pub(crate) use completions::snippet_candidate_suffixes;
@@ -93,6 +95,7 @@ pub(crate) use edit_prediction::{
     EditPredictionKeybindAction, EditPredictionKeybindSurface, edit_prediction_edit_text,
 };
 pub use edit_prediction_types::Direction;
+pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
     DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
@@ -991,10 +994,10 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
+    highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
-    gutter_highlights: HashMap<TypeId, GutterHighlight>,
+    gutter_highlights: TypeIdHashMap<GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -1114,7 +1117,7 @@ pub struct Editor {
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
-    addons: HashMap<TypeId, Box<dyn Addon>>,
+    addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
@@ -2189,10 +2192,10 @@ impl Editor {
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
-            highlighted_rows: HashMap::default(),
+            highlighted_rows: Default::default(),
             background_highlights: HashMap::default(),
             navigation_overlays: HashMap::default(),
-            gutter_highlights: HashMap::default(),
+            gutter_highlights: Default::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -2335,7 +2338,7 @@ impl Editor {
             breadcrumb_header: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
-            addons: HashMap::default(),
+            addons: Default::default(),
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
@@ -4807,7 +4810,13 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             this.insert("", window, cx);
             linked_edits.apply_with_left_expansion(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -4830,7 +4839,13 @@ impl Editor {
             let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
             this.insert("", window, cx);
             linked_edits.apply(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -5015,7 +5030,13 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -7326,7 +7347,13 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -7354,7 +7381,13 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -7973,6 +8006,7 @@ impl Editor {
                     project.restart_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
                         HashSet::default(),
+                        true,
                         cx,
                     );
                 });
@@ -8472,7 +8506,13 @@ impl Editor {
                     (selection.range(), uuid.to_string())
                 });
             this.edit(edits, cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -9491,7 +9531,7 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, window, cx);
+        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
@@ -11507,8 +11547,11 @@ pub enum EditorEvent {
     RestoreRequested {
         hunks: Vec<MultiBufferDiffHunk>,
     },
+    /// Emitted when an underlying buffer changes, including edits made through another editor.
     BufferEdited,
+    /// Emitted when this editor creates, undoes, or redoes an edit transaction.
     Edited {
+        /// The transaction that changed the editor's buffer.
         transaction_id: clock::Lamport,
     },
     Reparsed(BufferId),
