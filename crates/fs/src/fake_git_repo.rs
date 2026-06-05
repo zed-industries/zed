@@ -61,6 +61,8 @@ pub struct FakeGitRepositoryState {
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
+    pub head_symlinks: HashSet<RepoPath>,
+    pub index_symlinks: HashSet<RepoPath>,
     // everything in commit contents is in oids
     pub merge_base_contents: HashMap<RepoPath, Oid>,
     pub oids: HashMap<Oid, String>,
@@ -86,6 +88,8 @@ impl FakeGitRepositoryState {
             event_emitter,
             head_contents: Default::default(),
             index_contents: Default::default(),
+            head_symlinks: Default::default(),
+            index_symlinks: Default::default(),
             unmerged_paths: Default::default(),
             blames: Default::default(),
             current_branch_name: Default::default(),
@@ -163,24 +167,38 @@ impl FakeGitRepository {
 impl GitRepository for FakeGitRepository {
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         let fut = self.with_state_async(false, move |state| {
+            // Use git's recorded mode (like RealGitRepository's `git ls-files`), not the on-disk symlink.
+            if state.index_symlinks.contains(&path) {
+                return Ok(None);
+            }
             state
                 .index_contents
                 .get(&path)
                 .context("not present in index")
                 .cloned()
+                .map(Some)
         });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
+        self.executor
+            .spawn(async move { fut.await.ok().flatten() })
+            .boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         let fut = self.with_state_async(false, move |state| {
+            // Use git's recorded mode (like RealGitRepository's `git ls-tree`), not the on-disk symlink.
+            if state.head_symlinks.contains(&path) {
+                return Ok(None);
+            }
             state
                 .head_contents
                 .get(&path)
                 .context("not present in HEAD")
                 .cloned()
+                .map(Some)
         });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
+        self.executor
+            .spawn(async move { fut.await.ok().flatten() })
+            .boxed()
     }
 
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {

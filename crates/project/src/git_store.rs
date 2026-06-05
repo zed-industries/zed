@@ -8975,6 +8975,188 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_open_uncommitted_diff_skips_symlinks(cx: &mut TestAppContext) {
+        use util::rel_path::rel_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "target.txt": "rule one\nrule two\n",
+            }),
+        )
+        .await;
+        fs.insert_symlink("/project/agents.md", PathBuf::from("target.txt"))
+            .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/.git"),
+            &[
+                ("agents.md", "target.txt".into()),
+                ("target.txt", "rule one\n".into()),
+            ],
+        );
+        fs.set_symlinks_for_repo(Path::new("/project/.git"), &["agents.md"]);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // symlink file should not produce a base diff
+        let symlink_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("agents.md")), cx)
+            })
+            .await
+            .unwrap();
+        let symlink_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(symlink_buffer, cx)
+            })
+            .await
+            .unwrap();
+        symlink_diff.read_with(cx, |diff, _| {
+            assert!(
+                !diff.base_text_exists(),
+                "symlinked buffer should not have a git diff base"
+            );
+        });
+
+        // regular file should still produce a base diff
+        let regular_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("target.txt")), cx)
+            })
+            .await
+            .unwrap();
+        let regular_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(regular_buffer, cx)
+            })
+            .await
+            .unwrap();
+        regular_diff.read_with(cx, |diff, _| {
+            assert!(
+                diff.base_text_exists(),
+                "regular file should have a git diff base"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_uncommitted_diff_attaches_for_worktree_only_symlink(
+        cx: &mut TestAppContext,
+    ) {
+        use util::rel_path::rel_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "target.txt": "resolved\ncontents\n",
+            }),
+        )
+        .await;
+        // worktree symlink, but git records `agents.md` as a regular file (unstaged type change)
+        fs.insert_symlink("/project/agents.md", PathBuf::from("target.txt"))
+            .await;
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/.git"),
+            &[
+                ("agents.md", "committed regular contents\n".into()),
+                ("target.txt", "resolved\ncontents\n".into()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("agents.md")), cx)
+            })
+            .await
+            .unwrap();
+        let diff = project
+            .update(cx, |project, cx| project.open_uncommitted_diff(buffer, cx))
+            .await
+            .unwrap();
+        // git's regular mode wins: a base diff is still attached
+        diff.read_with(cx, |diff, _| {
+            assert!(
+                diff.base_text_exists(),
+                "worktree-only symlink should still attach a base diff"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_uncommitted_diff_skips_for_git_only_symlink(cx: &mut TestAppContext) {
+        use util::rel_path::rel_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        // ordinary file on disk, but git records `agents.md` with a symlink mode (e.g. checked
+        // out without symlink support)
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "agents.md": "target.txt",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/.git"),
+            &[("agents.md", "target.txt".into())],
+        );
+        fs.set_symlinks_for_repo(Path::new("/project/.git"), &["agents.md"]);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("agents.md")), cx)
+            })
+            .await
+            .unwrap();
+        let diff = project
+            .update(cx, |project, cx| project.open_uncommitted_diff(buffer, cx))
+            .await
+            .unwrap();
+        // git's symlink mode wins: the base diff is skipped
+        diff.read_with(cx, |diff, _| {
+            assert!(
+                !diff.base_text_exists(),
+                "git-only symlink should skip the base diff"
+            );
+        });
+    }
+
     #[test]
     fn test_new_worktree_path_uses_posix_style_for_remote_paths() {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
