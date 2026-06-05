@@ -5632,15 +5632,8 @@ impl AgentPanel {
                                     }),
                                 )
                                 .separator()
-                                .header("Skills")
-                                .entry(
-                                    "Create Skill…",
-                                    Some(Box::new(OpenRulesLibrary::default())),
-                                    |window, cx| {
-                                        window.dispatch_action(Box::new(OpenSkillCreator), cx);
-                                    },
-                                )
-                                .entry("Manage Skills…", None, |window, cx| {
+                                .header("Context")
+                                .entry("Skills", None, |window, cx| {
                                     window.dispatch_action(
                                         Box::new(zed_actions::OpenSettingsAt {
                                             path: "agent.skills".to_string(),
@@ -5648,12 +5641,9 @@ impl AgentPanel {
                                         }),
                                         cx,
                                     );
-                                })
-                                .separator();
+                                });
 
                             if project_agents_md_path.is_some() || global_agents_md_loaded {
-                                menu = menu.header("Rules");
-
                                 if global_agents_md_loaded {
                                     let workspace = workspace.clone();
 
