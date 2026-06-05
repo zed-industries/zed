@@ -2171,18 +2171,6 @@ impl Sidebar {
                 is_active: is_active_group,
                 has_threads,
             } => {
-                let has_active_draft = is_active
-                    && self
-                        .active_workspace(cx)
-                        .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-                        .is_some_and(|panel| {
-                            let panel = panel.read(cx);
-                            // An active terminal is its own surface, not a draft.
-                            panel.active_terminal_id().is_none()
-                                && (panel.active_view_is_new_draft(cx)
-                                    || panel.active_conversation_view().is_none())
-                        });
-
                 self.project_header_menu_handles.entry(ix).or_default();
                 self.project_header_new_thread_menu_handles
                     .entry(ix)
@@ -2200,7 +2188,7 @@ impl Sidebar {
                     *is_active_group,
                     is_selected,
                     *has_threads,
-                    has_active_draft,
+                    // has_active_draft,
                     cx,
                 )
             }
@@ -2259,7 +2247,6 @@ impl Sidebar {
         is_active: bool,
         is_focused: bool,
         has_threads: bool,
-        has_active_draft: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let host = key.host();
@@ -2460,7 +2447,6 @@ impl Sidebar {
         ix: usize,
         id_prefix: &str,
         key: &ProjectGroupKey,
-        has_active_draft: bool,
         group_name: &SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -3018,17 +3004,6 @@ impl Sidebar {
         let is_focused = self.focus_handle.is_focused(window);
         let is_selected = is_focused && self.selection == Some(header_idx);
 
-        let has_active_draft = *is_active
-            && self
-                .active_workspace(cx)
-                .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-                .is_some_and(|panel| {
-                    let panel = panel.read(cx);
-                    // An active terminal is its own surface, not a draft.
-                    panel.active_terminal_id().is_none()
-                        && (panel.active_view_is_new_draft(cx)
-                            || panel.active_conversation_view().is_none())
-                });
         let header_element = self.render_project_header(
             header_idx,
             true,
@@ -3041,7 +3016,6 @@ impl Sidebar {
             *is_active,
             is_selected,
             *has_threads,
-            has_active_draft,
             cx,
         );
 
