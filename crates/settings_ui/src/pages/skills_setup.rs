@@ -70,7 +70,7 @@ pub(crate) fn render_skills_setup_page(
                         .gap_2()
                         .child(Label::new(message).color(Color::Muted))
                         .child(
-                            Button::new("open-skill-creator", "Create a Skill")
+                            Button::new("open-skill-creator-empty", "Create a Skill")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Outlined)
                                 .on_click(cx.listener(move |this, _event, window, cx| {
@@ -83,43 +83,23 @@ pub(crate) fn render_skills_setup_page(
                         ),
                 )
             } else {
-                this.child(
-                    h_flex().px_8().pb_2().justify_end().child(
-                        Button::new("open-skill-creator", "Create Skill")
-                            .tab_index(0_isize)
-                            .style(ButtonStyle::Outlined)
-                            .on_click(cx.listener(move |this, _event, window, cx| {
-                                this.open_skill_creator_sub_page(
-                                    SkillCreatorOpenMode::Form,
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
-                )
-                .child(
-                    v_flex()
-                        .id("skills-list")
-                        .flex_1()
-                        .min_h_0()
-                        .track_scroll(scroll_handle)
-                        .overflow_y_scroll()
-                        .children(skills.iter().enumerate().flat_map(|(i, skill)| {
-                            let mut elements: Vec<AnyElement> =
-                                vec![render_skill_row(skill, settings_window, cx)];
+                this.track_scroll(scroll_handle)
+                    .overflow_y_scroll()
+                    .children(skills.iter().enumerate().flat_map(|(i, skill)| {
+                        let mut elements: Vec<AnyElement> =
+                            vec![render_skill_row(skill, settings_window, cx)];
 
-                            if i + 1 < skills.len() {
-                                elements.push(
-                                    div()
-                                        .px_8()
-                                        .child(Divider::horizontal().flex_grow_1())
-                                        .into_any_element(),
-                                );
-                            }
+                        if i + 1 < skills.len() {
+                            elements.push(
+                                div()
+                                    .px_8()
+                                    .child(Divider::horizontal().flex_grow_1())
+                                    .into_any_element(),
+                            );
+                        }
 
-                            elements
-                        })),
-                )
+                        elements
+                    }))
             }
         })
         .into_any_element()

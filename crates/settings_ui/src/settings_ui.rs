@@ -3561,6 +3561,7 @@ impl SettingsWindow {
         let page_content;
 
         if let Some(current_sub_page) = self.sub_page_stack.last() {
+            let is_skills_page = current_sub_page.link.json_path == Some("agent.skills");
             page_header = h_flex()
                 .w_full()
                 .min_w_0()
@@ -3593,6 +3594,22 @@ impl SettingsWindow {
                                 ))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.open_current_settings_file(window, cx);
+                                })),
+                        ),
+                    )
+                })
+                .when(is_skills_page, |this| {
+                    this.child(
+                        div().flex_shrink_0().child(
+                            Button::new("open-skill-creator", "Create Skill")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::OutlinedGhost)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_skill_creator_sub_page(
+                                        pages::SkillCreatorOpenMode::Form,
+                                        window,
+                                        cx,
+                                    );
                                 })),
                         ),
                     )
