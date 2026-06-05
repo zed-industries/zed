@@ -300,12 +300,11 @@ impl Inventory {
     )> {
         let mut scenarios = Vec::new();
 
-        if let Some(worktree_id) = task_contexts
+        for worktree_id in task_contexts
             .active_worktree_context
             .iter()
             .chain(task_contexts.other_worktree_contexts.iter())
             .map(|context| context.0)
-            .next()
         {
             scenarios.extend(self.worktree_scenarios_from_settings(worktree_id));
         }
