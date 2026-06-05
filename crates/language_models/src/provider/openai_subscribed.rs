@@ -518,25 +518,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-
-            let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
-                (
-                    HeaderName::from_static("originator"),
-                    HeaderValue::from_static("zed"),
-                ),
-                (
-                    HeaderName::from_static("openai-beta"),
-                    HeaderValue::from_static("responses=experimental"),
-                ),
-            ];
-            if let Some(ref id) = creds.account_id {
-                if !id.is_empty() {
-                    if let Ok(value) = HeaderValue::from_str(id) {
-                        header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
-                    }
-                }
-            }
-            let extra_headers = CustomHeaders::new(header_pairs);
+            let extra_headers = openai_subcription_headers(creds.account_id.as_deref());
 
             let access_token = creds.access_token.clone();
             request_limiter
@@ -617,25 +599,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
-
-            let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
-                (
-                    HeaderName::from_static("originator"),
-                    HeaderValue::from_static("zed"),
-                ),
-                (
-                    HeaderName::from_static("openai-beta"),
-                    HeaderValue::from_static("responses=experimental"),
-                ),
-            ];
-            if let Some(ref id) = creds.account_id {
-                if !id.is_empty() {
-                    if let Ok(value) = HeaderValue::from_str(id) {
-                        header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
-                    }
-                }
-            }
-            let extra_headers = CustomHeaders::new(header_pairs);
+            let extra_headers = openai_subcription_headers(creds.account_id.as_deref());
             let access_token = creds.access_token.clone();
             request_limiter
                 .run(async move {
@@ -661,6 +625,29 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         Some(future.boxed())
     }
+}
+
+fn openai_subcription_headers(account_id: Option<&str>) -> CustomHeaders {
+    let mut header_pairs = vec![
+        (
+            HeaderName::from_static("originator"),
+            HeaderValue::from_static("zed"),
+        ),
+        (
+            HeaderName::from_static("openai-beta"),
+            HeaderValue::from_static("responses=experimental"),
+        ),
+    ];
+
+    if let Some(account_id) = account_id {
+        if !account_id.is_empty() {
+            if let Ok(value) = HeaderValue::from_str(account_id) {
+                header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
+            }
+        }
+    }
+
+    CustomHeaders::new(header_pairs)
 }
 
 async fn get_fresh_credentials(
