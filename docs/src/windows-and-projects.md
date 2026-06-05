@@ -73,7 +73,7 @@ You can change the default CLI behavior with the `cli_default_open_behavior` set
 Options:
 
 - `existing_window` (default): Open folders in the current window's threads sidebar
-- `new_window`: Open folders in a new window
+- `new_window`: Always open folders in a new window
 
 This setting affects CLI and double-click behavior, not the File > Open menu.
 
