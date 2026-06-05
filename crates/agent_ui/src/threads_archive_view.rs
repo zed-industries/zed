@@ -824,7 +824,7 @@ impl ThreadsArchiveView {
                     if let Some(list) = state
                         .connection
                         .session_list(cx)
-                        .filter(|list| list.supports_delete(cx))
+                        .filter(|list| list.supports_delete())
                     {
                         list.delete_session(session_id, cx)
                     } else {
