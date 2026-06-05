@@ -54,7 +54,9 @@ use crate::components::{
     SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
     theme_picker,
 };
-use crate::pages::{render_input_audio_device_dropdown, render_output_audio_device_dropdown};
+use crate::pages::{
+    McpServerForm, render_input_audio_device_dropdown, render_output_audio_device_dropdown,
+};
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
@@ -780,6 +782,12 @@ pub struct SettingsWindow {
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
+    /// State for the active "add/edit custom MCP server" form sub-page, if open.
+    pub(crate) mcp_server_form: Option<McpServerForm>,
+    /// Stable focus handle for the MCP "Add Server" button, so it can show a
+    /// focus ring when the page auto-focuses it on open (which happens via mouse,
+    /// where `focus_visible` styling would otherwise be suppressed).
+    pub(crate) mcp_add_server_focus_handle: FocusHandle,
 }
 
 struct SearchDocument {
@@ -1812,6 +1820,8 @@ impl SettingsWindow {
             expanded_provider_configurations: HashMap::default(),
             provider_configuration_views: HashMap::default(),
             last_copied_skill_directory_path: None,
+            mcp_server_form: None,
+            mcp_add_server_focus_handle: cx.focus_handle(),
         };
 
         this.fetch_files(window, cx);
@@ -3576,7 +3586,16 @@ impl SettingsWindow {
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !this.sub_page_stack.is_empty() {
+                    // Keep Tab navigation within the sub-page content. Global
+                    // `focus_next` would otherwise wrap past the last control to
+                    // the navbar; instead, when focus leaves the content region we
+                    // wrap back to the first content tab stop.
+                    let content_handle = this.content_focus_handle.focus_handle(cx);
                     window.focus_next(cx);
+                    if !content_handle.contains_focused(window, cx) {
+                        content_handle.focus(window, cx);
+                        window.focus_next(cx);
+                    }
                     return;
                 }
                 for (logical_index, (actual_index, _)) in this.visible_page_items().enumerate() {
@@ -3831,6 +3850,7 @@ impl SettingsWindow {
         title: impl Into<SharedString>,
         section_header: impl Into<SharedString>,
         json_path: Option<&'static str>,
+        in_json: bool,
         render: fn(
             &SettingsWindow,
             &ScrollHandle,
@@ -3846,7 +3866,7 @@ impl SettingsWindow {
             r#type: SubPageType::default(),
             description: None,
             json_path,
-            in_json: true,
+            in_json,
             files: USER,
             render,
         };
@@ -3924,7 +3944,7 @@ impl SettingsWindow {
         false
     }
 
-    fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+    pub(crate) fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.regex_validation_error = None;
         self.sub_page_stack.pop();
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
@@ -4706,6 +4726,8 @@ pub mod test {
                 expanded_provider_configurations: HashMap::default(),
                 provider_configuration_views: HashMap::default(),
                 last_copied_skill_directory_path: None,
+                mcp_server_form: None,
+                mcp_add_server_focus_handle: cx.focus_handle(),
             }
         }
     }
@@ -4836,6 +4858,8 @@ pub mod test {
             expanded_provider_configurations: HashMap::default(),
             provider_configuration_views: HashMap::default(),
             last_copied_skill_directory_path: None,
+            mcp_server_form: None,
+            mcp_add_server_focus_handle: cx.focus_handle(),
         };
 
         settings_window.build_filter_table();

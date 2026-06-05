@@ -22,8 +22,7 @@ pub(crate) fn render_llm_providers_page(
         .size_full()
         .pt_2p5()
         .px_8()
-        .pb_16()
-        .track_scroll(scroll_handle)
+        .pb_16() .track_scroll(scroll_handle)
         .overflow_y_scroll()
         .children(
             providers
@@ -43,7 +42,7 @@ fn render_provider_block(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let provider_id = provider.id();
-    let provider_name = provider.name().0.clone();
+    let provider_name = provider.name().0;
     let disclosure_id = SharedString::from(format!("provider-disclosure-{}", provider_id.0));
 
     let is_expanded = settings_window
@@ -111,7 +110,7 @@ fn render_provider_block(
                                     h_flex()
                                         .w_full()
                                         .gap_1()
-                                        .child(Label::new(provider_name.clone()))
+                                        .child(Label::new(provider_name))
                                         .when(is_authenticated && !is_expanded, |this| {
                                             this.child(
                                                 Icon::new(IconName::Check).color(Color::Success),

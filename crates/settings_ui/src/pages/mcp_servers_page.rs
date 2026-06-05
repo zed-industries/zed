@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use collections::HashMap;
 use context_server::ContextServerId;
+use editor::Editor;
 use extension_host::ExtensionStore;
-use gpui::{Action as _, Entity, ScrollHandle, prelude::*};
+use gpui::{Action as _, Entity, Focusable as _, ScrollHandle, WeakEntity, prelude::*};
 use project::context_server_store::{
     ContextServerConfiguration, ContextServerStatus, ContextServerStore,
 };
-use settings::ContextServerSettingsContent;
+use settings::{ContextServerCommand, ContextServerSettingsContent, OAuthClientSettings};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, Divider, DividerColor,
     PopoverMenu, Switch, ToggleState, Tooltip, prelude::*,
@@ -20,7 +22,7 @@ use crate::SettingsWindow;
 pub(crate) fn render_mcp_servers_page(
     settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let context_server_store = get_context_server_store(settings_window, cx);
@@ -37,7 +39,7 @@ pub(crate) fn render_mcp_servers_page(
         render_no_project_state(cx)
     };
 
-    let add_server_popover = render_add_server_popover(settings_window, cx);
+    let add_server_popover = render_add_server_popover(settings_window, window, cx);
 
     v_flex()
         .id("mcp-servers-page")
@@ -146,12 +148,11 @@ fn render_context_server(
     let is_running = matches!(server_status, ContextServerStatus::Running);
     let item_id = SharedString::from(context_server_id.0.to_string());
 
-    let provided_by_extension = server_configuration.as_ref().is_none_or(|config| {
-        matches!(
-            config.as_ref(),
-            ContextServerConfiguration::Extension { .. }
-        )
-    });
+    // Determine the source from the configured settings rather than the runtime
+    // configuration: a custom (Stdio/HTTP) server that is disabled or not yet
+    // started has no runtime configuration, and must not be mistaken for an
+    // extension-provided server.
+    let provided_by_extension = store.read(cx).is_extension_provided(context_server_id, cx);
 
     let display_name = if provided_by_extension {
         resolve_extension_display_name(context_server_id, cx).unwrap_or_else(|| item_id.clone())
@@ -166,11 +167,6 @@ fn render_context_server(
     };
 
     let status = map_server_status(&server_status);
-
-    let is_remote = server_configuration
-        .as_ref()
-        .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
-        .unwrap_or(false);
 
     let should_show_logout = server_configuration.as_ref().is_some_and(|config| {
         matches!(config.as_ref(), ContextServerConfiguration::Http { .. })
@@ -191,13 +187,19 @@ fn render_context_server(
         None
     };
 
-    // Build gear menu
+    // Build gear menu. Use the editable configuration (which falls back to the
+    // configured settings) so "Configure Server" pre-fills correctly even when a
+    // custom server is disabled or has not been started this session.
+    let editable_configuration = store
+        .read(cx)
+        .editable_configuration_for_server(context_server_id);
     let gear_menu = render_gear_menu(
         context_server_id,
         store,
+        cx.entity().downgrade(),
+        editable_configuration,
         provided_by_extension,
         should_show_logout,
-        is_remote,
     );
 
     // Build toggle switch
@@ -255,9 +257,10 @@ fn resolve_extension_display_name(
 fn render_gear_menu(
     context_server_id: &ContextServerId,
     store: &Entity<ContextServerStore>,
+    settings_window: WeakEntity<SettingsWindow>,
+    configuration: Option<Arc<ContextServerConfiguration>>,
     provided_by_extension: bool,
     should_show_logout: bool,
-    _is_remote: bool,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
     let store = store.clone();
@@ -272,7 +275,8 @@ fn render_gear_menu(
             IconName::Settings,
         )
         .icon_color(Color::Muted)
-        .icon_size(IconSize::Small),
+        .icon_size(IconSize::Small)
+        .tab_index(0isize),
         Tooltip::text("Configure MCP Server"),
     )
     .anchor(gpui::Anchor::TopRight)
@@ -280,9 +284,32 @@ fn render_gear_menu(
         move |window, cx| {
             let context_server_id = context_server_id.clone();
             let store = store.clone();
+            let settings_window = settings_window.clone();
+            let configuration = configuration.clone();
 
             Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                menu.when(should_show_logout, |this| {
+                menu.when(!provided_by_extension, |this| {
+                    this.entry("Configure Server", None, {
+                        let settings_window = settings_window.clone();
+                        let context_server_id = context_server_id.clone();
+                        let configuration = configuration.clone();
+                        move |window, cx| {
+                            let transport = match configuration.as_deref() {
+                                Some(ContextServerConfiguration::Http { .. }) => McpTransport::Http,
+                                _ => McpTransport::Stdio,
+                            };
+                            let existing = configuration
+                                .clone()
+                                .map(|config| (context_server_id.clone(), config));
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    open_mcp_server_form(this, transport, existing, window, cx);
+                                })
+                                .log_err();
+                        }
+                    })
+                })
+                .when(should_show_logout, |this| {
                     this.entry("Log Out", None, {
                         let store = store.clone();
                         let context_server_id = context_server_id.clone();
@@ -293,7 +320,11 @@ fn render_gear_menu(
                         }
                     })
                 })
-                .separator()
+                // Only show a divider when there is an entry above "Uninstall".
+                // Extension servers have neither "Configure Server" nor "Log Out".
+                .when(!provided_by_extension || should_show_logout, |this| {
+                    this.separator()
+                })
                 .entry("Uninstall", None, {
                     let context_server_id = context_server_id.clone();
                     move |_, cx| {
@@ -321,6 +352,7 @@ fn render_toggle_switch(
             ToggleState::Unselected
         },
     )
+    .tab_index(0isize)
     .on_click({
         move |state, _window, cx| {
             let is_enabled = match state {
@@ -491,14 +523,31 @@ fn render_status_details(
 
 fn render_add_server_popover(
     settings_window: &SettingsWindow,
-    _cx: &App,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let original_window = settings_window.original_window;
+    // Stable handle so the button keeps focus state across renders and can show a
+    // focus ring even when the page is opened (and the button auto-focused) via a
+    // mouse click, where `focus_visible` styling is suppressed.
+    let focus_handle = settings_window
+        .mcp_add_server_focus_handle
+        .clone()
+        .tab_index(0)
+        .tab_stop(true);
+    let is_focused = focus_handle.is_focused(window);
+    let border_color = if is_focused {
+        cx.theme().colors().border_focused
+    } else {
+        gpui::transparent_black()
+    };
+    let settings_window = cx.entity().downgrade();
 
-    PopoverMenu::new("add-mcp-server-popover")
+    let popover = PopoverMenu::new("add-mcp-server-popover")
         .trigger(
             Button::new("add-mcp-server", "Add Server")
                 .style(ButtonStyle::Outlined)
+                .track_focus(&focus_handle)
                 .start_icon(
                     Icon::new(IconName::Plus)
                         .size(IconSize::Small)
@@ -509,8 +558,42 @@ fn render_add_server_popover(
         .anchor(gpui::Anchor::TopRight)
         .menu({
             move |window, cx| {
+                let settings_window = settings_window.clone();
                 Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                    menu.entry("Install from Extensions", None, {
+                    menu.entry("Add Local Server", None, {
+                        let settings_window = settings_window.clone();
+                        move |window, cx| {
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    open_mcp_server_form(
+                                        this,
+                                        McpTransport::Stdio,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .entry("Add Remote Server", None, {
+                        let settings_window = settings_window.clone();
+                        move |window, cx| {
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    open_mcp_server_form(
+                                        this,
+                                        McpTransport::Http,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .separator()
+                    .entry("Install from Extensions", None, {
                         move |_window, cx| {
                             if let Some(original_window) = original_window.as_ref() {
                                 cx.activate(true);
@@ -534,7 +617,13 @@ fn render_add_server_popover(
                     })
                 }))
             }
-        })
+        });
+
+    div()
+        .rounded_md()
+        .border_1()
+        .border_color(border_color)
+        .child(popover)
 }
 
 fn uninstall_server(
@@ -585,4 +674,798 @@ fn extension_only_provides_context_server(manifest: &extension::ExtensionManifes
         && manifest.slash_commands.is_empty()
         && manifest.snippets.is_none()
         && manifest.debug_locators.is_empty()
+}
+
+// === Custom (Stdio/HTTP) MCP server add/edit form ===
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum McpTransport {
+    /// Local server launched via stdin/stdout.
+    Stdio,
+    /// Remote server connected over HTTP.
+    Http,
+}
+
+#[derive(Clone, Copy)]
+enum McpKvKind {
+    Env,
+    Header,
+}
+
+impl McpKvKind {
+    fn rows_mut(self, form: &mut McpServerForm) -> &mut Vec<KeyValueRow> {
+        match self {
+            McpKvKind::Env => &mut form.env,
+            McpKvKind::Header => &mut form.headers,
+        }
+    }
+
+    fn remove_id(self) -> &'static str {
+        match self {
+            McpKvKind::Env => "mcp-env-remove",
+            McpKvKind::Header => "mcp-header-remove",
+        }
+    }
+
+    fn add_id(self) -> &'static str {
+        match self {
+            McpKvKind::Env => "mcp-env-add",
+            McpKvKind::Header => "mcp-header-add",
+        }
+    }
+}
+
+struct KeyValueRow {
+    key: Entity<Editor>,
+    value: Entity<Editor>,
+}
+
+/// Editor-backed state for the custom MCP server add/edit form.
+pub(crate) struct McpServerForm {
+    transport: McpTransport,
+    /// `Some` when editing an existing server (used to remove the old entry on rename).
+    original_id: Option<ContextServerId>,
+    name: Entity<Editor>,
+    command: Entity<Editor>,
+    args: Entity<Editor>,
+    url: Entity<Editor>,
+    timeout: Entity<Editor>,
+    oauth_client_id: Entity<Editor>,
+    env: Vec<KeyValueRow>,
+    headers: Vec<KeyValueRow>,
+    error: Option<SharedString>,
+}
+
+impl McpServerForm {
+    fn new(
+        transport: McpTransport,
+        existing: Option<(ContextServerId, Arc<ContextServerConfiguration>)>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> Self {
+        let original_id = existing.as_ref().map(|(id, _)| id.clone());
+        let config = existing.map(|(_, config)| config);
+        let name_initial = original_id.as_ref().map(|id| id.0.to_string());
+
+        let mut command_initial = None;
+        let mut args_initial = None;
+        let mut url_initial = None;
+        let mut timeout_initial = None;
+        let mut oauth_initial = None;
+        let mut env = Vec::new();
+        let mut headers = Vec::new();
+
+        if let Some(config) = config.as_deref() {
+            match config {
+                ContextServerConfiguration::Custom { command, .. }
+                | ContextServerConfiguration::Extension { command, .. } => {
+                    command_initial = Some(command.path.to_string_lossy().to_string());
+                    if !command.args.is_empty() {
+                        args_initial = Some(command.args.join(" "));
+                    }
+                    timeout_initial = command.timeout.map(|timeout| timeout.to_string());
+                    if let Some(env_map) = &command.env {
+                        for (key, value) in sorted_pairs(env_map) {
+                            env.push(new_kv_row(Some(&key), Some(&value), window, cx));
+                        }
+                    }
+                }
+                ContextServerConfiguration::Http {
+                    url,
+                    headers: header_map,
+                    timeout,
+                    oauth,
+                } => {
+                    url_initial = Some(url.to_string());
+                    timeout_initial = timeout.map(|timeout| timeout.to_string());
+                    for (key, value) in sorted_pairs(header_map) {
+                        headers.push(new_kv_row(Some(&key), Some(&value), window, cx));
+                    }
+                    oauth_initial = oauth.as_ref().map(|oauth| oauth.client_id.clone());
+                }
+            }
+        }
+
+        Self {
+            transport,
+            original_id,
+            name: new_input("my-mcp-server", name_initial.as_deref(), window, cx),
+            command: new_input("/path/to/server", command_initial.as_deref(), window, cx),
+            args: new_input("--flag value", args_initial.as_deref(), window, cx),
+            url: new_input("https://example.com/mcp", url_initial.as_deref(), window, cx),
+            timeout: new_input("60", timeout_initial.as_deref(), window, cx),
+            oauth_client_id: new_input(
+                "Optional OAuth client ID",
+                oauth_initial.as_deref(),
+                window,
+                cx,
+            ),
+            env,
+            headers,
+            error: None,
+        }
+    }
+}
+
+fn sorted_pairs(map: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = map
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    pairs
+}
+
+fn new_input(
+    placeholder: &str,
+    initial: Option<&str>,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> Entity<Editor> {
+    let placeholder = placeholder.to_string();
+    let initial = initial.map(|text| text.to_string());
+    cx.new(|cx| {
+        let mut editor = Editor::single_line(window, cx);
+        editor.set_placeholder_text(placeholder.as_str(), window, cx);
+        if let Some(text) = initial {
+            editor.set_text(text, window, cx);
+        }
+        editor
+    })
+}
+
+fn new_kv_row(
+    key: Option<&str>,
+    value: Option<&str>,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> KeyValueRow {
+    KeyValueRow {
+        key: new_input("Key", key, window, cx),
+        value: new_input("Value", value, window, cx),
+    }
+}
+
+/// Creates the form state and pushes the form sub-page onto the stack.
+pub(crate) fn open_mcp_server_form(
+    settings_window: &mut SettingsWindow,
+    transport: McpTransport,
+    existing: Option<(ContextServerId, Arc<ContextServerConfiguration>)>,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) {
+    let is_edit = existing.is_some();
+    settings_window.mcp_server_form = Some(McpServerForm::new(transport, existing, window, cx));
+
+    let title = if is_edit {
+        "Configure MCP Server"
+    } else {
+        match transport {
+            McpTransport::Stdio => "Add Local MCP Server",
+            McpTransport::Http => "Add Remote MCP Server",
+        }
+    };
+
+    settings_window.push_dynamic_sub_page(
+        title,
+        "Agent Configuration",
+        Some("context_servers"),
+        false,
+        render_mcp_server_form_page,
+        window,
+        cx,
+    );
+}
+
+fn render_mcp_server_form_page(
+    settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    _window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let Some(form) = settings_window.mcp_server_form.as_ref() else {
+        return div().into_any_element();
+    };
+    let transport = form.transport;
+    let error = form.error.clone();
+
+    let fields = v_flex()
+        .w_full()
+        .max_w(rems(36.))
+        .gap_3()
+        .child(labeled_field("Server Name", true, &form.name, cx))
+        .map(|this| match transport {
+            McpTransport::Stdio => this
+                .child(labeled_field("Command", true, &form.command, cx))
+                .child(labeled_field("Arguments", false, &form.args, cx))
+                .child(render_kv_section(
+                    "Environment Variables",
+                    &form.env,
+                    McpKvKind::Env,
+                    cx,
+                ))
+                .child(labeled_field("Timeout (seconds)", false, &form.timeout, cx)),
+            McpTransport::Http => this
+                .child(labeled_field("URL", true, &form.url, cx))
+                .child(render_kv_section(
+                    "Headers",
+                    &form.headers,
+                    McpKvKind::Header,
+                    cx,
+                ))
+                .child(labeled_field("Timeout (seconds)", false, &form.timeout, cx))
+                .child(labeled_field(
+                    "OAuth Client ID",
+                    false,
+                    &form.oauth_client_id,
+                    cx,
+                )),
+        })
+        .when_some(error, |this, error| this.child(render_form_error(error)))
+        .child(render_form_actions(cx));
+
+    v_flex()
+        .id("mcp-server-form-page")
+        .size_full()
+        .pt_2p5()
+        .px_8()
+        .pb_16()
+        .track_scroll(scroll_handle)
+        .overflow_y_scroll()
+        .child(fields)
+        .into_any_element()
+}
+
+fn field_label(label: &str, required: bool) -> impl IntoElement {
+    h_flex()
+        .gap_0p5()
+        .child(
+            Label::new(label.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .when(required, |this| {
+            this.child(Label::new("*").size(LabelSize::Small).color(Color::Error))
+        })
+}
+
+fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
+    let colors = cx.theme().colors();
+    // All form inputs share tab index 0, so tab order follows render (insertion)
+    // order. Tracking the editor's focus handle makes the field a tab stop and
+    // routes keyboard focus into the editor when tabbed to.
+    let focus_handle = editor.focus_handle(cx).tab_index(0).tab_stop(true);
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .py_1()
+        .px_2()
+        .h_8()
+        .rounded_md()
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.editor_background)
+        .track_focus(&focus_handle)
+        .focus(|style| style.border_color(colors.border_focused))
+        .child(editor.clone())
+}
+
+fn labeled_field(
+    label: &str,
+    required: bool,
+    editor: &Entity<Editor>,
+    cx: &App,
+) -> impl IntoElement {
+    v_flex()
+        .w_full()
+        .gap_1()
+        .child(field_label(label, required))
+        .child(input_box(editor, cx))
+}
+
+fn render_kv_section(
+    label: &str,
+    rows: &[KeyValueRow],
+    kind: McpKvKind,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    v_flex()
+        .w_full()
+        .gap_1()
+        .child(field_label(label, false))
+        .children(rows.iter().enumerate().map(|(ix, row)| {
+            h_flex()
+                .w_full()
+                .gap_1()
+                .items_center()
+                .child(div().flex_1().min_w_0().child(input_box(&row.key, cx)))
+                .child(div().flex_1().min_w_0().child(input_box(&row.value, cx)))
+                .child(
+                    IconButton::new((kind.remove_id(), ix), IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Remove"))
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            if let Some(form) = this.mcp_server_form.as_mut() {
+                                let rows = kind.rows_mut(form);
+                                if ix < rows.len() {
+                                    rows.remove(ix);
+                                }
+                            }
+                            cx.notify();
+                        })),
+                )
+        }))
+        .child(
+            Button::new(kind.add_id(), "Add")
+                .style(ButtonStyle::Outlined)
+                .label_size(LabelSize::Small)
+                .start_icon(
+                    Icon::new(IconName::Plus)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let row = new_kv_row(None, None, window, cx);
+                    if let Some(form) = this.mcp_server_form.as_mut() {
+                        kind.rows_mut(form).push(row);
+                    }
+                    cx.notify();
+                })),
+        )
+}
+
+fn render_form_error(error: SharedString) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .gap_2()
+        .items_start()
+        .child(
+            Icon::new(IconName::XCircle)
+                .size(IconSize::Small)
+                .color(Color::Error),
+        )
+        .child(
+            Label::new(error)
+                .size(LabelSize::Small)
+                .color(Color::Error),
+        )
+}
+
+fn render_form_actions(cx: &mut Context<SettingsWindow>) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .gap_2()
+        .justify_end()
+        .pt_2()
+        .child(
+            Button::new("mcp-form-cancel", "Cancel")
+                .style(ButtonStyle::Subtle)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.mcp_server_form = None;
+                    this.pop_sub_page(window, cx);
+                })),
+        )
+        .child(
+            Button::new("mcp-form-save", "Save")
+                .style(ButtonStyle::Filled)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    save_mcp_server_form(this, window, cx);
+                })),
+        )
+}
+
+fn save_mcp_server_form(
+    settings_window: &mut SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) {
+    let built = {
+        let Some(form) = settings_window.mcp_server_form.as_ref() else {
+            return;
+        };
+        build_settings_from_form(form, cx)
+    };
+
+    let (id, original_id, content) = match built {
+        Ok(value) => value,
+        Err(error) => {
+            if let Some(form) = settings_window.mcp_server_form.as_mut() {
+                form.error = Some(error);
+            }
+            cx.notify();
+            return;
+        }
+    };
+
+    // Reject names that would collide with a *different* existing server. This
+    // covers both adding a new server and renaming an existing one (where the new
+    // name must not clobber another server's configuration).
+    let collides_with_other_server =
+        get_context_server_store(settings_window, cx).is_some_and(|store| {
+            name_collides_with_other_server(&id, original_id.as_ref(), store.read(cx).server_ids())
+        });
+    if collides_with_other_server {
+        if let Some(form) = settings_window.mcp_server_form.as_mut() {
+            form.error = Some(format!("A server named \"{}\" already exists.", id.0).into());
+        }
+        cx.notify();
+        return;
+    }
+
+    let fs = <dyn fs::Fs>::global(cx);
+    settings::update_settings_file(fs, cx, move |settings, _| {
+        if let Some(original_id) = &original_id
+            && original_id.0 != id.0
+        {
+            settings.project.context_servers.remove(&original_id.0);
+        }
+        settings.project.context_servers.insert(id.0.clone(), content);
+    });
+
+    settings_window.mcp_server_form = None;
+    settings_window.pop_sub_page(window, cx);
+}
+
+/// Plain (editor-free) snapshot of the form's contents, so the validation /
+/// build logic can be exercised without a GPUI context.
+struct McpServerFormValues {
+    transport: McpTransport,
+    original_id: Option<ContextServerId>,
+    name: String,
+    command: String,
+    args: String,
+    url: String,
+    timeout: String,
+    oauth_client_id: String,
+    env: Vec<(String, String)>,
+    headers: Vec<(String, String)>,
+}
+
+fn build_settings_from_form(
+    form: &McpServerForm,
+    cx: &App,
+) -> Result<(ContextServerId, Option<ContextServerId>, ContextServerSettingsContent), SharedString> {
+    let values = McpServerFormValues {
+        transport: form.transport,
+        original_id: form.original_id.clone(),
+        name: form.name.read(cx).text(cx),
+        command: form.command.read(cx).text(cx),
+        args: form.args.read(cx).text(cx),
+        url: form.url.read(cx).text(cx),
+        timeout: form.timeout.read(cx).text(cx),
+        oauth_client_id: form.oauth_client_id.read(cx).text(cx),
+        env: read_kv(&form.env, cx),
+        headers: read_kv(&form.headers, cx),
+    };
+    build_settings_from_values(&values)
+}
+
+fn read_kv(rows: &[KeyValueRow], cx: &App) -> Vec<(String, String)> {
+    rows.iter()
+        .map(|row| (row.key.read(cx).text(cx), row.value.read(cx).text(cx)))
+        .collect()
+}
+
+fn build_settings_from_values(
+    values: &McpServerFormValues,
+) -> Result<(ContextServerId, Option<ContextServerId>, ContextServerSettingsContent), SharedString> {
+    let name = values.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Server name is required.".into());
+    }
+
+    let timeout = parse_timeout(&values.timeout)?;
+
+    let content = match values.transport {
+        McpTransport::Stdio => {
+            let command = values.command.trim().to_string();
+            if command.is_empty() {
+                return Err("Command is required.".into());
+            }
+            let args = values
+                .args
+                .split_whitespace()
+                .map(|arg| arg.to_string())
+                .collect::<Vec<_>>();
+            let env = collect_kv(&values.env, "environment variable")?;
+            ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: command.into(),
+                    args,
+                    env: (!env.is_empty()).then_some(env),
+                    timeout,
+                },
+            }
+        }
+        McpTransport::Http => {
+            let url = values.url.trim().to_string();
+            if url.is_empty() {
+                return Err("URL is required.".into());
+            }
+            // Validate the URL on save (a deliberate action) rather than on every
+            // render, so a clearly invalid URL is reported to the user instead of
+            // being silently written and failing later when the server starts.
+            if let Err(error) = url::Url::parse(&url) {
+                return Err(format!("Invalid URL: {error}").into());
+            }
+            let headers = collect_kv(&values.headers, "header")?;
+            let oauth_client_id = values.oauth_client_id.trim().to_string();
+            let oauth = (!oauth_client_id.is_empty()).then(|| OAuthClientSettings {
+                client_id: oauth_client_id,
+                client_secret: None,
+            });
+            ContextServerSettingsContent::Http {
+                enabled: true,
+                url,
+                headers,
+                timeout,
+                oauth,
+            }
+        }
+    };
+
+    Ok((ContextServerId(name.into()), values.original_id.clone(), content))
+}
+
+/// Returns whether saving under `id` would overwrite a *different* existing
+/// server. Editing a server in place (`id == original_id`) is allowed.
+fn name_collides_with_other_server(
+    id: &ContextServerId,
+    original_id: Option<&ContextServerId>,
+    existing_ids: &[ContextServerId],
+) -> bool {
+    original_id.is_none_or(|original| original.0 != id.0)
+        && existing_ids.iter().any(|existing| existing.0 == id.0)
+}
+
+fn parse_timeout(text: &str) -> Result<Option<u64>, SharedString> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse::<u64>()
+        .map(Some)
+        .map_err(|_| "Timeout must be a positive whole number of seconds.".into())
+}
+
+fn collect_kv(
+    rows: &[(String, String)],
+    label: &str,
+) -> Result<HashMap<String, String>, SharedString> {
+    let mut map = HashMap::default();
+    for (key, value) in rows {
+        let key = key.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        if map.contains_key(&key) {
+            return Err(format!("Duplicate {label} \"{key}\".").into());
+        }
+        map.insert(key, value.clone());
+    }
+    Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn values(transport: McpTransport) -> McpServerFormValues {
+        McpServerFormValues {
+            transport,
+            original_id: None,
+            name: "my-server".into(),
+            command: String::new(),
+            args: String::new(),
+            url: String::new(),
+            timeout: String::new(),
+            oauth_client_id: String::new(),
+            env: Vec::new(),
+            headers: Vec::new(),
+        }
+    }
+
+    fn id(name: &str) -> ContextServerId {
+        ContextServerId(name.into())
+    }
+
+    #[test]
+    fn parse_timeout_handles_empty_and_invalid() {
+        assert_eq!(parse_timeout(""), Ok(None));
+        assert_eq!(parse_timeout("   "), Ok(None));
+        assert_eq!(parse_timeout("60"), Ok(Some(60)));
+        assert_eq!(parse_timeout("  90  "), Ok(Some(90)));
+        assert!(parse_timeout("abc").is_err());
+        assert!(parse_timeout("-5").is_err());
+        assert!(parse_timeout("1.5").is_err());
+    }
+
+    #[test]
+    fn requires_server_name() {
+        let mut values = values(McpTransport::Stdio);
+        values.name = "   ".into();
+        values.command = "/bin/server".into();
+        assert_eq!(
+            build_settings_from_values(&values).unwrap_err().as_ref(),
+            "Server name is required."
+        );
+    }
+
+    #[test]
+    fn requires_command_for_local_server() {
+        let values = values(McpTransport::Stdio);
+        assert_eq!(
+            build_settings_from_values(&values).unwrap_err().as_ref(),
+            "Command is required."
+        );
+    }
+
+    #[test]
+    fn requires_url_for_remote_server() {
+        let values = values(McpTransport::Http);
+        assert_eq!(
+            build_settings_from_values(&values).unwrap_err().as_ref(),
+            "URL is required."
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_url() {
+        let mut values = values(McpTransport::Http);
+        values.url = "not a url".into();
+        let error = build_settings_from_values(&values).unwrap_err();
+        assert!(error.starts_with("Invalid URL"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn rejects_invalid_timeout() {
+        let mut values = values(McpTransport::Stdio);
+        values.command = "/bin/server".into();
+        values.timeout = "soon".into();
+        assert_eq!(
+            build_settings_from_values(&values).unwrap_err().as_ref(),
+            "Timeout must be a positive whole number of seconds."
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_environment_variables() {
+        let mut values = values(McpTransport::Stdio);
+        values.command = "/bin/server".into();
+        values.env = vec![("FOO".into(), "1".into()), ("FOO".into(), "2".into())];
+        assert_eq!(
+            build_settings_from_values(&values).unwrap_err().as_ref(),
+            "Duplicate environment variable \"FOO\"."
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_headers() {
+        let mut values = values(McpTransport::Http);
+        values.url = "https://example.com/mcp".into();
+        values.headers = vec![
+            ("Authorization".into(), "a".into()),
+            ("Authorization".into(), "b".into()),
+        ];
+        assert_eq!(
+            build_settings_from_values(&values).unwrap_err().as_ref(),
+            "Duplicate header \"Authorization\"."
+        );
+    }
+
+    #[test]
+    fn builds_local_server() {
+        let mut values = values(McpTransport::Stdio);
+        values.name = "  local  ".into();
+        values.command = "/usr/bin/server".into();
+        values.args = "--flag  value".into();
+        values.timeout = "30".into();
+        // Empty values are kept, but rows with a blank key are ignored.
+        values.env = vec![
+            ("KEY".into(), "VALUE".into()),
+            ("EMPTY".into(), String::new()),
+            ("   ".into(), "ignored".into()),
+        ];
+
+        let (id, original_id, content) = build_settings_from_values(&values).unwrap();
+        assert_eq!(id.0.as_ref(), "local");
+        assert_eq!(original_id, None);
+
+        let expected_env = HashMap::from_iter([
+            ("KEY".to_string(), "VALUE".to_string()),
+            ("EMPTY".to_string(), String::new()),
+        ]);
+        assert_eq!(
+            content,
+            ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "/usr/bin/server".into(),
+                    args: vec!["--flag".into(), "value".into()],
+                    env: Some(expected_env),
+                    timeout: Some(30),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn builds_remote_server() {
+        let mut values = values(McpTransport::Http);
+        values.name = "remote".into();
+        values.url = "https://example.com/mcp".into();
+        values.oauth_client_id = "client-123".into();
+        values.headers = vec![("Authorization".into(), "Bearer token".into())];
+
+        let (id, _, content) = build_settings_from_values(&values).unwrap();
+        assert_eq!(id.0.as_ref(), "remote");
+
+        let expected_headers =
+            HashMap::from_iter([("Authorization".to_string(), "Bearer token".to_string())]);
+        assert_eq!(
+            content,
+            ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://example.com/mcp".into(),
+                headers: expected_headers,
+                timeout: None,
+                oauth: Some(OAuthClientSettings {
+                    client_id: "client-123".into(),
+                    client_secret: None,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn name_collision_covers_new_and_rename() {
+        let existing = vec![id("foo"), id("bar")];
+
+        // New server taking an existing name collides.
+        assert!(name_collides_with_other_server(&id("foo"), None, &existing));
+        // New server with a free name is fine.
+        assert!(!name_collides_with_other_server(&id("baz"), None, &existing));
+        // Editing a server in place is allowed even though the name "exists".
+        assert!(!name_collides_with_other_server(
+            &id("foo"),
+            Some(&id("foo")),
+            &existing
+        ));
+        // Renaming onto a different server's name collides.
+        assert!(name_collides_with_other_server(
+            &id("bar"),
+            Some(&id("foo")),
+            &existing
+        ));
+        // Renaming to a free name is fine.
+        assert!(!name_collides_with_other_server(
+            &id("baz"),
+            Some(&id("foo")),
+            &existing
+        ));
+    }
 }
