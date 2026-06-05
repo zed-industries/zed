@@ -891,21 +891,80 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
     }
 }
 
-fn asset_kind_for_archive_url(archive_url: &str) -> Result<AssetKind> {
+#[derive(Debug, PartialEq, Eq)]
+enum RegistryArchiveKind {
+    Archive(AssetKind),
+    /// The archive URL points directly at an executable, per the ACP registry
+    /// schema: "URL to download archive (.zip, .tar.gz, .tgz, .tar.bz2, .tbz2,
+    /// or raw binary)".
+    RawBinary {
+        file_name: String,
+    },
+}
+
+fn registry_archive_kind_for_url(archive_url: &str) -> Result<RegistryArchiveKind> {
+    const UNSUPPORTED_SUFFIXES: &[&str] = &[
+        // Installer formats explicitly rejected by the registry schema.
+        ".dmg",
+        ".pkg",
+        ".deb",
+        ".rpm",
+        ".msi",
+        ".appimage",
+        // Archive formats we cannot extract; treating them as raw binaries
+        // would produce a broken install.
+        ".tar.xz",
+        ".txz",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+    ];
+
     let archive_path = Url::parse(archive_url)
         .ok()
         .map(|url| url.path().to_string())
         .unwrap_or_else(|| archive_url.to_string());
+    let lowercase_path = archive_path.to_lowercase();
 
-    if archive_path.ends_with(".zip") {
-        Ok(AssetKind::Zip)
-    } else if archive_path.ends_with(".tar.gz") || archive_path.ends_with(".tgz") {
-        Ok(AssetKind::TarGz)
-    } else if archive_path.ends_with(".tar.bz2") || archive_path.ends_with(".tbz2") {
-        Ok(AssetKind::TarBz2)
+    if lowercase_path.ends_with(".zip") {
+        Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
+    } else if lowercase_path.ends_with(".tar.gz") || lowercase_path.ends_with(".tgz") {
+        Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
+    } else if lowercase_path.ends_with(".tar.bz2") || lowercase_path.ends_with(".tbz2") {
+        Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
+    } else if let Some(suffix) = UNSUPPORTED_SUFFIXES
+        .iter()
+        .find(|suffix| lowercase_path.ends_with(*suffix))
+    {
+        bail!("unsupported archive type {suffix} in URL: {archive_url}");
     } else {
-        bail!("unsupported archive type in URL: {archive_url}");
+        let file_name = raw_binary_file_name(&archive_path)
+            .with_context(|| format!("determining binary file name from URL: {archive_url}"))?;
+        Ok(RegistryArchiveKind::RawBinary { file_name })
     }
+}
+
+fn raw_binary_file_name(archive_path: &str) -> Result<String> {
+    let last_segment = archive_path
+        .rsplit('/')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .context("URL has no file name")?;
+    let file_name = percent_decode_str(last_segment)
+        .decode_utf8()
+        .context("file name is not valid UTF-8")?
+        .into_owned();
+    anyhow::ensure!(
+        !file_name.is_empty()
+            && file_name != "."
+            && file_name != ".."
+            && !file_name.contains(['/', '\\'])
+            && !file_name.contains('\0'),
+        "invalid binary file name: {file_name}"
+    );
+    Ok(file_name)
 }
 
 struct GithubReleaseArchive {
@@ -1187,16 +1246,28 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
-                let asset_kind = asset_kind_for_archive_url(archive_url)?;
-
-                ::http_client::github_download::download_server_binary(
-                    &*http_client,
-                    archive_url,
-                    sha256.as_deref(),
-                    &version_dir,
-                    asset_kind,
-                )
-                .await?;
+                match registry_archive_kind_for_url(archive_url)? {
+                    RegistryArchiveKind::Archive(asset_kind) => {
+                        ::http_client::github_download::download_server_binary(
+                            &*http_client,
+                            archive_url,
+                            sha256.as_deref(),
+                            &version_dir,
+                            asset_kind,
+                        )
+                        .await?;
+                    }
+                    RegistryArchiveKind::RawBinary { file_name } => {
+                        ::http_client::github_download::download_server_raw_binary(
+                            &*http_client,
+                            archive_url,
+                            sha256.as_deref(),
+                            &version_dir,
+                            &file_name,
+                        )
+                        .await?;
+                    }
+                }
             }
 
             let cmd = &target_config.cmd;
@@ -1703,45 +1774,84 @@ mod tests {
     #[test]
     fn detects_supported_archive_suffixes() {
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.zip"),
-            Ok(AssetKind::Zip)
+            registry_archive_kind_for_url("https://example.com/agent.zip"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.zip?download=1"),
-            Ok(AssetKind::Zip)
+            registry_archive_kind_for_url("https://example.com/agent.zip?download=1"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.gz"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tar.gz"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.gz?download=1#latest"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tar.gz?download=1#latest"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tgz"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tgz"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tgz#download"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tgz#download"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.bz2"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tar.bz2"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.bz2?download=1"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tar.bz2?download=1"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tbz2"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tbz2"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tbz2#download"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tbz2#download"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
+        assert!(matches!(
+            registry_archive_kind_for_url("https://example.com/agent.ZIP"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
+        ));
+    }
+
+    #[test]
+    fn detects_raw_binary_archive_urls() {
+        assert_eq!(
+            registry_archive_kind_for_url("https://x.ai/cli/grok-0.2.20-macos-aarch64").unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "grok-0.2.20-macos-aarch64".to_string()
+            },
+        );
+        assert_eq!(
+            registry_archive_kind_for_url("https://x.ai/cli/grok-0.2.20-windows-x86_64.exe")
+                .unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "grok-0.2.20-windows-x86_64.exe".to_string()
+            },
+        );
+        assert_eq!(
+            registry_archive_kind_for_url("https://example.com/agent-binary?download=1#latest")
+                .unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "agent-binary".to_string()
+            },
+        );
+        assert_eq!(
+            registry_archive_kind_for_url("https://example.com/agent%20binary").unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "agent binary".to_string()
+            },
+        );
+        // No file name to install the binary as.
+        assert!(registry_archive_kind_for_url("https://example.com/").is_err());
+        // Percent-decoding must not allow path traversal in the file name.
+        assert!(registry_archive_kind_for_url("https://example.com/a%2F..%2Fevil").is_err());
+        assert!(registry_archive_kind_for_url("https://example.com/%2E%2E").is_err());
     }
 
     #[test]
@@ -1758,14 +1868,31 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_archive_suffixes() {
-        let error = asset_kind_for_archive_url("https://example.com/agent.tar.xz")
+        let error = registry_archive_kind_for_url("https://example.com/agent.tar.xz")
             .err()
             .map(|error| error.to_string());
 
         assert_eq!(
             error,
-            Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string()),
+            Some(
+                "unsupported archive type .tar.xz in URL: https://example.com/agent.tar.xz"
+                    .to_string()
+            ),
         );
+
+        for installer_url in [
+            "https://example.com/agent.dmg",
+            "https://example.com/agent.pkg",
+            "https://example.com/agent.deb",
+            "https://example.com/agent.rpm",
+            "https://example.com/agent.msi",
+            "https://example.com/agent.AppImage",
+        ] {
+            assert!(
+                registry_archive_kind_for_url(installer_url).is_err(),
+                "expected {installer_url} to be rejected"
+            );
+        }
     }
 
     #[test]
