@@ -260,6 +260,11 @@ TBD: Centered layout related settings
   }
 ```
 
+With `file_path_nav` enabled, click a breadcrumb segment to browse that folder, then click an entry to open it. Inside the dropdown:
+
+- <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> — move between path segments
+- <kbd>→</kbd> / <kbd>←</kbd> — expand / collapse a directory
+
 ### Editor Scrollbar and Minimap {#editor-scrollbar}
 
 ```json [settings]
