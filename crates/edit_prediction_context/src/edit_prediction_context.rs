@@ -22,10 +22,16 @@ use util::{RangeExt as _, ResultExt};
 mod assemble_excerpts;
 #[cfg(test)]
 mod edit_prediction_context_tests;
+mod editable_context;
 #[cfg(test)]
 mod fake_definition_lsp;
+mod git_log_context;
 
-pub use zeta_prompt::{RelatedExcerpt, RelatedFile};
+pub use editable_context::{
+    EditHistoryContextEntry, collect_editable_context, limit_retrieved_context_to_bytes,
+};
+
+pub use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
 const IDENTIFIER_LINE_COUNT: u32 = 3;
 
@@ -573,6 +579,7 @@ impl RelatedBuffer {
                     row_range: start.row..end.row,
                     text: buffer.text_for_range(start..end).collect::<String>().into(),
                     order,
+                    context_source: ContextSource::Lsp,
                 }
             })
             .collect::<Vec<_>>();

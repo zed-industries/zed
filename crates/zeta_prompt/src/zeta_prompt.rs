@@ -240,6 +240,21 @@ pub struct RelatedExcerpt {
     pub text: Arc<str>,
     #[serde(default)]
     pub order: usize,
+    #[serde(default)]
+    pub context_source: ContextSource,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSource {
+    #[default]
+    Lsp,
+    CursorExcerpt,
+    CurrentFile,
+    EditHistory,
+    EditHistoryFile,
+    GitLog,
+    OracleFile,
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
@@ -4851,6 +4866,7 @@ mod tests {
                 row_range: 0..content.lines().count() as u32,
                 text: content.into(),
                 order: 0,
+                context_source: ContextSource::Lsp,
             }],
             in_open_source_repo: false,
         }
@@ -4970,16 +4986,19 @@ mod tests {
                         row_range: 0..10,
                         text: "first excerpt\n".into(),
                         order: 0,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 10..20,
                         text: "second excerpt\n".into(),
                         order: 0,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 20..30,
                         text: "third excerpt\n".into(),
                         order: 0,
+                        context_source: ContextSource::Lsp,
                     },
                 ],
             }],
@@ -5039,6 +5058,7 @@ mod tests {
                         row_range: 0..10,
                         text: "low priority content\n".into(),
                         order: 5,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
                 RelatedFile {
@@ -5049,6 +5069,7 @@ mod tests {
                         row_range: 0..10,
                         text: "high priority content\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
             ],
@@ -5113,16 +5134,19 @@ mod tests {
                         row_range: 0..5,
                         text: "mod header\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 5..15,
                         text: "important fn\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
                         row_range: 15..30,
                         text: "less important fn\n".into(),
                         order: 3,
+                        context_source: ContextSource::Lsp,
                     },
                 ],
             }],
@@ -5522,6 +5546,7 @@ mod tests {
                         row_range: 0..5,
                         text: "low prio\n".into(),
                         order: 10,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
                 RelatedFile {
@@ -5532,6 +5557,7 @@ mod tests {
                         row_range: 0..5,
                         text: "high prio\n".into(),
                         order: 1,
+                        context_source: ContextSource::Lsp,
                     }],
                 },
             ],
