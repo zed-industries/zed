@@ -862,6 +862,8 @@ impl RecentProjectsDelegate {
         style: ProjectPickerStyle,
     ) -> Self {
         let render_paths = style == ProjectPickerStyle::Modal;
+        let has_any_non_local_projects = project_connection_options.is_some()
+            || window_project_groups.iter().any(|k| k.host().is_some());
         Self {
             workspace,
             open_folders,
@@ -872,7 +874,7 @@ impl RecentProjectsDelegate {
             create_new_window,
             render_paths,
             snap_selection_to_first_non_header_match: true,
-            has_any_non_local_projects: project_connection_options.is_some(),
+            has_any_non_local_projects,
             project_connection_options,
             focus_handle,
             style,
@@ -1154,22 +1156,43 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .log_err();
                         } else {
                             let path_list = key.path_list().clone();
-                            if let Some(task) = handle
+                            let host = key.host();
+                            let provisional_key = Some(key.clone());
+                            handle
                                 .update(cx, |multi_workspace, window, cx| {
-                                    multi_workspace.find_or_create_local_workspace(
+                                    let active_workspace = multi_workspace.workspace().clone();
+                                    let modal_workspace = active_workspace.clone();
+                                    let task = multi_workspace.find_or_create_workspace(
                                         path_list,
-                                        Some(key.clone()),
+                                        host,
+                                        provisional_key,
+                                        move |options, window, cx| {
+                                            remote_connection::connect_with_modal(
+                                                &active_workspace,
+                                                options,
+                                                window,
+                                                cx,
+                                            )
+                                        },
                                         &[],
                                         None,
                                         OpenMode::Activate,
                                         window,
                                         cx,
-                                    )
+                                    );
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            let result = task.await;
+                                            remote_connection::dismiss_connection_modal(
+                                                &modal_workspace,
+                                                cx,
+                                            );
+                                            result?;
+                                            anyhow::Ok(())
+                                        })
+                                        .detach_and_log_err(cx);
                                 })
-                                .log_err()
-                            {
-                                task.detach_and_log_err(cx);
-                            }
+                                .log_err();
                         }
                     });
                 }
@@ -1325,7 +1348,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .map(|p| p.compact().to_string_lossy().to_string())
                     .collect();
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
-                let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
+                let icon = icon_for_remote_connection(key.host().as_ref());
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
@@ -2343,12 +2366,17 @@ impl RecentProjectsDelegate {
 
 #[cfg(test)]
 mod tests {
+    use extension::ExtensionHostProxy;
+    use fs::FakeFs;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
-
+    use http_client::BlockedHttpClient;
+    use node_runtime::NodeRuntime;
+    use remote::RemoteClient;
+    use remote_server::{HeadlessAppState, HeadlessProject};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::{AppState, open_paths};
+    use workspace::{AppState, ProjectGroup, open_paths};
 
     use super::*;
 
@@ -2564,6 +2592,152 @@ mod tests {
 
         draw(cx);
         assert_pinned_to_bottom(&picker, cx, "after redraw");
+    }
+
+    #[gpui::test]
+    async fn test_project_picker_reopens_remote_project_group_as_remote(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/local-project"), json!({ "src": { "main.rs": "" } }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/local-project"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        executor.run_until_parked();
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/remote-project"),
+                json!({
+                    "src": {
+                        "lib.rs": "pub fn hello() {}",
+                    }
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let proxy = Arc::new(ExtensionHostProxy::new());
+
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy: proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard);
+
+        let remote_key = ProjectGroupKey::new(
+            Some(opts.clone()),
+            PathList::new(&[PathBuf::from(path!("/remote-project"))]),
+        );
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        let recent_projects = multi_workspace
+            .update(cx, {
+                move |multi_workspace, window, cx| {
+                    multi_workspace.test_add_project_group(ProjectGroup {
+                        key: remote_key.clone(),
+                        workspaces: Vec::new(),
+                        expanded: true,
+                    });
+
+                    let workspace = multi_workspace.workspace().clone();
+                    let focus_handle = workspace.read(cx).focus_handle(cx);
+                    workspace.update(cx, |workspace, cx| {
+                        RecentProjects::open(
+                            workspace,
+                            false,
+                            vec![remote_key.clone()],
+                            window,
+                            focus_handle,
+                            cx,
+                        );
+                    });
+
+                    workspace
+                        .read(cx)
+                        .active_modal::<RecentProjects>(cx)
+                        .expect("recent projects modal should be open")
+                }
+            })
+            .unwrap();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                recent_projects.update(cx, |recent_projects, cx| {
+                    recent_projects.picker.update(cx, |picker, cx| {
+                        picker.update_matches(String::new(), window, cx);
+                        let project_group_index = picker
+                            .delegate
+                            .filtered_entries
+                            .iter()
+                            .position(|entry| matches!(entry, ProjectPickerEntry::ProjectGroup(_)))
+                            .expect("picker should include the remote project group");
+                        picker.delegate.selected_index = project_group_index;
+                        picker.delegate.confirm(false, window, cx);
+                    });
+                });
+            })
+            .unwrap();
+
+        executor.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert!(
+                        workspace.project().read(cx).is_remote(),
+                        "picker should reopen the project group as a remote workspace"
+                    );
+                    assert_eq!(
+                        workspace.project_group_key(cx).host(),
+                        Some(opts.clone()),
+                        "reopened workspace should keep the saved remote connection options"
+                    );
+                });
+            })
+            .unwrap();
     }
 
     #[gpui::test]
