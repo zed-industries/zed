@@ -2750,6 +2750,7 @@ mod tests {
     use crate::PathList;
     use crate::ProjectGroupKey;
     use crate::{
+        AppState,
         multi_workspace::MultiWorkspace,
         persistence::{
             model::{
@@ -2764,7 +2765,7 @@ mod tests {
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
     use project::Project;
-    use remote::SshConnectionOptions;
+    use remote::{RemoteConnectionOptions, SshConnectionOptions};
     use serde_json::json;
     use std::{thread, time::Duration};
 
@@ -4638,6 +4639,83 @@ mod tests {
         assert_eq!(group_none.active_workspace.workspace_id, WorkspaceId(4));
         assert_eq!(group_none.state.active_workspace_id, None);
         assert_eq!(group_none.state.sidebar_open, false);
+    }
+
+    #[gpui::test]
+    async fn test_restore_multiworkspace_preserves_remote_project_group_keys(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::persistence::model::{MultiWorkspaceState, SerializedProjectGroup};
+
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/local-project", json!({ "src": {} })).await;
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        let local_key = ProjectGroupKey::new(None, PathList::new(&["/local-project"]));
+        let remote_key = ProjectGroupKey::new(
+            Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "remote-host".into(),
+                ..Default::default()
+            })),
+            PathList::new(&["/remote-project"]),
+        );
+
+        let window_id = WindowId::from(10_u64);
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        write_multi_workspace_state(
+            &kvp,
+            window_id,
+            MultiWorkspaceState {
+                active_workspace_id: Some(WorkspaceId(1)),
+                project_groups: vec![
+                    SerializedProjectGroup::from_group(&local_key, true),
+                    SerializedProjectGroup::from_group(&remote_key, true),
+                ],
+                sidebar_open: true,
+                sidebar_state: None,
+            },
+        )
+        .await;
+
+        let serialized = cx.update(|cx| {
+            read_serialized_multi_workspaces(
+                vec![SessionWorkspace {
+                    workspace_id: WorkspaceId(1),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&["/local-project"]),
+                    window_id: Some(window_id),
+                }],
+                cx,
+            )
+        });
+
+        assert_eq!(serialized.len(), 1, "should restore one multi-workspace");
+
+        let app_state = cx.update(AppState::test);
+        let restored_handle: gpui::WindowHandle<MultiWorkspace> = cx
+            .update({
+                let serialized = serialized.into_iter().next().unwrap();
+                move |cx| {
+                    cx.spawn(async move |mut cx| {
+                        crate::restore_multiworkspace(serialized, app_state, &mut cx).await
+                    })
+                }
+            })
+            .await
+            .expect("restore_multiworkspace should succeed");
+
+        cx.run_until_parked();
+
+        let restored_keys = restored_handle
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert_eq!(
+            restored_keys,
+            vec![local_key, remote_key],
+            "restored multi-workspace should preserve remote project group hosts"
+        );
     }
 
     #[gpui::test]
