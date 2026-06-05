@@ -810,8 +810,6 @@ impl SkillCreatorPage {
             )
             .child(self.render_optional_params(cx))
             .child(Divider::horizontal())
-            .child(self.render_scope_field())
-            .child(Divider::horizontal())
             .child(
                 v_flex()
                     .flex_grow_1()
@@ -820,43 +818,6 @@ impl SkillCreatorPage {
                     .child(Label::new("Skill Content"))
                     .child(self.render_body_field(window, cx)),
             )
-    }
-
-    /// The scope is fixed to the settings file selected in the settings
-    /// window (visible in the breadcrumb), so this only shows where the
-    /// skill will be saved.
-    fn render_scope_field(&self) -> impl IntoElement {
-        let scope_label: SharedString = match &self.scope {
-            ScopeChoice::Global => "Global".into(),
-            ScopeChoice::Project { root_name, .. } => {
-                SharedString::from(format!("{root_name} (project)"))
-            }
-        };
-        let sep = std::path::MAIN_SEPARATOR;
-        let scope_hint: SharedString = match &self.scope {
-            ScopeChoice::Global => SharedString::from(format!(
-                "Available across every Zed project. \
-                Saved to {GLOBAL_SKILLS_DIR_DISPLAY}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}."
-            )),
-            ScopeChoice::Project { root_name, .. } => SharedString::from(format!(
-                "Only available when this project is open. \
-                Saved to {root_name}{sep}{AGENTS_DIR_NAME}{sep}{SKILLS_DIR_NAME}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}."
-            )),
-        };
-
-        h_flex()
-            .min_w_0()
-            .w_full()
-            .gap_6()
-            .justify_between()
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(Label::new("Scope"))
-                    .child(Label::new(scope_hint).color(Color::Muted)),
-            )
-            .child(Label::new(scope_label).color(Color::Muted))
     }
 
     fn render_optional_params(&self, cx: &mut Context<Self>) -> impl IntoElement {
