@@ -2188,18 +2188,6 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_symlinks_for_repo(&self, dot_git: &Path, symlink_paths: &[&str]) {
-        self.with_git_state(dot_git, true, |state| {
-            state.head_symlinks.clear();
-            state.index_symlinks.clear();
-            for path in symlink_paths {
-                state.head_symlinks.insert(repo_path(path));
-                state.index_symlinks.insert(repo_path(path));
-            }
-        })
-        .unwrap();
-    }
-
     pub fn set_merge_base_content_for_repo(
         &self,
         dot_git: &Path,
