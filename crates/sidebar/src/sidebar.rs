@@ -2427,7 +2427,8 @@ impl Sidebar {
                         this.toggle_collapse(&key_for_toggle, window, cx);
                     }
                 }),
-            );
+            )
+            .occlude();
 
         if !is_collapsed && !has_threads {
             v_flex()
