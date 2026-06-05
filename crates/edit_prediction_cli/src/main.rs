@@ -129,12 +129,23 @@ pub enum FailedHandling {
 
 #[derive(Args, Debug, Clone)]
 struct ContextArgs {
-    /// Which context collector to run.
-    #[arg(long = "type", value_enum, default_value_t = ContextRetrievalType::Lsp)]
-    context_type: ContextRetrievalType,
+    /// Which context collectors to run.
+    /// May be repeated or comma-delimited, e.g. `--type=all,oracle-file`.
+    #[arg(long = "type", value_enum, value_delimiter = ',')]
+    context_types: Vec<ContextRetrievalType>,
     /// Recompute context even if the example already has related files.
     #[arg(long, short = 'f', default_value_t = false)]
     force: bool,
+}
+
+impl ContextArgs {
+    fn context_types(&self) -> Vec<ContextRetrievalType> {
+        if self.context_types.is_empty() {
+            vec![ContextRetrievalType::Lsp]
+        } else {
+            self.context_types.clone()
+        }
+    }
 }
 
 const INPUTS_HELP: &str = r#"
@@ -252,7 +263,13 @@ impl Display for Command {
             Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context(args) => {
-                write!(f, "context --type={}", args.context_type)?;
+                write!(f, "context --type=")?;
+                for (index, context_type) in args.context_types().iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, "{}", context_type)?;
+                }
                 if args.force {
                     write!(f, " --force")?;
                 }
@@ -1306,7 +1323,7 @@ fn main() {
                                                 example,
                                                 app_state.clone(),
                                                 &example_progress,
-                                                args.context_type,
+                                                args.context_types(),
                                                 args.force,
                                                 cx.clone(),
                                             )
@@ -1534,7 +1551,12 @@ fn main() {
                             context_source_filter.as_deref(),
                         );
                         if let Some(summary_path) = &args.summary_json {
-                            score::write_summary_json(&examples, summary_path)?;
+                            score::write_summary_json(
+                                &examples,
+                                summary_path,
+                                Some(args.related_context_limit * 3),
+                                context_source_filter.as_deref(),
+                            )?;
                         }
                     }
                     Command::Repair(args) => {

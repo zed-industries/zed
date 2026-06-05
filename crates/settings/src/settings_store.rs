@@ -286,8 +286,16 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
+        Self::new_with_semantic_tokens(cx, default_settings)
+    }
+
+    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
         let default_settings = Self::parse_default_settings(default_settings).unwrap();
+        Self::from_settings_content(cx, default_settings)
+    }
+
+    fn from_settings_content(cx: &mut App, default_settings: SettingsContent) -> Self {
+        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         if !cx.has_global::<DefaultSemanticTokenRules>() {
             cx.set_global::<DefaultSemanticTokenRules>(
                 crate::parse_json_with_comments::<SemanticTokenRules>(
@@ -504,7 +512,11 @@ impl SettingsStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Self {
-        Self::new(cx, &crate::test_settings())
+        static CACHED_SETTINGS_CONTENT: std::sync::LazyLock<SettingsContent> =
+            std::sync::LazyLock::new(|| {
+                SettingsContent::parse_json_with_comments(crate::test_settings()).unwrap()
+            });
+        Self::from_settings_content(cx, CACHED_SETTINGS_CONTENT.clone())
     }
 
     /// Updates the value of a setting in the user's global configuration.
