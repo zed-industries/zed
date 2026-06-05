@@ -2596,7 +2596,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn toolbar_section() -> [SettingsPageItem; 6] {
+    fn toolbar_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Toolbar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2719,6 +2719,30 @@ fn editor_page() -> SettingsPage {
                             .toolbar
                             .get_or_insert_default()
                             .code_actions = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "File Path Navigation",
+                description: "Show clickable file path segments in the breadcrumb for navigating the project.",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.file_path_nav"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .as_ref()?
+                            .file_path_nav
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .file_path_nav = value;
                     },
                 }),
                 metadata: None,
