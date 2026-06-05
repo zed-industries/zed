@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
-use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
+
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{
@@ -11,14 +11,16 @@ use http_client::{
 };
 use language_model::{
     AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter,
+    LanguageModelCompactionOutput, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
 };
 use open_ai::{
     ReasoningEffort, Role,
-    responses::{ContextManagement, ResponseInput, ResponseInputContent, ResponseInputItem},
+    responses::{
+        ResponseInput, ResponseInputContent, ResponseInputItem, compact_response, stream_response,
+    },
 };
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
@@ -31,8 +33,8 @@ use util::ResultExt as _;
 
 use crate::provider::open_ai::{
     OpenAiResponseEventMapper, ResponsesRequestConfig, into_open_ai_response,
-    native_compaction_threshold, native_compaction_unsupported,
-    stream_response_with_compaction_fallback,
+    is_unsupported_compaction_error, mark_native_compaction_unsupported,
+    native_compaction_unsupported, token_usage_from_response_usage,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
@@ -444,11 +446,6 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             .collect()
     }
 
-    fn uses_native_compaction(&self) -> bool {
-        self.model.supports_native_compaction()
-            && !native_compaction_unsupported(&self.telemetry_id())
-    }
-
     fn telemetry_id(&self) -> String {
         format!("openai-subscribed/{}", self.model.id())
     }
@@ -499,26 +496,110 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         );
         responses_request.store = Some(false);
 
-        // The Codex backend supports server-side compaction for every model it
-        // serves (all GPT-5 family). `store = false` above keeps this
-        // ZDR-friendly, as the compaction guide requires.
-        let native_compaction_enabled =
-            self.uses_native_compaction() && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>());
-        if native_compaction_enabled {
-            let compact_threshold = native_compaction_threshold(
-                self.model.max_token_count(),
-                self.model.max_output_tokens(),
-            );
-            log::debug!(
-                "Requesting OpenAI native compaction for {} (compact_threshold={compact_threshold})",
-                self.telemetry_id()
-            );
-            responses_request.context_management =
-                vec![ContextManagement::compaction(compact_threshold)];
-        }
-
         // The Codex backend requires system messages to be in the top-level
         // `instructions` field rather than as input items.
+        let mut instructions = Vec::new();
+        responses_request.input.retain(|item| {
+            let ResponseInput::Item(ResponseInputItem::Message(message)) = item else {
+                return true;
+            };
+            if message.role != Role::System {
+                return true;
+            }
+            for part in &message.content {
+                if let ResponseInputContent::Text { text } = part {
+                    instructions.push(text.clone());
+                }
+            }
+            false
+        });
+        responses_request.instructions = Some(instructions.join("\n\n"));
+
+        let state = self.state.downgrade();
+        let http_client = self.http_client.clone();
+        let request_limiter = self.request_limiter.clone();
+
+        let future = cx.spawn(async move |cx| {
+            let creds = get_fresh_credentials(&state, &http_client, cx).await?;
+
+            let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
+                (
+                    HeaderName::from_static("originator"),
+                    HeaderValue::from_static("zed"),
+                ),
+                (
+                    HeaderName::from_static("openai-beta"),
+                    HeaderValue::from_static("responses=experimental"),
+                ),
+            ];
+            if let Some(ref id) = creds.account_id {
+                if !id.is_empty() {
+                    if let Ok(value) = HeaderValue::from_str(id) {
+                        header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
+                    }
+                }
+            }
+            let extra_headers = CustomHeaders::new(header_pairs);
+
+            let access_token = creds.access_token.clone();
+            request_limiter
+                .stream(async move {
+                    stream_response(
+                        http_client.as_ref(),
+                        PROVIDER_NAME.0.as_str(),
+                        CODEX_BASE_URL,
+                        &access_token,
+                        &responses_request,
+                        &extra_headers,
+                    )
+                    .await
+                    .map_err(LanguageModelCompletionError::from)
+                })
+                .await
+        });
+
+        async move {
+            let mapper = OpenAiResponseEventMapper::new();
+            Ok(mapper.map_stream(future.await?.boxed()).boxed())
+        }
+        .boxed()
+    }
+
+    fn compact(
+        &self,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<Option<LanguageModelCompactionOutput>, LanguageModelCompletionError>,
+    > {
+        if !self.model.supports_native_compaction()
+            || native_compaction_unsupported(&self.telemetry_id())
+        {
+            return async { Ok(None) }.boxed();
+        }
+
+        if !self.model.supports_priority() {
+            request.speed = None;
+        }
+
+        let mut responses_request = into_open_ai_response(
+            request,
+            ResponsesRequestConfig {
+                model_id: self.model.id(),
+                provider_id: PROVIDER_ID.0.as_ref(),
+                supports_parallel_tool_calls: self.model.supports_parallel_tool_calls(),
+                supports_prompt_cache_key: self.model.supports_prompt_cache_key(),
+                max_output_tokens: None,
+                default_reasoning_effort: self.model.default_reasoning_effort(),
+                supports_none_reasoning_effort: self
+                    .model
+                    .supported_reasoning_efforts()
+                    .contains(&ReasoningEffort::None),
+            },
+        );
+        responses_request.store = Some(false);
+
         let mut instructions = Vec::new();
         responses_request.input.retain(|item| {
             let ResponseInput::Item(ResponseInputItem::Message(message)) = item else {
@@ -562,30 +643,34 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 }
             }
             let extra_headers = CustomHeaders::new(header_pairs);
-
             let access_token = creds.access_token.clone();
             request_limiter
-                .stream(async move {
-                    stream_response_with_compaction_fallback(
+                .run(async move {
+                    match compact_response(
                         http_client.as_ref(),
                         PROVIDER_NAME.0.as_str(),
                         CODEX_BASE_URL,
                         &access_token,
-                        responses_request,
+                        &responses_request,
                         &extra_headers,
-                        &model_telemetry_id,
                     )
                     .await
-                    .map_err(LanguageModelCompletionError::from)
+                    {
+                        Ok(response) => Ok(Some(LanguageModelCompactionOutput {
+                            output: response.output,
+                            token_usage: response.usage.map(token_usage_from_response_usage),
+                        })),
+                        Err(error) if is_unsupported_compaction_error(&error) => {
+                            mark_native_compaction_unsupported(&model_telemetry_id);
+                            Ok(None)
+                        }
+                        Err(error) => Err(LanguageModelCompletionError::from(error)),
+                    }
                 })
                 .await
         });
 
-        async move {
-            let mapper = OpenAiResponseEventMapper::new();
-            Ok(mapper.map_stream(future.await?.boxed()).boxed())
-        }
-        .boxed()
+        async move { future.await }.boxed()
     }
 }
 

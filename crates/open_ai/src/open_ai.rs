@@ -344,14 +344,10 @@ impl Model {
         true
     }
 
-    /// Whether this model supports OpenAI's server-side compaction
-    /// (`context_management` with `compact_threshold`) on the Responses API.
-    ///
-    /// OpenAI publishes no per-model capability list for this; support is only
-    /// observable at runtime (unsupported models reject the parameter with a 400
-    /// `unsupported_parameter` / "compact_threshold is not enabled"). Empirically
-    /// it is the GPT-5 family and codex models that support it, so we gate to
-    /// those and leave older models (gpt-4*, o3) and `Custom` off.
+    /// Whether this model supports OpenAI's standalone `/responses/compact`
+    /// endpoint. OpenAI publishes no per-model capability list for this, so we
+    /// gate to the GPT-5 family and codex models and fall back at runtime if the
+    /// endpoint rejects compaction.
     pub fn supports_native_compaction(&self) -> bool {
         match self {
             Self::Five
@@ -401,7 +397,7 @@ mod tests {
 
     #[test]
     fn native_compaction_gated_to_gpt_5_family() {
-        // GPT-5 family + codex support server-side compaction.
+        // GPT-5 family + codex support standalone compaction.
         for model in [
             Model::Five,
             Model::FiveMini,
@@ -423,7 +419,7 @@ mod tests {
             );
         }
 
-        // Older models (and Custom) reject `context_management`.
+        // Older models (and Custom) do not use the standalone compact endpoint.
         for model in [Model::Four, Model::FourOmniMini, Model::O3] {
             assert!(
                 !model.supports_native_compaction(),
@@ -431,16 +427,6 @@ mod tests {
                 model.id()
             );
         }
-    }
-
-    #[test]
-    fn context_management_serializes_to_compaction_entry() {
-        let value =
-            serde_json::to_value(crate::responses::ContextManagement::compaction(200_000)).unwrap();
-        assert_eq!(
-            value,
-            serde_json::json!({ "type": "compaction", "compact_threshold": 200_000 })
-        );
     }
 
     #[test]

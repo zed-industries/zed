@@ -39,28 +39,24 @@ pub struct Request {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
-    /// Server-side context management (e.g. compaction). Only honored by the
-    /// OpenAI Responses API on models that support it; sending it to other
-    /// models/endpoints returns a 400 `unsupported_parameter`.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub context_management: Vec<ContextManagement>,
 }
 
-#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ContextManagement {
-    Compaction {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        compact_threshold: Option<u64>,
-    },
+#[derive(Serialize)]
+struct CompactRequest<'a> {
+    model: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instructions: Option<&'a String>,
+    input: &'a [ResponseInput],
+    #[serde(skip_serializing_if = "<[ToolDefinition]>::is_empty")]
+    tools: &'a [ToolDefinition],
 }
 
-impl ContextManagement {
-    pub fn compaction(compact_threshold: u64) -> Self {
-        Self::Compaction {
-            compact_threshold: Some(compact_threshold),
-        }
-    }
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct CompactResponse {
+    #[serde(default)]
+    pub output: Vec<Value>,
+    #[serde(default)]
+    pub usage: Option<ResponseUsage>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -417,8 +413,7 @@ pub enum ResponseOutputItem {
     Unknown,
 }
 
-/// A provider-native compaction item emitted by the Responses API when
-/// server-side compaction (`context_management`) is enabled. Its
+/// A provider-native compaction item emitted by the Responses API. Its
 /// `encrypted_content` is opaque and must be replayed verbatim as an input item
 /// on subsequent turns to preserve the compacted context.
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -484,6 +479,59 @@ pub struct ResponseFunctionToolCall {
     pub name: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+pub async fn compact_response(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: &Request,
+    extra_headers: &CustomHeaders,
+) -> Result<CompactResponse, RequestError> {
+    let uri = format!("{api_url}/responses/compact");
+    let compact_request = CompactRequest {
+        model: &request.model,
+        instructions: request.instructions.as_ref(),
+        input: &request.input,
+        tools: &request.tools,
+    };
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(
+            serde_json::to_string(&compact_request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    if response.status().is_success() {
+        serde_json::from_str::<CompactResponse>(&body).map_err(|error| {
+            log::error!(
+                "Failed to parse OpenAI compact response: `{}`\nResponse: `{}`",
+                error,
+                body,
+            );
+            RequestError::Other(error.into())
+        })
+    } else {
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
 }
 
 pub async fn stream_response(

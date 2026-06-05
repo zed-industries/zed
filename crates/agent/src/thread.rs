@@ -180,7 +180,7 @@ impl CompactionInfo {
                 reasoning_details: None,
                 compaction_details: Some(Arc::new(serde_json::json!({
                     "provider": provider,
-                    "items": items,
+                    "output": items,
                 }))),
             }],
         }
@@ -2349,17 +2349,7 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
-            // Run Zed's summary compaction only when the active model does not do
-            // provider-native (server-side) compaction; otherwise the provider
-            // compacts for us and we'd double-compact.
-            let run_summary_compaction = cx.update(|cx| {
-                cx.has_flag::<HandoffFeatureFlag>()
-                    && !this
-                        .upgrade()
-                        .and_then(|thread| thread.read(cx).model.clone())
-                        .is_some_and(|model| model.uses_native_compaction())
-            });
-            if run_summary_compaction {
+            if cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
                 match Self::perform_compaction_if_needed(
                     this,
                     event_stream,
@@ -2646,11 +2636,58 @@ impl Thread {
         log::debug!("Running compaction");
         let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
         event_stream.send_context_compaction(compaction_id.clone());
-        let stream = futures::select! {
-            result = model.stream_completion(request, cx).fuse() => result,
+
+        let compaction_output = futures::select! {
+            result = model.compact(request.clone(), cx).fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
                 if *cancellation_rx.borrow() {
                     log::debug!("Compaction cancelled before request started");
+                    return Ok(ControlFlow::Break(()));
+                }
+                return Ok(ControlFlow::Continue(()));
+            }
+        }?;
+
+        if let Some(compaction_output) = compaction_output {
+            if compaction_output.output.is_empty() {
+                log::warn!("Compaction produced an empty output");
+                return Err(anyhow::anyhow!("Compaction produced an empty output"));
+            }
+            if let Some(usage) = compaction_output.token_usage {
+                this.update(cx, |this, _cx| {
+                    this.accumulate_token_usage(usage);
+                })?;
+            }
+            let provider = model.provider_id();
+            this.update(cx, |this, cx| {
+                let compaction = Arc::new(Message::Compaction(CompactionInfo::ProviderNative {
+                    provider,
+                    items: compaction_output.output,
+                }));
+                if insertion_ix <= this.messages.len() {
+                    this.messages.insert(insertion_ix, compaction);
+                } else {
+                    this.messages.push(compaction);
+                }
+                cx.notify();
+            })?;
+            return Ok(ControlFlow::Continue(()));
+        }
+
+        let mut summary_request = request;
+        summary_request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![COMPACTION_PROMPT.into()],
+            cache: false,
+            reasoning_details: None,
+            compaction_details: None,
+        });
+
+        let stream = futures::select! {
+            result = model.stream_completion(summary_request, cx).fuse() => result,
+            _ = cancellation_rx.changed().fuse() => {
+                if *cancellation_rx.borrow() {
+                    log::debug!("Compaction cancelled before summary request started");
                     return Ok(ControlFlow::Break(()));
                 }
                 return Ok(ControlFlow::Continue(()));
@@ -2691,7 +2728,6 @@ impl Thread {
                 | LanguageModelCompletionEvent::Thinking { .. }
                 | LanguageModelCompletionEvent::RedactedThinking { .. }
                 | LanguageModelCompletionEvent::ReasoningDetails(_)
-                | LanguageModelCompletionEvent::CompactionDetails { .. }
                 | LanguageModelCompletionEvent::ToolUse(_)
                 | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
                 | LanguageModelCompletionEvent::StartMessage { .. } => {}
@@ -2835,32 +2871,6 @@ impl Thread {
                     }
                 } else {
                     last_message.reasoning_details = Some(Arc::new(details));
-                }
-            }
-            CompactionDetails { items } => {
-                // Stamp the compaction with the provider that produced it so the
-                // replay guard can match it against the active request's provider.
-                // A model is always present during a turn; the check is defensive.
-                if !items.is_empty()
-                    && let Some(provider) = self.model.as_ref().map(|model| model.provider_id())
-                {
-                    // The model performed server-side compaction mid-turn. Record it as a
-                    // compaction boundary before the assistant message it precedes: the
-                    // pending assistant message hasn't been flushed yet, so pushing here
-                    // places the boundary directly before it. On the next request
-                    // `extend_request_history_until` drops everything before this boundary
-                    // and replays these opaque items in their place.
-                    log::debug!(
-                        "{} performed native (server-side) compaction; recording boundary with {} item(s)",
-                        provider.0,
-                        items.len()
-                    );
-                    let compaction_id =
-                        acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
-                    event_stream.send_context_compaction(compaction_id);
-                    self.messages.push(Arc::new(Message::Compaction(
-                        CompactionInfo::ProviderNative { provider, items },
-                    )));
                 }
             }
             ToolUse(tool_use) => {
@@ -3823,24 +3833,14 @@ impl Thread {
         model: &Arc<dyn LanguageModel>,
         cx: &App,
     ) -> LanguageModelRequest {
-        let mut request = LanguageModelRequest {
+        LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(model, cx),
             messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
             ..Default::default()
-        };
-
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![COMPACTION_PROMPT.into()],
-            cache: false,
-            reasoning_details: None,
-            compaction_details: None,
-        });
-
-        request
+        }
     }
 
     fn retained_user_request_messages_before(
@@ -5787,12 +5787,21 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_native_compaction_skips_summary_compaction(cx: &mut TestAppContext) {
+    async fn test_manual_compaction_uses_provider_output(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        // This model compacts server-side, so Zed must not run its own summary
-        // compaction pass even when the threshold would otherwise be crossed.
-        model.set_uses_native_compaction(true);
+        model.set_compaction_output(Some(language_model::LanguageModelCompactionOutput {
+            output: vec![json!({
+                "type": "compaction",
+                "encrypted_content": "enc-abc",
+                "id": "cmp_1",
+            })],
+            token_usage: Some(TokenUsage {
+                input_tokens: 40,
+                output_tokens: 9,
+                ..Default::default()
+            }),
+        }));
         let old_user_message_id = UserMessageId::new();
         let new_user_message_id = UserMessageId::new();
 
@@ -5804,8 +5813,6 @@ mod tests {
                     .messages
                     .push(user_text_message(old_user_message_id.clone(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
-                // Token usage far past the summary-compaction threshold; a
-                // non-native model would insert a summary here.
                 thread.request_token_usage.insert(
                     old_user_message_id.clone(),
                     language_model::TokenUsage {
@@ -5825,28 +5832,51 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        // The first (and only) request is the normal turn, not a summarization
-        // pass, and it still contains the full pre-compaction history.
+        let compact_request = model
+            .compaction_requests()
+            .pop()
+            .expect("expected a manual compaction request");
+        assert_eq!(
+            compact_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts_after_system(&compact_request.messages),
+            vec!["old user".to_string(), "old assistant".to_string()]
+        );
+
         let request = model.pending_completions().pop().unwrap();
         assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
+        let compaction_message = request
+            .messages
+            .get(1)
+            .expect("expected compaction message after system message");
+        assert_eq!(compaction_message.string_contents(), "");
         assert_eq!(
-            request_texts_after_system(&request.messages),
-            vec![
-                "old user".to_string(),
-                "old assistant".to_string(),
-                "new prompt".to_string(),
-            ]
+            compaction_message.compaction_details.as_deref(),
+            Some(&json!({
+                "provider": "fake",
+                "output": [{
+                    "type": "compaction",
+                    "encrypted_content": "enc-abc",
+                    "id": "cmp_1",
+                }],
+            }))
         );
+        let request_text = request_texts_after_system(&request.messages).join("\n");
+        assert!(!request_text.contains("old user"));
+        assert!(!request_text.contains("old assistant"));
+        assert!(request_text.contains("new prompt"));
 
         cx.update(|cx| {
             thread.read_with(cx, |thread, _cx| {
-                assert!(
-                    !thread
-                        .messages
-                        .iter()
-                        .any(|message| matches!(&**message, Message::Compaction(_))),
-                    "native compaction must not insert a summary compaction message"
-                );
+                assert!(matches!(
+                    &*thread.messages[2],
+                    Message::Compaction(CompactionInfo::ProviderNative { provider, items })
+                        if provider.0.as_ref() == "fake" && items.len() == 1
+                ));
+                assert_eq!(thread.cumulative_token_usage().input_tokens, 40);
+                assert_eq!(thread.cumulative_token_usage().output_tokens, 9);
             });
         });
 
@@ -6037,7 +6067,7 @@ mod tests {
             compaction_message.compaction_details.as_deref(),
             Some(&json!({
                 "provider": "openai",
-                "items": [{"type": "compaction"}],
+                "output": [{"type": "compaction"}],
             }))
         );
         assert_eq!(

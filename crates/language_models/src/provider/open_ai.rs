@@ -1,22 +1,23 @@
 use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
-use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
+
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
+    LanguageModelCompactionOutput, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
+    RateLimiter, TokenUsage, env_var,
 };
 use menu;
 use open_ai::{
     OPEN_AI_API_URL, RequestError, ResponseStreamEvent,
     responses::{
-        ContextManagement, Request as ResponseRequest, StreamEvent as ResponsesStreamEvent,
+        Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, compact_response,
         stream_response,
     },
     stream_completion,
@@ -234,36 +235,10 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 }
 
-/// Overrides the computed native-compaction `compact_threshold` with a fixed
-/// token count. Intended for manual testing: set it low (e.g. `2000`) to make
-/// OpenAI compact after a message or two instead of near the context limit.
-static NATIVE_COMPACTION_THRESHOLD_ENV_VAR: LazyLock<EnvVar> =
-    env_var!("ZED_NATIVE_COMPACTION_THRESHOLD");
-
-/// Token threshold at which we ask OpenAI to run server-side compaction. We
-/// reserve room for a full-length response so compaction triggers before the
-/// model would otherwise run out of context. Shared by the OpenAI and
-/// ChatGPT-subscription providers.
-pub(crate) fn native_compaction_threshold(
-    max_token_count: u64,
-    max_output_tokens: Option<u64>,
-) -> u64 {
-    if let Some(override_threshold) = NATIVE_COMPACTION_THRESHOLD_ENV_VAR
-        .value
-        .as_ref()
-        .and_then(|value| value.parse().ok())
-    {
-        return override_threshold;
-    }
-    let reserved = max_output_tokens.unwrap_or(max_token_count / 4);
-    max_token_count.saturating_sub(reserved).max(1)
-}
-
-/// Process-wide set of model telemetry ids that returned a 400
-/// `unsupported_parameter` for `compact_threshold`. OpenAI publishes no static
-/// per-model capability list, so we learn it at runtime: once a model lands
-/// here we stop requesting native compaction for it and fall back to summary
-/// compaction.
+/// Process-wide set of model telemetry ids that rejected standalone compaction.
+/// OpenAI publishes no static per-model capability list, so we learn it at
+/// runtime: once a model lands here we stop requesting native compaction for it
+/// and fall back to summary compaction.
 static NATIVE_COMPACTION_UNSUPPORTED: LazyLock<RwLock<HashSet<String>>> =
     LazyLock::new(|| RwLock::new(HashSet::new()));
 
@@ -274,22 +249,28 @@ pub(crate) fn native_compaction_unsupported(model_telemetry_id: &str) -> bool {
         .is_ok_and(|set| set.contains(model_telemetry_id))
 }
 
-fn mark_native_compaction_unsupported(model_telemetry_id: &str) {
+pub(crate) fn mark_native_compaction_unsupported(model_telemetry_id: &str) {
     if let Ok(mut set) = NATIVE_COMPACTION_UNSUPPORTED.write() {
         set.insert(model_telemetry_id.to_string());
     }
 }
 
-/// Clears the process-wide native-compaction cache so a test can't leak runtime
-/// state (the `static` outlives individual tests) into later tests.
-#[cfg(test)]
-pub(crate) fn clear_native_compaction_unsupported_for_test() {
-    if let Ok(mut set) = NATIVE_COMPACTION_UNSUPPORTED.write() {
-        set.clear();
+pub(crate) fn token_usage_from_response_usage(
+    usage: open_ai::responses::ResponseUsage,
+) -> TokenUsage {
+    let cache_read_input_tokens = usage.input_tokens_details.cached_tokens;
+    TokenUsage {
+        input_tokens: usage
+            .input_tokens
+            .unwrap_or_default()
+            .saturating_sub(cache_read_input_tokens),
+        output_tokens: usage.output_tokens.unwrap_or_default(),
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens,
     }
 }
 
-fn is_unsupported_compaction_error(error: &RequestError) -> bool {
+pub(crate) fn is_unsupported_compaction_error(error: &RequestError) -> bool {
     let RequestError::HttpResponseError {
         status_code, body, ..
     } = error
@@ -314,69 +295,15 @@ fn is_unsupported_compaction_error(error: &RequestError) -> bool {
     match serde_json::from_str::<ErrorBody>(body) {
         Ok(parsed) => {
             parsed.error.code.as_deref() == Some("unsupported_parameter")
-                && parsed.error.param.as_deref() == Some("compact_threshold")
+                && parsed
+                    .error
+                    .param
+                    .as_deref()
+                    .is_none_or(|param| param.contains("compact"))
         }
         // Fall back to a substring heuristic when the body isn't the JSON shape
         // we expect, so a format change still degrades gracefully.
-        Err(_) => body.contains("compact_threshold") && body.contains("unsupported_parameter"),
-    }
-}
-
-/// Sends a Responses request, transparently retrying once without
-/// `context_management` if the model rejects native compaction. On rejection we
-/// record the model (keyed by telemetry id) so subsequent turns skip native
-/// compaction and use summary compaction instead.
-///
-/// Note the rejected turn itself runs with neither native nor summary
-/// compaction: `uses_native_compaction()` was still true when the request was
-/// built, so the agent skipped its summary pass, and the retry here strips
-/// `context_management` entirely. That turn therefore sends the full,
-/// uncompacted history, which can itself overflow the context window if we were
-/// near the limit. We accept this one-turn degradation because the model is now
-/// marked unsupported, so the *next* turn's `compaction_message_target_ix`
-/// summary pass brings the window back under control.
-pub(crate) async fn stream_response_with_compaction_fallback(
-    client: &dyn HttpClient,
-    provider_name: &str,
-    api_url: &str,
-    api_key: &str,
-    mut request: ResponseRequest,
-    extra_headers: &CustomHeaders,
-    model_telemetry_id: &str,
-) -> Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>, RequestError> {
-    match stream_response(
-        client,
-        provider_name,
-        api_url,
-        api_key,
-        &request,
-        extra_headers,
-    )
-    .await
-    {
-        Err(error)
-            if !request.context_management.is_empty()
-                && is_unsupported_compaction_error(&error) =>
-        {
-            log::warn!(
-                "{model_telemetry_id} rejected native compaction; retrying without it and falling back to summary compaction"
-            );
-            // Remember this model can't compact so future turns fall back to
-            // summary compaction (see the function-level note on the one-turn
-            // gap this leaves).
-            mark_native_compaction_unsupported(model_telemetry_id);
-            request.context_management.clear();
-            stream_response(
-                client,
-                provider_name,
-                api_url,
-                api_key,
-                &request,
-                extra_headers,
-            )
-            .await
-        }
-        result => result,
+        Err(_) => body.contains("compact") && body.contains("unsupported"),
     }
 }
 
@@ -452,10 +379,9 @@ mod tests {
             headers: HeaderMap::new(),
         };
 
-        // The exact 400 OpenAI returns when a model can't compact.
         assert!(is_unsupported_compaction_error(&http_error(
             StatusCode::BAD_REQUEST,
-            r#"{"error":{"message":"compact_threshold is not enabled.","type":"invalid_request_error","param":"compact_threshold","code":"unsupported_parameter"}}"#,
+            r#"{"error":{"message":"compaction is not enabled.","type":"invalid_request_error","code":"unsupported_parameter"}}"#,
         )));
 
         // Same `unsupported_parameter` code for a different `param` must not
@@ -473,7 +399,7 @@ mod tests {
         )));
         assert!(!is_unsupported_compaction_error(&http_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "compact_threshold unsupported_parameter",
+            "compact unsupported_parameter",
         )));
         assert!(!is_unsupported_compaction_error(&RequestError::Other(
             anyhow::anyhow!("boom")
@@ -483,18 +409,8 @@ mod tests {
         // degrade gracefully if the error shape ever changes.
         assert!(is_unsupported_compaction_error(&http_error(
             StatusCode::BAD_REQUEST,
-            "compact_threshold unsupported_parameter",
+            "compact unsupported",
         )));
-    }
-
-    #[test]
-    fn native_compaction_threshold_reserves_output_headroom() {
-        // Threshold leaves room for a full-length response.
-        assert_eq!(native_compaction_threshold(272_000, Some(128_000)), 144_000);
-        // Falls back to reserving a quarter of the window when max output is unknown.
-        assert_eq!(native_compaction_threshold(400_000, None), 300_000);
-        // Never underflows to zero.
-        assert_eq!(native_compaction_threshold(1_000, Some(8_000)), 1);
     }
 
     #[test]
@@ -535,152 +451,6 @@ mod tests {
                 .supported_reasoning_efforts()
                 .contains(&open_ai::ReasoningEffort::None)
         );
-    }
-
-    /// A non-streaming Responses request that opts in to native compaction, so
-    /// the fallback path has something to strip on retry.
-    fn native_compaction_request() -> ResponseRequest {
-        let mut request = into_open_ai_response(
-            LanguageModelRequest::default(),
-            ResponsesRequestConfig {
-                model_id: "gpt-5",
-                provider_id: "openai",
-                supports_parallel_tool_calls: true,
-                supports_prompt_cache_key: true,
-                max_output_tokens: None,
-                default_reasoning_effort: None,
-                supports_none_reasoning_effort: true,
-            },
-        );
-        request.stream = false;
-        request.context_management = vec![ContextManagement::compaction(1000)];
-        request
-    }
-
-    #[test]
-    fn stream_response_with_compaction_fallback_retries_without_native_compaction() {
-        use futures::AsyncReadExt as _;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        // The exact 400 OpenAI returns when a model can't compact.
-        const UNSUPPORTED_BODY: &str = r#"{"error":{"message":"compact_threshold is not enabled.","type":"invalid_request_error","param":"compact_threshold","code":"unsupported_parameter"}}"#;
-        // Minimal non-streaming Responses body that `stream_response` parses when
-        // `request.stream == false`.
-        const SUCCESS_BODY: &str = r#"{"output":[],"status":"completed"}"#;
-        const MODEL_TELEMETRY_ID: &str = "openai/test-native-compaction";
-
-        clear_native_compaction_unsupported_for_test();
-        assert!(!native_compaction_unsupported(MODEL_TELEMETRY_ID));
-
-        let call_count = Arc::new(AtomicUsize::new(0));
-        let request_bodies = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
-
-        let client: Arc<dyn HttpClient> = http_client::FakeHttpClient::create({
-            let call_count = call_count.clone();
-            let request_bodies = request_bodies.clone();
-            move |req| {
-                let call_count = call_count.clone();
-                let request_bodies = request_bodies.clone();
-                let mut body = req.into_body();
-                async move {
-                    let mut body_string = String::new();
-                    body.read_to_string(&mut body_string).await?;
-                    request_bodies.lock().push(body_string);
-
-                    // First attempt rejects native compaction; the retry succeeds.
-                    if call_count.fetch_add(1, Ordering::SeqCst) == 0 {
-                        Ok(http_client::Response::builder()
-                            .status(400)
-                            .body(http_client::AsyncBody::from(UNSUPPORTED_BODY))?)
-                    } else {
-                        Ok(http_client::Response::builder()
-                            .status(200)
-                            .body(http_client::AsyncBody::from(SUCCESS_BODY))?)
-                    }
-                }
-            }
-        });
-
-        let events = smol::block_on(async {
-            let stream = stream_response_with_compaction_fallback(
-                client.as_ref(),
-                "openai",
-                "https://api.openai.com/v1",
-                "test-key",
-                native_compaction_request(),
-                &CustomHeaders::default(),
-                MODEL_TELEMETRY_ID,
-            )
-            .await
-            .expect("native compaction fallback should retry and succeed");
-            stream.collect::<Vec<_>>().await
-        });
-
-        // The retried, non-streaming 200 body parsed into events without error.
-        assert!(events.iter().all(|event| event.is_ok()));
-
-        // Sent exactly two requests: the rejected one and the retry.
-        assert_eq!(call_count.load(Ordering::SeqCst), 2);
-
-        let request_bodies = request_bodies.lock();
-        assert_eq!(request_bodies.len(), 2);
-        // The first request asked for native compaction...
-        assert!(request_bodies[0].contains("context_management"));
-        assert!(request_bodies[0].contains("compact_threshold"));
-        // ...and the retry dropped it.
-        assert!(!request_bodies[1].contains("context_management"));
-
-        // The model is now remembered as unable to do native compaction.
-        assert!(native_compaction_unsupported(MODEL_TELEMETRY_ID));
-
-        clear_native_compaction_unsupported_for_test();
-    }
-
-    #[test]
-    fn stream_response_with_compaction_fallback_does_not_retry_on_success() {
-        use futures::AsyncReadExt as _;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        const SUCCESS_BODY: &str = r#"{"output":[],"status":"completed"}"#;
-        // Distinct id from the fallback test, and this test never clears the
-        // shared cache, so the two can run concurrently without racing on it.
-        const MODEL_TELEMETRY_ID: &str = "openai/test-native-compaction-success";
-
-        assert!(!native_compaction_unsupported(MODEL_TELEMETRY_ID));
-
-        let call_count = Arc::new(AtomicUsize::new(0));
-        let client: Arc<dyn HttpClient> = http_client::FakeHttpClient::create({
-            let call_count = call_count.clone();
-            move |req| {
-                let call_count = call_count.clone();
-                let mut body = req.into_body();
-                async move {
-                    // Drain the body so the request is fully "sent".
-                    let mut body_string = String::new();
-                    body.read_to_string(&mut body_string).await?;
-                    call_count.fetch_add(1, Ordering::SeqCst);
-                    Ok(http_client::Response::builder()
-                        .status(200)
-                        .body(http_client::AsyncBody::from(SUCCESS_BODY))?)
-                }
-            }
-        });
-
-        let result = smol::block_on(stream_response_with_compaction_fallback(
-            client.as_ref(),
-            "openai",
-            "https://api.openai.com/v1",
-            "test-key",
-            native_compaction_request(),
-            &CustomHeaders::default(),
-            MODEL_TELEMETRY_ID,
-        ));
-
-        assert!(result.is_ok());
-        // A successful first attempt must not retry...
-        assert_eq!(call_count.load(Ordering::SeqCst), 1);
-        // ...and must not mark the model as unsupported.
-        assert!(!native_compaction_unsupported(MODEL_TELEMETRY_ID));
     }
 }
 
@@ -736,7 +506,6 @@ impl OpenAiLanguageModel {
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
-        let model_telemetry_id = self.telemetry_id();
 
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
@@ -751,14 +520,13 @@ impl OpenAiLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let response = stream_response_with_compaction_fallback(
+            let response = stream_response(
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
                 &api_key,
-                request,
+                &request,
                 &extra_headers,
-                &model_telemetry_id,
             )
             .await?;
             Ok(response)
@@ -841,11 +609,6 @@ impl LanguageModel for OpenAiLanguageModel {
         true
     }
 
-    fn uses_native_compaction(&self) -> bool {
-        self.model.supports_native_compaction()
-            && !native_compaction_unsupported(&self.telemetry_id())
-    }
-
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -876,7 +639,7 @@ impl LanguageModel for OpenAiLanguageModel {
             request.speed = None;
         }
         if self.model.uses_responses_api() {
-            let mut request = into_open_ai_response(
+            let request = into_open_ai_response(
                 request,
                 ResponsesRequestConfig {
                     model_id: self.model.id(),
@@ -891,19 +654,6 @@ impl LanguageModel for OpenAiLanguageModel {
                         .contains(&open_ai::ReasoningEffort::None),
                 },
             );
-            let native_compaction_enabled = self.uses_native_compaction()
-                && cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>());
-            if native_compaction_enabled {
-                let compact_threshold = native_compaction_threshold(
-                    self.model.max_token_count(),
-                    self.model.max_output_tokens(),
-                );
-                log::debug!(
-                    "Requesting OpenAI native compaction for {} (compact_threshold={compact_threshold})",
-                    self.telemetry_id()
-                );
-                request.context_management = vec![ContextManagement::compaction(compact_threshold)];
-            }
             let completions = self.stream_response(request, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();
@@ -927,6 +677,79 @@ impl LanguageModel for OpenAiLanguageModel {
             }
             .boxed()
         }
+    }
+
+    fn compact(
+        &self,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<Option<LanguageModelCompactionOutput>, LanguageModelCompletionError>,
+    > {
+        if !self.model.uses_responses_api()
+            || !self.model.supports_native_compaction()
+            || native_compaction_unsupported(&self.telemetry_id())
+        {
+            return async { Ok(None) }.boxed();
+        }
+
+        if !self.model.supports_priority() {
+            request.speed = None;
+        }
+
+        let request = into_open_ai_response(
+            request,
+            ResponsesRequestConfig {
+                model_id: self.model.id(),
+                provider_id: PROVIDER_ID.0.as_ref(),
+                supports_parallel_tool_calls: self.model.supports_parallel_tool_calls(),
+                supports_prompt_cache_key: self.model.supports_prompt_cache_key(),
+                max_output_tokens: self.max_output_tokens(),
+                default_reasoning_effort: default_thinking_reasoning_effort(&self.model),
+                supports_none_reasoning_effort: self
+                    .model
+                    .supported_reasoning_efforts()
+                    .contains(&open_ai::ReasoningEffort::None),
+            },
+        );
+        let http_client = self.http_client.clone();
+        let model_telemetry_id = self.telemetry_id();
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        let provider = PROVIDER_NAME;
+        let future = self.request_limiter.run(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            match compact_response(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                &request,
+                &extra_headers,
+            )
+            .await
+            {
+                Ok(response) => Ok(Some(LanguageModelCompactionOutput {
+                    output: response.output,
+                    token_usage: response.usage.map(token_usage_from_response_usage),
+                })),
+                Err(error) if is_unsupported_compaction_error(&error) => {
+                    mark_native_compaction_unsupported(&model_telemetry_id);
+                    Ok(None)
+                }
+                Err(error) => Err(LanguageModelCompletionError::from(error)),
+            }
+        });
+
+        async move { future.await }.boxed()
     }
 }
 

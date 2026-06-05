@@ -55,12 +55,7 @@ pub enum LanguageModelCompletionEvent {
         message_id: String,
     },
     ReasoningDetails(serde_json::Value),
-    /// Provider-native compaction items captured from a completion stream. The
-    /// opaque `items` must be replayed verbatim on subsequent turns by the
-    /// provider that produced them.
-    CompactionDetails {
-        items: Vec<serde_json::Value>,
-    },
+
     UsageUpdate(TokenUsage),
 }
 

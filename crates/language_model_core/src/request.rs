@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
-use crate::{LanguageModelToolUse, LanguageModelToolUseId, SharedString};
+use crate::{LanguageModelToolUse, LanguageModelToolUseId, SharedString, TokenUsage};
 
 /// Dimensions of a `LanguageModelImage`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -296,6 +296,12 @@ pub struct LanguageModelRequestMessage {
     pub reasoning_details: Option<Arc<serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction_details: Option<Arc<serde_json::Value>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LanguageModelCompactionOutput {
+    pub output: Vec<serde_json::Value>,
+    pub token_usage: Option<TokenUsage>,
 }
 
 impl LanguageModelRequestMessage {

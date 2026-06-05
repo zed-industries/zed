@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    Request as ResponseRequest, ResponseCompactionItem, ResponseError, ResponseFunctionCallItem,
+    Request as ResponseRequest, ResponseError, ResponseFunctionCallItem,
     ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
     ResponseInput, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
     ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
@@ -327,9 +327,6 @@ pub fn into_open_ai_response(
         },
         reasoning,
         service_tier,
-        // Native compaction is opt-in per provider/model; callers that support it
-        // set this on the returned request.
-        context_management: Vec::new(),
     }
 }
 
@@ -342,8 +339,8 @@ fn append_compaction_details_to_response_items(
         return;
     };
 
-    // `compaction_details` is always built by `CompactionInfo::ProviderNative`
-    // as `{ "provider", "items" }`; only replay items produced by the provider
+    // `compaction_details` is built by `CompactionInfo::ProviderNative` as
+    // `{ "provider", "output" }`; only replay output produced by the provider
     // handling the active request, and reject any other shape.
     let Value::Object(details) = compaction_details else {
         log::warn!("OpenAI native compaction details had an unexpected shape");
@@ -352,8 +349,12 @@ fn append_compaction_details_to_response_items(
     if details.get("provider").and_then(Value::as_str) != Some(provider_id) {
         return;
     }
-    let Some(items) = details.get("items").and_then(Value::as_array) else {
-        log::warn!("OpenAI native compaction details did not contain an items array");
+    let Some(items) = details
+        .get("output")
+        .or_else(|| details.get("items"))
+        .and_then(Value::as_array)
+    else {
+        log::warn!("OpenAI compaction details did not contain an output array");
         return;
     };
     input_items.extend(items.iter().cloned().map(ResponseInput::Raw));
@@ -777,8 +778,6 @@ pub struct OpenAiResponseEventMapper {
     reasoning_items: Vec<ResponseReasoningInputItem>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
-    compaction_items: Vec<Value>,
-    seen_compaction_keys: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -795,8 +794,6 @@ impl OpenAiResponseEventMapper {
             reasoning_items: Vec::new(),
             current_message_phase: None,
             pending_stop_reason: None,
-            compaction_items: Vec::new(),
-            seen_compaction_keys: HashSet::default(),
         }
     }
 
@@ -952,8 +949,6 @@ impl OpenAiResponseEventMapper {
 
                 let mut events = Vec::new();
                 events.extend(self.capture_reasoning_items_from_output(&response.output));
-                self.capture_compaction_items_from_output(&response.output);
-                events.extend(self.take_captured_compaction_event());
                 if response_output_contains_refusal(&response.output)
                     && !matches!(stop_reason, StopReason::MaxTokens)
                 {
@@ -999,10 +994,7 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
-                ResponseOutputItem::Compaction(compaction) => {
-                    self.capture_compaction_item(&compaction);
-                    Vec::new()
-                }
+                ResponseOutputItem::Compaction(_) => Vec::new(),
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
             ResponsesStreamEvent::OutputTextDone { .. }
@@ -1024,8 +1016,6 @@ impl OpenAiResponseEventMapper {
         let mut events = Vec::new();
 
         events.extend(self.capture_reasoning_items_from_output(&response.output));
-        self.capture_compaction_items_from_output(&response.output);
-        events.extend(self.take_captured_compaction_event());
 
         if response_output_contains_refusal(&response.output) {
             self.pending_stop_reason = Some(StopReason::Refusal);
@@ -1105,65 +1095,6 @@ impl OpenAiResponseEventMapper {
             }
         }
         events
-    }
-
-    fn capture_compaction_items_from_output(&mut self, output: &[ResponseOutputItem]) {
-        for item in output {
-            if let ResponseOutputItem::Compaction(compaction) = item {
-                self.capture_compaction_item(compaction);
-            }
-        }
-    }
-
-    /// Records a provider-native compaction item for replay. The same item can
-    /// arrive both as a streamed `OutputItemDone` and in the final response's
-    /// `output`, so we dedupe by `encrypted_content` — the opaque payload that
-    /// must be replayed verbatim and is stable across deliveries (unlike `id`,
-    /// which is optional and need not match between the two). Items without
-    /// `encrypted_content` are skipped because they cannot be replayed.
-    ///
-    /// Recording is separate from emitting: captured items are surfaced once,
-    /// when the stream finishes, via [`Self::take_captured_compaction_event`].
-    fn capture_compaction_item(&mut self, compaction: &ResponseCompactionItem) {
-        let Some(encrypted_content) = compaction.encrypted_content.as_deref() else {
-            return;
-        };
-
-        if !self
-            .seen_compaction_keys
-            .insert(encrypted_content.to_string())
-        {
-            return;
-        }
-
-        // Preserve every field OpenAI sent (including any we don't model) so the
-        // item round-trips unchanged on replay. `type` is re-added because the
-        // internally-tagged enum consumed it while deserializing.
-        let mut item = compaction.extra.clone();
-        item.insert("type".to_string(), Value::from("compaction"));
-        item.insert(
-            "encrypted_content".to_string(),
-            Value::from(encrypted_content),
-        );
-        if let Some(id) = compaction.id.as_deref() {
-            item.insert("id".to_string(), Value::from(id));
-        }
-        self.compaction_items.push(Value::Object(item));
-    }
-
-    /// Emits the compaction items captured during this stream as a single
-    /// `CompactionDetails` event, or `None` if none were captured. Called once
-    /// at the terminal event so a turn produces exactly one compaction boundary,
-    /// regardless of how many deliveries the items arrived in.
-    fn take_captured_compaction_event(
-        &mut self,
-    ) -> Option<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        if self.compaction_items.is_empty() {
-            return None;
-        }
-        Some(Ok(LanguageModelCompletionEvent::CompactionDetails {
-            items: std::mem::take(&mut self.compaction_items),
-        }))
     }
 
     fn capture_message_phase(
@@ -1341,10 +1272,9 @@ fn response_reasoning_input_item_from_output(
 #[cfg(test)]
 mod tests {
     use crate::responses::{
-        ReasoningSummaryPart, ResponseCompactionItem, ResponseError, ResponseFunctionToolCall,
-        ResponseIncompleteDetails, ResponseInputTokensDetails, ResponseOutputItem,
-        ResponseOutputMessage, ResponseReasoningItem, ResponseSummary, ResponseUsage,
-        StreamEvent as ResponsesStreamEvent,
+        ReasoningSummaryPart, ResponseError, ResponseFunctionToolCall, ResponseIncompleteDetails,
+        ResponseInputTokensDetails, ResponseOutputItem, ResponseOutputMessage,
+        ResponseReasoningItem, ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
     };
     use futures::{StreamExt, executor::block_on};
     use language_model_core::{
@@ -1412,7 +1342,7 @@ mod tests {
                     reasoning_details: None,
                     compaction_details: Some(Arc::new(json!({
                         "provider": "openai",
-                        "items": [{"type": "compaction", "encrypted_content": "encrypted"}],
+                        "output": [{"type": "compaction", "encrypted_content": "encrypted"}],
                     }))),
                 },
                 LanguageModelRequestMessage {
@@ -1442,87 +1372,6 @@ mod tests {
                     "content": [{"type": "input_text", "text": "after compaction"}],
                 },
             ])
-        );
-    }
-
-    #[test]
-    fn responses_stream_captures_native_compaction_items() {
-        let compaction = || {
-            ResponseOutputItem::Compaction(ResponseCompactionItem {
-                id: Some("cmp_1".into()),
-                encrypted_content: Some("enc-abc".into()),
-                ..Default::default()
-            })
-        };
-
-        let events = vec![
-            ResponsesStreamEvent::OutputItemDone {
-                output_index: 0,
-                sequence_number: None,
-                item: compaction(),
-            },
-            ResponsesStreamEvent::Completed {
-                response: ResponseSummary {
-                    // The same compaction item also appears in the final response
-                    // output; it must only be surfaced once.
-                    output: vec![compaction()],
-                    ..Default::default()
-                },
-            },
-        ];
-
-        let compaction_events: Vec<_> = map_response_events(events)
-            .into_iter()
-            .filter_map(|event| match event {
-                LanguageModelCompletionEvent::CompactionDetails { items } => Some(items),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(
-            compaction_events,
-            vec![vec![json!({
-                "type": "compaction",
-                "encrypted_content": "enc-abc",
-                "id": "cmp_1",
-            })]]
-        );
-    }
-
-    #[test]
-    fn responses_stream_preserves_unknown_compaction_fields() {
-        // Deserialize a compaction item carrying a field we don't model; it must
-        // survive capture and be replayed verbatim, since OpenAI requires the
-        // item to be sent back unchanged.
-        let item: ResponseOutputItem = serde_json::from_value(json!({
-            "type": "compaction",
-            "id": "cmp_1",
-            "encrypted_content": "enc-abc",
-            "some_future_field": {"nested": true},
-        }))
-        .unwrap();
-
-        let items = map_response_events(vec![ResponsesStreamEvent::Completed {
-            response: ResponseSummary {
-                output: vec![item],
-                ..Default::default()
-            },
-        }])
-        .into_iter()
-        .find_map(|event| match event {
-            LanguageModelCompletionEvent::CompactionDetails { items } => Some(items),
-            _ => None,
-        })
-        .expect("expected a compaction event");
-
-        assert_eq!(
-            items,
-            vec![json!({
-                "type": "compaction",
-                "encrypted_content": "enc-abc",
-                "id": "cmp_1",
-                "some_future_field": {"nested": true},
-            })]
         );
     }
 

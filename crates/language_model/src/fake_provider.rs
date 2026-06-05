@@ -1,8 +1,8 @@
 use crate::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel, LanguageModelCompactionOutput,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
 };
 use anyhow::anyhow;
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
@@ -126,7 +126,8 @@ pub struct FakeLanguageModel {
     supports_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
-    uses_native_compaction: AtomicBool,
+    compaction_output: Mutex<Option<LanguageModelCompactionOutput>>,
+    compaction_requests: Mutex<Vec<LanguageModelRequest>>,
     max_token_count: AtomicU64,
     max_output_tokens: AtomicU64,
 }
@@ -143,7 +144,8 @@ impl Default for FakeLanguageModel {
             supports_thinking: AtomicBool::new(false),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
-            uses_native_compaction: AtomicBool::new(false),
+            compaction_output: Mutex::new(None),
+            compaction_requests: Mutex::new(Vec::new()),
             max_token_count: AtomicU64::new(1_000_000),
             max_output_tokens: AtomicU64::new(0),
         }
@@ -186,8 +188,8 @@ impl FakeLanguageModel {
         self.supports_images.store(supports, SeqCst);
     }
 
-    pub fn set_uses_native_compaction(&self, uses: bool) {
-        self.uses_native_compaction.store(uses, SeqCst);
+    pub fn set_compaction_output(&self, output: Option<LanguageModelCompactionOutput>) {
+        *self.compaction_output.lock() = output;
     }
 
     pub fn set_max_token_count(&self, count: u64) {
@@ -197,6 +199,10 @@ impl FakeLanguageModel {
     pub fn set_max_output_tokens(&self, count: Option<u64>) {
         self.max_output_tokens
             .store(count.unwrap_or_default(), SeqCst);
+    }
+
+    pub fn compaction_requests(&self) -> Vec<LanguageModelRequest> {
+        self.compaction_requests.lock().clone()
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -316,10 +322,6 @@ impl LanguageModel for FakeLanguageModel {
         self.supports_streaming_tools.load(SeqCst)
     }
 
-    fn uses_native_compaction(&self) -> bool {
-        self.uses_native_compaction.load(SeqCst)
-    }
-
     fn telemetry_id(&self) -> String {
         "fake".to_string()
     }
@@ -335,6 +337,19 @@ impl LanguageModel for FakeLanguageModel {
         } else {
             Some(max_output_tokens)
         }
+    }
+
+    fn compact(
+        &self,
+        request: LanguageModelRequest,
+        _: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<Option<LanguageModelCompactionOutput>, LanguageModelCompletionError>,
+    > {
+        self.compaction_requests.lock().push(request);
+        let output = self.compaction_output.lock().clone();
+        async move { Ok(output) }.boxed()
     }
 
     fn stream_completion(
