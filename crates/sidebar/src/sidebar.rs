@@ -2315,7 +2315,7 @@ impl Sidebar {
             GradientFade::new(base_bg, hover_solid, hover_solid)
                 .width(px(92.0))
                 .right(px(-2.0))
-                .gradient_stop(0.85)
+                .gradient_stop(0.7)
                 .when(!has_filter, |this| {
                     this.group_name(group_name_for_gradient.clone())
                 })
