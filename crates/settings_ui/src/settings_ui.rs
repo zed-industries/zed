@@ -4108,7 +4108,12 @@ impl SettingsWindow {
                 .iter()
                 .position(|entry| entry.page_index == page_index && entry.is_root)
         {
-            self.open_and_scroll_to_navbar_entry(navbar_entry_index, None, false, window, cx);
+            // Select the navbar entry directly rather than via
+            // `open_and_scroll_to_navbar_entry`: that helper focuses the
+            // navbar entry on the next frame, and the navbar's `on_focus`
+            // subscription re-opens the entry's page, which clears the
+            // sub-page stack and would discard the sub-pages pushed below.
+            self.open_navbar_entry_page(navbar_entry_index);
         }
         self.navigate_to_sub_page("agent.skills", window, cx);
         self.open_skill_creator_sub_page(open_mode, window, cx);
