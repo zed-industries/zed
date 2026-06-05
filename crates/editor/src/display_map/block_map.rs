@@ -119,6 +119,43 @@ impl BlockPoint {
     }
 }
 
+/// Forward-only cursor mapping [`WrapPoint`]s to [`BlockPoint`]s, reusing its
+/// tree position across calls. This is the streaming equivalent of
+/// [`BlockSnapshot::to_block_point`]; callers must provide non-decreasing wrap
+/// points.
+pub struct BlockPointCursor<'a> {
+    snapshot: &'a BlockSnapshot,
+    cursor: sum_tree::Cursor<'a, 'static, Transform, Dimensions<WrapRow, BlockRow>>,
+}
+
+impl BlockPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
+    pub fn map(&mut self, wrap_point: WrapPoint) -> BlockPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&wrap_point.row(), Bias::Right);
+        } else {
+            cursor.seek(&wrap_point.row(), Bias::Right);
+        }
+        if let Some(transform) = cursor.item() {
+            if transform.block.is_some() {
+                BlockPoint::new(cursor.start().1, 0)
+            } else {
+                let input_start = Point::new(cursor.start().0.0, 0);
+                let output_start = Point::new(cursor.start().1.0, 0);
+                let input_overshoot = wrap_point.0 - input_start;
+                BlockPoint(output_start + input_overshoot)
+            }
+        } else {
+            self.snapshot.max_point()
+        }
+    }
+}
+
 pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
 
 /// Where to place a block.
@@ -2491,6 +2528,13 @@ impl BlockSnapshot {
                 search_left = !search_left;
                 cursor.seek(&BlockRow(point.row), Bias::Right);
             }
+        }
+    }
+
+    pub fn block_point_cursor(&self) -> BlockPointCursor<'_> {
+        BlockPointCursor {
+            snapshot: self,
+            cursor: self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(()),
         }
     }
 
