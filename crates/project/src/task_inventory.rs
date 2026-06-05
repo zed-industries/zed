@@ -238,8 +238,8 @@ impl TaskContexts {
         let id_base = kind.to_id_base();
         let task = resolved_task.original_task();
 
-        let candidate_contexts: Vec<&TaskContext> = match kind {
-            TaskSourceKind::Worktree { id, .. } => [
+        let candidate_contexts: Vec<Option<&TaskContext>> = match kind {
+            TaskSourceKind::Worktree { id, .. } => vec![
                 self.active_item_context
                     .as_ref()
                     .filter(|(worktree_id, _, _)| worktree_id.as_ref() == Some(id))
@@ -252,25 +252,20 @@ impl TaskContexts {
                     .iter()
                     .find(|(worktree_id, _)| worktree_id == id)
                     .map(|(_, context)| context),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
-            _ => [
+            ],
+            _ => vec![
                 self.active_item_context
                     .as_ref()
                     .map(|(_, _, context)| context),
                 self.active_worktree_context
                     .as_ref()
                     .map(|(_, context)| context),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
+            ],
         };
 
         candidate_contexts
             .into_iter()
+            .flatten()
             .find_map(|context| task.resolve_task(&id_base, context))
             .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
             .unwrap_or_else(|| resolved_task.clone())
@@ -531,26 +526,22 @@ impl Inventory {
                     true
                 }
             })
-            .filter(|(_, resolved_task)| {
-                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+            .map(|(task_source_kind, resolved_task)| {
+                let reresolved = task_contexts.reresolve_task(task_source_kind, resolved_task);
+                (task_source_kind.clone(), reresolved)
+            })
+            .filter_map(|(task_source_kind, resolved_task)| {
+                let keep = match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
                     hash_map::Entry::Occupied(mut o) => {
-                        o.get_mut().insert(resolved_task.id.clone());
-                        // Neber allow duplicate reused tasks with the same labels
-                        false
+                        // Allow distinct re-resolved tasks that share a label but differ by context.
+                        o.get_mut().insert(resolved_task.id.clone())
                     }
                     hash_map::Entry::Vacant(v) => {
                         v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
                         true
                     }
-                }
-            })
-            .map(|(task_source_kind, resolved_task)| {
-                let reresolved = task_contexts.reresolve_task(task_source_kind, resolved_task);
-                (
-                    task_source_kind.clone(),
-                    reresolved,
-                    post_inc(&mut lru_score),
-                )
+                };
+                keep.then(|| (task_source_kind, resolved_task, post_inc(&mut lru_score)))
             })
             .sorted_unstable_by(task_lru_comparator)
             .map(|(kind, task, _)| (kind, task))
