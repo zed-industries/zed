@@ -15,7 +15,7 @@ use language_model::{
 };
 use menu;
 use open_ai::{
-    OPEN_AI_API_URL, RequestError, ResponseStreamEvent,
+    OPEN_AI_API_URL, ResponseStreamEvent,
     responses::{
         Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, compact_response,
         stream_response,
@@ -23,8 +23,7 @@ use open_ai::{
     stream_completion,
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
-use std::collections::HashSet;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
@@ -235,26 +234,6 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 }
 
-/// Process-wide set of model telemetry ids that rejected standalone compaction.
-/// OpenAI publishes no static per-model capability list, so we learn it at
-/// runtime: once a model lands here we stop requesting native compaction for it
-/// and fall back to summary compaction.
-static NATIVE_COMPACTION_UNSUPPORTED: LazyLock<RwLock<HashSet<String>>> =
-    LazyLock::new(|| RwLock::new(HashSet::new()));
-
-/// Whether a model previously rejected native compaction at runtime.
-pub(crate) fn native_compaction_unsupported(model_telemetry_id: &str) -> bool {
-    NATIVE_COMPACTION_UNSUPPORTED
-        .read()
-        .is_ok_and(|set| set.contains(model_telemetry_id))
-}
-
-pub(crate) fn mark_native_compaction_unsupported(model_telemetry_id: &str) {
-    if let Ok(mut set) = NATIVE_COMPACTION_UNSUPPORTED.write() {
-        set.insert(model_telemetry_id.to_string());
-    }
-}
-
 pub(crate) fn token_usage_from_response_usage(
     usage: open_ai::responses::ResponseUsage,
 ) -> TokenUsage {
@@ -267,43 +246,6 @@ pub(crate) fn token_usage_from_response_usage(
         output_tokens: usage.output_tokens.unwrap_or_default(),
         cache_creation_input_tokens: 0,
         cache_read_input_tokens,
-    }
-}
-
-pub(crate) fn is_unsupported_compaction_error(error: &RequestError) -> bool {
-    let RequestError::HttpResponseError {
-        status_code, body, ..
-    } = error
-    else {
-        return false;
-    };
-    if status_code.as_u16() != 400 {
-        return false;
-    }
-
-    #[derive(serde::Deserialize)]
-    struct ErrorBody {
-        error: ErrorDetails,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct ErrorDetails {
-        code: Option<String>,
-        param: Option<String>,
-    }
-
-    match serde_json::from_str::<ErrorBody>(body) {
-        Ok(parsed) => {
-            parsed.error.code.as_deref() == Some("unsupported_parameter")
-                && parsed
-                    .error
-                    .param
-                    .as_deref()
-                    .is_none_or(|param| param.contains("compact"))
-        }
-        // Fall back to a substring heuristic when the body isn't the JSON shape
-        // we expect, so a format change still degrades gracefully.
-        Err(_) => body.contains("compact") && body.contains("unsupported"),
     }
 }
 
@@ -366,52 +308,6 @@ fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModel
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detects_unsupported_compaction_error() {
-        use http_client::StatusCode;
-        use http_client::http::HeaderMap;
-
-        let http_error = |status: StatusCode, body: &str| RequestError::HttpResponseError {
-            provider: "openai".into(),
-            status_code: status,
-            body: body.to_string(),
-            headers: HeaderMap::new(),
-        };
-
-        assert!(is_unsupported_compaction_error(&http_error(
-            StatusCode::BAD_REQUEST,
-            r#"{"error":{"message":"compaction is not enabled.","type":"invalid_request_error","code":"unsupported_parameter"}}"#,
-        )));
-
-        // Same `unsupported_parameter` code for a different `param` must not
-        // trigger the fallback. Matching on `code` alone would be too coarse.
-        assert!(!is_unsupported_compaction_error(&http_error(
-            StatusCode::BAD_REQUEST,
-            r#"{"error":{"message":"max_output_tokens is not supported.","type":"invalid_request_error","param":"max_output_tokens","code":"unsupported_parameter"}}"#,
-        )));
-
-        // Unrelated 400s, other statuses, and non-HTTP errors must not trigger
-        // the fallback.
-        assert!(!is_unsupported_compaction_error(&http_error(
-            StatusCode::BAD_REQUEST,
-            r#"{"error":{"message":"unknown model","code":"invalid_value"}}"#,
-        )));
-        assert!(!is_unsupported_compaction_error(&http_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "compact unsupported_parameter",
-        )));
-        assert!(!is_unsupported_compaction_error(&RequestError::Other(
-            anyhow::anyhow!("boom")
-        )));
-
-        // A non-JSON body still falls back to the substring heuristic so we
-        // degrade gracefully if the error shape ever changes.
-        assert!(is_unsupported_compaction_error(&http_error(
-            StatusCode::BAD_REQUEST,
-            "compact unsupported",
-        )));
-    }
 
     #[test]
     fn supported_thinking_effort_levels_hide_none() {
@@ -686,10 +582,7 @@ impl LanguageModel for OpenAiLanguageModel {
     ) -> Option<
         BoxFuture<'static, Result<LanguageModelCompactionOutput, LanguageModelCompletionError>>,
     > {
-        if !self.model.uses_responses_api()
-            || !self.model.supports_native_compaction()
-            || native_compaction_unsupported(&self.telemetry_id())
-        {
+        if !self.model.uses_responses_api() || !self.model.supports_native_compaction() {
             return None;
         }
 
@@ -713,7 +606,6 @@ impl LanguageModel for OpenAiLanguageModel {
             },
         );
         let http_client = self.http_client.clone();
-        let model_telemetry_id = self.telemetry_id();
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
             let extra_headers = OpenAiLanguageModelProvider::settings(cx)
@@ -740,10 +632,6 @@ impl LanguageModel for OpenAiLanguageModel {
                     output: response.output,
                     token_usage: response.usage.map(token_usage_from_response_usage),
                 }),
-                Err(error) if is_unsupported_compaction_error(&error) => {
-                    mark_native_compaction_unsupported(&model_telemetry_id);
-                    Err(LanguageModelCompletionError::from(error))
-                }
                 Err(error) => Err(LanguageModelCompletionError::from(error)),
             }
         });

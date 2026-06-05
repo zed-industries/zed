@@ -33,8 +33,7 @@ use util::ResultExt as _;
 
 use crate::provider::open_ai::{
     OpenAiResponseEventMapper, ResponsesRequestConfig, into_open_ai_response,
-    is_unsupported_compaction_error, mark_native_compaction_unsupported,
-    native_compaction_unsupported, token_usage_from_response_usage,
+    token_usage_from_response_usage,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
@@ -572,9 +571,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
     ) -> Option<
         BoxFuture<'static, Result<LanguageModelCompactionOutput, LanguageModelCompletionError>>,
     > {
-        if !self.model.supports_native_compaction()
-            || native_compaction_unsupported(&self.telemetry_id())
-        {
+        if !self.model.supports_native_compaction() {
             return None;
         }
 
@@ -619,7 +616,6 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
         let request_limiter = self.request_limiter.clone();
-        let model_telemetry_id = self.telemetry_id();
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
@@ -659,10 +655,6 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                             output: response.output,
                             token_usage: response.usage.map(token_usage_from_response_usage),
                         }),
-                        Err(error) if is_unsupported_compaction_error(&error) => {
-                            mark_native_compaction_unsupported(&model_telemetry_id);
-                            Err(LanguageModelCompletionError::from(error))
-                        }
                         Err(error) => Err(LanguageModelCompletionError::from(error)),
                     }
                 })
