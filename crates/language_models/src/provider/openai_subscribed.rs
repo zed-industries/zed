@@ -661,7 +661,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 .await
         });
 
-        Some(async move { future.await }.boxed())
+        Some(future.boxed())
     }
 }
 

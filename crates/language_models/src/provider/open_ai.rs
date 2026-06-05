@@ -636,7 +636,7 @@ impl LanguageModel for OpenAiLanguageModel {
             }
         });
 
-        Some(async move { future.await }.boxed())
+        Some(future.boxed())
     }
 }
 
