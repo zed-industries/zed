@@ -78,5 +78,5 @@ where
 
 /// Use a quick, non-cryptographically secure hash function to get an identifier from data
 pub fn hash<T: Hash>(data: &T) -> u64 {
-    collections::FxBuildHasher::default().hash_one(data)
+    collections::FxBuildHasher.hash_one(data)
 }
