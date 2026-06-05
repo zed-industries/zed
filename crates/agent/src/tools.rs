@@ -24,6 +24,7 @@ mod skill_tool;
 mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;
+mod thread_history_tools;
 mod tool_permissions;
 mod update_plan_tool;
 mod update_title_tool;
@@ -83,6 +84,7 @@ pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
 pub use terminal_tool::*;
+pub use thread_history_tools::*;
 pub use tool_permissions::*;
 pub use update_plan_tool::*;
 pub use update_title_tool::*;
@@ -185,9 +187,12 @@ tools! {
     GrepTool,
     ListAgentsAndModelsTool,
     ListDirectoryTool,
+    ListThreadsTool,
     MovePathTool,
     ReadFileTool,
+    ReadThreadTool,
     RenameTool,
+    SearchThreadsTool,
     SkillTool,
     SpawnAgentTool,
     TerminalTool,
