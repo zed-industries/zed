@@ -910,7 +910,13 @@ impl Editor {
                 });
             }
             linked_edits.apply(cx);
-            editor.refresh_edit_prediction(true, false, window, cx);
+            editor.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::LSPCompletionAccepted,
+                window,
+                cx,
+            );
         });
         self.invalidate_autoclose_regions(
             &self.selections.disjoint_anchors_arc(),
