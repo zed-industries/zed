@@ -1058,7 +1058,7 @@ impl Item for Editor {
     ) -> Option<gpui::AnyElement> {
         use crate::file_path_nav::FilePathNav;
 
-        if !self.show_breadcrumbs || !EditorSettings::get_global(cx).toolbar.file_path_nav {
+        if !self.breadcrumbs_visible() || !EditorSettings::get_global(cx).toolbar.file_path_nav {
             return None;
         }
         if !self.buffer.read(cx).is_singleton() {
@@ -1078,13 +1078,11 @@ impl Item for Editor {
             .map(|p| p.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or(false);
         let root_name = if show_root {
-            project
-                .upgrade()
-                .and_then(|p| {
-                    p.read(cx)
-                        .worktree_for_id(worktree_id, cx)
-                        .map(|wt| SharedString::from(wt.read(cx).root_name_str().to_owned()))
-                })
+            project.upgrade().and_then(|p| {
+                p.read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .map(|wt| SharedString::from(wt.read(cx).root_name_str().to_owned()))
+            })
         } else {
             None
         };

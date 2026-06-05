@@ -1,16 +1,9 @@
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, collections::HashSet, rc::Rc, sync::Arc};
 
 use file_icons::FileIcons;
 use gpui::{AnyElement, App, Context, ElementId, IntoElement, WeakEntity, Window};
 use project::{Entry, Project, ProjectPath, Worktree, WorktreeId};
-use ui::{
-    ButtonLike, ButtonStyle, Color, ContextMenu, PopoverMenu, PopoverMenuHandle, prelude::*,
-};
+use ui::{ButtonLike, ButtonStyle, Color, ContextMenu, PopoverMenu, PopoverMenuHandle, prelude::*};
 use util::rel_path::RelPath;
 use workspace::{Workspace, notifications::NotifyTaskExt as _};
 
@@ -56,51 +49,56 @@ impl FilePathNav {
         project: WeakEntity<Project>,
         workspace: Option<WeakEntity<Workspace>>,
     ) -> Self {
-        let component_names: Vec<String> =
-            path.components().map(|component| component.to_owned()).collect();
-
-        // `ancestors()` produces the path itself, then its parent, grandparent, …, down to "".
-        // Reversed, this gives ["", "a", "a/b", …, "a/b/c/file"].
-        // The parent_dir for component[i] is the i-th element of this reversed list.
-        let ancestors_reversed: Vec<Arc<RelPath>> = {
-            let mut values: Vec<Arc<RelPath>> = path.ancestors().map(Arc::from).collect();
-            values.reverse();
-            values
-        };
-
-        let mut components: Vec<FilePathComponent> = component_names
-            .into_iter()
-            .zip(ancestors_reversed)
-            .map(|(name, parent_dir)| FilePathComponent {
-                name: SharedString::from(name),
-                parent_dir,
-            })
-            .collect();
-
-        if show_worktree_root
-            && let Some(root_name) = root_name
-        {
-            components.insert(
-                0,
-                FilePathComponent {
-                    name: root_name,
-                    parent_dir: Arc::from(RelPath::empty()),
-                },
-            );
-        }
-
         Self {
             worktree_id,
-            components,
+            components: build_components(&path, show_worktree_root, root_name),
             project,
             workspace,
         }
     }
+}
 
-    #[cfg(test)]
-    pub(crate) fn component_names(&self) -> Vec<&str> {
-        self.components.iter().map(|c| c.name.as_ref()).collect()
+/// Decompose a worktree-relative file path into breadcrumb segments.
+///
+/// Each segment carries the directory whose contents the dropdown shows when
+/// clicked (the path prefix up to, but not including, that segment). When
+/// `show_worktree_root` is set, the worktree root is prepended as the first
+/// segment (used for multi-root projects to disambiguate which root a file is in).
+fn build_components(
+    path: &RelPath,
+    show_worktree_root: bool,
+    root_name: Option<SharedString>,
+) -> Vec<FilePathComponent> {
+    let component_names = path.components().map(|component| component.to_owned());
+
+    // `ancestors()` yields the path itself, then its parent, grandparent, …, down to "".
+    // Reversed, this gives ["", "a", "a/b", …]. The parent_dir for component[i] is the
+    // i-th element of this reversed list; `zip` pairs each name with its prefix.
+    let ancestors_reversed: Vec<Arc<RelPath>> = {
+        let mut values: Vec<Arc<RelPath>> = path.ancestors().map(Arc::from).collect();
+        values.reverse();
+        values
+    };
+
+    let mut components: Vec<FilePathComponent> = component_names
+        .zip(ancestors_reversed)
+        .map(|(name, parent_dir)| FilePathComponent {
+            name: SharedString::from(name),
+            parent_dir,
+        })
+        .collect();
+
+    if show_worktree_root && let Some(root_name) = root_name {
+        components.insert(
+            0,
+            FilePathComponent {
+                name: root_name,
+                parent_dir: Arc::from(RelPath::empty()),
+            },
+        );
     }
+
+    components
 }
 
 pub(crate) fn open_breadcrumb_file(
@@ -187,7 +185,7 @@ fn build_inline_directory_menu(
     expanded_directories: &Rc<RefCell<HashSet<Arc<RelPath>>>>,
     visible_rows: &Rc<RefCell<Vec<InlineMenuRow>>>,
     segment_index: usize,
-    segment_handles: &Arc<Vec<PopoverMenuHandle<ContextMenu>>>,
+    segment_handles: &Rc<Vec<PopoverMenuHandle<ContextMenu>>>,
     _window: &mut Window,
     cx: &mut Context<ContextMenu>,
 ) -> ContextMenu {
@@ -247,7 +245,10 @@ fn build_inline_directory_menu(
             let Some(selected_index) = menu.selected_index() else {
                 return false;
             };
-            let Some(selected_row) = visible_rows_for_parent.borrow().get(selected_index).cloned()
+            let Some(selected_row) = visible_rows_for_parent
+                .borrow()
+                .get(selected_index)
+                .cloned()
             else {
                 return false;
             };
@@ -410,7 +411,7 @@ impl RenderOnce for FilePathNav {
         let project = self.project;
         let workspace = self.workspace;
 
-        let segment_handles: Arc<Vec<PopoverMenuHandle<ContextMenu>>> = Arc::new(
+        let segment_handles: Rc<Vec<PopoverMenuHandle<ContextMenu>>> = Rc::new(
             (0..self.components.len())
                 .map(|_| PopoverMenuHandle::default())
                 .collect(),
@@ -420,11 +421,7 @@ impl RenderOnce for FilePathNav {
 
         for (index, component) in self.components.into_iter().enumerate() {
             if index > 0 {
-                elements.push(
-                    Label::new("/")
-                        .color(Color::Placeholder)
-                        .into_any_element(),
-                );
+                elements.push(Label::new("/").color(Color::Placeholder).into_any_element());
             }
 
             let parent_dir = component.parent_dir.clone();
@@ -444,7 +441,7 @@ impl RenderOnce for FilePathNav {
 
             let segment = PopoverMenu::new(menu_id)
                 .with_handle(menu_handle)
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::Anchor::TopLeft)
                 .menu(move |window, cx| {
                     let Some(project_entity) = project.upgrade() else {
                         log::error!(
@@ -494,5 +491,54 @@ impl RenderOnce for FilePathNav {
         }
 
         h_flex().gap_1().children(elements)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use util::rel_path::RelPath;
+
+    fn names(components: &[FilePathComponent]) -> Vec<&str> {
+        components.iter().map(|c| c.name.as_ref()).collect()
+    }
+
+    fn parents(components: &[FilePathComponent]) -> Vec<&str> {
+        components
+            .iter()
+            .map(|c| c.parent_dir.as_unix_str())
+            .collect()
+    }
+
+    #[test]
+    fn decomposes_nested_path() {
+        let path = RelPath::unix("a/b/file.rs").unwrap();
+        let components = build_components(path, false, None);
+        assert_eq!(names(&components), vec!["a", "b", "file.rs"]);
+        // Each segment's parent_dir is the path prefix before it.
+        assert_eq!(parents(&components), vec!["", "a", "a/b"]);
+    }
+
+    #[test]
+    fn single_file_has_empty_parent() {
+        let path = RelPath::unix("file.rs").unwrap();
+        let components = build_components(path, false, None);
+        assert_eq!(names(&components), vec!["file.rs"]);
+        assert_eq!(parents(&components), vec![""]);
+    }
+
+    #[test]
+    fn prepends_worktree_root_when_requested() {
+        let path = RelPath::unix("a/file.rs").unwrap();
+        let components = build_components(path, true, Some("my-root".into()));
+        assert_eq!(names(&components), vec!["my-root", "a", "file.rs"]);
+        assert_eq!(parents(&components), vec!["", "", "a"]);
+    }
+
+    #[test]
+    fn omits_worktree_root_when_flag_unset() {
+        let path = RelPath::unix("a/file.rs").unwrap();
+        let components = build_components(path, false, Some("my-root".into()));
+        assert_eq!(names(&components), vec!["a", "file.rs"]);
     }
 }

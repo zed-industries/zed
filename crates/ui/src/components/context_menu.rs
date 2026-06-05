@@ -11,7 +11,6 @@ use menu::{
     SelectChild, SelectFirst, SelectLast, SelectNext, SelectNextTarget, SelectParent,
     SelectPrevious, SelectPreviousTarget,
 };
-use settings::Settings;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
