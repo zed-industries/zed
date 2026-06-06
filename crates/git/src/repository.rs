@@ -2049,6 +2049,13 @@ impl GitRepository for RealGitRepository {
                     .await
                     .is_ok()
                 {
+                    let name = match git_binary.run(&["symbolic-ref", &remote_ref]).await {
+                        Ok(resolved) => resolved
+                            .strip_prefix("refs/remotes/")
+                            .map(str::to_owned)
+                            .unwrap_or(name),
+                        Err(_) => name,
+                    };
                     let (_, branch_name) =
                         name.split_once('/').context("Unexpected branch format")?;
                     let local_branch_ref = format!("refs/heads/{branch_name}");
