@@ -831,8 +831,16 @@ impl AutoUpdater {
             return test_install(target_path, cx);
         }
         match OS {
-            "macos" => install_release_macos(&installer_dir, target_path, cx).await,
-            "linux" => install_release_linux(&installer_dir, target_path, cx).await,
+            "macos" => {
+                let running_app_path = cx.update(|cx| cx.app_path())?;
+                let background_executor = cx.background_executor();
+                install_release_macos(&installer_dir, target_path, running_app_path, background_executor).await
+            },
+            "linux" => {
+                let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
+                let running_app_path = cx.update(|cx| cx.app_path())?;
+                install_release_linux(&installer_dir, target_path, channel, running_app_path).await
+            },
             "windows" => install_release_windows(target_path).await,
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }
@@ -978,11 +986,10 @@ async fn download_release(
 async fn install_release_linux(
     temp_dir: &InstallerDir,
     downloaded_tar_gz: &Path,
-    cx: &AsyncApp,
+    channel: &str,
+    running_app_path: PathBuf,
 ) -> Result<Option<PathBuf>> {
-    let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
-    let running_app_path = cx.update(|cx| cx.app_path())?;
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)
@@ -1047,9 +1054,9 @@ async fn install_release_linux(
 async fn install_release_macos(
     temp_dir: &InstallerDir,
     downloaded_dmg: &Path,
-    cx: &AsyncApp,
+    running_app_path: PathBuf,
+    background_executor: &BackgroundExecutor
 ) -> Result<Option<PathBuf>> {
-    let running_app_path = cx.update(|cx| cx.app_path())?;
     let running_app_filename = running_app_path
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
@@ -1077,7 +1084,7 @@ async fn install_release_macos(
     // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
     let _unmounter = MacOsUnmounter {
         mount_path: mount_path.clone(),
-        background_executor: cx.background_executor(),
+        background_executor
     };
 
     let mut cmd = new_command("rsync");
