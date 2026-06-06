@@ -1501,6 +1501,9 @@ impl MarkdownElement {
                 MetadataValue::Scalar(text) | MetadataValue::Raw(text) => {
                     locate_metadata_span(source, content_range, &mut cursor, text)
                 }
+                // Unused: list items render as chips, not text. The cursor isn't
+                // advanced past them because scanning for a normalized item
+                // (`TRUE` stored as `true`) can overshoot into a later key.
                 MetadataValue::List(_) => content_range.clone(),
             };
             self.push_metadata_cell(

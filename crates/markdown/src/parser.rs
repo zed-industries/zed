@@ -188,7 +188,9 @@ fn parse_metadata_rows(
     }
 }
 
-/// `None` signals the block isn't a valid, non-empty YAML mapping.
+/// `None` signals the block isn't a non-empty YAML mapping. Entries with a
+/// non-scalar or empty key are skipped, so one such entry doesn't discard the
+/// whole table.
 fn parse_yaml_metadata_rows(source: &str, source_range: Range<usize>) -> Option<Vec<MetadataRow>> {
     let content = source.get(source_range)?;
     let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(content).ok()?;
@@ -198,14 +200,14 @@ fn parse_yaml_metadata_rows(source: &str, source_range: Range<usize>) -> Option<
 
     let rows = mapping
         .iter()
-        .map(|(key, value)| {
+        .filter_map(|(key, value)| {
             let key = metadata_scalar(key).filter(|key| !key.is_empty())?;
             Some(MetadataRow {
                 key,
                 value: metadata_value(value),
             })
         })
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Vec<_>>();
 
     (!rows.is_empty()).then_some(rows)
 }
@@ -1105,6 +1107,28 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn test_metadata_rows_skip_entries_with_unrenderable_keys() {
+        // A bare `null` key is the null scalar, i.e. an empty key, so it's skipped.
+        let source = "title: Post\nnull: ignored\nauthor: Zed\n";
+        let rows = parse_metadata_rows(MetadataBlockKind::YamlStyle, source, 0..source.len())
+            .expect("expected metadata rows");
+
+        assert_eq!(
+            rows,
+            vec![
+                MetadataRow {
+                    key: "title".into(),
+                    value: MetadataValue::Scalar("Post".into()),
+                },
+                MetadataRow {
+                    key: "author".into(),
+                    value: MetadataValue::Scalar("Zed".into()),
+                },
+            ]
+        );
     }
 
     #[test]
