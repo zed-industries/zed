@@ -1480,8 +1480,10 @@ impl MarkdownElement {
 
         // Recover precise source ranges for rendered text by scanning forward
         // through the block, so selection and search highlights land on the
-        // right source offsets. Values without a verbatim source span (e.g.
-        // block scalars) fall back to the whole block range.
+        // right source offsets. Values the YAML parser normalizes away from
+        // their source text (block scalars, and numbers or quoted strings
+        // re-serialized to a different spelling) have no verbatim span and fall
+        // back to the whole block range.
         let mut cursor = content_range.start;
         for (row_index, row) in rows.iter().enumerate() {
             let key_range = locate_metadata_span(source, content_range, &mut cursor, &row.key);
@@ -3904,6 +3906,38 @@ mod tests {
         );
         // Recognized but not rendered: the frontmatter is stripped from the body.
         assert_eq!(rendered.text_for_range(0..24), "Body");
+    }
+
+    #[gpui::test]
+    fn test_frontmatter_falls_back_to_code_block_for_invalid_yaml(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "---\nkey: [unterminated\n---\nBody",
+            None,
+            MarkdownOptions {
+                render_metadata_blocks: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        // Frontmatter that isn't a valid YAML mapping renders verbatim as a code
+        // block rather than a table, with the body still following it.
+        assert_eq!(rendered.text_for_range(0..31), "key: [unterminated\nBody");
+    }
+
+    #[gpui::test]
+    fn test_frontmatter_renders_nested_mapping_value(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "---\nmeta:\n  nested: true\n---\nBody",
+            None,
+            MarkdownOptions {
+                render_metadata_blocks: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        // A nested mapping keeps its YAML text in the value cell so the structure
+        // stays readable instead of collapsing to one line.
+        assert_eq!(rendered.text_for_range(0..33), "meta\nnested: true\nBody");
     }
 
     fn render_markdown_with_code_span_link(
