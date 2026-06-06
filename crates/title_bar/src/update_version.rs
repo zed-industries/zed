@@ -41,7 +41,10 @@ impl UpdateVersion {
     pub fn update_simulation(&mut self, cx: &mut Context<Self>) {
         let next_state = match self.status {
             AutoUpdateStatus::Idle => AutoUpdateStatus::Checking,
-            AutoUpdateStatus::Checking => AutoUpdateStatus::Downloading {
+            AutoUpdateStatus::Checking => AutoUpdateStatus::Available {
+                version: VersionCheckType::Semantic(Version::new(1, 99, 0)),
+            },
+            AutoUpdateStatus::Available { .. } => AutoUpdateStatus::Downloading {
                 version: VersionCheckType::Semantic(Version::new(1, 99, 0)),
             },
             AutoUpdateStatus::Downloading { .. } => AutoUpdateStatus::Installing {
@@ -117,7 +120,9 @@ impl Render for UpdateVersion {
                     }))
                     .into_any_element()
             }
-            AutoUpdateStatus::Idle | AutoUpdateStatus::Checking { .. } => Empty.into_any_element(),
+            AutoUpdateStatus::Available { .. }
+            | AutoUpdateStatus::Idle
+            | AutoUpdateStatus::Checking { .. } => Empty.into_any_element(),
         }
     }
 }
