@@ -40,7 +40,6 @@
       "f7": "debugger::StepOver",
       "ctrl-f11": "debugger::StepInto",
       "shift-f11": "debugger::StepOut",
-      "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RatePredictions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
       "ctrl-alt-l": "lsp_tool::ToggleMenu",
@@ -602,6 +601,7 @@
   {
     "context": "Workspace",
     "bindings": {
+      "f11": "zed::ToggleFullScreen",
       "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
