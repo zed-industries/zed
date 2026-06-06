@@ -2671,6 +2671,7 @@ impl GitPanel {
         user_agents_md: Option<&str>,
         rules_content: Option<&str>,
         instructions: Option<&str>,
+        skill_content: Option<&str>,
         subject: &str,
         diff_text: &str,
     ) -> String {
@@ -2690,6 +2691,14 @@ impl GitPanel {
             None => String::new(),
         };
 
+        let commit_message_skill_section = match skill_content {
+            Some(skill_content) if !skill_content.trim().is_empty() => format!(
+                "\n\nThe user has selected the following skill for writing commit messages that you should follow:\n\
+                <skill_content name=\"write-commit-message\">\n{skill_content}\n</skill_content>\n"
+            ),
+            _ => String::new(),
+        };
+
         let instructions_section = match instructions {
             Some(instructions) if !instructions.trim().is_empty() => format!(
                 "\n\nThe user has provided the following instructions for writing commit messages that you should follow:\n\
@@ -2705,7 +2714,7 @@ impl GitPanel {
         };
 
         format!(
-            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+            "{prompt}{user_agents_md_section}{rules_section}{commit_message_skill_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
         )
     }
 
