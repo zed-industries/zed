@@ -772,6 +772,8 @@
     "context": "Workspace && debugger_stopped",
     "bindings": {
       "f5": "debugger::Continue",
+      "f11": "debugger::StepInto",
+      "ctrl-f11": "debugger::StepInto",
     },
   },
   {

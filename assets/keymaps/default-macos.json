@@ -824,7 +824,6 @@
       // Unbind `f5` to avoid dispatching the `debugger::Rerun` as that is what `f5` is bound to in the `Workspace`
       // context.
       "f5": null,
-      "f11": "debugger::StepInto",
     },
   },
   {
@@ -832,6 +831,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "f5": "debugger::Continue",
+      "f11": "debugger::StepInto",
+      "ctrl-f11": "debugger::StepInto",
     },
   },
   // Bindings from Sublime Text
