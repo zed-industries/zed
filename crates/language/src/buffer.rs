@@ -3405,6 +3405,32 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
+    pub(crate) fn for_highlighting(
+        text: Rope,
+        language: Arc<Language>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+    ) -> Self {
+        let buffer_id = BufferId::from(std::num::NonZeroU64::MIN);
+        let text =
+            TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
+                .into_snapshot();
+        let mut syntax = SyntaxMap::new(&text).snapshot();
+        syntax.reparse(&text, language_registry, language.clone());
+        let tree_sitter_data = TreeSitterData::new(&text);
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            tree_sitter_data: Arc::new(tree_sitter_data),
+            language: Some(language),
+            non_text_state_update_count: 0,
+            capability: Capability::ReadOnly,
+            modeline: None,
+        }
+    }
+
     /// Returns [`IndentSize`] for a given line that respects user settings and
     /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
