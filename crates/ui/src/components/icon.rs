@@ -121,6 +121,7 @@ pub fn git_hosting_provider_icon(provider_name: &str) -> IconName {
         "GitHub" => IconName::Github,
         "GitLab" => IconName::Gitlab,
         "Gitea" => IconName::Gitea,
+        "SourceHut" => IconName::Sourcehut,
         _ => IconName::Link,
     }
 }

@@ -5,6 +5,7 @@ use crate::{
 };
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
+use file_icons::FileIcons;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     commit::ParsedCommitMessage,
@@ -49,8 +50,8 @@ use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry,
-    DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
+    Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
+    Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
     prelude::*, render_redistributable_columns_resize_handles, render_table_header,
@@ -262,62 +263,262 @@ impl ChangedFileEntry {
     fn render(
         &self,
         ix: usize,
+        depth: usize,
+        directory_label: Option<SharedString>,
         commit_sha: SharedString,
         repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         _cx: &App,
     ) -> AnyElement {
+        const TREE_INDENT: f32 = 12.0;
+
         let file_name = self.file_name.clone();
         let dir_path = self.dir_path.clone();
 
-        div()
-            .w_full()
+        ListItem::new(("changed-file", ix))
+            .spacing(ListItemSpacing::Sparse)
+            .indent_level(depth)
+            .indent_step_size(px(TREE_INDENT))
+            .start_slot(git_status_icon(self.status))
             .child(
-                ButtonLike::new(("changed-file", ix))
-                    .child(
-                        h_flex()
-                            .min_w_0()
-                            .w_full()
-                            .gap_1()
-                            .overflow_hidden()
-                            .child(git_status_icon(self.status))
-                            .child(
-                                Label::new(file_name.clone())
-                                    .size(LabelSize::Small)
-                                    .truncate(),
-                            )
-                            .when(!dir_path.is_empty(), |this| {
-                                this.child(
-                                    Label::new(dir_path.clone())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .truncate_start(),
-                                )
-                            }),
-                    )
-                    .tooltip({
-                        let meta = if dir_path.is_empty() {
-                            file_name
-                        } else {
-                            format!("{}/{}", dir_path, file_name).into()
-                        };
-                        move |_, cx| Tooltip::with_meta("View Changes", None, meta.clone(), cx)
-                    })
-                    .on_click({
-                        let entry = self.clone();
-                        move |_, window, cx| {
-                            entry.open_in_commit_view(
-                                &commit_sha,
-                                &repository,
-                                &workspace,
-                                window,
-                                cx,
-                            );
-                        }
-                    }),
+                Label::new(file_name.clone())
+                    .size(LabelSize::Small)
+                    .truncate(),
             )
+            .when_some(directory_label, |this, directory_label| {
+                this.child(
+                    Label::new(directory_label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .truncate_start(),
+                )
+            })
+            .tooltip({
+                let meta = if dir_path.is_empty() {
+                    file_name
+                } else {
+                    format!("{}/{}", dir_path, file_name).into()
+                };
+                move |_, cx| Tooltip::with_meta("View Changes", None, meta.clone(), cx)
+            })
+            .on_click({
+                let entry = self.clone();
+                move |_, window, cx| {
+                    entry.open_in_commit_view(&commit_sha, &repository, &workspace, window, cx);
+                }
+            })
             .into_any_element()
     }
+}
+
+enum ChangedFileTreeEntry {
+    Directory(ChangedFileDirectoryEntry),
+    File(ChangedFileTreeStatusEntry),
+}
+
+struct ChangedFileTreeStatusEntry {
+    entry: ChangedFileEntry,
+    depth: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ChangedFilesViewMode {
+    Flat,
+    #[default]
+    Tree,
+}
+
+impl ChangedFilesViewMode {
+    fn toggled(self) -> Self {
+        match self {
+            Self::Flat => Self::Tree,
+            Self::Tree => Self::Flat,
+        }
+    }
+
+    fn is_tree(self) -> bool {
+        matches!(self, Self::Tree)
+    }
+}
+
+struct ChangedFileDirectoryEntry {
+    path: RepoPath,
+    name: SharedString,
+    depth: usize,
+    expanded: bool,
+}
+
+impl ChangedFileDirectoryEntry {
+    fn render(&self, ix: usize, git_graph: WeakEntity<GitGraph>, cx: &App) -> AnyElement {
+        const TREE_INDENT: f32 = 12.0;
+
+        let path = self.path.clone();
+        let expanded = self.expanded;
+        let folder_icon = FileIcons::get_folder_icon(expanded, path.as_std_path(), cx)
+            .map(|icon| {
+                Icon::from_path(icon)
+                    .size(IconSize::Small)
+                    .color(Color::Muted)
+            })
+            .unwrap_or_else(|| {
+                let icon = if expanded {
+                    IconName::FolderOpen
+                } else {
+                    IconName::Folder
+                };
+                Icon::new(icon).size(IconSize::Small).color(Color::Muted)
+            });
+
+        ListItem::new(("changed-file-dir", ix))
+            .spacing(ListItemSpacing::Sparse)
+            .indent_level(self.depth)
+            .indent_step_size(px(TREE_INDENT))
+            .toggle(Some(expanded))
+            .always_show_disclosure_icon(true)
+            .on_toggle({
+                let path = path.clone();
+                let git_graph = git_graph.clone();
+                move |_, _, cx| {
+                    git_graph
+                        .update(cx, |git_graph, cx| {
+                            git_graph
+                                .changed_files_expanded_dirs
+                                .insert(path.clone(), !expanded);
+                            cx.notify();
+                        })
+                        .ok();
+                }
+            })
+            .start_slot(folder_icon)
+            .child(
+                Label::new(self.name.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .truncate(),
+            )
+            .tooltip({
+                let name = self.name.clone();
+                move |_, cx| Tooltip::with_meta("Toggle Folder", None, name.clone(), cx)
+            })
+            .on_click(move |_, _, cx| {
+                git_graph
+                    .update(cx, |git_graph, cx| {
+                        git_graph
+                            .changed_files_expanded_dirs
+                            .insert(path.clone(), !expanded);
+                        cx.notify();
+                    })
+                    .ok();
+            })
+            .into_any_element()
+    }
+}
+
+#[derive(Default)]
+struct ChangedFileTreeNode {
+    name: SharedString,
+    path: Option<RepoPath>,
+    children: BTreeMap<SharedString, ChangedFileTreeNode>,
+    files: Vec<ChangedFileEntry>,
+}
+
+fn build_changed_file_tree_entries(
+    mut files: Vec<ChangedFileEntry>,
+    expanded_dirs: &HashMap<RepoPath, bool>,
+) -> Vec<ChangedFileTreeEntry> {
+    files.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+
+    let mut root = ChangedFileTreeNode::default();
+    for file in files {
+        let components: Vec<&str> = file.repo_path.components().collect();
+        if components.is_empty() {
+            root.files.push(file);
+            continue;
+        }
+
+        let mut current = &mut root;
+        let mut current_path = String::new();
+
+        for (ix, component) in components.iter().enumerate() {
+            if ix == components.len() - 1 {
+                current.files.push(file.clone());
+            } else {
+                if !current_path.is_empty() {
+                    current_path.push('/');
+                }
+                current_path.push_str(component);
+
+                let Ok(dir_path) = RepoPath::new(&current_path) else {
+                    continue;
+                };
+                let component = SharedString::from(component.to_string());
+
+                current = current
+                    .children
+                    .entry(component.clone())
+                    .or_insert_with(|| ChangedFileTreeNode {
+                        name: component,
+                        path: Some(dir_path),
+                        ..Default::default()
+                    });
+            }
+        }
+    }
+
+    flatten_changed_file_tree(&root, 0, expanded_dirs)
+}
+
+fn flatten_changed_file_tree(
+    node: &ChangedFileTreeNode,
+    depth: usize,
+    expanded_dirs: &HashMap<RepoPath, bool>,
+) -> Vec<ChangedFileTreeEntry> {
+    let mut entries = Vec::new();
+
+    for child in node.children.values() {
+        let (terminal, name) = compact_changed_file_directory_chain(child);
+        let Some(path) = terminal.path.clone().or_else(|| child.path.clone()) else {
+            continue;
+        };
+        let expanded = *expanded_dirs.get(&path).unwrap_or(&true);
+        let child_entries = flatten_changed_file_tree(terminal, depth + 1, expanded_dirs);
+
+        entries.push(ChangedFileTreeEntry::Directory(ChangedFileDirectoryEntry {
+            path,
+            name,
+            depth,
+            expanded,
+        }));
+
+        if expanded {
+            entries.extend(child_entries);
+        }
+    }
+
+    entries.extend(
+        node.files
+            .iter()
+            .cloned()
+            .map(|entry| ChangedFileTreeEntry::File(ChangedFileTreeStatusEntry { entry, depth })),
+    );
+    entries
+}
+
+fn compact_changed_file_directory_chain(
+    mut node: &ChangedFileTreeNode,
+) -> (&ChangedFileTreeNode, SharedString) {
+    let mut parts = vec![node.name.clone()];
+    while node.files.is_empty() && node.children.len() == 1 {
+        let Some(child) = node.children.values().next() else {
+            continue;
+        };
+        if child.path.is_none() {
+            break;
+        }
+        parts.push(child.name.clone());
+        node = child;
+    }
+    (node, SharedString::from(parts.join("/")))
 }
 
 enum QueryState {
@@ -408,6 +609,8 @@ actions!(
         ScrollUp,
         /// Selects a commit half a page below the current selection.
         ScrollDown,
+        /// Toggles the selected commit's changed files between flat and tree views.
+        ToggleChangedFilesView,
     ]
 );
 
@@ -1133,6 +1336,8 @@ pub struct GitGraph {
     commit_details_split_state: Entity<SplitState>,
     repo_id: RepositoryId,
     changed_files_scroll_handle: UniformListScrollHandle,
+    changed_files_view_mode: ChangedFilesViewMode,
+    changed_files_expanded_dirs: HashMap<RepoPath, bool>,
     pending_select_sha: Option<Oid>,
 }
 
@@ -1353,6 +1558,8 @@ impl GitGraph {
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             repo_id,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
+            changed_files_view_mode: ChangedFilesViewMode::default(),
+            changed_files_expanded_dirs: HashMap::default(),
             pending_select_sha: None,
         };
 
@@ -1689,6 +1896,7 @@ impl GitGraph {
         self.selected_entry_idx = None;
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
+        self.changed_files_expanded_dirs.clear();
         cx.emit(ItemEvent::Edit);
         cx.notify();
     }
@@ -1755,6 +1963,18 @@ impl GitGraph {
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         self.open_selected_commit_view(window, cx);
+    }
+
+    fn toggle_changed_files_view(
+        &mut self,
+        _: &ToggleChangedFilesView,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.changed_files_view_mode = self.changed_files_view_mode.toggled();
+        self.changed_files_scroll_handle
+            .scroll_to_item(0, ScrollStrategy::Top);
+        cx.notify();
     }
 
     fn search(&mut self, query: SharedString, cx: &mut Context<Self>) {
@@ -1880,6 +2100,7 @@ impl GitGraph {
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
+        self.changed_files_expanded_dirs.clear();
         self.changed_files_scroll_handle
             .scroll_to_item(0, ScrollStrategy::Top);
         self.table_interaction_state.update(cx, |state, cx| {
@@ -2560,19 +2781,30 @@ impl GitGraph {
         let (total_lines_added, total_lines_removed) =
             self.selected_commit_diff_stats.unwrap_or((0, 0));
 
-        let sorted_file_entries: Rc<Vec<ChangedFileEntry>> = Rc::new(
-            self.selected_commit_diff
-                .as_ref()
-                .map(|diff| {
-                    let mut files: Vec<_> = diff.files.iter().collect();
+        let changed_file_entries: Vec<ChangedFileEntry> = self
+            .selected_commit_diff
+            .as_ref()
+            .map(|diff| {
+                let mut files = diff.files.iter().collect::<Vec<_>>();
+                if !self.changed_files_view_mode.is_tree() {
                     files.sort_by_key(|file| file.status());
-                    files
-                        .into_iter()
-                        .map(|file| ChangedFileEntry::from_commit_file(file, cx))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        );
+                }
+                files
+                    .into_iter()
+                    .map(|file| ChangedFileEntry::from_commit_file(file, cx))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let changed_file_entries = Rc::new(changed_file_entries);
+        let tree_entries: Rc<Vec<ChangedFileTreeEntry>> = if self.changed_files_view_mode.is_tree()
+        {
+            Rc::new(build_changed_file_tree_entries(
+                changed_file_entries.as_ref().clone(),
+                &self.changed_files_expanded_dirs,
+            ))
+        } else {
+            Rc::default()
+        };
 
         v_flex()
             .min_w(px(300.))
@@ -2595,6 +2827,7 @@ impl GitGraph {
                                     this.selected_entry_idx = None;
                                     this.selected_commit_diff = None;
                                     this.selected_commit_diff_stats = None;
+                                    this.changed_files_expanded_dirs.clear();
                                     this._commit_diff_task = None;
                                     cx.notify();
                                 })),
@@ -2794,11 +3027,48 @@ impl GitGraph {
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                             )
-                            .child(DiffStat::new(
-                                "commit-diff-stat",
-                                total_lines_added,
-                                total_lines_removed,
-                            )),
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(DiffStat::new(
+                                        "commit-diff-stat",
+                                        total_lines_added,
+                                        total_lines_removed,
+                                    ))
+                                    .child(
+                                        IconButton::new(
+                                            "toggle-changed-files-view",
+                                            IconName::ListTree,
+                                        )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .icon_size(IconSize::Small)
+                                        .toggle_state(self.changed_files_view_mode.is_tree())
+                                        .tooltip({
+                                            let tooltip = if self.changed_files_view_mode.is_tree()
+                                            {
+                                                "Show Flat View"
+                                            } else {
+                                                "Show Tree View"
+                                            };
+                                            move |_, cx| {
+                                                Tooltip::for_action(
+                                                    tooltip,
+                                                    &ToggleChangedFilesView,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(
+                                            cx.listener(|this, _, _window, cx| {
+                                                this.changed_files_view_mode =
+                                                    this.changed_files_view_mode.toggled();
+                                                this.changed_files_scroll_handle
+                                                    .scroll_to_item(0, ScrollStrategy::Top);
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ),
+                            ),
                     )
                     .child(
                         div()
@@ -2806,24 +3076,55 @@ impl GitGraph {
                             .flex_1()
                             .min_h_0()
                             .child({
-                                let entries = sorted_file_entries;
-                                let entry_count = entries.len();
+                                let flat_entries = changed_file_entries;
+                                let is_tree_view = self.changed_files_view_mode.is_tree();
+                                let entry_count = if is_tree_view {
+                                    tree_entries.len()
+                                } else {
+                                    flat_entries.len()
+                                };
                                 let commit_sha = full_sha.clone();
                                 let repository = repository.downgrade();
                                 let workspace = self.workspace.clone();
+                                let git_graph = cx.weak_entity();
                                 uniform_list(
                                     "changed-files-list",
                                     entry_count,
                                     move |range, _window, cx| {
                                         range
                                             .map(|ix| {
-                                                entries[ix].render(
-                                                    ix,
-                                                    commit_sha.clone(),
-                                                    repository.clone(),
-                                                    workspace.clone(),
-                                                    cx,
-                                                )
+                                                if is_tree_view {
+                                                    match &tree_entries[ix] {
+                                                        ChangedFileTreeEntry::Directory(entry) => {
+                                                            entry.render(ix, git_graph.clone(), cx)
+                                                        }
+                                                        ChangedFileTreeEntry::File(entry) => {
+                                                            entry.entry.render(
+                                                                ix,
+                                                                entry.depth,
+                                                                None,
+                                                                commit_sha.clone(),
+                                                                repository.clone(),
+                                                                workspace.clone(),
+                                                                cx,
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    let directory_label = (!flat_entries[ix]
+                                                        .dir_path
+                                                        .is_empty())
+                                                    .then(|| flat_entries[ix].dir_path.clone());
+                                                    flat_entries[ix].render(
+                                                        ix,
+                                                        0,
+                                                        directory_label,
+                                                        commit_sha.clone(),
+                                                        repository.clone(),
+                                                        workspace.clone(),
+                                                        cx,
+                                                    )
+                                                }
                                             })
                                             .collect()
                                     },
@@ -3611,6 +3912,7 @@ impl Render for GitGraph {
             .on_action(cx.listener(Self::scroll_up))
             .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::toggle_changed_files_view))
             .on_action(cx.listener(Self::focus_next_tab_stop))
             .on_action(cx.listener(Self::focus_previous_tab_stop))
             .on_action(cx.listener(|this, _: &SelectNextMatch, _window, cx| {

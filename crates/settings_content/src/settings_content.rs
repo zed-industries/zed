@@ -469,17 +469,6 @@ impl strum::VariantNames for BaseKeymapContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
-    /// Automatically increase or decrease you microphone's volume. This affects how
-    /// loud you sound to others.
-    ///
-    /// Recommended: off (default)
-    /// Microphones are too quite in zed, until everyone is on experimental
-    /// audio and has auto speaker volume on this will make you very loud
-    /// compared to other speakers.
-    #[serde(rename = "experimental.auto_microphone_volume")]
-    pub auto_microphone_volume: Option<bool>,
-    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
-    /// not work well on music.
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
@@ -647,7 +636,7 @@ pub struct GitPanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: right
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
@@ -756,7 +745,7 @@ pub struct PanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: right
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
@@ -1001,7 +990,7 @@ pub struct OutlinePanelSettingsContent {
     pub default_width: Option<f32>,
     /// The position of outline panel
     ///
-    /// Default: right
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
     /// Whether to show file icons in the outline panel.
     ///

@@ -860,6 +860,17 @@ impl GitStore {
             .map(|id| self.repositories[id].clone())
     }
 
+    fn file_is_symlink(file: &File, cx: &App) -> bool {
+        file.worktree
+            .read(cx)
+            .entry_for_path(&file.path)
+            .is_some_and(|entry| entry.canonical_path.is_some())
+    }
+
+    fn buffer_is_symlink(buffer: &Entity<Buffer>, cx: &App) -> bool {
+        File::from_dyn(buffer.read(cx).file()).is_some_and(|file| Self::file_is_symlink(file, cx))
+    }
+
     pub fn open_unstaged_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -890,13 +901,18 @@ impl GitStore {
             return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
 
+        let is_symlink = Self::buffer_is_symlink(&buffer, cx);
         let task = self
             .loading_diffs
             .entry((buffer_id, DiffKind::Unstaged))
             .or_insert_with(|| {
-                let staged_text = repo.update(cx, |repo, cx| {
-                    repo.load_staged_text(buffer_id, repo_path, cx)
-                });
+                let staged_text = if is_symlink {
+                    Task::ready(Ok(None))
+                } else {
+                    repo.update(cx, |repo, cx| {
+                        repo.load_staged_text(buffer_id, repo_path, cx)
+                    })
+                };
                 cx.spawn(async move |this, cx| {
                     Self::open_diff_internal(
                         this,
@@ -1048,13 +1064,18 @@ impl GitStore {
             return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
 
+        let is_symlink = Self::buffer_is_symlink(&buffer, cx);
         let task = self
             .loading_diffs
             .entry((buffer_id, DiffKind::Uncommitted))
             .or_insert_with(|| {
-                let changes = repo.update(cx, |repo, cx| {
-                    repo.load_committed_text(buffer_id, repo_path, cx)
-                });
+                let changes = if is_symlink {
+                    Task::ready(Ok(DiffBasesChange::SetBoth(None)))
+                } else {
+                    repo.update(cx, |repo, cx| {
+                        repo.load_committed_text(buffer_id, repo_path, cx)
+                    })
+                };
 
                 // todo(lw): hot foreground spawn
                 cx.spawn(async move |this, cx| {
@@ -1174,8 +1195,7 @@ impl GitStore {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Entity<ConflictSet> {
-        log::debug!("open conflict set");
+    ) -> Task<Entity<ConflictSet>> {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some(git_state) = self.diffs.get(&buffer_id)
@@ -1188,11 +1208,14 @@ impl GitStore {
             let conflict_set = conflict_set;
             let buffer_snapshot = buffer.read(cx).text_snapshot();
 
-            git_state.update(cx, |state, cx| {
-                let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+            let rx = git_state.update(cx, |state, cx| {
+                state.reparse_conflict_markers(buffer_snapshot, cx)
             });
 
-            return conflict_set;
+            return cx.spawn(async move |_, _| {
+                rx.await.ok();
+                conflict_set
+            });
         }
 
         let is_unmerged = self
@@ -1210,13 +1233,16 @@ impl GitStore {
                 cx.emit(GitStoreEvent::ConflictsUpdated);
             }));
 
-        buffer_git_state.update(cx, |state, cx| {
+        let rx = buffer_git_state.update(cx, |state, cx| {
             state.conflict_set = Some(conflict_set.downgrade());
             let buffer_snapshot = buffer.read(cx).text_snapshot();
-            let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+            state.reparse_conflict_markers(buffer_snapshot, cx)
         });
 
-        conflict_set
+        cx.spawn(async move |_, _| {
+            rx.await.ok();
+            conflict_set
+        })
     }
 
     pub fn project_path_git_status(
@@ -1852,14 +1878,18 @@ impl GitStore {
                 {
                     let buffer = buffer.clone();
                     let diff_state = diff_state.clone();
+                    let is_symlink = Self::buffer_is_symlink(&buffer, cx);
 
                     cx.spawn(async move |_git_store, cx| {
                         async {
-                            let diff_bases_change = repo
-                                .update(cx, |repo, cx| {
+                            let diff_bases_change = if is_symlink {
+                                DiffBasesChange::SetBoth(None)
+                            } else {
+                                repo.update(cx, |repo, cx| {
                                     repo.load_committed_text(buffer_id, repo_path, cx)
                                 })
-                                .await?;
+                                .await?
+                            };
 
                             diff_state.update(cx, |diff_state, cx| {
                                 let buffer_snapshot = buffer.read(cx).text_snapshot();
@@ -3809,39 +3839,35 @@ impl BufferGitState {
             return rx;
         };
 
-        let old_snapshot = conflict_set.read_with(cx, |conflict_set, _| {
-            if conflict_set.has_conflict {
-                Some(conflict_set.snapshot())
-            } else {
-                None
-            }
-        });
-
-        if let Some(old_snapshot) = old_snapshot {
-            self.conflict_updated_futures.push(tx);
-            self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
-                let (snapshot, changed_range) = cx
-                    .background_spawn(async move {
-                        let new_snapshot = ConflictSet::parse(&buffer);
-                        let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
-                        (new_snapshot, changed_range)
-                    })
-                    .await;
-                this.update(cx, |this, cx| {
-                    if let Some(conflict_set) = &this.conflict_set {
-                        conflict_set
-                            .update(cx, |conflict_set, cx| {
-                                conflict_set.set_snapshot(snapshot, changed_range, cx);
-                            })
-                            .ok();
-                    }
-                    let futures = std::mem::take(&mut this.conflict_updated_futures);
-                    for tx in futures {
-                        tx.send(()).ok();
-                    }
-                })
-            }))
+        let has_conflict = conflict_set.read_with(cx, |conflict_set, _| conflict_set.has_conflict);
+        if !has_conflict {
+            return rx;
         }
+
+        let old_snapshot = conflict_set.read_with(cx, |conflict_set, _| conflict_set.snapshot());
+        self.conflict_updated_futures.push(tx);
+        self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
+            let (snapshot, changed_range) = cx
+                .background_spawn(async move {
+                    let new_snapshot = ConflictSet::parse(&buffer);
+                    let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
+                    (new_snapshot, changed_range)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(conflict_set) = &this.conflict_set {
+                    conflict_set
+                        .update(cx, |conflict_set, cx| {
+                            conflict_set.set_snapshot(snapshot, changed_range, cx);
+                        })
+                        .ok();
+                }
+                let futures = std::mem::take(&mut this.conflict_updated_futures);
+                for tx in futures {
+                    tx.send(()).ok();
+                }
+            })
+        }));
 
         rx
     }
@@ -4769,6 +4795,7 @@ impl Repository {
                                 let file = File::from_dyn(buffer.read(cx).file())?;
                                 let abs_path = file.worktree.read(cx).absolutize(&file.path);
                                 let repo_path = this.abs_path_to_repo_path(&abs_path)?;
+                                let is_symlink = GitStore::file_is_symlink(file, cx);
                                 log::debug!(
                                     "start reload diff bases for repo path {}",
                                     repo_path.as_unix_str()
@@ -4786,6 +4813,7 @@ impl Repository {
                                     Some((
                                         buffer,
                                         repo_path,
+                                        is_symlink,
                                         has_unstaged_diff.then(|| diff_state.index_text.clone()),
                                         has_uncommitted_diff.then(|| diff_state.head_text.clone()),
                                     ))
@@ -4798,15 +4826,20 @@ impl Repository {
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
                         let mut changes = Vec::new();
-                        for (buffer, repo_path, current_index_text, current_head_text) in
-                            &repo_diff_state_updates
+                        for (
+                            buffer,
+                            repo_path,
+                            is_symlink,
+                            current_index_text,
+                            current_head_text,
+                        ) in &repo_diff_state_updates
                         {
-                            let index_text = if current_index_text.is_some() {
+                            let index_text = if current_index_text.is_some() && !*is_symlink {
                                 backend.load_index_text(repo_path.clone())
                             } else {
                                 future::ready(None).boxed()
                             };
-                            let head_text = if current_head_text.is_some() {
+                            let head_text = if current_head_text.is_some() && !*is_symlink {
                                 backend.load_committed_text(repo_path.clone())
                             } else {
                                 future::ready(None).boxed()
@@ -8971,6 +9004,83 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_uncommitted_diff_skips_symlinks(cx: &mut TestAppContext) {
+        use util::rel_path::rel_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "target.txt": "rule one\nrule two\n",
+            }),
+        )
+        .await;
+        fs.insert_symlink("/project/agents.md", PathBuf::from("target.txt"))
+            .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/.git"),
+            &[
+                // git stores the symlink's target path as the blob for `agents.md`
+                ("agents.md", "target.txt".into()),
+                ("target.txt", "rule one\n".into()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // symlink file should not produce a base diff
+        let symlink_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("agents.md")), cx)
+            })
+            .await
+            .unwrap();
+        let symlink_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(symlink_buffer, cx)
+            })
+            .await
+            .unwrap();
+        symlink_diff.read_with(cx, |diff, _| {
+            assert!(
+                !diff.base_text_exists(),
+                "symlinked buffer should not have a git diff base"
+            );
+        });
+
+        // regular file should still produce a base diff
+        let regular_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("target.txt")), cx)
+            })
+            .await
+            .unwrap();
+        let regular_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(regular_buffer, cx)
+            })
+            .await
+            .unwrap();
+        regular_diff.read_with(cx, |diff, _| {
+            assert!(
+                diff.base_text_exists(),
+                "regular file should have a git diff base"
+            );
         });
     }
 

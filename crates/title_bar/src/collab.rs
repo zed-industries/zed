@@ -5,7 +5,7 @@ use call::{ActiveCall, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
-    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, TaskExt,
+    AnyElement, Empty, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, TaskExt,
     WeakEntity, canvas, point,
 };
 use gpui::{App, Task, Window};
@@ -18,7 +18,8 @@ use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
 use ui::{
     Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, DividerColor,
-    Facepile, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
+    Facepile, KeyBinding, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip,
+    prelude::*,
 };
 use util::rel_path::RelPath;
 use workspace::{ParticipantLocation, notifications::DetachAndPromptErr};
@@ -336,9 +337,9 @@ impl TitleBar {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    ) -> AnyElement {
         let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
-            return Vec::new();
+            return Empty.into_any_element();
         };
 
         let is_connecting_to_project = self
@@ -372,8 +373,6 @@ impl TitleBar {
             .channel_id()
             .and_then(|channel_id| channel_store.read(cx).channel_for_id(channel_id).cloned());
 
-        let mut children = Vec::new();
-
         let effective_quality = stats.effective_quality.unwrap_or(ConnectionQuality::Lost);
         let (signal_icon, signal_color, quality_label) = match effective_quality {
             ConnectionQuality::Excellent => {
@@ -386,246 +385,305 @@ impl TitleBar {
 
         let quality_label: SharedString = quality_label.into();
 
-        children.push(
-            h_flex()
-                .gap_1()
-                .child(
-                    IconButton::new("leave-call", IconName::Exit)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Leave Call"))
-                        .icon_size(IconSize::Small)
-                        .on_click(move |_, _window, cx| {
-                            ActiveCall::global(cx)
-                                .update(cx, |call, cx| call.hang_up(cx))
-                                .detach_and_log_err(cx);
-                        }),
-                )
-                .child(Divider::vertical().color(DividerColor::Border))
-                .into_any_element(),
-        );
-
-        children.push(
-            IconButton::new("call-quality", signal_icon)
-                .icon_size(IconSize::Small)
-                .when_some(signal_color, |button, color| button.icon_color(color))
-                .tooltip(move |_window, cx| {
-                    let quality_label = quality_label.clone();
-                    let latency = format_stat(stats.latency_ms, |v| format!("{:.0}ms", v));
-                    let jitter = format_stat(stats.jitter_ms, |v| format!("{:.0}ms", v));
-                    let packet_loss = format_stat(stats.packet_loss_pct, |v| format!("{:.1}%", v));
-                    let input_lag =
-                        format_stat(stats.input_lag.map(|d| d.as_secs_f64() * 1000.0), |v| {
-                            format!("{:.1}ms", v)
-                        });
-
-                    Tooltip::with_meta(
-                        format!("Connection: {quality_label}"),
-                        Some(&ShowCallStats),
-                        format!(
-                            "Latency: {latency} · Jitter: {jitter} · Loss: {packet_loss} · Input lag: {input_lag}",
-                        ),
-                        cx,
+        h_flex()
+            .gap_1()
+            .pr_1p5()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("leave-call", IconName::Exit)
+                            .tooltip(Tooltip::text("Leave Call"))
+                            .icon_size(IconSize::Small)
+                            .on_click(move |_, _window, cx| {
+                                ActiveCall::global(cx)
+                                    .update(cx, |call, cx| call.hang_up(cx))
+                                    .detach_and_log_err(cx);
+                            }),
                     )
-                })
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(ShowCallStats), cx);
-                })
-                .into_any_element(),
-        );
+                    .child(Divider::vertical().color(DividerColor::Border)),
+            )
+            .child(
+                IconButton::new("call-quality", signal_icon)
+                    .icon_size(IconSize::Small)
+                    .when_some(signal_color, |button, color| button.icon_color(color))
+                    .tooltip(Tooltip::element(move |window, cx| {
+                        let quality_label = quality_label.clone();
+                        let latency = format_stat(stats.latency_ms, |v| format!("{:.0}ms", v));
+                        let jitter = format_stat(stats.jitter_ms, |v| format!("{:.0}ms", v));
+                        let packet_loss =
+                            format_stat(stats.packet_loss_pct, |v| format!("{:.1}%", v));
+                        let input_lag =
+                            format_stat(stats.input_lag.map(|d| d.as_secs_f64() * 1000.0), |v| {
+                                format!("{:.1}ms", v)
+                            });
 
-        if is_local && can_share_projects && !is_connecting_to_project {
-            let is_sharing_disabled = channel.is_some_and(|channel| match channel.visibility {
-                proto::ChannelVisibility::Public => project.visible_worktrees(cx).any(|worktree| {
-                    let worktree_id = worktree.read(cx).id();
+                        let key_binding = KeyBinding::for_action(&ShowCallStats, cx);
+                        let has_key_binding = key_binding.has_binding(window);
 
-                    let settings_location = Some(SettingsLocation {
-                        worktree_id,
-                        path: RelPath::empty(),
-                    });
+                        let stat_row = |label: &'static str, value: String| {
+                            h_flex()
+                                .justify_between()
+                                .gap_4()
+                                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                                .child(Label::new(value).size(LabelSize::Small))
+                        };
 
-                    WorktreeSettings::get(settings_location, cx).prevent_sharing_in_public_channels
-                }),
-                proto::ChannelVisibility::Members => false,
-            });
-
-            children.push(
-                Button::new(
-                    "toggle_sharing",
-                    if is_shared { "Unshare" } else { "Share" },
+                        v_flex()
+                            .child(
+                                h_flex()
+                                    .gap_4()
+                                    .justify_between()
+                                    .child(Label::new(format!("Connection: {quality_label}")))
+                                    .when(has_key_binding, |this| this.child(key_binding)),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(stat_row("Latency", latency))
+                                    .child(stat_row("Jitter", jitter))
+                                    .child(stat_row("Packet loss", packet_loss))
+                                    .child(stat_row("Input lag", input_lag)),
+                            )
+                            .into_any_element()
+                    }))
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(ShowCallStats), cx);
+                    }),
+            )
+            .when(can_use_microphone, |this| {
+                this.child(
+                    IconButton::new(
+                        "mute-microphone",
+                        if is_muted {
+                            IconName::MicMute
+                        } else {
+                            IconName::Mic
+                        },
+                    )
+                    .tooltip(move |_window, cx| {
+                        if is_muted {
+                            if is_deafened {
+                                Tooltip::with_meta(
+                                    "Unmute Microphone",
+                                    None,
+                                    "Audio will be unmuted",
+                                    cx,
+                                )
+                            } else {
+                                Tooltip::simple("Unmute Microphone", cx)
+                            }
+                        } else {
+                            Tooltip::simple("Mute Microphone", cx)
+                        }
+                    })
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_muted)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Error))
+                    .on_click(move |_, _window, cx| toggle_mute(cx)),
                 )
-                .tooltip(Tooltip::text(if is_shared {
-                    "Stop sharing project with call participants"
-                } else {
-                    "Share project with call participants"
-                }))
-                .style(ButtonStyle::Subtle)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(is_shared)
-                .label_size(LabelSize::Small)
-                .when(is_sharing_disabled, |parent| {
-                    parent.disabled(true).tooltip(Tooltip::text(
-                        "This project may not be shared in a public channel.",
-                    ))
-                })
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if is_shared {
-                        this.unshare_project(window, cx);
-                    } else {
-                        this.share_project(cx);
-                    }
-                }))
-                .into_any_element(),
-            );
-        }
-
-        if can_use_microphone {
-            children.push(
+            })
+            .child(
                 IconButton::new(
-                    "mute-microphone",
-                    if is_muted {
-                        IconName::MicMute
+                    "mute-sound",
+                    if is_deafened {
+                        IconName::AudioOff
                     } else {
-                        IconName::Mic
+                        IconName::AudioOn
                     },
                 )
+                .selected_style(ButtonStyle::Tinted(TintColor::Error))
+                .icon_size(IconSize::Small)
+                .toggle_state(is_deafened)
                 .tooltip(move |_window, cx| {
-                    if is_muted {
-                        if is_deafened {
-                            Tooltip::with_meta(
-                                "Unmute Microphone",
-                                None,
-                                "Audio will be unmuted",
-                                cx,
-                            )
+                    if is_deafened {
+                        let label = "Unmute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
                         } else {
-                            Tooltip::simple("Unmute Microphone", cx)
+                            Tooltip::simple(label, cx)
                         }
                     } else {
-                        Tooltip::simple("Mute Microphone", cx)
+                        let label = "Mute Audio";
+
+                        if !muted_by_user {
+                            Tooltip::with_meta(label, None, "Microphone will be muted", cx)
+                        } else {
+                            Tooltip::simple(label, cx)
+                        }
                     }
                 })
-                .style(ButtonStyle::Subtle)
-                .icon_size(IconSize::Small)
-                .toggle_state(is_muted)
-                .selected_style(ButtonStyle::Tinted(TintColor::Error))
-                .on_click(move |_, _window, cx| toggle_mute(cx))
-                .into_any_element(),
-            );
-        }
+                .on_click(move |_, _, cx| toggle_deafen(cx)),
+            )
+            .when(
+                is_local && can_share_projects && !is_connecting_to_project,
+                |this| {
+                    let is_sharing_disabled =
+                        channel.is_some_and(|channel| match channel.visibility {
+                            proto::ChannelVisibility::Public => {
+                                project.visible_worktrees(cx).any(|worktree| {
+                                    let worktree_id = worktree.read(cx).id();
 
-        children.push(
-            IconButton::new(
-                "mute-sound",
-                if is_deafened {
-                    IconName::AudioOff
-                } else {
-                    IconName::AudioOn
+                                    let settings_location = Some(SettingsLocation {
+                                        worktree_id,
+                                        path: RelPath::empty(),
+                                    });
+
+                                    WorktreeSettings::get(settings_location, cx)
+                                        .prevent_sharing_in_public_channels
+                                })
+                            }
+                            proto::ChannelVisibility::Members => false,
+                        });
+
+                    let icon = if is_shared {
+                        IconName::FolderShared
+                    } else {
+                        IconName::FolderShare
+                    };
+
+                    let folder_names = project
+                        .visible_worktrees(cx)
+                        .filter_map(|worktree| {
+                            worktree
+                                .read(cx)
+                                .root_name()
+                                .file_name()
+                                .map(|name| name.to_string())
+                        })
+                        .collect::<Vec<_>>();
+                    let folder_list = folder_names.join(", ");
+
+                    let unshare_meta: SharedString = if folder_list.is_empty() {
+                        "Stop sharing project with call participants".into()
+                    } else {
+                        format!("Stop sharing {folder_list} with call participants").into()
+                    };
+                    let share_meta: SharedString = if folder_list.is_empty() {
+                        "Share active project with call participants".into()
+                    } else {
+                        format!("Share {folder_list} with call participants").into()
+                    };
+
+                    this.child(
+                        IconButton::new("toggle_sharing", icon)
+                            .icon_size(IconSize::Small)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                            .toggle_state(is_shared)
+                            .map(|this| {
+                                if is_shared {
+                                    this.tooltip(move |_, cx| {
+                                        Tooltip::with_meta(
+                                            "Unshare Project",
+                                            None,
+                                            unshare_meta.clone(),
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.unshare_project(window, cx);
+                                        },
+                                    ))
+                                } else if is_sharing_disabled {
+                                    this.disabled(true).tooltip(Tooltip::text(
+                                        "This project may not be shared in a public channel.",
+                                    ))
+                                } else {
+                                    this.tooltip(move |_, cx| {
+                                        Tooltip::with_meta(
+                                            "Share Project",
+                                            None,
+                                            share_meta.clone(),
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.share_project(cx);
+                                        },
+                                    ))
+                                }
+                            }),
+                    )
                 },
             )
-            .style(ButtonStyle::Subtle)
-            .selected_style(ButtonStyle::Tinted(TintColor::Error))
-            .icon_size(IconSize::Small)
-            .toggle_state(is_deafened)
-            .tooltip(move |_window, cx| {
-                if is_deafened {
-                    let label = "Unmute Audio";
+            .when(can_use_microphone && screen_sharing_supported, |parent| {
+                #[cfg(target_os = "linux")]
+                let is_wayland = gpui::guess_compositor() == "Wayland";
+                #[cfg(not(target_os = "linux"))]
+                let is_wayland = false;
 
-                    if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
+                let trigger = IconButton::new("screen-share", IconName::Screen)
+                    .style(ButtonStyle::Subtle)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_screen_sharing)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .tooltip(Tooltip::text(if is_screen_sharing {
+                        "Stop Sharing Screen"
                     } else {
-                        Tooltip::simple(label, cx)
-                    }
+                        "Share Screen"
+                    }))
+                    .on_click(move |_, window, cx| {
+                        let should_share = ActiveCall::global(cx)
+                            .read(cx)
+                            .room()
+                            .is_some_and(|room| !room.read(cx).is_sharing_screen());
+
+                        #[cfg(target_os = "linux")]
+                        {
+                            if is_wayland
+                                && let Some(room) = ActiveCall::global(cx).read(cx).room().cloned()
+                            {
+                                let task = room.update(cx, |room, cx| {
+                                    if should_share {
+                                        room.share_screen_wayland(cx)
+                                    } else {
+                                        room.unshare_screen(true, cx)
+                                            .map(|()| Task::ready(Ok(())))
+                                            .unwrap_or_else(|e| Task::ready(Err(e)))
+                                    }
+                                });
+                                task.detach_and_prompt_err(
+                                    "Sharing Screen Failed",
+                                    window,
+                                    cx,
+                                    |e, _, _| Some(format!("{e:?}")),
+                                );
+                            }
+                        }
+                        if !is_wayland {
+                            window
+                                .spawn(cx, async move |cx| {
+                                    let screen = if should_share {
+                                        cx.update(|_, cx| pick_default_screen(cx))?.await
+                                    } else {
+                                        Ok(None)
+                                    };
+                                    cx.update(|window, cx| {
+                                        toggle_screen_sharing(screen, window, cx)
+                                    })?;
+
+                                    Result::<_, anyhow::Error>::Ok(())
+                                })
+                                .detach();
+                        }
+                    });
+
+                if is_wayland {
+                    parent.child(trigger)
                 } else {
-                    let label = "Mute Audio";
-
-                    if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be muted", cx)
-                    } else {
-                        Tooltip::simple(label, cx)
-                    }
+                    parent.child(
+                        SplitButton::new(
+                            trigger.render(window, cx),
+                            self.render_screen_list().into_any_element(),
+                        )
+                        .style(SplitButtonStyle::Transparent),
+                    )
                 }
             })
-            .on_click(move |_, _, cx| toggle_deafen(cx))
-            .into_any_element(),
-        );
-
-        if can_use_microphone && screen_sharing_supported {
-            #[cfg(target_os = "linux")]
-            let is_wayland = gpui::guess_compositor() == "Wayland";
-            #[cfg(not(target_os = "linux"))]
-            let is_wayland = false;
-
-            let trigger = IconButton::new("screen-share", IconName::Screen)
-                .style(ButtonStyle::Subtle)
-                .icon_size(IconSize::Small)
-                .toggle_state(is_screen_sharing)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .tooltip(Tooltip::text(if is_screen_sharing {
-                    "Stop Sharing Screen"
-                } else {
-                    "Share Screen"
-                }))
-                .on_click(move |_, window, cx| {
-                    let should_share = ActiveCall::global(cx)
-                        .read(cx)
-                        .room()
-                        .is_some_and(|room| !room.read(cx).is_sharing_screen());
-
-                    #[cfg(target_os = "linux")]
-                    {
-                        if is_wayland
-                            && let Some(room) = ActiveCall::global(cx).read(cx).room().cloned()
-                        {
-                            let task = room.update(cx, |room, cx| {
-                                if should_share {
-                                    room.share_screen_wayland(cx)
-                                } else {
-                                    room.unshare_screen(true, cx)
-                                        .map(|()| Task::ready(Ok(())))
-                                        .unwrap_or_else(|e| Task::ready(Err(e)))
-                                }
-                            });
-                            task.detach_and_prompt_err(
-                                "Sharing Screen Failed",
-                                window,
-                                cx,
-                                |e, _, _| Some(format!("{e:?}")),
-                            );
-                        }
-                    }
-                    if !is_wayland {
-                        window
-                            .spawn(cx, async move |cx| {
-                                let screen = if should_share {
-                                    cx.update(|_, cx| pick_default_screen(cx))?.await
-                                } else {
-                                    Ok(None)
-                                };
-                                cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
-
-                                Result::<_, anyhow::Error>::Ok(())
-                            })
-                            .detach();
-                    }
-                });
-
-            if is_wayland {
-                children.push(trigger.into_any_element());
-            } else {
-                children.push(
-                    SplitButton::new(
-                        trigger.render(window, cx),
-                        self.render_screen_list().into_any_element(),
-                    )
-                    .style(SplitButtonStyle::Transparent)
-                    .into_any_element(),
-                );
-            }
-        }
-
-        children.push(div().pr_2().into_any_element());
-
-        children
+            .into_any_element()
     }
 
     fn render_screen_list(&self) -> impl IntoElement {

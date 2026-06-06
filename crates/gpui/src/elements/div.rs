@@ -46,7 +46,7 @@ use std::{
 use super::ImageCacheProvider;
 
 const DRAG_THRESHOLD: f64 = 2.;
-const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
+const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
 /// The styling information for a given group.
@@ -643,6 +643,12 @@ impl Interactivity {
             build: Rc::new(build_tooltip),
             hoverable: true,
         });
+    }
+
+    /// Set the delay before this element's tooltip is shown.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip_show_delay`].
+    pub fn tooltip_show_delay(&mut self, delay: Duration) {
+        self.tooltip_show_delay = Some(delay);
     }
 
     /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
@@ -1441,6 +1447,16 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self.interactivity().hoverable_tooltip(build_tooltip);
         self
     }
+
+    /// Set the delay before this element's tooltip is shown.
+    /// The fluent API equivalent to [`Interactivity::tooltip_show_delay`].
+    fn tooltip_show_delay(mut self, delay: Duration) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().tooltip_show_delay(delay);
+        self
+    }
 }
 
 pub(crate) type MouseDownListener =
@@ -1836,6 +1852,7 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
+    pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) tab_index: Option<isize>,
@@ -2748,6 +2765,7 @@ impl Interactivity {
                     build_tooltip,
                     check_is_hovered,
                     check_is_hovered_during_prepaint,
+                    self.tooltip_show_delay,
                     window,
                 );
             }
@@ -3195,9 +3213,11 @@ pub(crate) fn register_tooltip_mouse_handlers(
     build_tooltip: Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered: Rc<dyn Fn(&Window) -> bool>,
     check_is_hovered_during_prepaint: Rc<dyn Fn(&Window) -> bool>,
+    show_delay: Option<Duration>,
     window: &mut Window,
 ) {
     let current_view = window.current_view();
+    let show_delay = show_delay.unwrap_or(DEFAULT_TOOLTIP_SHOW_DELAY);
 
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
@@ -3212,6 +3232,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
                 tooltip_id,
                 current_view,
                 phase,
+                show_delay,
                 window,
                 cx,
             )
@@ -3256,6 +3277,7 @@ fn handle_tooltip_mouse_move(
     tooltip_id: Option<TooltipId>,
     current_view: EntityId,
     phase: DispatchPhase,
+    show_delay: Duration,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -3320,7 +3342,7 @@ fn handle_tooltip_mouse_move(
                 let build_tooltip = build_tooltip.clone();
                 let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
                 async move |cx| {
-                    cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
+                    cx.background_executor().timer(show_delay).await;
                     let Some(active_tooltip) = weak_active_tooltip.upgrade() else {
                         return;
                     };
@@ -3846,7 +3868,10 @@ impl ScrollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext};
+    use crate::{
+        AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext,
+        util::FluentBuilder as _,
+    };
     use std::rc::Weak;
 
     struct TestTooltipView;
@@ -3933,6 +3958,7 @@ mod tests {
 
     struct TooltipOwner {
         captured_active_tooltip: CapturedActiveTooltip,
+        show_delay_override: Option<Duration>,
     }
 
     impl Render for TooltipOwner {
@@ -3945,7 +3971,10 @@ mod tests {
                             .id("target")
                             .w(px(50.))
                             .h(px(50.))
-                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                            .when_some(self.show_delay_override, |this, delay| {
+                                this.tooltip_show_delay(delay)
+                            }),
                     )
                     .into_any_element(),
                 captured_active_tooltip: self.captured_active_tooltip.clone(),
@@ -3991,7 +4020,9 @@ mod tests {
         assert_eq!(handle.offset().y, px(-25.));
     }
 
-    fn setup_tooltip_owner_test() -> (
+    fn setup_tooltip_owner_test(
+        show_delay_override: Option<Duration>,
+    ) -> (
         TestAppContext,
         crate::AnyWindowHandle,
         CapturedActiveTooltip,
@@ -4002,6 +4033,7 @@ mod tests {
             let captured_active_tooltip = captured_active_tooltip.clone();
             move |_, _| TooltipOwner {
                 captured_active_tooltip,
+                show_delay_override,
             }
         });
         let any_window = window.into();
@@ -4037,7 +4069,7 @@ mod tests {
 
     #[test]
     fn tooltip_waiting_for_show_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -4058,13 +4090,44 @@ mod tests {
     }
 
     #[test]
-    fn tooltip_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+    fn tooltip_respects_custom_show_delay() {
+        let extra_delay = Duration::from_secs(1);
+        let show_delay_override = DEFAULT_TOOLTIP_SHOW_DELAY + extra_delay;
+        let (mut test_app, _any_window, captured_active_tooltip) =
+            setup_tooltip_owner_test(Some(show_delay_override));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
 
-        test_app.dispatcher.advance_clock(TOOLTIP_SHOW_DELAY);
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        test_app.dispatcher.advance_clock(extra_delay);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+    }
+
+    #[test]
+    fn tooltip_is_released_when_its_owner_disappears() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         test_app.run_until_parked();
 
         assert!(matches!(
@@ -4085,12 +4148,14 @@ mod tests {
 
     #[test]
     fn tooltip_hides_after_mouse_leaves_origin() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
 
-        test_app.dispatcher.advance_clock(TOOLTIP_SHOW_DELAY);
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         test_app.run_until_parked();
 
         assert!(matches!(
