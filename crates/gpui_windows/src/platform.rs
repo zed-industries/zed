@@ -7,11 +7,12 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot::{self, Receiver};
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -66,6 +67,7 @@ pub struct WindowsPlatform {
     text_system: Arc<dyn PlatformTextSystem>,
     direct_write_text_system: Option<Arc<DirectWriteTextSystem>>,
     drop_target_helper: Option<IDropTargetHelper>,
+    shell_executor: WindowsShellExecutor,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     invalidate_devices: Arc<AtomicBool>,
@@ -112,6 +114,93 @@ struct PlatformCallbacks {
     system_sleep: Cell<Option<Box<dyn FnMut()>>>,
     system_wake: Cell<Option<Box<dyn FnMut()>>>,
     displays_changed: Cell<Option<Box<dyn FnMut()>>>,
+}
+
+type WindowsShellJob = Box<dyn FnOnce() + Send + 'static>;
+
+/// Runs short Windows shell COM jobs on a dedicated OLE-initialized thread.
+///
+/// Windows shell APIs such as jump lists and shell namespace operations require COM/OLE
+/// initialization, but GPUI's generic background executor uses Windows thread-pool threads
+/// that do not guarantee any particular COM apartment.
+#[derive(Clone)]
+struct WindowsShellExecutor {
+    sender: mpsc::Sender<WindowsShellJob>,
+}
+
+impl WindowsShellExecutor {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel::<WindowsShellJob>();
+        std::thread::spawn(move || {
+            let _ole_initializer =
+                OleInitializer::new("unable to initialize Windows OLE for shell executor")
+                    .log_err();
+            for job in receiver {
+                job();
+            }
+        });
+        Self { sender }
+    }
+
+    /// Queues a shell job and returns a task that resolves with its result.
+    fn spawn<T>(
+        &self,
+        background_executor: &BackgroundExecutor,
+        job: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Task<Result<T>>
+    where
+        T: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Box::new(move || {
+                _ = tx.send(job());
+            }))
+            .log_err();
+
+        background_executor.spawn(async move {
+            rx.await
+                .context("Windows shell executor stopped before completing job")?
+        })
+    }
+
+    /// Queues a shell job and logs any error without waiting for completion.
+    fn detach(
+        &self,
+        background_executor: &BackgroundExecutor,
+        job: impl FnOnce() -> Result<()> + Send + 'static,
+    ) {
+        let task = self.spawn(background_executor, job);
+        background_executor
+            .spawn(async move {
+                task.await.log_err();
+            })
+            .detach();
+    }
+}
+
+struct OleInitializer {
+    not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl OleInitializer {
+    fn new(context: &'static str) -> Result<Self> {
+        // SAFETY: OLE initialization is thread-local. Constructing this guard records
+        // a successful initialization on the current thread, and its `Drop` implementation
+        // balances it with `OleUninitialize` on the same thread.
+        unsafe { OleInitialize(None) }.context(context)?;
+        Ok(Self {
+            not_send: std::marker::PhantomData,
+        })
+    }
+}
+
+impl Drop for OleInitializer {
+    fn drop(&mut self) {
+        // SAFETY: `OleInitializer` is only constructed after `OleInitialize` succeeds, and
+        // the guard is not sent to another thread, so this balances that call on the same thread.
+        unsafe { OleUninitialize() };
+    }
 }
 
 impl WindowsPlatformState {
@@ -281,6 +370,7 @@ impl WindowsPlatform {
             disable_direct_composition,
             has_package_identity: has_package_identity(),
             drop_target_helper,
+            shell_executor: WindowsShellExecutor::new(),
             invalidate_devices: Arc::new(AtomicBool::new(false)),
             app_identity: RefCell::new(None),
             system_notifications: RefCell::new(SystemNotificationState::new()),
@@ -333,11 +423,10 @@ impl WindowsPlatform {
             .map(|menu| (menu.name.clone(), menu.description.clone()))
             .collect::<Vec<_>>();
         let recent_workspaces = borrow.recent_workspaces.clone();
-        self.background_executor
-            .spawn(async move {
-                update_jump_list(&recent_workspaces, &dock_menus).log_err();
-            })
-            .detach();
+        self.shell_executor
+            .detach(&self.background_executor, move || {
+                update_jump_list(&recent_workspaces, &dock_menus).map(|_| ())
+            });
     }
 
     fn update_jump_list(
@@ -360,11 +449,13 @@ impl WindowsPlatform {
             .map(|menu| (menu.name.clone(), menu.description.clone()))
             .collect::<Vec<_>>();
         let recent_workspaces = jump_list.recent_workspaces.clone();
-        self.background_executor.spawn(async move {
-            update_jump_list(&recent_workspaces, &dock_menus)
-                .log_err()
-                .unwrap_or_default()
-        })
+        let task = self
+            .shell_executor
+            .spawn(&self.background_executor, move || {
+                update_jump_list(&recent_workspaces, &dock_menus)
+            });
+        self.background_executor
+            .spawn(async move { task.await.log_err().unwrap_or_default() })
     }
 
     fn find_current_active_window(&self) -> Option<HWND> {
@@ -827,13 +918,11 @@ impl Platform for WindowsPlatform {
             return;
         }
         let path = path.to_path_buf();
-        self.background_executor()
-            .spawn(async move {
+        self.shell_executor
+            .detach(&self.background_executor, move || {
                 open_target_in_explorer(&path)
                     .with_context(|| format!("Revealing path {} in explorer", path.display()))
-                    .log_err();
-            })
-            .detach();
+            });
     }
 
     fn open_with_system(&self, path: &Path) {
