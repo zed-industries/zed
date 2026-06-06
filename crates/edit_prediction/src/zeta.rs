@@ -567,6 +567,7 @@ fn handle_api_response<T>(
 
 const ACTIVE_BUFFER_DIAGNOSTIC_ADDITIONAL_CONTEXT_TOKEN_COUNT: usize = 100;
 const MAX_ACTIVE_BUFFER_DIAGNOSTICS_TO_COLLECT: usize = 20;
+const MAX_ACTIVE_BUFFER_DIAGNOSTIC_MESSAGE_TOKENS_TO_COLLECT: usize = 512;
 const MAX_ACTIVE_BUFFER_DIAGNOSTIC_SNIPPET_TOKENS_TO_COLLECT: usize = 512;
 
 pub(crate) fn active_buffer_diagnostics(
@@ -601,7 +602,11 @@ pub(crate) fn active_buffer_diagnostics(
             };
             (
                 severity,
-                entry.diagnostic.message.clone(),
+                zeta_prompt::clamp_text_to_token_count(
+                    &entry.diagnostic.message,
+                    MAX_ACTIVE_BUFFER_DIAGNOSTIC_MESSAGE_TOKENS_TO_COLLECT,
+                )
+                .to_string(),
                 diagnostic_point_range,
                 snippet_point_range,
             )
