@@ -1503,28 +1503,36 @@ impl MarkdownElement {
                 }
                 MetadataValue::List(_) => content_range.clone(),
             };
-            self.push_metadata_cell(builder, content_range, markdown_end, row_index, false, cx, {
-                let value = &row.value;
-                let raw_text_style = self.style.code_block.text.to_owned();
-                move |builder| match value {
-                    MetadataValue::Scalar(text) => {
-                        builder.push_text(text, value_range);
+            self.push_metadata_cell(
+                builder,
+                content_range,
+                markdown_end,
+                row_index,
+                false,
+                cx,
+                {
+                    let value = &row.value;
+                    let raw_text_style = self.style.code_block.text.to_owned();
+                    move |builder| match value {
+                        MetadataValue::Scalar(text) => {
+                            builder.push_text(text, value_range);
+                        }
+                        MetadataValue::Raw(text) => {
+                            builder.push_text_style(raw_text_style);
+                            builder.push_text(text, value_range);
+                            builder.pop_text_style();
+                        }
+                        MetadataValue::List(items) => {
+                            builder.push_image_child(
+                                h_flex()
+                                    .flex_wrap()
+                                    .gap_1()
+                                    .children(items.iter().map(|item| Chip::new(item.clone()))),
+                            );
+                        }
                     }
-                    MetadataValue::Raw(text) => {
-                        builder.push_text_style(raw_text_style);
-                        builder.push_text(text, value_range);
-                        builder.pop_text_style();
-                    }
-                    MetadataValue::List(items) => {
-                        builder.push_image_child(
-                            h_flex()
-                                .flex_wrap()
-                                .gap_1()
-                                .children(items.iter().map(|item| Chip::new(item.clone()))),
-                        );
-                    }
-                }
-            });
+                },
+            );
         }
 
         builder.pop_div();
@@ -1551,9 +1559,7 @@ impl MarkdownElement {
                 .border_color(cx.theme().colors().border)
                 .when(row_index > 0, |this| this.border_t_1())
                 .when(!is_key, |this| this.border_l_1())
-                .when(is_key, |this| {
-                    this.bg(cx.theme().colors().panel_background)
-                }),
+                .when(is_key, |this| this.bg(cx.theme().colors().panel_background)),
             block_range,
             markdown_end,
         );
