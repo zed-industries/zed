@@ -37,7 +37,6 @@
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::RerunSession",
       "f6": "debugger::Pause",
-      "shift-f11": "debugger::StepOut",
       "ctrl-alt-z": "edit_prediction::RatePredictions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
       "ctrl-alt-l": "lsp_tool::ToggleMenu",
@@ -745,6 +744,7 @@
       "f10": "debugger::StepOver",
       "f11": "debugger::StepInto",
       "ctrl-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
     },
   },
   {
