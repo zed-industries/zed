@@ -1044,6 +1044,15 @@ impl Domain for WorkspaceDb {
             ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
             ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
         ),
+        sql!(
+            CREATE TABLE window_theme_overrides (
+                workspace_id INTEGER PRIMARY KEY,
+                theme_name TEXT NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            );
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -2407,6 +2416,28 @@ impl WorkspaceDb {
         pub async fn update_timestamp(workspace_id: WorkspaceId) -> Result<()> {
             UPDATE workspaces
             SET timestamp = CURRENT_TIMESTAMP
+            WHERE workspace_id = ?
+        }
+    }
+
+    query! {
+        pub async fn save_window_theme_override(workspace_id: WorkspaceId, theme_name: String) -> Result<()> {
+            INSERT INTO window_theme_overrides(workspace_id, theme_name)
+            VALUES (?1, ?2)
+            ON CONFLICT(workspace_id) DO UPDATE SET theme_name = ?2
+        }
+    }
+
+    query! {
+        pub async fn delete_window_theme_override(workspace_id: WorkspaceId) -> Result<()> {
+            DELETE FROM window_theme_overrides
+            WHERE workspace_id = ?
+        }
+    }
+
+    query! {
+        pub fn window_theme_override(workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT theme_name FROM window_theme_overrides
             WHERE workspace_id = ?
         }
     }

@@ -6891,6 +6891,31 @@ impl Workspace {
         self.session_id.clone()
     }
 
+    /// Persists (or clears) this workspace's per-window theme override so it is
+    /// restored on the next launch. The override is stored in the user's
+    /// workspace database keyed by this workspace — never in project settings —
+    /// so the user, not an opened repository, decides per-window appearance.
+    /// No-op until the workspace has a database id.
+    pub fn persist_window_theme_override(&self, window: &Window, cx: &mut App) {
+        let Some(workspace_id) = self.database_id else {
+            return;
+        };
+        let window_id = window.window_handle().window_id();
+        let theme_name = theme::WindowThemeOverrides::theme_name(cx, window_id);
+        let db = WorkspaceDb::global(cx);
+        cx.background_executor()
+            .spawn(async move {
+                match theme_name {
+                    Some(theme_name) => db
+                        .save_window_theme_override(workspace_id, theme_name.to_string())
+                        .await
+                        .log_err(),
+                    None => db.delete_window_theme_override(workspace_id).await.log_err(),
+                };
+            })
+            .detach();
+    }
+
     fn save_window_bounds(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(display) = window.display(cx) else {
             return Task::ready(());
@@ -7323,6 +7348,14 @@ impl Workspace {
                         dock.serialized_dock = Some(serialized_dock.clone());
                         dock.restore_state(window, cx);
                     });
+                }
+
+                // Restore a per-window theme override saved for this workspace.
+                if let Ok(Some(theme_name)) =
+                    WorkspaceDb::global(cx).window_theme_override(serialized_workspace.id)
+                {
+                    let window_id = window.window_handle().window_id();
+                    theme_settings::set_window_theme(cx, window_id, theme_name.into());
                 }
 
                 cx.notify();

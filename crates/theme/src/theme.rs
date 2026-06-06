@@ -19,6 +19,7 @@ mod schema;
 mod styles;
 mod theme_settings_provider;
 mod ui_density;
+mod window_theme;
 
 use std::sync::Arc;
 
@@ -40,6 +41,7 @@ pub use crate::schema::*;
 pub use crate::styles::*;
 pub use crate::theme_settings_provider::*;
 pub use crate::ui_density::*;
+pub use crate::window_theme::*;
 
 /// The name of the default dark theme.
 pub const DEFAULT_DARK_THEME: &str = "One Dark";
@@ -112,7 +114,25 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
             .unwrap()
     });
     let icon_theme = themes.default_icon_theme().unwrap();
-    cx.set_global(GlobalTheme { theme, icon_theme });
+    cx.set_global(GlobalTheme::new(theme, icon_theme));
+
+    // Per-window theming: a registry of user-chosen, per-window theme overrides
+    // and a draw hook that swaps the active theme into place at the start of each
+    // window's render pass. Windows without an override render the configured
+    // theme.
+    cx.set_global(WindowThemeOverrides::default());
+    cx.observe_window_draw(|window, cx| {
+        let window_id = window.window_handle().window_id();
+        WindowThemeOverrides::apply_for_window(cx, window_id);
+    })
+    .detach();
+    // Drop a closed window's override so the in-memory map doesn't grow for the
+    // lifetime of the session. The persisted override (keyed by workspace) is
+    // untouched and still restores on reopen.
+    cx.on_window_closed(|cx, window_id| {
+        WindowThemeOverrides::clear(cx, window_id);
+    })
+    .detach();
 }
 
 /// Implementing this trait allows accessing the active theme.
@@ -291,20 +311,44 @@ pub fn deserialize_icon_theme(bytes: &[u8]) -> anyhow::Result<IconThemeFamilyCon
 
 /// The active theme.
 pub struct GlobalTheme {
+    /// The theme used for the render pass currently in progress. The per-window
+    /// theming hook swaps this at the start of each window's draw via
+    /// [`GlobalTheme::set_active_theme`]; for windows without an override it
+    /// equals `configured_theme`.
     theme: Arc<Theme>,
+    /// The app-wide theme configured via settings. Used as the fallback for
+    /// windows that have no per-window override, and never swapped per frame.
+    configured_theme: Arc<Theme>,
     icon_theme: Arc<IconTheme>,
 }
 impl Global for GlobalTheme {}
 
 impl GlobalTheme {
-    /// Creates a new [`GlobalTheme`] with the given theme and icon theme.
+    /// Creates a new [`GlobalTheme`] with the given theme and icon theme. The
+    /// given theme becomes both the active and the configured theme.
     pub fn new(theme: Arc<Theme>, icon_theme: Arc<IconTheme>) -> Self {
-        Self { theme, icon_theme }
+        Self {
+            configured_theme: theme.clone(),
+            theme,
+            icon_theme,
+        }
     }
 
-    /// Updates the active theme.
+    /// Updates the app-wide configured theme (and the active theme) and notifies
+    /// observers. Called when the theme settings change.
     pub fn update_theme(cx: &mut App, theme: Arc<Theme>) {
-        cx.update_global::<Self, _>(|this, _| this.theme = theme);
+        cx.update_global::<Self, _>(|this, _| {
+            this.configured_theme = theme.clone();
+            this.theme = theme;
+        });
+    }
+
+    /// Sets the theme for the render pass currently in progress *without*
+    /// notifying observers. Used by the per-window theming draw hook every frame;
+    /// notifying here would re-invalidate the window and cause an unbounded
+    /// redraw loop. See [`gpui::App::update_global_quietly`].
+    pub fn set_active_theme(cx: &mut App, theme: Arc<Theme>) {
+        cx.update_global_quietly::<Self, _>(|this, _| this.theme = theme);
     }
 
     /// Updates the active icon theme.
@@ -312,9 +356,15 @@ impl GlobalTheme {
         cx.update_global::<Self, _>(|this, _| this.icon_theme = icon_theme);
     }
 
-    /// Returns the active theme.
+    /// Returns the active theme (the theme for the window currently drawing).
     pub fn theme(cx: &App) -> &Arc<Theme> {
         &cx.global::<Self>().theme
+    }
+
+    /// Returns the app-wide configured theme — the fallback used for windows
+    /// without a per-window override.
+    pub fn configured_theme(cx: &App) -> &Arc<Theme> {
+        &cx.global::<Self>().configured_theme
     }
 
     /// Returns the active icon theme.
