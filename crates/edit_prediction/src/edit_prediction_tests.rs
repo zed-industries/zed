@@ -1471,7 +1471,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            EditPredictionRequestTrigger::Other,
+            EditPredictionRequestTrigger::Explicit,
             cx,
         );
     });
@@ -1490,6 +1490,15 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
                 .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
+        let shown_predictions = ep_store.shown_predictions().collect::<Vec<_>>();
+        assert_eq!(shown_predictions.len(), 1);
+        assert_eq!(shown_predictions[0].id.to_string(), id);
+        assert!(shown_predictions[0].edits.is_empty());
+        assert!(shown_predictions[0].editable_range.is_some());
+        assert!(matches!(
+            shown_predictions[0].trigger,
+            PredictEditsRequestTrigger::Explicit
+        ));
     });
 
     // prediction is reported as rejected
@@ -1559,6 +1568,11 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
                 .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
+        let shown_predictions = ep_store.shown_predictions().collect::<Vec<_>>();
+        assert_eq!(shown_predictions.len(), 1);
+        assert_eq!(shown_predictions[0].id.to_string(), id);
+        assert!(shown_predictions[0].edits.is_empty());
+        assert!(shown_predictions[0].editable_range.is_some());
     });
 
     // prediction is reported as rejected
@@ -1774,6 +1788,11 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
                 .0,
             first_id
         );
+        let shown_prediction_ids = ep_store
+            .shown_predictions()
+            .map(|prediction| prediction.id.to_string())
+            .collect::<Vec<_>>();
+        assert!(shown_prediction_ids.is_empty());
     });
 
     // second is reported as rejected
@@ -2962,6 +2981,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             repo_url: None,
         },
         model_version: None,
+        trigger: PredictEditsRequestTrigger::Other,
     };
 
     cx.update(|cx| {

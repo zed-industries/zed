@@ -756,6 +756,14 @@ pub struct EditPreview {
 }
 
 impl EditPreview {
+    pub fn unchanged(snapshot: &BufferSnapshot) -> Self {
+        Self {
+            old_snapshot: snapshot.text.clone(),
+            applied_edits_snapshot: snapshot.text.clone(),
+            syntax_snapshot: snapshot.syntax.clone(),
+        }
+    }
+
     pub fn as_unified_diff(
         &self,
         file: Option<&Arc<dyn File>>,
