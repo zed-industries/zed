@@ -144,12 +144,12 @@ impl WindowsShellExecutor {
     }
 }
 
-struct OleInitializer {
+pub(crate) struct OleInitializer {
     not_send: std::marker::PhantomData<*const ()>,
 }
 
 impl OleInitializer {
-    fn new(context: &'static str) -> Result<Self> {
+    pub(crate) fn new(context: &'static str) -> Result<Self> {
         // SAFETY: OLE initialization is thread-local. Constructing this guard records
         // a successful initialization on the current thread, and its `Drop` implementation
         // balances it with `OleUninitialize` on the same thread.
