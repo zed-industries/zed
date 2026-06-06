@@ -149,6 +149,9 @@ pub struct OpenSettingsAt {
     pub target: Option<OpenSettingsAtTarget>,
 }
 
+/// `OpenSettingsAt` path of the agent skills page in the settings UI.
+pub const AGENT_SKILLS_SETTINGS_PATH: &str = "agent.skills";
+
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenSettingsAtTarget {
@@ -577,7 +580,6 @@ pub mod assistant {
     use gpui::{Action, actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
-    use uuid::Uuid;
 
     actions!(
         agent,
@@ -597,17 +599,11 @@ pub mod assistant {
             /// Opens the project AGENTS.md rules file.
             #[action(name = "OpenProjectAGENTS.mdRules")]
             OpenProjectAgentsMdRules,
+            /// Opens the skills manager in the settings window.
+            #[action(deprecated_aliases = ["agent::OpenRulesLibrary", "assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
+            ManageSkills,
         ]
     );
-
-    /// Opens the rules library for managing agent rules and prompts.
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-    #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
-    #[serde(deny_unknown_fields)]
-    pub struct OpenRulesLibrary {
-        #[serde(skip)]
-        pub prompt_to_select: Option<Uuid>,
-    }
 
     /// Deploys the assistant interface with the specified configuration.
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema, Action)]

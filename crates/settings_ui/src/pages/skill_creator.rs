@@ -9,7 +9,7 @@ use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Task, TextStyle,
-    WindowHandle, actions,
+    WeakEntity, WindowHandle, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, language_settings::SoftWrap};
@@ -36,7 +36,7 @@ const DESCRIPTION_FIELD_TAB_INDEX: isize = 3;
 const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
 const BODY_FIELD_TAB_INDEX: isize = 5;
 const SAVE_BUTTON_TAB_INDEX: isize = 6;
-const URL_IMPORT_DEBOUNCE: Duration = Duration::from_millis(100);
+const URL_IMPORT_DEBOUNCE: Duration = Duration::from_millis(300);
 const URL_IMPORT_ERROR_BODY_MAX_LEN: usize = 2048;
 
 #[derive(Clone, Debug, Default)]
@@ -124,17 +124,11 @@ pub(crate) fn render_skill_creator_page(
     settings_window: &SettingsWindow,
     _scroll_handle: &ScrollHandle,
     _window: &mut Window,
-    cx: &mut Context<SettingsWindow>,
+    _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let Some(page) = settings_window.skill_creator_page() else {
         return gpui::Empty.into_any_element();
     };
-    let scope = scope_for_settings_file(
-        &settings_window.current_file,
-        settings_window.original_window.as_ref(),
-        cx,
-    );
-    page.update(cx, |page, cx| page.set_scope(scope, cx));
     page.into_any_element()
 }
 
@@ -147,7 +141,7 @@ pub struct SkillCreatorPage {
     description_editor: Entity<InputField>,
     body_editor: Entity<Editor>,
     description_length: usize,
-    scope: ScopeChoice,
+    settings_window: WeakEntity<SettingsWindow>,
     disable_model_invocation: bool,
     name_error: Option<&'static str>,
     description_error: Option<&'static str>,
@@ -166,8 +160,7 @@ impl EventEmitter<SkillCreatorEvent> for SkillCreatorPage {}
 
 impl SkillCreatorPage {
     pub(crate) fn new(
-        original_window: Option<WindowHandle<MultiWorkspace>>,
-        current_file: &SettingsUiFile,
+        settings_window: WeakEntity<SettingsWindow>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -177,7 +170,6 @@ impl SkillCreatorPage {
         let http_client = cx.http_client();
 
         let focus_handle = cx.focus_handle();
-        let scope = scope_for_settings_file(current_file, original_window.as_ref(), cx);
 
         let url_editor = cx.new(|cx| {
             InputField::new(
@@ -301,7 +293,7 @@ impl SkillCreatorPage {
             description_editor,
             body_editor,
             description_length: 0,
-            scope,
+            settings_window,
             disable_model_invocation: false,
             name_error: None,
             description_error: None,
@@ -319,13 +311,6 @@ impl SkillCreatorPage {
 
     pub(crate) fn name_editor_focus_handle(&self, cx: &App) -> FocusHandle {
         self.name_editor.focus_handle(cx)
-    }
-
-    fn set_scope(&mut self, scope: ScopeChoice, cx: &mut Context<Self>) {
-        if self.scope != scope {
-            self.scope = scope;
-            cx.notify();
-        }
     }
 
     fn handle_url_input_event(
@@ -635,7 +620,18 @@ impl SkillCreatorPage {
             return;
         }
 
-        let scope = self.scope.clone();
+        // Resolve the scope at save time so the skill is written to whichever
+        // settings file is selected at the moment the user clicks Save.
+        let scope = self
+            .settings_window
+            .read_with(cx, |settings_window, cx| {
+                scope_for_settings_file(
+                    &settings_window.current_file,
+                    settings_window.original_window.as_ref(),
+                    cx,
+                )
+            })
+            .unwrap_or(ScopeChoice::Global);
         let name = self.current_name(cx);
         let description = self.current_description(cx);
         let body = self.current_body(cx);
@@ -707,7 +703,9 @@ impl SkillCreatorPage {
             .child(self.url_editor.clone())
             .child(match &self.url_import_status {
                 UrlImportStatus::Idle => Label::new(
-                    "Paste a GitHub .md URL. Zed will fetch it and fill out the skill form.",
+                    "Paste a GitHub .md URL. Zed will fetch it and fill out the skill form. \
+                     If the file isn't publicly accessible, Zed retries using the GITHUB_TOKEN \
+                     environment variable, if set.",
                 )
                 .size(LabelSize::Small)
                 .color(Color::Muted)
@@ -851,9 +849,14 @@ impl SkillCreatorPage {
                         .style(ButtonStyle::Outlined)
                         .loading(saving)
                         .tab_index(SAVE_BUTTON_TAB_INDEX)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(SaveSkill), cx);
-                        }),
+                        // Call `save_skill` directly instead of dispatching the
+                        // `SaveSkill` action: action dispatch follows the focused
+                        // element's path, so a dispatched action is silently
+                        // dropped whenever focus is outside the creator (e.g.
+                        // right after switching the settings file/scope).
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.save_skill(&SaveSkill, window, cx);
+                        })),
                 ),
             )
     }
@@ -990,8 +993,19 @@ async fn fetch_skill_url(
     raw_url: &str,
     github_token: Option<&str>,
 ) -> Result<(StatusCode, Vec<u8>)> {
+    // When sending the GitHub token, don't follow redirects: whether an
+    // `Authorization` header survives a cross-origin redirect depends on the
+    // underlying `HttpClient` implementation, and a redirect away from
+    // raw.githubusercontent.com must never carry the user's token with it.
+    // Authenticated raw.githubusercontent.com responses are served directly,
+    // so a redirect on that path is unexpected anyway.
+    let redirect_policy = if github_token.is_some() {
+        http_client::RedirectPolicy::NoFollow
+    } else {
+        http_client::RedirectPolicy::FollowAll
+    };
     let request = Request::get(raw_url)
-        .follow_redirects(http_client::RedirectPolicy::FollowAll)
+        .follow_redirects(redirect_policy)
         .when_some(github_token, |builder, token| {
             builder.header("Authorization", format!("Bearer {token}"))
         })
@@ -1003,6 +1017,12 @@ async fn fetch_skill_url(
         .with_context(|| format!("failed to fetch {raw_url}"))?;
 
     let status = response.status();
+    if github_token.is_some() && status.is_redirection() {
+        anyhow::bail!(
+            "GitHub returned an unexpected redirect ({}) for the authenticated request to {raw_url}",
+            status.as_u16()
+        );
+    }
     let mut body = Vec::new();
     response
         .body_mut()
@@ -1262,6 +1282,7 @@ mod tests {
     struct TestHttpClient {
         responses: Mutex<VecDeque<(StatusCode, AsyncBody)>>,
         authorization_headers: Mutex<Vec<Option<String>>>,
+        redirect_policies: Mutex<Vec<http_client::RedirectPolicy>>,
     }
 
     impl TestHttpClient {
@@ -1284,6 +1305,7 @@ mod tests {
                         .collect(),
                 ),
                 authorization_headers: Mutex::new(Vec::new()),
+                redirect_policies: Mutex::new(Vec::new()),
             })
         }
 
@@ -1291,6 +1313,13 @@ mod tests {
             self.authorization_headers
                 .lock()
                 .expect("authorization header mutex should not be poisoned")
+                .clone()
+        }
+
+        fn redirect_policies(&self) -> Vec<http_client::RedirectPolicy> {
+            self.redirect_policies
+                .lock()
+                .expect("redirect policy mutex should not be poisoned")
                 .clone()
         }
     }
@@ -1321,6 +1350,20 @@ mod tests {
                         Err(anyhow::anyhow!(
                             "test authorization header mutex was poisoned"
                         ))
+                    });
+                }
+            }
+
+            let redirect_policy = req
+                .extensions()
+                .get::<http_client::RedirectPolicy>()
+                .cloned()
+                .unwrap_or_default();
+            match self.redirect_policies.lock() {
+                Ok(mut redirect_policies) => redirect_policies.push(redirect_policy),
+                Err(_) => {
+                    return Box::pin(async {
+                        Err(anyhow::anyhow!("test redirect policy mutex was poisoned"))
                     });
                 }
             }
@@ -1510,6 +1553,39 @@ mod tests {
         assert_eq!(
             client.authorization_headers(),
             vec![None, Some("Bearer secret-token".to_string())]
+        );
+        assert_eq!(
+            client.redirect_policies(),
+            vec![
+                http_client::RedirectPolicy::FollowAll,
+                http_client::RedirectPolicy::NoFollow,
+            ],
+            "the authenticated retry must not follow redirects, so the token \
+             can never be forwarded to another host"
+        );
+    }
+
+    #[gpui::test]
+    async fn fetch_imported_skill_rejects_redirect_on_authenticated_request(
+        _cx: &mut gpui::TestAppContext,
+    ) {
+        let client = TestHttpClient::new_sequence(vec![
+            (404, AsyncBody::from("Not Found")),
+            (302, AsyncBody::from("")),
+        ]);
+
+        let error = fetch_imported_skill_from_url_with_github_token(
+            client.clone(),
+            "https://github.com/owner/repo/blob/main/skill.md".to_string(),
+            Some("secret-token".to_string()),
+        )
+        .await
+        .expect_err("a redirect on the authenticated request should be an error");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("unexpected redirect (302)"),
+            "error should report the redirect, got: {message}"
         );
     }
 

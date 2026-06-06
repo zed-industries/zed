@@ -30,7 +30,7 @@ use zed_actions::{
         ResolveConflictsWithAgent, ReviewBranchDiff,
     },
     assistant::{
-        FocusAgent, OpenGlobalAgentsMdRules, OpenProjectAgentsMdRules, OpenRulesLibrary, Toggle,
+        FocusAgent, ManageSkills, OpenGlobalAgentsMdRules, OpenProjectAgentsMdRules, Toggle,
         ToggleFocus,
     },
 };
@@ -422,12 +422,10 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
-                .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
+                .register_action(|workspace, action: &ManageSkills, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| {
-                            panel.deploy_rules_library(action, window, cx)
-                        });
+                        panel.update(cx, |panel, cx| panel.manage_skills(action, window, cx));
                     }
                 })
                 .register_action(|workspace, _: &OpenGlobalAgentsMdRules, window, cx| {
@@ -3389,15 +3387,15 @@ impl AgentPanel {
         self.set_base_view(thread.into(), focus, window, cx);
     }
 
-    fn deploy_rules_library(
+    fn manage_skills(
         &mut self,
-        _action: &OpenRulesLibrary,
+        _action: &ManageSkills,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         window.dispatch_action(
             Box::new(zed_actions::OpenSettingsAt {
-                path: "agent.skills".to_string(),
+                path: zed_actions::AGENT_SKILLS_SETTINGS_PATH.to_string(),
                 target: None,
             }),
             cx,
@@ -5535,7 +5533,7 @@ impl AgentPanel {
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
         // Resolve menu shortcuts at the thread root; the active editor can
-        // shadow panel-level commands such as OpenRulesLibrary.
+        // shadow panel-level commands such as ManageSkills.
         let menu_action_context = match &self.base_view {
             BaseView::AgentThread { conversation_view } => conversation_view
                 .read(cx)
@@ -5633,7 +5631,7 @@ impl AgentPanel {
                                 )
                                 .separator()
                                 .header("Context")
-                                .action("Skills", Box::new(OpenRulesLibrary::default()));
+                                .action("Skills", Box::new(ManageSkills));
 
                             if project_agents_md_path.is_some() || global_agents_md_loaded {
                                 if global_agents_md_loaded {
@@ -6528,7 +6526,7 @@ impl Render for AgentPanel {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
-            .on_action(cx.listener(Self::deploy_rules_library))
+            .on_action(cx.listener(Self::manage_skills))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_options_menu))
             .on_action(cx.listener(Self::increase_font_size))
@@ -9234,7 +9232,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_skills_menu_entry_shows_rules_shortcut(cx: &mut TestAppContext) {
+    async fn test_skills_menu_entry_shows_manage_skills_shortcut(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
@@ -9283,7 +9281,7 @@ mod tests {
         );
         assert!(
             cx.debug_bounds("KEY_BINDING-l").is_some(),
-            "Skills menu item should show the OpenRulesLibrary shortcut"
+            "Skills menu item should show the ManageSkills shortcut"
         );
     }
 

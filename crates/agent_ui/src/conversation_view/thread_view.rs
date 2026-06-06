@@ -9879,7 +9879,8 @@ impl ThreadView {
                                     .on_click(move |_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(zed_actions::OpenSettingsAt {
-                                                path: "agent.skills".to_string(),
+                                                path: zed_actions::AGENT_SKILLS_SETTINGS_PATH
+                                                    .to_string(),
                                                 target: target.clone(),
                                             }),
                                             cx,

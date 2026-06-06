@@ -261,7 +261,7 @@
     "bindings": {
       "ctrl-n": "agent::NewThread",
       "ctrl--": "pane::GoBack",
-      "shift-alt-l": "agent::OpenRulesLibrary",
+      "shift-alt-l": "agent::ManageSkills",
       "shift-alt-p": "agent::ManageProfiles",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",

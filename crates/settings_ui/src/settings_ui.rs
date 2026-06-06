@@ -48,7 +48,10 @@ use workspace::{
     AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
     client_side_decorations,
 };
-use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt, OpenSettingsAtTarget};
+use zed_actions::{
+    AGENT_SKILLS_SETTINGS_PATH, OpenProjectSettings, OpenSettings, OpenSettingsAt,
+    OpenSettingsAtTarget,
+};
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
@@ -3555,7 +3558,8 @@ impl SettingsWindow {
         let page_content;
 
         if let Some(current_sub_page) = self.sub_page_stack.last() {
-            let is_skills_page = current_sub_page.link.json_path == Some("agent.skills");
+            let is_skills_page =
+                current_sub_page.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH);
             page_header = h_flex()
                 .w_full()
                 .min_w_0()
@@ -4057,9 +4061,8 @@ impl SettingsWindow {
             return;
         }
 
-        let page = cx.new(|cx| {
-            pages::SkillCreatorPage::new(self.original_window, &self.current_file, window, cx)
-        });
+        let settings_window = cx.weak_entity();
+        let page = cx.new(|cx| pages::SkillCreatorPage::new(settings_window, window, cx));
 
         let subscription =
             cx.subscribe_in(
@@ -4111,7 +4114,8 @@ impl SettingsWindow {
             page.items.iter().any(|item| {
                 matches!(
                     item,
-                    SettingsPageItem::SubPageLink(link) if link.json_path == Some("agent.skills")
+                    SettingsPageItem::SubPageLink(link)
+                        if link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH)
                 )
             })
         });
@@ -4123,7 +4127,7 @@ impl SettingsWindow {
         {
             self.open_navbar_entry_page(navbar_entry_index);
         }
-        self.navigate_to_sub_page("agent.skills", window, cx);
+        self.navigate_to_sub_page(AGENT_SKILLS_SETTINGS_PATH, window, cx);
         self.open_skill_creator_sub_page(open_mode, window, cx);
     }
 
@@ -5899,7 +5903,7 @@ pub mod test {
 
             assert_eq!(settings_window.current_file, SettingsUiFile::User);
             assert!(
-                settings_window.navigate_to_sub_page("agent.skills", window, cx),
+                settings_window.navigate_to_sub_page(AGENT_SKILLS_SETTINGS_PATH, window, cx),
                 "Skills sub-page should exist"
             );
             assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);

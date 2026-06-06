@@ -242,7 +242,7 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 }
 ```
 
-To customize the format of generated commit messages, run {#action agent::OpenRulesLibrary} and select the "Commit message" rule on the left side.
+To customize the format of generated commit messages, run {#action agent::ManageSkills} and select the "Commit message" rule on the left side.
 From there, you can modify the prompt to match your desired format.
 
 Any specific instructions for commit messages added to [Rules files](./ai/rules.md) are also picked up by the model tasked with writing your commit message.
