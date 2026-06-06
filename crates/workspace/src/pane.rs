@@ -324,6 +324,9 @@ pub enum Event {
     AddItem {
         item: Box<dyn ItemHandle>,
     },
+    OpenItem {
+        item: Box<dyn ItemHandle>,
+    },
     ActivateItem {
         local: bool,
         focus_changed: bool,
@@ -357,6 +360,10 @@ impl fmt::Debug for Event {
         match self {
             Event::AddItem { item } => f
                 .debug_struct("AddItem")
+                .field("item", &item.item_id())
+                .finish(),
+            Event::OpenItem { item } => f
+                .debug_struct("OpenItem")
                 .field("item", &item.item_id())
                 .finish(),
             Event::ActivateItem { local, .. } => f
@@ -1193,6 +1200,9 @@ impl Pane {
                 resulting_item
             } else {
                 set_up_new_item(new_item.clone(), destination_index, self, window, cx);
+                cx.emit(Event::OpenItem {
+                    item: new_item.boxed_clone(),
+                });
                 new_item
             }
         }
