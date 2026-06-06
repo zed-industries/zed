@@ -1780,7 +1780,7 @@ impl RemoteServerProjects {
                             gpui::PromptLevel::Critical,
                             "Failed to connect",
                             Some(&e.to_string()),
-                            &["Ok"],
+                            &["OK"],
                         )
                         .await
                         .ok();
@@ -2075,7 +2075,7 @@ impl RemoteServerProjects {
                             gpui::PromptLevel::Critical,
                             "Failed to start Dev Container. See logs for details",
                             Some(&format!("{e}")),
-                            &["Ok"],
+                            &["OK"],
                         )
                         .await
                         .ok();
@@ -2130,7 +2130,7 @@ impl RemoteServerProjects {
                     gpui::PromptLevel::Critical,
                     "Failed to connect",
                     Some(&e.to_string()),
-                    &["Ok"],
+                    &["OK"],
                 )
                 .await
                 .ok();
