@@ -4770,7 +4770,7 @@ impl BufferSnapshot {
                     })
                     .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
-                unique_closes.sort();
+                unique_closes.sort_unstable();
                 unique_closes.dedup();
 
                 // Build valid pairs by walking through closes in order
