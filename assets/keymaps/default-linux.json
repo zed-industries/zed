@@ -249,6 +249,13 @@
     },
   },
   {
+    "context": "TerminalInputOverlay > Editor",
+    "bindings": {
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline",
+    },
+  },
+  {
     "context": "AcpThread > ModeSelector",
     "bindings": {
       "ctrl-enter": "menu::Confirm",

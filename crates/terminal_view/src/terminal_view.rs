@@ -108,7 +108,7 @@ pub struct RenameTerminal;
 /// controls (mouse positioning, selection, free editing across rows). Toggle
 /// again to close. Disabled while a full-screen program owns the terminal.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
-#[action(namespace = toggle)]
+#[action(namespace = terminal, name = "Editor")]
 pub struct TerminalEditor;
 
 pub fn init(cx: &mut App) {
@@ -502,10 +502,6 @@ impl TerminalView {
         cx.emit(Event::Wakeup);
     }
 
-    pub fn input_overlay_is_open(&self) -> bool {
-        self.input_overlay.is_some()
-    }
-
     /// Toggle the terminal-editor overlay. Opening is suppressed while a
     /// full-screen program (vim, top, less, an ssh session, …) owns the
     /// terminal, since there is no shell prompt to send the line to. Toggle
@@ -545,12 +541,20 @@ impl TerminalView {
             return;
         };
 
-        let text = editor.read(cx).text(cx);
-        // Carriage return is what a terminal sends for Return; this submits the
-        // composed text to the shell exactly as typing it and pressing enter.
-        let mut bytes = text.into_bytes();
-        bytes.push(b'\r');
-        self.terminal.update(cx, |term, _| term.input(bytes));
+        // Replay the composed text as if typed: every line break becomes a
+        // carriage return (what a terminal sends for Return), matching
+        // `Terminal::paste` normalization, with a trailing return to submit the
+        // final line.
+        let mut input = editor
+            .read(cx)
+            .text(cx)
+            .replace("\r\n", "\r")
+            .replace('\n', "\r");
+        if !input.ends_with('\r') {
+            input.push('\r');
+        }
+        self.terminal
+            .update(cx, |term, _| term.input(input.into_bytes()));
 
         // Keep the overlay open as a persistent composer: clear it and keep
         // focus so the next command can be typed without reopening.
