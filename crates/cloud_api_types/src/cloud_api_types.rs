@@ -138,6 +138,10 @@ pub struct SubmitEditPredictionSettledBody {
     pub ts_error_count_after_prediction: usize,
     pub can_collect_data: bool,
     pub is_in_open_source_repo: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub future_edit_history_events: Vec<Arc<zeta_prompt::Event>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_edit_cursor_offset: Option<usize>,
     #[serde(flatten)]
     pub kept_chars: EditPredictionSettledKeptChars,
     pub example: Option<serde_json::Value>,

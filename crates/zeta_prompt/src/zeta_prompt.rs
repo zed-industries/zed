@@ -165,6 +165,10 @@ impl ZetaFormat {
     }
 }
 
+fn empty_range() -> Range<usize> {
+    0..0
+}
+
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(tag = "event")]
 pub enum Event {
@@ -172,6 +176,10 @@ pub enum Event {
         path: Arc<Path>,
         old_path: Arc<Path>,
         diff: String,
+        #[serde(default = "empty_range")]
+        old_range: Range<usize>,
+        #[serde(default = "empty_range")]
+        new_range: Range<usize>,
         predicted: bool,
         in_open_source_repo: bool,
     },
@@ -201,7 +209,7 @@ pub fn write_event(prompt: &mut String, event: &Event) {
             old_path,
             diff,
             predicted,
-            in_open_source_repo: _,
+            ..
         } => {
             if *predicted {
                 prompt.push_str("// User accepted prediction:\n");
@@ -4909,6 +4917,8 @@ mod tests {
             path: Path::new(path).into(),
             old_path: Path::new(path).into(),
             diff: diff.to_string(),
+            old_range: 0..0,
+            new_range: 0..0,
             predicted: false,
             in_open_source_repo: false,
         }

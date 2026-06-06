@@ -477,6 +477,21 @@ impl ProjectState {
         for capture in &mut self.pending_jump_example_captures {
             capture.future_events.push(event.event.clone());
         }
+        for registered_buffer in self.registered_buffers.values_mut() {
+            if registered_buffer.snapshot.remote_id() == event.old_snapshot.remote_id() {
+                for pending_settled_prediction in &mut registered_buffer.pending_settled_predictions
+                {
+                    if event.total_edit_range.overlaps(
+                        &pending_settled_prediction.editable_anchor_range,
+                        &registered_buffer.snapshot,
+                    ) {
+                        pending_settled_prediction
+                            .future_edit_history_events
+                            .push(event.event.clone());
+                    }
+                }
+            }
+        }
         jump_example::drain_completed_jump_example_captures(self, cx);
         if self.events.len() + 1 >= EVENT_COUNT_MAX {
             self.events.pop_front();
@@ -595,6 +610,8 @@ struct PendingSettledPrediction {
     organization_id: Option<OrganizationId>,
     can_collect_data: bool,
     is_in_open_source_repo: bool,
+    future_edit_history_events: Vec<Arc<zeta_prompt::Event>>,
+    next_edit_cursor_offset: Option<usize>,
     example: Option<ExampleSpec>,
     model_version: Option<String>,
     enqueued_at: Instant,
@@ -605,7 +622,7 @@ struct PendingSettledPrediction {
 struct RegisteredBuffer {
     file: Option<Arc<dyn File>>,
     snapshot: TextBufferSnapshot,
-    pending_predictions: Vec<PendingSettledPrediction>,
+    pending_settled_predictions: Vec<PendingSettledPrediction>,
     last_position: Option<Anchor>,
     _subscriptions: [gpui::Subscription; 2],
 }
@@ -645,7 +662,7 @@ impl LastEvent {
                     })
                 });
 
-        let (diff, edit_range) = compute_diff_between_snapshots_in_range(
+        let (diff, old_range, new_range) = compute_diff_between_snapshots_in_range(
             &self.old_snapshot,
             &self.new_snapshot,
             &self.total_edit_range,
@@ -659,13 +676,15 @@ impl LastEvent {
                     old_path,
                     path,
                     diff,
+                    old_range,
+                    new_range: new_range.clone(),
                     in_open_source_repo,
                     predicted: self.predicted,
                 }),
                 old_snapshot: self.old_snapshot.clone(),
                 new_snapshot_version: self.new_snapshot.version.clone(),
-                total_edit_range: self.new_snapshot.anchor_before(edit_range.start)
-                    ..self.new_snapshot.anchor_before(edit_range.end),
+                total_edit_range: self.new_snapshot.anchor_before(new_range.start)
+                    ..self.new_snapshot.anchor_before(new_range.end),
                 file_context: self.file_context.clone(),
             })
         }
@@ -787,12 +806,16 @@ fn compute_diff_between_snapshots_in_range(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
     total_edit_range: &Range<Anchor>,
-) -> Option<(String, Range<Point>)> {
-    let new_start_point = total_edit_range.start.to_point(new_snapshot);
-    let new_end_point = total_edit_range.end.to_point(new_snapshot);
+) -> Option<(String, Range<usize>, Range<usize>)> {
+    let new_start_offset = total_edit_range.start.to_offset(new_snapshot);
+    let new_end_offset = total_edit_range.end.to_offset(new_snapshot);
+    let new_start_point = new_snapshot.offset_to_point(new_start_offset);
+    let new_end_point = new_snapshot.offset_to_point(new_end_offset);
     let old_range = compute_old_range_for_new_range(old_snapshot, new_snapshot, total_edit_range)?;
     let old_start_point = old_range.start;
     let old_end_point = old_range.end;
+    let old_start_offset = old_snapshot.point_to_offset(old_start_point);
+    let old_end_offset = old_snapshot.point_to_offset(old_end_point);
 
     const CONTEXT_LINES: u32 = 3;
 
@@ -828,7 +851,11 @@ fn compute_diff_between_snapshots_in_range(
         new_context_start_row,
     );
 
-    Some((diff, new_start_point..new_end_point))
+    Some((
+        diff,
+        old_start_offset..old_end_offset,
+        new_start_offset..new_end_offset,
+    ))
 }
 
 pub(crate) fn buffer_path_with_id_fallback(
@@ -1543,7 +1570,7 @@ impl EditPredictionStore {
                     snapshot,
                     file,
                     last_position: None,
-                    pending_predictions: Vec::new(),
+                    pending_settled_predictions: Vec::new(),
                     _subscriptions: [
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
@@ -1611,9 +1638,14 @@ impl EditPredictionStore {
             return;
         };
 
-        for pending_prediction in &mut registered_buffer.pending_predictions {
+        for pending_prediction in &mut registered_buffer.pending_settled_predictions {
             if edit_range.overlaps(&pending_prediction.editable_anchor_range, &new_snapshot) {
                 pending_prediction.last_edit_at = now;
+                if is_local && !is_predicted && pending_prediction.next_edit_cursor_offset.is_none()
+                {
+                    pending_prediction.next_edit_cursor_offset =
+                        Some(edit_range.start.to_offset(&new_snapshot));
+                }
             }
         }
 
@@ -1898,20 +1930,23 @@ impl EditPredictionStore {
                 for (_, project_state) in this.projects.iter_mut() {
                     for (_, registered_buffer) in project_state.registered_buffers.iter_mut() {
                         let mut pending_index = 0;
-                        while pending_index < registered_buffer.pending_predictions.len() {
+                        while pending_index < registered_buffer.pending_settled_predictions.len() {
                             let pending_prediction =
-                                &registered_buffer.pending_predictions[pending_index];
+                                &registered_buffer.pending_settled_predictions[pending_index];
                             let age = now.saturating_duration_since(pending_prediction.enqueued_at);
                             if age >= EDIT_PREDICTION_SETTLED_TTL {
-                                registered_buffer.pending_predictions.remove(pending_index);
+                                registered_buffer
+                                    .pending_settled_predictions
+                                    .remove(pending_index);
                                 continue;
                             }
 
                             let quiet_for =
                                 now.saturating_duration_since(pending_prediction.last_edit_at);
                             if quiet_for >= EDIT_PREDICTION_SETTLED_QUIESCENCE {
-                                let pending_prediction =
-                                    registered_buffer.pending_predictions.remove(pending_index);
+                                let pending_prediction = registered_buffer
+                                    .pending_settled_predictions
+                                    .remove(pending_index);
                                 let settled_editable_region = registered_buffer
                                     .snapshot
                                     .text_for_range(
@@ -1944,6 +1979,8 @@ impl EditPredictionStore {
                     organization_id,
                     can_collect_data,
                     is_in_open_source_repo,
+                    future_edit_history_events,
+                    next_edit_cursor_offset,
                     example,
                     model_version,
                     e2e_latency,
@@ -1972,12 +2009,20 @@ impl EditPredictionStore {
                         );
 
                         let result: anyhow::Result<()> = async {
-                            let settled_editable_region =
-                                can_collect_data.then_some(settled_editable_region);
-                            let example = if can_collect_data {
-                                example.map(serde_json::to_value).transpose()?
+                            let (
+                                settled_editable_region,
+                                future_edit_history_events,
+                                next_edit_cursor_offset,
+                                example,
+                            ) = if can_collect_data {
+                                (
+                                    Some(settled_editable_region),
+                                    future_edit_history_events,
+                                    next_edit_cursor_offset,
+                                    example.map(serde_json::to_value).transpose()?,
+                                )
                             } else {
-                                None
+                                (None, Vec::new(), next_edit_cursor_offset, None)
                             };
 
                             let body = SubmitEditPredictionSettledBody {
@@ -1987,6 +2032,8 @@ impl EditPredictionStore {
                                 ts_error_count_after_prediction,
                                 can_collect_data,
                                 is_in_open_source_repo,
+                                future_edit_history_events,
+                                next_edit_cursor_offset,
                                 kept_chars: EditPredictionSettledKeptChars {
                                     candidate_new: kept_rate_result.candidate_new_chars,
                                     reference_new: kept_rate_result.reference_new_chars,
@@ -2098,7 +2145,7 @@ impl EditPredictionStore {
             edited_buffer_snapshot.anchor_range_inside(editable_offset_range);
         let now = cx.background_executor().now();
         registered_buffer
-            .pending_predictions
+            .pending_settled_predictions
             .push(PendingSettledPrediction {
                 request_id,
                 editable_anchor_range,
@@ -2109,6 +2156,8 @@ impl EditPredictionStore {
                 organization_id,
                 can_collect_data,
                 is_in_open_source_repo,
+                future_edit_history_events: Vec::new(),
+                next_edit_cursor_offset: None,
                 example,
                 model_version,
                 e2e_latency,
@@ -3438,7 +3487,7 @@ fn merge_trailing_events_if_needed(
             merge_anchor_ranges(&merged_edit_range, &event.total_edit_range, latest_snapshot);
     }
 
-    if let Some((diff, edit_range)) = compute_diff_between_snapshots_in_range(
+    if let Some((diff, old_range, new_range)) = compute_diff_between_snapshots_in_range(
         &oldest_snapshot,
         newest_snapshot,
         &merged_edit_range,
@@ -3454,6 +3503,8 @@ fn merge_trailing_events_if_needed(
                     old_path: old_path.clone(),
                     path: path.clone(),
                     diff,
+                    old_range,
+                    new_range: new_range.clone(),
                     in_open_source_repo: *in_open_source_repo,
                     predicted: events.range(merge_start..).all(|event| {
                         matches!(
@@ -3467,8 +3518,8 @@ fn merge_trailing_events_if_needed(
                 }),
                 old_snapshot: oldest_snapshot.clone(),
                 new_snapshot_version: newest_snapshot.version.clone(),
-                total_edit_range: newest_snapshot.anchor_before(edit_range.start)
-                    ..newest_snapshot.anchor_before(edit_range.end),
+                total_edit_range: newest_snapshot.anchor_before(new_range.start)
+                    ..newest_snapshot.anchor_before(new_range.end),
                 file_context: oldest_event.file_context.clone(),
             },
         };

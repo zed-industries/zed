@@ -505,6 +505,70 @@ async fn test_simple_request(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_zeta_request_sends_settled_body_when_data_collection_is_disabled(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    let prediction_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.request_prediction(
+            &project,
+            &buffer,
+            position,
+            PredictEditsRequestTrigger::Other,
+            cx,
+        )
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    assert!(!request.input.can_collect_data);
+    respond_tx
+        .send(model_response(&request, SIMPLE_DIFF))
+        .unwrap();
+
+    prediction_task.await.unwrap().unwrap().prediction.unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .now_or_never()
+        .flatten()
+        .expect("settled request should be sent");
+    assert!(!settled_request.can_collect_data);
+    assert_eq!(settled_request.settled_editable_region, None);
+    assert!(settled_request.future_edit_history_events.is_empty());
+    assert_eq!(settled_request.next_edit_cursor_offset, None);
+    assert_eq!(settled_request.example, None);
+}
+
+#[gpui::test]
 async fn test_request_events(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -1467,6 +1531,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
     let position = snapshot.anchor_before(language::Point::new(1, 3));
 
     ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
         ep_store.refresh_prediction_from_buffer(
             project.clone(),
             buffer.clone(),
@@ -1507,13 +1572,29 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
     assert_eq!(
         &reject_request.rejections,
         &[EditPredictionRejection {
-            request_id: id,
+            request_id: id.clone(),
             reason: EditPredictionRejectReason::Empty,
             was_shown: false,
             model_version: Some("zeta2:test-empty".to_string()),
             e2e_latency_ms: Some(0),
         }]
     );
+
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .now_or_never()
+        .flatten()
+        .expect("empty prediction should still send settled request");
+    assert_eq!(settled_request.request_id, id);
+    assert_eq!(settled_request.settled_editable_region, None);
+    assert!(settled_request.future_edit_history_events.is_empty());
+    assert_eq!(settled_request.next_edit_cursor_offset, None);
+    assert_eq!(settled_request.example, None);
 }
 
 #[gpui::test]
@@ -3993,7 +4074,128 @@ async fn test_edit_prediction_settled_omits_body_when_data_collection_is_disable
         .expect("settled request should be sent");
     assert!(!settled_request.can_collect_data);
     assert_eq!(settled_request.settled_editable_region, None);
+    assert!(settled_request.future_edit_history_events.is_empty());
+    assert_eq!(settled_request.next_edit_cursor_offset, None);
     assert_eq!(settled_request.example, None);
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_includes_overlapping_future_events_and_next_cursor_offset(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": (0..30)
+                .map(|ix| format!("line {ix}\n"))
+                .collect::<String>()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let editable_region =
+        snapshot.point_to_offset(Point::new(1, 0))..snapshot.point_to_offset(Point::new(2, 0));
+    let empty_edits: Arc<[(Range<Anchor>, Arc<str>)]> = Vec::new().into();
+    let edit_preview = buffer
+        .read_with(cx, |buffer, cx| buffer.preview_edits(empty_edits, cx))
+        .await;
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-with-future-events".into()),
+            &project,
+            &buffer,
+            &snapshot,
+            editable_region,
+            &edit_preview,
+            None,
+            None,
+            Duration::from_secs(0),
+            cx,
+        );
+        let registered_buffer = ep_store
+            .projects
+            .get_mut(&project.entity_id())
+            .unwrap()
+            .registered_buffers
+            .get_mut(&buffer.entity_id())
+            .unwrap();
+        registered_buffer
+            .pending_settled_predictions
+            .last_mut()
+            .unwrap()
+            .can_collect_data = true;
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(20, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "outside ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let next_edit_cursor_offset = buffer.read_with(cx, |buffer, _cx| {
+        buffer.snapshot().point_to_offset(Point::new(1, 5))
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            vec![(next_edit_cursor_offset..next_edit_cursor_offset, " inside")],
+            None,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(25, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "later outside ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .await
+        .expect("settled request should be sent");
+    assert_eq!(
+        settled_request.next_edit_cursor_offset,
+        Some(next_edit_cursor_offset)
+    );
+    assert_eq!(settled_request.future_edit_history_events.len(), 1);
+    let zeta_prompt::Event::BufferChange {
+        diff,
+        old_range,
+        new_range,
+        ..
+    } = settled_request.future_edit_history_events[0].as_ref();
+    assert_eq!(
+        old_range,
+        &(next_edit_cursor_offset..next_edit_cursor_offset)
+    );
+    assert_eq!(
+        new_range,
+        &(next_edit_cursor_offset..next_edit_cursor_offset + " inside".len())
+    );
+    assert!(diff.contains("inside"), "{diff}");
+    assert!(!diff.contains("outside"), "{diff}");
 }
 
 #[gpui::test]
