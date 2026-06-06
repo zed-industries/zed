@@ -28,6 +28,7 @@ use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
 use parking_lot::Mutex;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
+use remote::RemoteConnectionOptions;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
@@ -4053,28 +4054,68 @@ impl Pane {
         let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
-        let is_remote = self
+        let (should_block, needs_wsl_translation) = self
             .workspace
             .update(cx, |workspace, cx| {
-                if workspace.project().read(cx).is_via_collab() {
+                let project = workspace.project().read(cx);
+                if project.is_via_collab() {
                     workspace.show_error(
                         &anyhow::anyhow!("Cannot drop files on a remote project"),
                         cx,
                     );
-                    true
-                } else {
-                    false
+                    return (true, false);
                 }
+                if project.is_via_remote_server() {
+                    let is_wsl = matches!(
+                        project.remote_connection_options(cx),
+                        Some(RemoteConnectionOptions::Wsl(_))
+                    );
+                    if !is_wsl {
+                        workspace.show_error(
+                            &anyhow::anyhow!(
+                                "Cannot drop local files on a remote SSH/Docker project"
+                            ),
+                            cx,
+                        );
+                        return (true, false);
+                    }
+                    return (false, true);
+                }
+                (false, false)
             })
-            .unwrap_or(true);
-        if is_remote {
+            .unwrap_or((true, false));
+        if should_block {
             return;
         }
 
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
+                let project = workspace.project().clone();
                 cx.spawn_in(window, async move |workspace, cx| {
+                    let paths = if needs_wsl_translation {
+                        let mut translated = Vec::with_capacity(paths.len());
+                        for path in &paths {
+                            log::info!("dropped Windows path {}", path.display());
+                            let fut = project.read_with(cx, |project, cx| {
+                                project.try_windows_path_to_wsl(path, cx)
+                            });
+                            match fut.await {
+                                Ok(wsl_path) => {
+                                    log::info!("translated to WSL path {}", wsl_path.display());
+                                    translated.push(wsl_path);
+                                }
+                                Err(e) => log::warn!(
+                                    "wslpath failed for {}: {e:#}, dropping this path",
+                                    path.display()
+                                ),
+                            }
+                        }
+                        translated
+                    } else {
+                        paths
+                    };
+
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {
                         is_file_checks.push(fs.is_file(path))
