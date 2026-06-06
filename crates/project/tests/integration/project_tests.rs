@@ -2899,6 +2899,11 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageDetected(buffer.clone())
+    );
+
     buffer.update(cx, |buffer, _| {
         let snapshot = buffer.snapshot();
         let diagnostics = snapshot
