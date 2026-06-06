@@ -7,7 +7,6 @@
       "shift-f5": "debugger::Stop",
       "shift-cmd-f5": "debugger::RerunSession",
       "f6": "debugger::Pause",
-      "f7": "debugger::StepOver",
       "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
@@ -799,6 +798,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "f5": "debugger::Continue",
+      "f7": "debugger::StepOver",
+      "f10": "debugger::StepOver",
       "f11": "debugger::StepInto",
       "ctrl-f11": "debugger::StepInto",
     },
