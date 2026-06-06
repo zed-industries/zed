@@ -43,12 +43,22 @@ To run a command automatically in every new Terminal Thread, set `agent.terminal
 ```json [settings]
 {
   "agent": {
-    "terminal_command": "claude"
+    "terminal_command": "harness"
   }
 }
 ```
 
-The command runs in the shell, so when it exits you are dropped back into the shell. It does not run when an existing Terminal Thread is restored after restarting Zed.
+A plain string runs the command inside the shell, so when it exits you are dropped back into the shell. To spawn a program directly without a shell, use an object with `program` and optional `args`:
+
+```json [settings]
+{
+  "agent": {
+    "terminal_command": { "program": "harness", "args": ["--continue"] }
+  }
+}
+```
+
+When spawned directly, the Terminal Thread closes when the program exits. If the program fails before you have interacted with it (for example, it exits with an error at startup), the thread stays open so you can read the error. In both forms, the command does not run when an existing Terminal Thread is restored after restarting Zed.
 
 ## Terminal Thread Titles {#terminal-thread-titles}
 

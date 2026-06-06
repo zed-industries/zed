@@ -292,7 +292,19 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_internal(cwd, None, false, cx)
+    }
+
+    /// Creates a terminal that runs the given program directly instead of the
+    /// configured shell.
+    pub fn create_terminal_with_command(
+        &mut self,
+        cwd: Option<PathBuf>,
+        program: String,
+        args: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        self.create_terminal_shell_internal(cwd, Some((program, args)), false, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -309,7 +321,7 @@ impl Project {
             // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_internal(working_directory, None, true, cx)
     }
 
     /// Internal method for creating terminal shells.
@@ -318,6 +330,7 @@ impl Project {
     fn create_terminal_shell_internal(
         &mut self,
         cwd: Option<PathBuf>,
+        spawn_command: Option<(String, Vec<String>)>,
         force_local: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
@@ -334,7 +347,9 @@ impl Project {
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
-        let detect_venv = settings.detect_venv.as_option().is_some();
+        // Activation scripts are typed into the pty, which would reach a
+        // directly spawned program's stdin instead of a shell.
+        let detect_venv = spawn_command.is_none() && settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
 
         // See create_terminal_task: scope the toolchain lookup to the
@@ -406,10 +421,24 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let (shell, env) = {
                         match remote_client {
-                            Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
-                            }
-                            None => (settings.shell, env),
+                            Some(remote_client) => create_remote_shell(
+                                spawn_command.as_ref().map(|(program, args)| (program, args)),
+                                env,
+                                path,
+                                remote_client,
+                                cx,
+                            )?,
+                            None => match spawn_command {
+                                Some((program, args)) => (
+                                    Shell::WithArguments {
+                                        program,
+                                        args,
+                                        title_override: None,
+                                    },
+                                    env,
+                                ),
+                                None => (settings.shell, env),
+                            },
                         }
                     };
                     anyhow::Ok(TerminalBuilder::new(

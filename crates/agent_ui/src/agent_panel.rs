@@ -84,7 +84,7 @@ use language_model::LanguageModelRegistry;
 use notifications::status_toast::StatusToast;
 use project::{Project, ProjectPath, Worktree};
 use settings::TerminalDockPosition;
-use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
+use settings::{AgentTerminalCommand, NotifyWhenAgentWaiting, Settings, update_settings_file};
 
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
@@ -1994,7 +1994,7 @@ impl AgentPanel {
         custom_title: Option<SharedString>,
         initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
-        initial_command: Option<String>,
+        initial_command: Option<AgentTerminalCommand>,
         select: bool,
         focus: bool,
         source: AgentThreadSource,
@@ -2002,8 +2002,20 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let terminal_working_directory = working_directory.clone();
-        let terminal_task = self.project.update(cx, |project, cx| {
-            project.create_terminal_shell(working_directory, cx)
+        let (spawn_command, in_shell_command) = match initial_command {
+            Some(AgentTerminalCommand::Direct { program, args })
+                if !program.trim().is_empty() =>
+            {
+                (Some((program, args)), None)
+            }
+            Some(AgentTerminalCommand::InShell(command)) => (None, Some(command)),
+            _ => (None, None),
+        };
+        let terminal_task = self.project.update(cx, |project, cx| match spawn_command {
+            Some((program, args)) => {
+                project.create_terminal_with_command(working_directory, program, args, cx)
+            }
+            None => project.create_terminal_shell(working_directory, cx),
         });
         let workspace = self.workspace.clone();
         let workspace_id = self.workspace_id;
@@ -2028,7 +2040,7 @@ impl AgentPanel {
                 }
             };
             this.update_in(cx, |this, window, cx| {
-                if let Some(command) = initial_command {
+                if let Some(command) = in_shell_command {
                     let command = command.trim();
                     if !command.is_empty() {
                         terminal.update(cx, |terminal, _| {

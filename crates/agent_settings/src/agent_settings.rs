@@ -16,7 +16,7 @@ use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
+    AgentTerminalCommand, DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
@@ -234,7 +234,7 @@ pub struct AgentSettings {
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
-    pub terminal_command: Option<String>,
+    pub terminal_command: Option<AgentTerminalCommand>,
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,

@@ -8062,21 +8062,33 @@ fn ai_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Terminal Command",
-                description: "Command to run automatically in new terminal threads in the agent panel, e.g. `claude`.",
+                description: "Command to run automatically in new terminal threads in the agent panel, e.g. an agent harness CLI. The command runs inside the shell; edit settings.json to spawn a program directly without a shell.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent.terminal_command"),
                     pick: |settings_content| {
-                        settings_content
-                            .agent
-                            .as_ref()?
-                            .terminal_command
-                            .as_ref()
-                            .or(DEFAULT_EMPTY_STRING)
+                        match settings_content.agent.as_ref()?.terminal_command.as_ref() {
+                            Some(settings::AgentTerminalCommand::InShell(command)) => {
+                                Some(command)
+                            }
+                            _ => None,
+                        }
+                        .or(DEFAULT_EMPTY_STRING)
                     },
                     write: |settings_content, value, _| {
-                        settings_content.agent.get_or_insert_default().terminal_command =
-                            value.filter(|command| !command.is_empty());
+                        let agent = settings_content.agent.get_or_insert_default();
+                        let value = value.filter(|command| !command.is_empty());
+                        // Don't erase a configured `Direct` command via the empty text field.
+                        if value.is_none()
+                            && matches!(
+                                agent.terminal_command,
+                                Some(settings::AgentTerminalCommand::Direct { .. })
+                            )
+                        {
+                            return;
+                        }
+                        agent.terminal_command =
+                            value.map(settings::AgentTerminalCommand::InShell);
                     },
                 }),
                 metadata: None,

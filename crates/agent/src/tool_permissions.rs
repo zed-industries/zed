@@ -599,6 +599,7 @@ mod tests {
             expand_terminal_card: true,
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
+            terminal_command: None,
             message_editor_min_lines: 1,
             tool_permissions,
             sandbox_permissions: Default::default(),

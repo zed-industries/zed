@@ -188,6 +188,22 @@ pub struct AutoCompactSettingsContent {
     pub threshold: Option<AutoCompactThreshold>,
 }
 
+/// Command to run automatically in new terminal threads in the agent panel.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum AgentTerminalCommand {
+    /// Run the command inside the shell.
+    InShell(String),
+    /// Spawn the program directly, without a shell.
+    Direct {
+        /// The program to run.
+        program: String,
+        /// The arguments to pass to the program.
+        #[serde(default)]
+        args: Vec<String>,
+    },
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -311,12 +327,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub use_modifier_to_send: Option<bool>,
-    /// Command to run automatically in new terminal threads in the agent panel,
-    /// e.g. `claude`. The command runs in the shell, so when it exits the user
-    /// is dropped back into the shell.
+    /// Command to run automatically in new terminal threads in the agent panel.
+    /// A plain string (e.g. `"harness"`) runs inside the shell; an object with
+    /// `program` and optional `args` spawns the program directly without a shell.
     ///
     /// Default: none
-    pub terminal_command: Option<String>,
+    pub terminal_command: Option<AgentTerminalCommand>,
     /// Minimum number of lines of height the agent message editor should have.
     ///
     /// Default: 4
@@ -821,6 +837,32 @@ impl std::fmt::Display for ToolPermissionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_terminal_command_deserialization() {
+        let in_shell: AgentTerminalCommand = serde_json::from_str(r#""harness""#).unwrap();
+        assert_eq!(in_shell, AgentTerminalCommand::InShell("harness".to_string()));
+
+        let direct: AgentTerminalCommand =
+            serde_json::from_str(r#"{"program": "harness", "args": ["--continue"]}"#).unwrap();
+        assert_eq!(
+            direct,
+            AgentTerminalCommand::Direct {
+                program: "harness".to_string(),
+                args: vec!["--continue".to_string()],
+            }
+        );
+
+        let direct_without_args: AgentTerminalCommand =
+            serde_json::from_str(r#"{"program": "harness"}"#).unwrap();
+        assert_eq!(
+            direct_without_args,
+            AgentTerminalCommand::Direct {
+                program: "harness".to_string(),
+                args: Vec::new(),
+            }
+        );
+    }
 
     #[test]
     fn test_set_tool_default_permission_creates_structure() {
