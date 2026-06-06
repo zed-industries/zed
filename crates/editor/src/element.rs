@@ -57,7 +57,7 @@ use language::{
 };
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExcerptBoundaryInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
+    Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo, ToOffset,
 };
 
