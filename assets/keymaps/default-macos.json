@@ -835,6 +835,7 @@
       "f10": "debugger::StepOver",
       "f11": "debugger::StepInto",
       "ctrl-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
     },
   },
   // Bindings from Sublime Text
