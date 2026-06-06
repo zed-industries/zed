@@ -795,7 +795,7 @@ impl AcpConnection {
                 project.remote_client().and_then(|client| {
                     let template = client
                         .read(cx)
-                        .build_command_with_options(
+                        .build_command(
                             Some(command.path.display().to_string()),
                             &command.args,
                             &command.env.clone().into_iter().flatten().collect(),
