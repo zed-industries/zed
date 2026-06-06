@@ -45,8 +45,9 @@ pub(crate) struct ParsedMarkdownData {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ParsedMetadataBlock {
     pub content_range: Range<usize>,
-    /// Parsed key/value rows, or `None` when the block isn't a valid YAML
-    /// mapping (in which case the raw content is rendered as a code block).
+    /// Parsed key/value rows, or `None` when the block can't be rendered as a
+    /// table (invalid or unsupported frontmatter), in which case the raw
+    /// content is rendered as a code block.
     pub rows: Option<Vec<MetadataRow>>,
 }
 
@@ -173,9 +174,22 @@ fn build_heading_slugs(
     slugs
 }
 
-/// `None` signals the block isn't a valid, non-empty YAML mapping, so the
-/// caller renders the raw content as a code block instead.
-fn parse_metadata_rows(source: &str, source_range: Range<usize>) -> Option<Vec<MetadataRow>> {
+/// Dispatches on the block's delimiter format. `None` means the caller renders
+/// the raw content as a code block instead of a table.
+fn parse_metadata_rows(
+    kind: MetadataBlockKind,
+    source: &str,
+    source_range: Range<usize>,
+) -> Option<Vec<MetadataRow>> {
+    match kind {
+        MetadataBlockKind::YamlStyle => parse_yaml_metadata_rows(source, source_range),
+        // TOML (`+++`) frontmatter is recognized as a block but not parsed yet.
+        MetadataBlockKind::PlusesStyle => None,
+    }
+}
+
+/// `None` signals the block isn't a valid, non-empty YAML mapping.
+fn parse_yaml_metadata_rows(source: &str, source_range: Range<usize>) -> Option<Vec<MetadataRow>> {
     let content = source.get(source_range)?;
     let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(content).ok()?;
     let serde_yaml_ng::Value::Mapping(mapping) = value else {
@@ -197,15 +211,15 @@ fn parse_metadata_rows(source: &str, source_range: Range<usize>) -> Option<Vec<M
 }
 
 fn metadata_value(value: &serde_yaml_ng::Value) -> MetadataValue {
+    let raw = || MetadataValue::Raw(metadata_raw(value));
     match value {
         serde_yaml_ng::Value::Sequence(items) => items
             .iter()
             .map(metadata_scalar)
             .collect::<Option<Vec<_>>>()
-            .map_or_else(|| MetadataValue::Raw(metadata_raw(value)), MetadataValue::List),
-        serde_yaml_ng::Value::Mapping(_) => MetadataValue::Raw(metadata_raw(value)),
-        scalar => metadata_scalar(scalar)
-            .map_or_else(|| MetadataValue::Raw(metadata_raw(value)), MetadataValue::Scalar),
+            .map_or_else(raw, MetadataValue::List),
+        serde_yaml_ng::Value::Mapping(_) => raw(),
+        scalar => metadata_scalar(scalar).map_or_else(raw, MetadataValue::Scalar),
     }
 }
 
@@ -441,7 +455,7 @@ pub(crate) fn parse_markdown_with_options(
                     within_link = false;
                 } else if let pulldown_cmark::TagEnd::CodeBlock = tag {
                     within_code_block = false;
-                } else if let pulldown_cmark::TagEnd::MetadataBlock(_) = tag {
+                } else if let pulldown_cmark::TagEnd::MetadataBlock(kind) = tag {
                     within_metadata = false;
                     let block_start = current_metadata_block_start.take();
                     let content_range = metadata_block_content_range.take();
@@ -452,7 +466,7 @@ pub(crate) fn parse_markdown_with_options(
                         metadata_blocks.insert(
                             block_start,
                             ParsedMetadataBlock {
-                                rows: parse_metadata_rows(text, content_range.clone()),
+                                rows: parse_metadata_rows(kind, text, content_range.clone()),
                                 content_range,
                             },
                         );
@@ -1040,7 +1054,8 @@ mod tests {
     #[test]
     fn test_metadata_rows_parse_value_kinds() {
         let source = "title: Post\ntags:\n  - a\n  - b\nmeta:\n  nested: true\n";
-        let rows = parse_metadata_rows(source, 0..source.len()).expect("expected metadata rows");
+        let rows = parse_metadata_rows(MetadataBlockKind::YamlStyle, source, 0..source.len())
+            .expect("expected metadata rows");
 
         assert_eq!(
             rows,
@@ -1064,7 +1079,8 @@ mod tests {
     #[test]
     fn test_metadata_rows_preserve_block_scalars() {
         let source = "scope: |\n  line one\n  line two\n";
-        let rows = parse_metadata_rows(source, 0..source.len()).expect("expected metadata rows");
+        let rows = parse_metadata_rows(MetadataBlockKind::YamlStyle, source, 0..source.len())
+            .expect("expected metadata rows");
 
         assert_eq!(
             rows,
@@ -1084,8 +1100,26 @@ mod tests {
             "\n",
             "key: [unterminated\n",
         ] {
-            assert!(parse_metadata_rows(source, 0..source.len()).is_none());
+            assert!(
+                parse_metadata_rows(MetadataBlockKind::YamlStyle, source, 0..source.len())
+                    .is_none()
+            );
         }
+    }
+
+    #[test]
+    fn test_metadata_rows_pluses_format_unsupported() {
+        // A block is dispatched by its delimiter format, not its content: TOML
+        // (`+++`) frontmatter isn't parsed yet, so it yields no rows and falls
+        // back to a raw code block even when the content happens to be valid
+        // YAML that the YAML path would otherwise render as a table.
+        let source = "title: Post\n";
+        assert!(
+            parse_metadata_rows(MetadataBlockKind::YamlStyle, source, 0..source.len()).is_some()
+        );
+        assert!(
+            parse_metadata_rows(MetadataBlockKind::PlusesStyle, source, 0..source.len()).is_none()
+        );
     }
 
     #[test]

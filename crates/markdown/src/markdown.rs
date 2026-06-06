@@ -1449,7 +1449,8 @@ impl MarkdownElement {
     ) {
         let content_range = &metadata_block.content_range;
         let Some(rows) = metadata_block.rows.as_deref() else {
-            // Not a valid YAML mapping: render the raw content as a code block.
+            // No table rows (invalid or unsupported frontmatter): render the
+            // raw content as a code block.
             let mut metadata_block = div().w_full().rounded_md();
             metadata_block.style().refine(&self.style.code_block);
             builder.push_text_style(self.style.code_block.text.to_owned());
