@@ -34,7 +34,6 @@
       "ctrl-alt-,": "zed::OpenSettingsFile",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
-      "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RatePredictions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
       "ctrl-alt-l": "lsp_tool::ToggleMenu",
@@ -631,6 +630,7 @@
       "shift-f6": "workspace::FocusPreviousPart",
       "ctrl-f6": "workspace::FocusNextPart",
       "alt-open": "projects::OpenRecent",
+      "f11": "zed::ToggleFullScreen",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
       "alt-ctrl-o": "projects::OpenRecent",

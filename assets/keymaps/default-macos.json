@@ -38,8 +38,6 @@
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
       "cmd-m": "zed::Minimize",
-      "fn-f": "zed::ToggleFullScreen",
-      "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RatePredictions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
@@ -695,6 +693,8 @@
       "f6": "workspace::FocusNextPart",
       "shift-f6": "workspace::FocusPreviousPart",
       "cmd-f6": "workspace::FocusNextPart",
+      "fn-f": "zed::ToggleFullScreen",
+      "ctrl-cmd-f": "zed::ToggleFullScreen",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
