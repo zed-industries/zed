@@ -104,6 +104,13 @@ actions!(
 #[action(namespace = terminal)]
 pub struct RenameTerminal;
 
+/// Toggles a multi-line editor for composing terminal input with full editor
+/// controls (mouse positioning, selection, free editing across rows). Toggle
+/// again to close. Disabled while a full-screen program owns the terminal.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = toggle)]
+pub struct TerminalEditor;
+
 pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
 
@@ -152,6 +159,7 @@ pub struct TerminalView {
     self_handle: WeakEntity<Self>,
     rename_editor: Option<Entity<Editor>>,
     rename_editor_subscription: Option<Subscription>,
+    input_overlay: Option<Entity<Editor>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -298,6 +306,7 @@ impl TerminalView {
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
             rename_editor_subscription: None,
+            input_overlay: None,
             _subscriptions: subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
@@ -491,6 +500,73 @@ impl TerminalView {
     pub fn clear_bell(&mut self, cx: &mut Context<TerminalView>) {
         self.has_bell = false;
         cx.emit(Event::Wakeup);
+    }
+
+    pub fn input_overlay_is_open(&self) -> bool {
+        self.input_overlay.is_some()
+    }
+
+    /// Toggle the terminal-editor overlay. Opening is suppressed while a
+    /// full-screen program (vim, top, less, an ssh session, …) owns the
+    /// terminal, since there is no shell prompt to send the line to. Toggle
+    /// again to close.
+    fn toggle_input_overlay(
+        &mut self,
+        _: &TerminalEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.input_overlay.is_some() {
+            self.close_input_overlay(window, cx);
+            return;
+        }
+
+        if self
+            .terminal
+            .read(cx)
+            .last_content
+            .mode
+            .contains(Modes::ALT_SCREEN)
+        {
+            return;
+        }
+
+        let editor = cx.new(|cx| Editor::auto_height(3, 3, window, cx));
+        editor.update(cx, |editor, cx| {
+            editor.focus_handle(cx).focus(window, cx);
+        });
+
+        self.input_overlay = Some(editor);
+        cx.notify();
+    }
+
+    fn submit_input_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.input_overlay.clone() else {
+            return;
+        };
+
+        let text = editor.read(cx).text(cx);
+        // Carriage return is what a terminal sends for Return; this submits the
+        // composed text to the shell exactly as typing it and pressing enter.
+        let mut bytes = text.into_bytes();
+        bytes.push(b'\r');
+        self.terminal.update(cx, |term, _| term.input(bytes));
+
+        // Keep the overlay open as a persistent composer: clear it and keep
+        // focus so the next command can be typed without reopening.
+        editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn close_input_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.input_overlay.take().is_none() {
+            return;
+        }
+        self.focus_handle.focus(window, cx);
+        cx.notify();
     }
 
     pub fn deploy_context_menu(
@@ -1332,6 +1408,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
             .on_action(cx.listener(TerminalView::rename_terminal))
+            .on_action(cx.listener(TerminalView::toggle_input_overlay))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -1396,6 +1473,29 @@ impl Render for TerminalView {
                 )
                 .with_priority(1)
             }))
+            .when_some(self.input_overlay.clone(), |this, editor| {
+                let colors = cx.theme().colors();
+                let submit_handle = self.self_handle.clone();
+                this.child(
+                    div()
+                        .key_context("TerminalInputOverlay")
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .px_3()
+                        .py_2()
+                        .bg(colors.elevated_surface_background)
+                        .border_t_1()
+                        .border_color(colors.border)
+                        .child(editor)
+                        .on_action(move |_: &menu::Confirm, window, cx| {
+                            submit_handle
+                                .update(cx, |this, cx| this.submit_input_overlay(window, cx))
+                                .ok();
+                        }),
+                )
+            })
     }
 }
 

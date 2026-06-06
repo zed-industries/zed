@@ -289,6 +289,14 @@
     },
   },
   {
+    "context": "TerminalInputOverlay > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline",
+    },
+  },
+  {
     "context": "AgentConfiguration",
     "bindings": {
       "ctrl--": "pane::GoBack",
