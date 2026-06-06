@@ -240,7 +240,11 @@ pub struct Child {
 impl Drop for Child {
     fn drop(&mut self) {
         if self.kill_on_drop && self.status.is_none() {
-            let _ = self.kill();
+            self.kill().ok();
+            let pid = self.pid;
+            std::thread::spawn(move || {
+                nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid), None).ok();
+            });
         }
     }
 }
@@ -587,6 +591,61 @@ fn invalid_input_error() -> io::Error {
 mod tests {
     use super::*;
     use futures_lite::AsyncWriteExt;
+
+    #[test]
+    fn test_kill_on_drop_reaps_child() {
+        let child = Command::new("/bin/sleep")
+            .args(["10"])
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn");
+        let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+        drop(child);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let result =
+            nix::sys::wait::waitpid(pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG));
+        assert!(
+            matches!(result, Err(nix::errno::Errno::ECHILD)),
+            "child was not reaped: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_kill_then_drop_reaps_child() {
+        let mut child = Command::new("/bin/sleep")
+            .args(["10"])
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn");
+        let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+        child.kill().expect("kill failed");
+        drop(child);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let result =
+            nix::sys::wait::waitpid(pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG));
+        assert!(
+            matches!(result, Err(nix::errno::Errno::ECHILD)),
+            "child was not reaped after explicit kill: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_naturally_exited_child_reaped_on_drop() {
+        let child = Command::new("/usr/bin/true")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn");
+        let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        drop(child);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let result =
+            nix::sys::wait::waitpid(pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG));
+        assert!(
+            matches!(result, Err(nix::errno::Errno::ECHILD)),
+            "naturally-exited child was not reaped: {result:?}"
+        );
+    }
 
     // Verifies that pipes returned by `create_pipe` aren't visible to unrelated
     // child processes spawned via `std::process::Command`. On macOS, `std`
