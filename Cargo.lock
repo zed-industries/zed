@@ -4515,8 +4515,10 @@ dependencies = [
  "feature_flags",
  "gpui",
  "log",
+ "serde_json",
  "text",
  "ui",
+ "util",
  "workspace",
 ]
 
