@@ -719,26 +719,12 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let running_app_path = cx.update(|cx| cx.app_path())?;
-        let background_executor = cx.background_executor().clone();
-        let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
-        let install_result = {
-            #[cfg(test)]
-            if let Some(test_install) =
-                cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
-            {
-                test_install(&target_path, cx)
-            } else {
-                cx.background_spawn(Self::install_release(
-                    installer_dir,
-                    target_path.clone(),
-                    running_app_path,
-                    channel,
-                    background_executor,
-                ))
-                .await
-            }
-            #[cfg(not(test))]
+        let install_result = if let Some(result) = Self::test_install(&target_path, cx) {
+            result
+        } else {
+            let running_app_path = cx.update(|cx| cx.app_path())?;
+            let background_executor = cx.background_executor().clone();
+            let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
             cx.background_spawn(Self::install_release(
                 installer_dir,
                 target_path.clone(),
@@ -845,6 +831,17 @@ impl AutoUpdater {
         }?;
 
         Ok(installer_dir.path().join(filename))
+    }
+
+    #[cfg(test)]
+    fn test_install(target_path: &Path, cx: &AsyncApp) -> Option<Result<Option<PathBuf>>> {
+        cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
+            .map(|test_install| test_install(target_path, cx))
+    }
+
+    #[cfg(not(test))]
+    fn test_install(_target_path: &Path, _cx: &AsyncApp) -> Option<Result<Option<PathBuf>>> {
+        None
     }
 
     async fn install_release(
