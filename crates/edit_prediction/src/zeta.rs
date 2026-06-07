@@ -503,7 +503,7 @@ fn handle_api_response<T>(
                             self.message.clone()
                         }
                         fn severity(&self) -> ErrorSeverity {
-                            ErrorSeverity::Error
+                            ErrorSeverity::Critical
                         }
                         fn primary_action(&self) -> ErrorAction {
                             ErrorAction::link("Update Zed", "https://zed.dev/releases")

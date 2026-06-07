@@ -1316,7 +1316,7 @@ fn register_actions(
             }
 
             fn severity(&self) -> ErrorSeverity {
-                ErrorSeverity::Error
+                ErrorSeverity::Warning
             }
 
             fn primary_action(&self) -> ErrorAction {

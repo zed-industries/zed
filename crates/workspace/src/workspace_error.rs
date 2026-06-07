@@ -142,7 +142,7 @@ impl WorkspaceError for &'static str {
     }
 
     fn severity(&self) -> ErrorSeverity {
-        ErrorSeverity::Error
+        ErrorSeverity::Critical
     }
 }
 
@@ -156,7 +156,7 @@ impl WorkspaceError for String {
     }
 
     fn severity(&self) -> ErrorSeverity {
-        ErrorSeverity::Error
+        ErrorSeverity::Critical
     }
 }
 
