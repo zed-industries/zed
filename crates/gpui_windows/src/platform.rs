@@ -21,7 +21,7 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -29,6 +29,10 @@ use windows::{
 
 use crate::*;
 use gpui::*;
+
+thread_local! {
+    static IDLE_SLEEP_PREVENTION_COUNT: Cell<usize> = Cell::new(0);
+}
 
 pub struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
@@ -93,6 +97,54 @@ impl WindowsPlatformState {
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
+    }
+}
+
+struct PreventIdleSleepGuard;
+
+impl PreventIdleSleepGuard {
+    fn new() -> Result<Self> {
+        IDLE_SLEEP_PREVENTION_COUNT.with(|count| {
+            let current_count = count.get();
+            if current_count == 0 {
+                let previous_state = unsafe {
+                    SetThreadExecutionState(
+                        ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED,
+                    )
+                };
+
+                if previous_state == EXECUTION_STATE(0) {
+                    anyhow::bail!(
+                        "SetThreadExecutionState failed while enabling idle sleep prevention"
+                    );
+                }
+            }
+
+            count.set(current_count + 1);
+            Ok(Self)
+        })
+    }
+}
+
+impl Drop for PreventIdleSleepGuard {
+    fn drop(&mut self) {
+        IDLE_SLEEP_PREVENTION_COUNT.with(|count| {
+            let current_count = count.get();
+            if current_count == 0 {
+                log::error!("Idle sleep prevention count underflow on Windows");
+                return;
+            }
+
+            if current_count == 1 {
+                let previous_state = unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
+                if previous_state == EXECUTION_STATE(0) {
+                    log::error!("Failed to clear idle sleep prevention on Windows");
+                }
+                count.set(0);
+            } else {
+                count.set(current_count - 1);
+            }
+        });
     }
 }
 
@@ -394,6 +446,16 @@ impl Platform for WindowsPlatform {
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
+    }
+
+    fn prevent_idle_sleep(&self, _reason: &str) -> Option<PreventIdleSleepToken> {
+        match PreventIdleSleepGuard::new() {
+            Ok(guard) => Some(PreventIdleSleepToken::new(guard)),
+            Err(error) => {
+                log::error!("Failed to prevent idle sleep on Windows: {error:#}");
+                None
+            }
+        }
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {

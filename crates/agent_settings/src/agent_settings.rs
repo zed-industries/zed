@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
-use gpui::{App, Pixels, SharedString, px};
+use gpui::{App, BorrowAppContext, Global, Pixels, SharedString, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
@@ -26,6 +26,32 @@ pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
     include_str!("prompts/summarize_thread_detailed_prompt.txt");
 pub const COMPACTION_PROMPT: &str = include_str!("prompts/compaction_prompt.txt");
+
+#[derive(Default)]
+pub struct AgentOutputIdleSleepControl {
+    enabled: bool,
+}
+
+impl Global for AgentOutputIdleSleepControl {}
+
+impl AgentOutputIdleSleepControl {
+    pub fn is_enabled(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|state| state.enabled)
+    }
+
+    pub fn set_enabled(enabled: bool, cx: &mut impl BorrowAppContext) {
+        cx.update_default_global::<Self, _>(|state, _| {
+            state.enabled = enabled;
+        });
+    }
+
+    pub fn toggle(cx: &mut impl BorrowAppContext) -> bool {
+        cx.update_default_global::<Self, _>(|state, _| {
+            state.enabled = !state.enabled;
+            state.enabled
+        })
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PanelLayout {

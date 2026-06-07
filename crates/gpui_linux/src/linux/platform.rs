@@ -1,5 +1,6 @@
 use std::{
     env,
+    fmt::Display,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -14,6 +15,8 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow};
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use ashpd::desktop::inhibit::{InhibitFlags, InhibitOptions, InhibitProxy};
 use calloop::LoopSignal;
 use futures::channel::oneshot;
 use util::ResultExt as _;
@@ -26,8 +29,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams,
+    PlatformWindow, PreventIdleSleepToken, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -160,6 +163,64 @@ pub(crate) struct LinuxPlatform<P> {
     pub(crate) inner: P,
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+struct PreventIdleSleepGuard<T> {
+    request: Option<T>,
+    foreground_executor: ForegroundExecutor,
+    on_drop: Option<Box<dyn FnOnce(T, ForegroundExecutor)>>,
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl<T> PreventIdleSleepGuard<T> {
+    fn new(
+        request: T,
+        foreground_executor: ForegroundExecutor,
+        on_drop: impl 'static + FnOnce(T, ForegroundExecutor),
+    ) -> Self {
+        Self {
+            request: Some(request),
+            foreground_executor,
+            on_drop: Some(Box::new(on_drop)),
+        }
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl<T> Drop for PreventIdleSleepGuard<T> {
+    fn drop(&mut self) {
+        let Some(request) = self.request.take() else {
+            return;
+        };
+        let Some(on_drop) = self.on_drop.take() else {
+            return;
+        };
+        on_drop(request, self.foreground_executor.clone());
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn idle_sleep_token_from_request<T, E>(
+    request: Result<T, E>,
+    foreground_executor: &ForegroundExecutor,
+    on_drop: impl 'static + FnOnce(T, ForegroundExecutor),
+) -> Option<PreventIdleSleepToken>
+where
+    T: 'static,
+    E: Display,
+{
+    match request {
+        Ok(request) => Some(PreventIdleSleepToken::new(PreventIdleSleepGuard::new(
+            request,
+            foreground_executor.clone(),
+            on_drop,
+        ))),
+        Err(error) => {
+            log::error!("Failed to prevent idle sleep on Linux: {error}");
+            None
+        }
+    }
+}
+
 impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn background_executor(&self) -> BackgroundExecutor {
         self.inner
@@ -192,6 +253,36 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Option<PreventIdleSleepToken> {
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+        {
+            let _ = reason;
+            None
+        }
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        {
+            let request = smol::block_on(async {
+                let identifier = self.inner.window_identifier().await;
+                let proxy = InhibitProxy::new().await?;
+                proxy
+                    .inhibit(
+                        identifier.as_ref(),
+                        InhibitFlags::Idle | InhibitFlags::Suspend,
+                        InhibitOptions::default().set_reason(Some(reason)),
+                    )
+                    .await
+            });
+
+            idle_sleep_token_from_request(request, &self.foreground_executor(), |request, cx| {
+                cx.spawn(async move {
+                    request.close().await.log_err();
+                })
+                .detach();
+            })
+        }
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -1107,7 +1198,12 @@ pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::Comp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Point, px};
+    use anyhow::anyhow;
+    use gpui::{Point, TestDispatcher, px};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    };
 
     #[test]
     fn test_is_within_click_distance() {
@@ -1125,5 +1221,42 @@ mod tests {
             zero,
             Point::new(px(5.0), px(5.1))
         ),);
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn test_idle_sleep_token_is_not_created_when_request_fails() {
+        let dispatcher = Arc::new(TestDispatcher::new(0));
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+
+        let token = idle_sleep_token_from_request::<(), _>(
+            Err(anyhow!("portal unavailable")),
+            &foreground_executor,
+            |_, _| panic!("drop handler should not run when request creation fails"),
+        );
+
+        assert!(token.is_none());
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn test_idle_sleep_token_runs_drop_handler_after_success() {
+        let dispatcher = Arc::new(TestDispatcher::new(0));
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let dropped = Arc::new(AtomicBool::new(false));
+
+        let token = idle_sleep_token_from_request(Ok(42usize), &foreground_executor, {
+            let dropped = dropped.clone();
+            move |_, _| {
+                dropped.store(true, SeqCst);
+            }
+        });
+
+        assert!(token.is_some());
+        assert!(!dropped.load(SeqCst));
+
+        drop(token);
+
+        assert!(dropped.load(SeqCst));
     }
 }
