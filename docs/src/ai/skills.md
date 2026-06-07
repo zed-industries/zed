@@ -35,7 +35,7 @@ To install a skill, copy the skill's folder into `~/.agents/skills/` for global 
 
 Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to **AI > Skills**, or go directly to [agent.skills](zed://settings/agent.skills).
 
-The **User** tab shows your global skills. And in each project tab, you should skills for that project.
+The **User** tab shows your global skills, and each **Project** tab shows the skills for that project.
 
 For each skill you can:
 
