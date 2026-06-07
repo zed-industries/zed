@@ -392,15 +392,21 @@ impl SkillCreatorPage {
         self.url_editor.read(cx).text(cx)
     }
 
-    fn recompute_name_error(&mut self, cx: &App) {
+    fn recompute_name_error(&mut self, cx: &mut Context<Self>) {
         let name = self.current_name(cx);
-        self.name_error = validate_name(&name).err();
+        let error = validate_name(&name).err();
+        self.name_error = error;
+        self.name_editor
+            .update(cx, |field, cx| field.set_error(error, cx));
     }
 
-    fn recompute_description_error(&mut self, cx: &App) {
+    fn recompute_description_error(&mut self, cx: &mut Context<Self>) {
         let description = self.current_description(cx);
         self.description_length = description.len();
-        self.description_error = validate_description(&description).err();
+        let error = validate_description(&description).err();
+        self.description_error = error;
+        self.description_editor
+            .update(cx, |field, cx| field.set_error(error, cx));
     }
 
     fn recompute_body_error(&mut self, cx: &App) {
@@ -750,7 +756,10 @@ impl SkillCreatorPage {
                     .flex_shrink_0()
                     .gap_2()
                     .child(Label::new("Skill Content"))
-                    .child(self.render_body_field(window, cx)),
+                    .child(self.render_body_field(window, cx))
+                    .when_some(self.body_error, |this, error| {
+                        this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+                    }),
             )
     }
 
