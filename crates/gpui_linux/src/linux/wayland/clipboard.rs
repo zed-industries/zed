@@ -147,7 +147,7 @@ impl<T: ReceiveData> DataOffer<T> {
             return None;
         }
         Some(ClipboardItem {
-            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths.into()))],
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))],
         })
     }
 
