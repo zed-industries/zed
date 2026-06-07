@@ -111,6 +111,18 @@ pub struct RenameTerminal;
 #[action(namespace = terminal, name = "Editor")]
 pub struct TerminalEditor;
 
+/// Turns text composed in the input overlay into the bytes a shell expects from
+/// a typed-and-submitted command: every line break becomes a carriage return
+/// (what a terminal sends for Return, matching `Terminal::paste` normalization),
+/// with a trailing return so the final line is submitted.
+fn compose_terminal_submission(text: &str) -> String {
+    let mut input = text.replace("\r\n", "\r").replace('\n', "\r");
+    if !input.ends_with('\r') {
+        input.push('\r');
+    }
+    input
+}
+
 pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
 
@@ -541,18 +553,7 @@ impl TerminalView {
             return;
         };
 
-        // Replay the composed text as if typed: every line break becomes a
-        // carriage return (what a terminal sends for Return), matching
-        // `Terminal::paste` normalization, with a trailing return to submit the
-        // final line.
-        let mut input = editor
-            .read(cx)
-            .text(cx)
-            .replace("\r\n", "\r")
-            .replace('\n', "\r");
-        if !input.ends_with('\r') {
-            input.push('\r');
-        }
+        let input = compose_terminal_submission(&editor.read(cx).text(cx));
         self.terminal
             .update(cx, |term, _| term.input(input.into_bytes()));
 
@@ -2386,6 +2387,128 @@ mod tests {
             vec![SHIFT_UP_ESCAPE.to_vec()],
             "shift-up should be forwarded to the program in the alternate screen",
         );
+    }
+
+    #[gpui::test]
+    fn test_compose_terminal_submission(_cx: &mut TestAppContext) {
+        // A single line gets a trailing return so it is submitted.
+        assert_eq!(compose_terminal_submission("echo hi"), "echo hi\r");
+        // An already-terminated line is not double-terminated.
+        assert_eq!(compose_terminal_submission("echo hi\n"), "echo hi\r");
+        // Interior newlines (and CRLF) become carriage returns, so each line is
+        // run in turn, matching what typing the lines would send.
+        assert_eq!(compose_terminal_submission("a\nb\nc"), "a\rb\rc\r");
+        assert_eq!(compose_terminal_submission("a\r\nb"), "a\rb\r");
+        // Empty input still submits (sends a bare return, like pressing Enter).
+        assert_eq!(compose_terminal_submission(""), "\r");
+    }
+
+    #[gpui::test]
+    async fn terminal_editor_overlay_toggles_open_and_closed(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, _terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |view, cx| {
+                assert!(view.input_overlay.is_none());
+                view.toggle_input_overlay(&TerminalEditor, window, cx);
+                assert!(view.input_overlay.is_some(), "first toggle opens the overlay");
+                view.toggle_input_overlay(&TerminalEditor, window, cx);
+                assert!(
+                    view.input_overlay.is_none(),
+                    "second toggle closes the overlay"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn terminal_editor_overlay_submits_normalized_input(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+
+        // Open the overlay and compose a multi-line command.
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |view, cx| {
+                view.toggle_input_overlay(&TerminalEditor, window, cx);
+                let editor = view
+                    .input_overlay
+                    .clone()
+                    .expect("overlay should be open after toggle");
+                editor.update(cx, |editor, cx| {
+                    editor.set_text("echo hi\nls", window, cx);
+                });
+            });
+        });
+
+        // Submitting replays the composed text to the shell: each newline becomes
+        // a carriage return, with a trailing return to run the final line.
+        terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |view, cx| {
+                view.submit_input_overlay(window, cx);
+            });
+        });
+        assert_eq!(
+            terminal.update(&mut cx, |terminal, _| terminal.take_input_log()),
+            vec![b"echo hi\rls\r".to_vec()],
+        );
+
+        // The overlay stays open as a persistent composer and is cleared for the
+        // next command.
+        terminal_view.read_with(&cx, |view, cx| {
+            let editor = view
+                .input_overlay
+                .clone()
+                .expect("overlay should remain open after submit");
+            assert_eq!(editor.read(cx).text(cx), "");
+        });
+    }
+
+    #[gpui::test]
+    async fn terminal_editor_overlay_suppressed_in_alt_screen(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+
+        // A full-screen program takes over the terminal (alternate screen).
+        cx.update(|window, cx| {
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(ENTER_ALT_SCREEN, cx);
+                terminal.sync(window, cx);
+            });
+        });
+        terminal.read_with(&cx, |terminal, _| {
+            assert!(terminal.last_content.mode.contains(Modes::ALT_SCREEN));
+        });
+
+        // Toggling does nothing: there is no shell prompt to send a line to.
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |view, cx| {
+                view.toggle_input_overlay(&TerminalEditor, window, cx);
+                assert!(view.input_overlay.is_none());
+            });
+        });
     }
 
     // Working directory calculation tests
