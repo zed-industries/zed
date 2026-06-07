@@ -20,7 +20,7 @@ use multi_buffer::MultiBuffer;
 use project::{
     Project, ProjectPath,
     git_store::{
-        Repository,
+        GitStoreEvent, Repository,
         diff_buffer_list::{self, DiffBase},
     },
 };
@@ -231,18 +231,47 @@ impl ProjectDiff {
         Self::from_diff(diff, project, workspace, cx)
     }
 
-    fn from_diff(
+fn from_diff(
         diff: Entity<DiffMultibuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let observation = cx.observe(&diff, |_, _, cx| cx.notify());
+
+        // When the user switches the active repository via the repository
+        // selector, update the diff to reflect the new repo.  Without
+        // this, the "Uncommitted Changes" buffer would stay on the old repo
+        // until a diff file is explicitly clicked.
+        // See: https://github.com/zed-industries/zed/issues/58792
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription = cx.subscribe(&git_store, |this, _git_store, event, cx| {
+            if let GitStoreEvent::ActiveRepositoryChanged(Some(_)) = event {
+                let new_repo = this
+                    .project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .active_repository();
+                let current = this.diff.read(cx).repo(cx);
+                let needs_switch = match (&new_repo, current) {
+                    (Some(new), Some(cur)) => new.read(cx).id != cur.read(cx).id,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                if needs_switch {
+                    this.diff.update(cx, |diff, cx| {
+                        diff.set_repo(new_repo, cx);
+                    });
+                }
+            }
+        });
+
         Self {
             project,
             workspace: workspace.downgrade(),
             diff,
-            _diff_observation: observation,
+            _diff_observation: Subscription::join(observation, git_store_subscription),
         }
     }
 
