@@ -1392,6 +1392,8 @@ impl Render for TerminalView {
             .id("terminal-view")
             .size_full()
             .relative()
+            .flex()
+            .flex_col()
             .track_focus(&self.focus_handle(cx))
             .key_context(self.dispatch_context(cx))
             .on_action(cx.listener(TerminalView::send_text))
@@ -1442,7 +1444,12 @@ impl Render for TerminalView {
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div()
                     .id("terminal-view-container")
-                    .size_full()
+                    // Take the space left above the input overlay (when open) so
+                    // the terminal grid reflows to fewer rows instead of letting
+                    // its bottom lines render underneath the overlay.
+                    .flex_1()
+                    .overflow_hidden()
+                    .w_full()
                     .bg(cx.theme().colors().editor_background)
                     .child(TerminalElement::new(
                         terminal_handle,
@@ -1484,10 +1491,11 @@ impl Render for TerminalView {
                 this.child(
                     div()
                         .key_context("TerminalInputOverlay")
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
+                        // A normal flow child at the bottom of the column (not
+                        // absolutely positioned), so it reserves its own height
+                        // and the terminal above shrinks to fit.
+                        .flex_shrink_0()
+                        .w_full()
                         .px_3()
                         .py_2()
                         .bg(colors.elevated_surface_background)
@@ -2547,6 +2555,41 @@ mod tests {
                 "cmd-alt-e should close the overlay from inside it"
             )
         });
+    }
+
+    #[gpui::test]
+    async fn terminal_editor_overlay_shrinks_terminal_viewport(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.simulate_resize(gpui::size(gpui::px(800.), gpui::px(600.)));
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+        let rows_without_overlay = terminal.read_with(&cx, |terminal, _| terminal.viewport_lines());
+        assert!(rows_without_overlay > 0, "terminal should have visible rows");
+
+        // Open the overlay and redraw.
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |view, cx| {
+                view.toggle_input_overlay(&TerminalEditor, window, cx);
+            });
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+        let rows_with_overlay = terminal.read_with(&cx, |terminal, _| terminal.viewport_lines());
+
+        // The overlay reserves its own height at the bottom of the column, so the
+        // terminal grid reflows to fewer visible rows instead of letting its
+        // bottom lines render underneath the overlay.
+        assert!(
+            rows_with_overlay < rows_without_overlay,
+            "terminal viewport should shrink when the overlay opens: \
+             without={rows_without_overlay} with={rows_with_overlay}",
+        );
     }
 
     // Working directory calculation tests
