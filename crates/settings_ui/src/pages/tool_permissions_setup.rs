@@ -1411,9 +1411,12 @@ mod tests {
             "grep",
             "list_agents_and_models",
             "list_directory",
+            "list_threads",
             "open",
             "read_file",
+            "read_thread",
             "rename_symbol",
+            "search_threads",
             "thinking",
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.

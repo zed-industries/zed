@@ -86,6 +86,20 @@ impl FeatureFlag for CreateThreadToolFeatureFlag {
 }
 register_feature_flag!(CreateThreadToolFeatureFlag);
 
+/// Gates the `list_threads`, `search_threads`, and `read_thread` tools,
+/// which let the agent search and read the user's saved thread history.
+pub struct ThreadHistoryToolsFeatureFlag;
+
+impl FeatureFlag for ThreadHistoryToolsFeatureFlag {
+    const NAME: &'static str = "thread-history-tools";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(ThreadHistoryToolsFeatureFlag);
+
 pub struct UpdateTitleToolFeatureFlag;
 
 impl FeatureFlag for UpdateTitleToolFeatureFlag {

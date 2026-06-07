@@ -2,17 +2,19 @@ use crate::{
     ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
     CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
     FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
-    ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
-    RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ToolPermissionDecision, UpdatePlanTool, UpdateTitleTool, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    ListAgentsAndModelsTool, ListDirectoryTool, ListThreadsTool, MovePathTool, ProjectSnapshot,
+    ReadFileTool, ReadThreadTool, RenameTool, SandboxedTerminalTool, SearchThreadsTool,
+    SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
     CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag, LspToolFeatureFlag,
-    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
+    RenameToolFeatureFlag, ThreadHistoryToolsFeatureFlag, UpdatePlanToolFeatureFlag,
+    UpdateTitleToolFeatureFlag,
 };
 use zed_env_vars::{EnvVar, env_var};
 
@@ -1960,6 +1962,12 @@ impl Thread {
         // `Thread::enabled_tools`.
         self.add_tool(CreateThreadTool::new(environment.clone()));
         self.add_tool(ListAgentsAndModelsTool::new(environment));
+
+        // Thread-history tools. Visibility to the model is gated by
+        // `ThreadHistoryToolsFeatureFlag` in `Thread::enabled_tools`.
+        self.add_tool(ListThreadsTool::new(self.id.clone()));
+        self.add_tool(SearchThreadsTool::new(self.id.clone()));
+        self.add_tool(ReadThreadTool::new(self.id.clone()));
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -3511,6 +3519,9 @@ impl Thread {
                 | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
                 CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
                     cx.has_flag::<CreateThreadToolFeatureFlag>()
+                }
+                ListThreadsTool::NAME | SearchThreadsTool::NAME | ReadThreadTool::NAME => {
+                    cx.has_flag::<ThreadHistoryToolsFeatureFlag>()
                 }
                 _ => true,
             })
