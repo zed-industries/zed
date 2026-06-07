@@ -10,8 +10,12 @@ use strum::IntoEnumIterator;
 use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
+use http_client::Url;
+use smallvec::SmallVec;
+use util::ResultExt as _;
+
 use crate::linux::{WaylandClientStatePtr, platform::read_fd};
-use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
+use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths, Image, ImageFormat, hash};
 
 /// Text mime types that we'll offer to other programs.
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
@@ -29,6 +33,11 @@ pub(crate) struct Clipboard {
     // Internal clipboard
     contents: Option<ClipboardItem>,
     primary_contents: Option<ClipboardItem>,
+    // True when this process last set the clipboard selection. Most Wayland compositors do not
+    // send a wl_data_device.selection event back to the client that called set_selection, so we
+    // track ownership ourselves to avoid needing current_offer to be populated for same-process
+    // cross-window reads.
+    is_self_owner: bool,
 
     // External clipboard
     cached_read: Option<ClipboardItem>,
@@ -117,6 +126,31 @@ impl<T: ReceiveData> DataOffer<T> {
         Some(ClipboardItem::new_string(result))
     }
 
+    fn read_uri_list(&self, connection: &Connection) -> Option<ClipboardItem> {
+        if !self.has_mime_type(FILE_LIST_MIME_TYPE) {
+            return None;
+        }
+        let bytes = self.read_bytes(connection, FILE_LIST_MIME_TYPE)?;
+        let text = String::from_utf8(bytes).ok()?;
+        let paths: SmallVec<[_; 2]> = text
+            .lines()
+            .map(|line| line.trim_end_matches('\r'))
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .filter_map(|line| Url::parse(line).log_err())
+            .filter_map(|url| {
+                url.to_file_path()
+                    .map_err(|_| log::error!("Failed to convert {url:?} into a file path"))
+                    .ok()
+            })
+            .collect();
+        if paths.is_empty() {
+            return None;
+        }
+        Some(ClipboardItem {
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))],
+        })
+    }
+
     fn read_image(&self, connection: &Connection) -> Option<ClipboardItem> {
         for format in ImageFormat::iter() {
             let mime_type = format.mime_type();
@@ -147,6 +181,7 @@ impl Clipboard {
 
             contents: None,
             primary_contents: None,
+            is_self_owner: false,
 
             cached_read: None,
             current_offer: None,
@@ -157,6 +192,7 @@ impl Clipboard {
 
     pub fn set(&mut self, item: ClipboardItem) {
         self.contents = Some(item);
+        self.is_self_owner = true;
     }
 
     pub fn set_primary(&mut self, item: ClipboardItem) {
@@ -166,6 +202,7 @@ impl Clipboard {
     pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
         self.cached_read = None;
         self.current_offer = data_offer;
+        self.is_self_owner = false;
     }
 
     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
@@ -177,8 +214,25 @@ impl Clipboard {
         self.self_mime.clone()
     }
 
-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
+    pub fn send(&self, mime_type: String, fd: OwnedFd) {
+        let Some(contents) = self.contents.as_ref() else {
+            return;
+        };
+        if mime_type == FILE_LIST_MIME_TYPE {
+            for entry in contents.entries() {
+                if let ClipboardEntry::ExternalPaths(paths) = entry {
+                    let uri_list = paths
+                        .paths()
+                        .iter()
+                        .filter_map(|path| Url::from_file_path(path).ok())
+                        .map(|url| url.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\r\n");
+                    self.send_internal(fd, uri_list.into_bytes());
+                    return;
+                }
+            }
+        } else if let Some(text) = contents.text() {
             self.send_internal(fd, text.as_bytes().to_owned());
         }
     }
@@ -194,6 +248,13 @@ impl Clipboard {
     }
 
     pub fn read(&mut self) -> Option<ClipboardItem> {
+        // When we are the clipboard owner, return our contents directly. Most Wayland compositors
+        // do not send a wl_data_device.selection event back to the client that called
+        // set_selection, so current_offer is not updated on self-write.
+        if self.is_self_owner {
+            return self.contents.clone();
+        }
+
         let offer = self.current_offer.as_ref()?;
         if let Some(cached) = self.cached_read.clone() {
             return Some(cached);
@@ -205,6 +266,7 @@ impl Clipboard {
 
         let item = offer
             .read_text(&self.connection)
+            .or_else(|| offer.read_uri_list(&self.connection))
             .or_else(|| offer.read_image(&self.connection))?;
 
         self.cached_read = Some(item.clone());

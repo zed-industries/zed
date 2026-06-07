@@ -970,6 +970,10 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
+            let has_external_paths = item
+                .entries()
+                .iter()
+                .any(|e| matches!(e, gpui::ClipboardEntry::ExternalPaths(_)));
             state.clipboard.set(item);
             let serial = state.serial_tracker.get_latest();
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
@@ -977,6 +981,9 @@ impl LinuxClient for WaylandClient {
                 data_source.offer(mime_type.to_string());
             }
             data_source.offer(state.clipboard.self_mime());
+            if has_external_paths {
+                data_source.offer(FILE_LIST_MIME_TYPE.to_string());
+            }
             data_device.set_selection(Some(&data_source), serial);
         }
     }

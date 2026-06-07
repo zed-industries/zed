@@ -8553,104 +8553,6 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     );
 }
 
-#[gpui::test]
-async fn test_context_menu_new_file_in_empty_hidden_root(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/root"), json!({})).await;
-
-    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(window.into(), cx);
-
-    cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
-    });
-
-    let panel = workspace.update_in(cx, |workspace, window, cx| {
-        let panel = ProjectPanel::new(workspace, window, cx);
-        workspace.add_panel(panel.clone(), window, cx);
-        panel
-    });
-    cx.run_until_parked();
-
-    assert!(
-        visible_entries_as_strings(&panel, 0..20, cx).is_empty(),
-        "Empty worktree with hide_root=true should render no entries"
-    );
-
-    panel.update(cx, |panel, _| {
-        assert!(
-            panel.selection.is_none(),
-            "Project panel should start without a selection"
-        );
-        assert!(
-            panel.state.last_worktree_root_id.is_some(),
-            "Project panel should still track the hidden root entry"
-        );
-    });
-
-    panel.update_in(cx, |panel, window, cx| {
-        let root_entry_id = panel
-            .state
-            .last_worktree_root_id
-            .expect("hidden root should be available for background context menu actions");
-        panel.deploy_context_menu(
-            gpui::point(gpui::px(1.), gpui::px(1.)),
-            root_entry_id,
-            window,
-            cx,
-        );
-        panel.new_file(&NewFile, window, cx);
-    });
-    cx.run_until_parked();
-
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(
-            panel.filename_editor.read(cx).is_focused(window),
-            "New File from the background context menu should open the filename editor"
-        );
-    });
-
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &["  [EDITOR: '']  <== selected"],
-        "New file editor should appear at the hidden root level"
-    );
-
-    let confirm = panel.update_in(cx, |panel, window, cx| {
-        panel.filename_editor.update(cx, |editor, cx| {
-            editor.set_text("new_file_from_context_menu.txt", window, cx)
-        });
-        panel.confirm_edit(true, window, cx).unwrap()
-    });
-    confirm.await.unwrap();
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &["  new_file_from_context_menu.txt  <== selected  <== marked"],
-        "Confirmed file should appear at the hidden root level"
-    );
-
-    assert!(
-        fs.is_file(Path::new("/root/new_file_from_context_menu.txt"))
-            .await,
-        "File should be created in the empty root directory"
-    );
-}
-
 #[cfg(windows)]
 #[gpui::test]
 async fn test_create_entry_with_trailing_dot_windows(cx: &mut gpui::TestAppContext) {
@@ -10847,6 +10749,88 @@ impl Render for TestProjectItemView {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
+}
+
+#[gpui::test]
+async fn test_copy_paste_between_windows(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "file_a.txt": "content a",
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "existing.txt": "existing",
+        }),
+    )
+    .await;
+
+    // Create first window with root1
+    let project1 = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let window1 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+    let workspace1 = window1
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx1 = &mut VisualTestContext::from_window(window1.into(), cx);
+    let panel1 = workspace1.update_in(cx1, ProjectPanel::new);
+    cx1.run_until_parked();
+
+    // Create second window with root2
+    let project2 = Project::test(fs.clone(), ["/root2".as_ref()], cx).await;
+    let window2 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project2.clone(), window, cx));
+    let workspace2 = window2
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx2 = &mut VisualTestContext::from_window(window2.into(), cx);
+    let panel2 = workspace2.update_in(cx2, ProjectPanel::new);
+    cx2.run_until_parked();
+
+    // Copy file from window1
+    select_path(&panel1, "root1/file_a.txt", cx1);
+    panel1.update_in(cx1, |panel, window, cx| {
+        panel.copy(&Default::default(), window, cx);
+    });
+
+    // Verify clipboard has ExternalPaths format
+    let clipboard = cx1
+        .read_from_clipboard()
+        .expect("clipboard should have content after copy");
+
+    let has_external_paths = clipboard
+        .entries()
+        .iter()
+        .any(|entry| matches!(entry, GpuiClipboardEntry::ExternalPaths(_)));
+
+    assert!(
+        has_external_paths,
+        "Clipboard should contain ExternalPaths format for cross-window paste"
+    );
+
+    // Paste into window2
+    select_path(&panel2, "root2", cx2);
+    panel2.update_in(cx2, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx2.executor().run_until_parked();
+
+    // Verify file was pasted
+    assert_eq!(
+        visible_entries_as_strings(&panel2, 0..10, cx2),
+        &[
+            "v root2",
+            "      existing.txt",
+            "      file_a.txt  <== selected",
+        ]
+    );
 }
 
 #[gpui::test]

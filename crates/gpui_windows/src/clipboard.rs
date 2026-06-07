@@ -78,7 +78,7 @@ pub(crate) fn write_to_clipboard(item: ClipboardItem) {
             match entry {
                 ClipboardEntry::String(string) => write_string(string)?,
                 ClipboardEntry::Image(image) => write_image(image)?,
-                ClipboardEntry::ExternalPaths(_) => {}
+                ClipboardEntry::ExternalPaths(paths) => write_paths(paths)?,
             }
         }
         Ok(())
@@ -260,12 +260,69 @@ fn read_image(format: u32) -> Option<ClipboardEntry> {
 
 fn read_files() -> Option<ClipboardEntry> {
     let locked = get_clipboard_data(CF_HDROP.0 as u32)?;
-    let hdrop = HDROP(locked.ptr as *mut _);
+    // locked.global is the HGLOBAL handle; locked.ptr is the locked memory pointer.
+    // DragQueryFileW expects the handle, not the locked pointer.
+    let hdrop = HDROP(locked.global.0);
     let mut filenames = Vec::new();
     with_file_names(hdrop, |name| filenames.push(std::path::PathBuf::from(name)));
     Some(ClipboardEntry::ExternalPaths(ExternalPaths(
         filenames.into(),
     )))
+}
+
+#[repr(C)]
+struct DropFilesHeader {
+    p_files: u32,
+    pt_x: u32,
+    pt_y: u32,
+    f_nc: u32,
+    f_wide: u32,
+}
+
+fn write_paths(paths: &ExternalPaths) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    // HDROP structure: DROPFILES header + null-terminated wide strings + final null
+    let mut wide_paths = Vec::new();
+    for path in paths.paths() {
+        wide_paths.extend(path.as_os_str().encode_wide());
+        wide_paths.push(0); // null terminator for each path
+    }
+    wide_paths.push(0); // final null terminator
+
+    let header_size = std::mem::size_of::<DropFilesHeader>();
+    let total_size = header_size + wide_paths.len() * std::mem::size_of::<u16>();
+
+    unsafe {
+        let global = Owned::new(GlobalAlloc(GMEM_MOVEABLE, total_size)?);
+        let ptr = GlobalLock(*global) as *mut u8;
+        anyhow::ensure!(!ptr.is_null(), "GlobalLock returned null");
+
+        // GlobalLock returns *mut u8 (1-byte aligned), so we use write_unaligned
+        // to avoid UB when casting to *mut DropFilesHeader, even if the memory
+        // happens to be sufficiently aligned at runtime.
+        std::ptr::write_unaligned(
+            ptr as *mut DropFilesHeader,
+            DropFilesHeader {
+                p_files: header_size as u32,
+                pt_x: 0,
+                pt_y: 0,
+                f_nc: 0,
+                f_wide: 1,
+            },
+        );
+
+        // Write wide strings
+        std::ptr::copy_nonoverlapping(
+            wide_paths.as_ptr(),
+            ptr.add(header_size) as *mut u16,
+            wide_paths.len(),
+        );
+
+        GlobalUnlock(*global).ok();
+        SetClipboardData(CF_HDROP.0 as u32, Some(HANDLE(global.0)))?;
+        std::mem::forget(global);
+    }
+    Ok(())
 }
 
 /// DIB is BMP without the 14-byte BITMAPFILEHEADER. Prepend one.

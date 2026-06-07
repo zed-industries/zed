@@ -3118,15 +3118,24 @@ impl ProjectPanel {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(external_paths) = self.external_paths_from_system_clipboard(cx) {
-            let target_entry_id = self
-                .selection
-                .map(|s| s.entry_id)
-                .or(self.state.last_worktree_root_id);
-            if let Some(entry_id) = target_entry_id {
-                self.drop_external_files(external_paths.paths(), entry_id, window, cx);
+        // Check internal clipboard first (for cut/copy within Zed)
+        let has_internal_clipboard = self
+            .clipboard
+            .as_ref()
+            .is_some_and(|clipboard| !clipboard.items().is_empty());
+
+        if !has_internal_clipboard {
+            // Only use external paths if there's no internal clipboard state
+            if let Some(external_paths) = self.external_paths_from_system_clipboard(cx) {
+                let target_entry_id = self
+                    .selection
+                    .map(|s| s.entry_id)
+                    .or(self.state.last_worktree_root_id);
+                if let Some(entry_id) = target_entry_id {
+                    self.drop_external_files(external_paths.paths(), entry_id, window, cx);
+                }
+                return;
             }
-            return;
         }
 
         maybe!({
@@ -3881,23 +3890,21 @@ impl ProjectPanel {
 
     fn write_entries_to_system_clipboard(&self, entries: &BTreeSet<SelectedEntry>, cx: &mut App) {
         let project = self.project.read(cx);
-        let paths: Vec<String> = entries
+        let paths: Vec<_> = entries
             .iter()
             .filter_map(|entry| {
                 let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
                 let worktree = worktree.read(cx);
                 let worktree_entry = worktree.entry_for_id(entry.entry_id)?;
-                Some(
-                    worktree
-                        .abs_path()
-                        .join(worktree_entry.path.as_std_path())
-                        .to_string_lossy()
-                        .to_string(),
-                )
+                Some(worktree.abs_path().join(worktree_entry.path.as_std_path()))
             })
             .collect();
         if !paths.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
+            cx.write_to_clipboard(ClipboardItem {
+                entries: vec![GpuiClipboardEntry::ExternalPaths(ExternalPaths(
+                    paths.into(),
+                ))],
+            });
         }
     }
 
