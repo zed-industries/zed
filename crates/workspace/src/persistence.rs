@@ -3307,6 +3307,71 @@ mod tests {
         assert_eq!(test_text_1, "test-text-1");
     }
 
+    #[gpui::test]
+    async fn test_window_theme_override() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_window_theme_override").await;
+
+        let workspace = SerializedWorkspace {
+            id: WorkspaceId(1),
+            paths: PathList::new(&["/tmp"]),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            session_id: None,
+            window_id: None,
+            user_toolchains: Default::default(),
+        };
+        db.save_workspace(workspace).await;
+
+        // No override until one is saved.
+        assert_eq!(db.window_theme_override(WorkspaceId(1)).unwrap(), None);
+
+        // Save an override and read it back.
+        db.save_window_theme_override(WorkspaceId(1), "Ayu Dark".to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            db.window_theme_override(WorkspaceId(1)).unwrap(),
+            Some("Ayu Dark".to_string())
+        );
+
+        // Saving again upserts (ON CONFLICT) rather than erroring or duplicating.
+        db.save_window_theme_override(WorkspaceId(1), "Gruvbox Dark".to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            db.window_theme_override(WorkspaceId(1)).unwrap(),
+            Some("Gruvbox Dark".to_string())
+        );
+
+        // Clearing removes it, falling back to the configured theme.
+        db.delete_window_theme_override(WorkspaceId(1))
+            .await
+            .unwrap();
+        assert_eq!(db.window_theme_override(WorkspaceId(1)).unwrap(), None);
+
+        // Deleting the parent workspace cascades the override away (FOREIGN KEY
+        // ... ON DELETE CASCADE), so no orphaned row outlives its workspace.
+        db.save_window_theme_override(WorkspaceId(1), "Ayu Dark".to_string())
+            .await
+            .unwrap();
+        db.write(|conn| {
+            conn.exec_bound::<i32>(sql!(DELETE FROM workspaces WHERE workspace_id = ?))
+                .unwrap()(1)
+            .unwrap();
+        })
+        .await;
+        assert_eq!(db.window_theme_override(WorkspaceId(1)).unwrap(), None);
+    }
+
     fn group(axis: Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
         SerializedPaneGroup::Group {
             axis: SerializedAxis(axis),
