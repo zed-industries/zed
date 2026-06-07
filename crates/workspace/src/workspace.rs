@@ -5580,7 +5580,7 @@ impl Workspace {
             Some((slot.provider_id, pane, preview))
         });
 
-        match live_slot {
+        let previous = match live_slot {
             Some((slot_id, pane, preview)) if slot_id == provider_id => {
                 let swapped = cx.update_global::<AutoPreviewRegistry, _>(|registry, cx| {
                     registry
@@ -5598,18 +5598,22 @@ impl Workspace {
                     cx.notify();
                     return;
                 }
-                self.close_auto_preview_slot(window, cx);
-                self.create_auto_preview(provider_index, provider_id, item, to_side, window, cx);
+                Some((pane, preview))
             }
-            Some(_) => {
-                self.close_auto_preview_slot(window, cx);
-                self.create_auto_preview(provider_index, provider_id, item, to_side, window, cx);
-            }
-            None => {
-                self.auto_preview = None;
-                self.create_auto_preview(provider_index, provider_id, item, to_side, window, cx);
-            }
-        }
+            Some((_, pane, preview)) => Some((pane, preview)),
+            None => None,
+        };
+
+        self.auto_preview = None;
+        self.create_auto_preview(
+            provider_index,
+            provider_id,
+            item,
+            to_side,
+            previous,
+            window,
+            cx,
+        );
     }
 
     fn create_auto_preview(
@@ -5618,41 +5622,58 @@ impl Workspace {
         provider_id: &'static str,
         item: Box<dyn ItemHandle>,
         to_side: bool,
+        previous: Option<(Entity<Pane>, Box<dyn ItemHandle>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(preview) = self.create_with_provider(provider_index, item.as_ref(), window, cx)
-        else {
-            return;
-        };
+        let preview = self.create_with_provider(provider_index, item.as_ref(), window, cx);
 
-        let pane = if to_side {
-            self.find_pane_in_direction(SplitDirection::Right, cx)
-                .unwrap_or_else(|| {
-                    self.split_pane(
-                        self.active_pane().clone(),
-                        SplitDirection::Right,
-                        window,
-                        cx,
-                    )
-                })
-        } else {
-            self.active_pane().clone()
-        };
+        if let Some(preview) = &preview {
+            let reuse_pane = previous
+                .as_ref()
+                .map(|(pane, _)| pane.clone())
+                .filter(|pane| !to_side || pane.entity_id() != self.active_pane().entity_id());
 
-        let focus = !to_side;
-        pane.update(cx, |pane, cx| {
-            pane.add_item(preview.boxed_clone(), focus, focus, None, window, cx);
-        });
-        if to_side {
-            item_focus_back(item.as_ref(), window, cx);
+            let pane = if to_side {
+                reuse_pane
+                    .or_else(|| self.find_pane_in_direction(SplitDirection::Right, cx))
+                    .unwrap_or_else(|| {
+                        self.split_pane(
+                            self.active_pane().clone(),
+                            SplitDirection::Right,
+                            window,
+                            cx,
+                        )
+                    })
+            } else {
+                reuse_pane.unwrap_or_else(|| self.active_pane().clone())
+            };
+
+            let focus = !to_side;
+            pane.update(cx, |pane, cx| {
+                pane.add_item(preview.boxed_clone(), focus, focus, None, window, cx);
+            });
+            if to_side {
+                item_focus_back(item.as_ref(), window, cx);
+            }
+
+            self.auto_preview = Some(AutoPreviewSlot {
+                provider_id,
+                pane: pane.downgrade(),
+                preview: preview.downgrade_item(),
+            });
         }
 
-        self.auto_preview = Some(AutoPreviewSlot {
-            provider_id,
-            pane: pane.downgrade(),
-            preview: preview.downgrade_item(),
-        });
+        if let Some((old_pane, old_preview)) = previous
+            && preview
+                .as_ref()
+                .is_none_or(|preview| preview.item_id() != old_preview.item_id())
+        {
+            old_pane.update(cx, |pane, cx| {
+                pane.remove_item(old_preview.item_id(), false, true, window, cx);
+            });
+        }
+
         cx.notify();
     }
 
@@ -16622,6 +16643,7 @@ mod tests {
         workspace: &Entity<Workspace>,
         item: Entity<TestItem>,
         path: &str,
+        allow_preview: bool,
         cx: &mut VisualTestContext,
     ) {
         workspace.update_in(cx, |workspace, window, cx| {
@@ -16637,7 +16659,7 @@ mod tests {
                     None,
                     project_path,
                     true,
-                    false,
+                    allow_preview,
                     true,
                     None,
                     window,
@@ -16672,7 +16694,7 @@ mod tests {
             item.label = "doc.md".into();
             item
         });
-        open_item_through_pane(&workspace, md, "doc.md", cx);
+        open_item_through_pane(&workspace, md, "doc.md", false, cx);
         cx.run_until_parked();
         workspace.read_with(cx, |workspace, cx| {
             assert_eq!(preview_tab_count(workspace, cx), 1);
@@ -16779,4 +16801,96 @@ mod tests {
             assert_eq!(preview_tab_count(workspace, cx), 1);
         });
     }
+
+    #[gpui::test]
+    async fn test_auto_preview_to_side_through_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "md",
+                    matches_label: "doc.md",
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::ToSide, cx);
+        });
+
+        let md = cx.new(|cx| {
+            let mut item = TestItem::new(cx);
+            item.label = "doc.md".into();
+            item
+        });
+        open_item_through_pane(&workspace, md, "doc.md", true, cx);
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+            assert_eq!(workspace.panes().len(), 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_to_side_provider_switch(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "md",
+                    matches_label: "doc.md",
+                },
+                cx,
+            );
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "csv",
+                    matches_label: "data.csv",
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::ToSide, cx);
+        });
+
+        let open =
+            |workspace: &Entity<Workspace>, label: &'static str, cx: &mut VisualTestContext| {
+                let item = cx.new(|cx| {
+                    let mut item = TestItem::new(cx);
+                    item.label = label.into();
+                    item
+                });
+                open_item_through_pane(workspace, item, label, true, cx);
+                cx.run_until_parked();
+            };
+
+        for (step, label) in [
+            "doc.md", "doc.md", "data.csv", "doc.md", "doc.md", "data.csv", "data.csv",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            open(&workspace, label, cx);
+            workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(
+                    preview_tab_count(workspace, cx),
+                    1,
+                    "step {step} ({label}): expected exactly one visible side preview"
+                );
+                assert_eq!(
+                    workspace.panes().len(),
+                    2,
+                    "step {step} ({label}): side pane should survive"
+                );
+            });
+        }
+    }
+
 }
