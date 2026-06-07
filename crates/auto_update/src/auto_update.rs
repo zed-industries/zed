@@ -719,8 +719,20 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let new_binary_path = Self::install_release(installer_dir, &target_path, cx)
-            .await
+        let running_app_path = cx.update(|cx| cx.app_path())?;
+        let background_executor = cx.background_executor();
+        let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
+        let install_result = {
+            #[cfg(test)]
+            if let Some(test_install) = cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone()) {
+                test_install(&target_path, cx)
+            } else {
+                Self::install_release(installer_dir, &target_path, running_app_path, channel, background_executor).await
+            }
+            #[cfg(not(test))]
+            Self::install_release(installer_dir, &target_path, running_app_path, channel, background_executor).await
+        };
+        let new_binary_path = install_result
             .with_context(|| format!("Failed to install update at: {}", target_path.display()))?;
         if let Some(new_binary_path) = new_binary_path {
             cx.update(|cx| cx.set_restart_path(new_binary_path));
@@ -822,25 +834,13 @@ impl AutoUpdater {
     async fn install_release(
         installer_dir: InstallerDir,
         target_path: &Path,
-        cx: &AsyncApp,
+        running_app_path: PathBuf,
+        channel: &str,
+        background_executor: &BackgroundExecutor,
     ) -> Result<Option<PathBuf>> {
-        #[cfg(test)]
-        if let Some(test_install) =
-            cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
-        {
-            return test_install(target_path, cx);
-        }
         match OS {
-            "macos" => {
-                let running_app_path = cx.update(|cx| cx.app_path())?;
-                let background_executor = cx.background_executor();
-                install_release_macos(&installer_dir, target_path, running_app_path, background_executor).await
-            },
-            "linux" => {
-                let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
-                let running_app_path = cx.update(|cx| cx.app_path())?;
-                install_release_linux(&installer_dir, target_path, channel, running_app_path).await
-            },
+            "macos" => install_release_macos(&installer_dir, target_path, running_app_path, background_executor).await,
+            "linux" => install_release_linux(&installer_dir, target_path, channel, running_app_path).await,
             "windows" => install_release_windows(target_path).await,
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }
