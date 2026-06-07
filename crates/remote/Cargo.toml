@@ -44,6 +44,7 @@ thiserror.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 which.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

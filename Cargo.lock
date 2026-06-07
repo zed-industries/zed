@@ -14962,6 +14962,7 @@ dependencies = [
  "urlencoding",
  "util",
  "which 6.0.3",
+ "zstd",
 ]
 
 [[package]]
