@@ -3856,33 +3856,17 @@ impl ProjectPanel {
             })
             .collect();
         if !paths.is_empty() {
-            let external_paths = ExternalPaths(paths.into());
-            eprintln!(
-                "Writing to clipboard: ExternalPaths with {} paths",
-                external_paths.paths().len()
-            );
             cx.write_to_clipboard(ClipboardItem {
-                entries: vec![GpuiClipboardEntry::ExternalPaths(external_paths)],
+                entries: vec![GpuiClipboardEntry::ExternalPaths(ExternalPaths(
+                    paths.into(),
+                ))],
             });
         }
     }
 
     fn external_paths_from_system_clipboard(&self, cx: &App) -> Option<ExternalPaths> {
         let clipboard_item = cx.read_from_clipboard()?;
-        eprintln!("Clipboard has {} entries", clipboard_item.entries().len());
-        for (i, entry) in clipboard_item.entries().iter().enumerate() {
-            eprintln!(
-                "  Entry {}: {:?}",
-                i,
-                match entry {
-                    GpuiClipboardEntry::String(_) => "String",
-                    GpuiClipboardEntry::Image(_) => "Image",
-                    GpuiClipboardEntry::ExternalPaths(p) => {
-                        eprintln!("    ExternalPaths with {} paths", p.paths().len());
-                        "ExternalPaths"
-                    }
-                }
-            );
+        for entry in clipboard_item.entries() {
             if let GpuiClipboardEntry::ExternalPaths(paths) = entry {
                 if !paths.paths().is_empty() {
                     return Some(paths.clone());
@@ -3893,22 +3877,14 @@ impl ProjectPanel {
     }
 
     fn has_pasteable_content(&self, cx: &App) -> bool {
-        let has_internal = self
+        if self
             .clipboard
             .as_ref()
-            .is_some_and(|c| !c.items().is_empty());
-
-        let has_external = self.external_paths_from_system_clipboard(cx).is_some();
-
-        eprintln!(
-            "has_pasteable_content: internal={}, external={}",
-            has_internal, has_external
-        );
-
-        if has_internal {
+            .is_some_and(|c| !c.items().is_empty())
+        {
             return true;
         }
-        has_external
+        self.external_paths_from_system_clipboard(cx).is_some()
     }
 
     fn selected_entry_handle<'a>(

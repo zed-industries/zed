@@ -260,7 +260,9 @@ fn read_image(format: u32) -> Option<ClipboardEntry> {
 
 fn read_files() -> Option<ClipboardEntry> {
     let locked = get_clipboard_data(CF_HDROP.0 as u32)?;
-    let hdrop = HDROP(locked.ptr as *mut _);
+    // locked.global is the HGLOBAL handle; locked.ptr is the locked memory pointer.
+    // DragQueryFileW expects the handle, not the locked pointer.
+    let hdrop = HDROP(locked.global.0);
     let mut filenames = Vec::new();
     with_file_names(hdrop, |name| filenames.push(std::path::PathBuf::from(name)));
     Some(ClipboardEntry::ExternalPaths(ExternalPaths(
@@ -278,11 +280,11 @@ struct DropFilesHeader {
 }
 
 fn write_paths(paths: &ExternalPaths) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
     // HDROP structure: DROPFILES header + null-terminated wide strings + final null
     let mut wide_paths = Vec::new();
     for path in paths.paths() {
-        let path_str = path.to_string_lossy();
-        wide_paths.extend(path_str.encode_utf16());
+        wide_paths.extend(path.as_os_str().encode_wide());
         wide_paths.push(0); // null terminator for each path
     }
     wide_paths.push(0); // final null terminator

@@ -56,6 +56,9 @@ impl Pasteboard {
                 let mut paths = SmallVec::new();
                 for file in filenames.iter() {
                     let f = NSString::UTF8String(file);
+                    if f.is_null() {
+                        continue;
+                    }
                     let path = CStr::from_ptr(f).to_string_lossy().into_owned();
                     paths.push(PathBuf::from(path));
                 }
