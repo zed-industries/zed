@@ -15,8 +15,8 @@ use workspace::AppState;
 const OLLAMA_API_URL_PLACEHOLDER: &str = "http://localhost:11434";
 const OLLAMA_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 
-const OPENAI_COMPATIBLE_API_URL_PLACEHOLDER: &str = "http://localhost:8080/v1/completions";
-const OPENAI_COMPATIBLE_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
+const OPEN_AI_COMPATIBLE_API_URL_PLACEHOLDER: &str = "http://localhost:8080/v1/completions";
+const OPEN_AI_COMPATIBLE_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -525,7 +525,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                 json_path: Some("edit_predictions.open_ai_compatible_api.api_url"),
             }),
             metadata: Some(Box::new(SettingsFieldMetadata {
-                placeholder: Some(OPENAI_COMPATIBLE_API_URL_PLACEHOLDER),
+                placeholder: Some(OPEN_AI_COMPATIBLE_API_URL_PLACEHOLDER),
                 ..Default::default()
             })),
             files: USER,
@@ -559,7 +559,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                 json_path: Some("edit_predictions.open_ai_compatible_api.model"),
             }),
             metadata: Some(Box::new(SettingsFieldMetadata {
-                placeholder: Some(OPENAI_COMPATIBLE_MODEL_PLACEHOLDER),
+                placeholder: Some(OPEN_AI_COMPATIBLE_MODEL_PLACEHOLDER),
                 ..Default::default()
             })),
             files: USER,
