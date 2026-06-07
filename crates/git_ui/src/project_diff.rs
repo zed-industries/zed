@@ -29,7 +29,7 @@ use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     ConflictSet, Project, ProjectPath,
     git_store::{
-        Repository,
+        GitStoreEvent, Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
@@ -602,6 +602,34 @@ impl ProjectDiff {
             async |cx| Self::refresh(this, cx).await
         });
 
+        // When the user switches the active repository via the repository
+        // selector, update branch_diff to reflect the new repo.  Without
+        // this, the "Uncommitted Changes" buffer would stay on the old repo
+        // until a diff file is explicitly clicked.
+        // See: https://github.com/zed-industries/zed/issues/58792
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription = cx.subscribe(&git_store, |this, _git_store, event, cx| {
+            if let GitStoreEvent::ActiveRepositoryChanged(Some(_)) = event {
+                let new_repo = this
+                    .project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .active_repository();
+                let current = this.branch_diff.read(cx).repo();
+                let needs_switch = match (&new_repo, current) {
+                    (Some(new), Some(cur)) => new.read(cx).id != cur.read(cx).id,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                if needs_switch {
+                    this.branch_diff.update(cx, |bd, cx| {
+                        bd.set_repo(new_repo, cx);
+                    });
+                }
+            }
+        });
+
         Self {
             project,
             workspace: workspace.downgrade(),
@@ -614,8 +642,11 @@ impl ProjectDiff {
             review_comment_count: 0,
             _task: task,
             _subscription: Subscription::join(
-                branch_diff_subscription,
-                Subscription::join(editor_subscription, review_comment_subscription),
+                git_store_subscription,
+                Subscription::join(
+                    branch_diff_subscription,
+                    Subscription::join(editor_subscription, review_comment_subscription),
+                ),
             ),
         }
     }
