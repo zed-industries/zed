@@ -368,6 +368,16 @@ pub trait SiblingThreadHost {
     fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents>;
 }
 
+/// Implemented by the UI layer to let native-agent tools start debug sessions
+/// through the workspace debugger UI, without depending on `debugger_ui`.
+pub trait DebuggerHost {
+    fn start_debug_session(
+        &self,
+        request: DebugSessionRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<DebugSessionInfo>>;
+}
+
 pub struct NativeAgent {
     /// Session ID -> Session mapping
     sessions: HashMap<acp::SessionId, Session>,
@@ -381,6 +391,8 @@ pub struct NativeAgent {
     models: LanguageModels,
     /// Handler installed by the UI for `create_thread` / `list_agents_and_models` tools.
     sibling_thread_host: Option<Rc<dyn SiblingThreadHost>>,
+    /// Handler installed by the UI for native-agent debugger tools.
+    debugger_host: Option<Rc<dyn DebuggerHost>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the lifecycle of global skills directory observation. We
@@ -545,6 +557,7 @@ impl NativeAgent {
                 templates,
                 models: LanguageModels::new(cx),
                 sibling_thread_host: None,
+                debugger_host: None,
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
@@ -677,6 +690,14 @@ impl NativeAgent {
 
     pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
         self.sibling_thread_host.clone()
+    }
+
+    pub fn set_debugger_host(&mut self, host: Rc<dyn DebuggerHost>) {
+        self.debugger_host = Some(host);
+    }
+
+    pub fn debugger_host(&self) -> Option<Rc<dyn DebuggerHost>> {
+        self.debugger_host.clone()
     }
 
     fn new_session(
@@ -3057,6 +3078,24 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 )
             })?;
         host.list_available_agents(cx)
+    }
+
+    fn start_debug_session(
+        &self,
+        request: DebugSessionRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<DebugSessionInfo>> {
+        let host = match self.agent.read_with(cx, |agent, _| agent.debugger_host()) {
+            Ok(Some(host)) => host,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No debugger host is registered. This usually means the \
+                     agent panel hasn't been initialized in this workspace."
+                )));
+            }
+            Err(err) => return Task::ready(Err(err)),
+        };
+        host.start_debug_session(request, cx)
     }
 }
 

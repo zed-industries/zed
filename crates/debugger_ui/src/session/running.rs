@@ -1775,7 +1775,8 @@ impl RunningState {
                         cx,
                     )
                 })
-                .ok();
+                .and_then(|result| result)
+                .log_err();
         } else {
             self.restart_session(cx);
         }
