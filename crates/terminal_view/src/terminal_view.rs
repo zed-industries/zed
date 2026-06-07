@@ -2511,6 +2511,44 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn terminal_editor_overlay_keybinding_toggles(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        cx.update(load_default_keymap);
+        let (_pane, _terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+
+        // cmd-alt-e, bound in the `Terminal` context, opens the overlay.
+        cx.simulate_keystrokes("cmd-alt-e");
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.run_until_parked();
+        terminal_view.read_with(&cx, |view, _| {
+            assert!(
+                view.input_overlay.is_some(),
+                "cmd-alt-e should open the overlay"
+            )
+        });
+
+        // The same chord, bound in the `TerminalInputOverlay > Editor` context,
+        // closes it from within — a single toggle, not two commands.
+        cx.simulate_keystrokes("cmd-alt-e");
+        cx.run_until_parked();
+        terminal_view.read_with(&cx, |view, _| {
+            assert!(
+                view.input_overlay.is_none(),
+                "cmd-alt-e should close the overlay from inside it"
+            )
+        });
+    }
+
     // Working directory calculation tests
 
     // No Worktrees in project -> home_dir()

@@ -294,6 +294,7 @@
     "bindings": {
       "enter": "menu::Confirm",
       "alt-enter": "editor::Newline",
+      "cmd-alt-e": "terminal::Editor",
     },
   },
   {
@@ -1318,6 +1319,7 @@
       "ctrl-alt-left": "pane::SplitLeft",
       "ctrl-alt-right": "pane::SplitRight",
       "cmd-d": "pane::SplitRight",
+      "cmd-alt-e": "terminal::Editor",
       "cmd-alt-r": "terminal::RerunTask",
       "cmd->": "agent::AddSelectionToThread",
     },
