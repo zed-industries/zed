@@ -640,7 +640,9 @@ mod tests {
 
     fn lookup<'a>(entries: &'a [(RepoPath, DiffStat)], path: &str) -> Option<&'a DiffStat> {
         let path = RepoPath::new(path).unwrap();
-        entries.iter().find(|(p, _)| p == &path).map(|(_, s)| s)
+        // `entries` is sorted by path (see `parse_numstat`), so we can binary search.
+        let ix = entries.binary_search_by(|(p, _)| p.cmp(&path)).ok()?;
+        entries.get(ix).map(|(_, s)| s)
     }
 
     #[test]
