@@ -82,7 +82,7 @@ use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Item, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
@@ -826,7 +826,7 @@ impl GitPanel {
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                workspace.show_error(error, cx);
+                                workspace.show_error(format!("{error}"), cx);
                             })
                             .ok();
                     }
@@ -4080,16 +4080,7 @@ impl GitPanel {
     {
         if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
             let _ = workspace.update(cx, |workspace, cx| {
-                struct CommitMessageError;
-                let notification_id = NotificationId::unique::<CommitMessageError>();
-                workspace.show_notification(notification_id, cx, |cx| {
-                    cx.new(|cx| {
-                        ErrorMessagePrompt::new(
-                            format!("Failed to generate commit message: {err}"),
-                            cx,
-                        )
-                    })
-                });
+                workspace.show_error(format!("Failed to generate commit message: {err}"), cx);
             });
         }
     }
