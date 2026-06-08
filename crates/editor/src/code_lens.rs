@@ -691,6 +691,7 @@ mod tests {
     use super::{CODE_LENS_SEPARATOR, displayed_title};
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
+        display_map::{BlockId, DisplayRow},
         editor_tests::{init_test, update_test_editor_settings},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
@@ -1672,7 +1673,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_code_lens_blocks_hidden_for_folded_lines(cx: &mut TestAppContext) {
+    async fn test_code_lens_blocks_hidden_when_folded(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         update_test_editor_settings(cx, &|settings| {
             settings.code_lens = Some(CodeLens::On);
@@ -1734,15 +1735,15 @@ mod tests {
         );
         cx.run_until_parked();
 
-        cx.editor.read_with(&cx.cx.cx, |editor, _cx| {
-            assert_eq!(editor.code_lens_enabled(), true);
-            let total_blocks: usize = editor
-                .code_lens
-                .as_ref()
-                .map(|s| s.blocks.values().map(|v| v.len()).sum())
-                .unwrap_or(0);
+        cx.editor(|editor, _, cx| {
+            assert!(editor.code_lens_enabled());
+            let snapshot = editor.display_snapshot(cx);
+            let custom_block_count = snapshot
+                .blocks_in_range(DisplayRow(0)..DisplayRow(100))
+                .filter(|(_, block)| matches!(block.id(), BlockId::Custom(_)))
+                .count();
             assert_eq!(
-                total_blocks, 3,
+                custom_block_count, 3,
                 "Should have 3 code lens blocks before folding"
             );
         });
@@ -1752,15 +1753,19 @@ mod tests {
         });
         cx.run_until_parked();
 
-        cx.editor.read_with(&cx.cx.cx, |editor, _cx| {
-            let total_blocks: usize = editor
-                .code_lens
-                .as_ref()
-                .map(|s| s.blocks.values().map(|v| v.len()).sum())
-                .unwrap_or(0);
+        cx.editor(|editor, _, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            assert!(
+                snapshot.is_line_folded(MultiBufferRow(1)),
+                "Line 1 should be folded"
+            );
+            let custom_block_count = snapshot
+                .blocks_in_range(DisplayRow(0)..DisplayRow(100))
+                .filter(|(_, block)| matches!(block.id(), BlockId::Custom(_)))
+                .count();
             assert_eq!(
-                total_blocks, 2,
-                "Should have only 2 blocks after folding line 1"
+                custom_block_count, 2,
+                "Should have 2 blocks after folding line 1 (lens on the folded line should be suppressed)"
             );
         });
 
@@ -1769,14 +1774,18 @@ mod tests {
         });
         cx.run_until_parked();
 
-        cx.editor.read_with(&cx.cx.cx, |editor, _cx| {
-            let total_blocks: usize = editor
-                .code_lens
-                .as_ref()
-                .map(|s| s.blocks.values().map(|v| v.len()).sum())
-                .unwrap_or(0);
+        cx.editor(|editor, _, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            assert!(
+                !snapshot.is_line_folded(MultiBufferRow(1)),
+                "Line 1 should be unfolded"
+            );
+            let custom_block_count = snapshot
+                .blocks_in_range(DisplayRow(0)..DisplayRow(100))
+                .filter(|(_, block)| matches!(block.id(), BlockId::Custom(_)))
+                .count();
             assert_eq!(
-                total_blocks, 3,
+                custom_block_count, 3,
                 "Should have 3 code lens blocks after unfolding"
             );
         });
