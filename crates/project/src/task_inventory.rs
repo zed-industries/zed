@@ -528,10 +528,15 @@ impl Inventory {
             })
             .map(|(task_source_kind, resolved_task)| {
                 let reresolved = task_contexts.reresolve_task(task_source_kind, resolved_task);
-                (task_source_kind.clone(), reresolved)
+                let task = if reresolved.resolved_label == resolved_task.resolved_label {
+                    reresolved
+                } else {
+                    resolved_task.clone()
+                };
+                (task_source_kind.clone(), task)
             })
-            .filter_map(|(task_source_kind, resolved_task)| {
-                let keep = match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+            .filter(|(_, resolved_task)| {
+                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
                     hash_map::Entry::Occupied(mut o) => {
                         // Allow distinct re-resolved tasks that share a label but differ by context.
                         o.get_mut().insert(resolved_task.id.clone())
@@ -540,9 +545,9 @@ impl Inventory {
                         v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
                         true
                     }
-                };
-                keep.then(|| (task_source_kind, resolved_task, post_inc(&mut lru_score)))
+                }
             })
+            .map(|(kind, task)| (kind, task, post_inc(&mut lru_score)))
             .sorted_unstable_by(task_lru_comparator)
             .map(|(kind, task, _)| (kind, task))
             .collect::<Vec<_>>();
