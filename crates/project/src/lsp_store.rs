@@ -12271,7 +12271,7 @@ impl LspStore {
             .iter()
             .filter_map(|(seed, v)| seed.worktree_id.eq(&worktree_id).then(|| v.id))
             .collect::<Vec<_>>();
-        language_server_ids.sort();
+        language_server_ids.sort_unstable();
         language_server_ids.dedup();
 
         // let abs_path = worktree_handle.read(cx).abs_path();
