@@ -539,6 +539,7 @@ impl Database {
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
                 warning_count: ActiveValue::set(summary.warning_count as i32),
+                info_count: ActiveValue::set(summary.info_count as i32),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -550,6 +551,7 @@ impl Database {
                     worktree_diagnostic_summary::Column::LanguageServerId,
                     worktree_diagnostic_summary::Column::ErrorCount,
                     worktree_diagnostic_summary::Column::WarningCount,
+                    worktree_diagnostic_summary::Column::InfoCount,
                 ])
                 .to_owned(),
             )
@@ -928,6 +930,7 @@ impl Database {
                             language_server_id: db_summary.language_server_id as u64,
                             error_count: db_summary.error_count as u32,
                             warning_count: db_summary.warning_count as u32,
+                            info_count: db_summary.info_count as u32,
                         });
                 }
             }

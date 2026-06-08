@@ -4125,6 +4125,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 0,
+                    info_count: 0,
                 },
             )]
         )
@@ -4161,6 +4162,7 @@ async fn test_collaborating_with_diagnostics(
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
+                info_count: 0,
             },
         )]
     );
@@ -4202,6 +4204,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 1,
+                    info_count: 0,
                 },
             )]
         );
@@ -4219,6 +4222,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 1,
+                    info_count: 0,
                 },
             )]
         );
