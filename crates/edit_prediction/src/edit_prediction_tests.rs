@@ -55,6 +55,7 @@ use crate::{
 
 #[gpui::test]
 async fn test_current_state(cx: &mut TestAppContext) {
+    enable_edit_prediction_jumps(cx);
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -197,14 +198,8 @@ async fn test_current_state(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppContext) {
+    enable_edit_prediction_jumps(cx);
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(
-            false,
-            vec![EditPredictionJumpsFeatureFlag::NAME.to_string()],
-        );
-    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -369,14 +364,8 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
 
 #[gpui::test]
 async fn test_diagnostics_refresh_suppressed_after_agent_edit(cx: &mut TestAppContext) {
+    enable_edit_prediction_jumps(cx);
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(
-            false,
-            vec![EditPredictionJumpsFeatureFlag::NAME.to_string()],
-        );
-    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -1471,7 +1460,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            EditPredictionRequestTrigger::Other,
+            EditPredictionRequestTrigger::Explicit,
             cx,
         );
     });
@@ -1490,6 +1479,15 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
                 .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
+        let shown_predictions = ep_store.shown_predictions().collect::<Vec<_>>();
+        assert_eq!(shown_predictions.len(), 1);
+        assert_eq!(shown_predictions[0].id.to_string(), id);
+        assert!(shown_predictions[0].edits.is_empty());
+        assert!(shown_predictions[0].editable_range.is_some());
+        assert!(matches!(
+            shown_predictions[0].trigger,
+            PredictEditsRequestTrigger::Explicit
+        ));
     });
 
     // prediction is reported as rejected
@@ -1559,6 +1557,11 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
                 .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
+        let shown_predictions = ep_store.shown_predictions().collect::<Vec<_>>();
+        assert_eq!(shown_predictions.len(), 1);
+        assert_eq!(shown_predictions[0].id.to_string(), id);
+        assert!(shown_predictions[0].edits.is_empty());
+        assert!(shown_predictions[0].editable_range.is_some());
     });
 
     // prediction is reported as rejected
@@ -1774,6 +1777,11 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
                 .0,
             first_id
         );
+        let shown_prediction_ids = ep_store
+            .shown_predictions()
+            .map(|prediction| prediction.id.to_string())
+            .collect::<Vec<_>>();
+        assert!(shown_prediction_ids.is_empty());
     });
 
     // second is reported as rejected
@@ -2060,6 +2068,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
+    enable_edit_prediction_jumps(cx);
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -2766,6 +2775,12 @@ fn assert_no_predict_request_ready(
     }
 }
 
+fn enable_edit_prediction_jumps(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.update_flags(true, vec![EditPredictionJumpsFeatureFlag::NAME.to_string()]);
+    });
+}
+
 fn update_test_diagnostics(
     project: &Entity<Project>,
     path: &str,
@@ -2962,6 +2977,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             repo_url: None,
         },
         model_version: None,
+        trigger: PredictEditsRequestTrigger::Other,
     };
 
     cx.update(|cx| {

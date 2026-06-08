@@ -1697,6 +1697,7 @@ impl CompletionProvider for FakeCompletionMenuProvider {
                 documentation: None,
                 source: CompletionSource::Custom,
                 icon_path: None,
+                icon_color: None,
                 match_start: None,
                 snippet_deduplication_key: None,
                 insert_text_mode: None,

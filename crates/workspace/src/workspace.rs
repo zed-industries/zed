@@ -26,9 +26,9 @@ mod theme_preview;
 mod toast_layer;
 mod toolbar;
 pub mod welcome;
+pub mod workspace_error;
 mod workspace_settings;
 
-pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectToNewWindow,
@@ -138,7 +138,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
-use theme::{ActiveTheme, SystemAppearance};
+use theme::{ActiveTheme, ClientDecorationsExt, SystemAppearance};
 use theme_settings::ThemeSettings;
 pub use toolbar::{
     PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -577,16 +577,16 @@ pub enum CloseIntent {
 #[derive(Clone)]
 pub struct Toast {
     id: NotificationId,
-    msg: Cow<'static, str>,
+    message: Cow<'static, str>,
     autohide: bool,
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut Window, &mut App)>)>,
 }
 
 impl Toast {
-    pub fn new<I: Into<Cow<'static, str>>>(id: NotificationId, msg: I) -> Self {
+    pub fn new<I: Into<Cow<'static, str>>>(id: NotificationId, message: I) -> Self {
         Toast {
             id,
-            msg: msg.into(),
+            message: message.into(),
             on_click: None,
             autohide: false,
         }
@@ -610,7 +610,7 @@ impl Toast {
 impl PartialEq for Toast {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
-            && self.msg == other.msg
+            && self.message == other.message
             && self.on_click.is_some() == other.on_click.is_some()
     }
 }
@@ -3012,7 +3012,8 @@ impl Workspace {
                     }
                     Err(err) => {
                         let rx = workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.show_portal_error(err.to_string(), cx);
+                            workspace
+                                .show_error(workspace_error::PortalError::new(err.to_string()), cx);
                             let prompt = workspace.on_prompt_for_open_path.take().unwrap();
                             let rx = prompt(workspace, lister, window, cx);
                             workspace.on_prompt_for_open_path = Some(prompt);
@@ -3068,7 +3069,8 @@ impl Workspace {
                 Ok(path) => path,
                 Err(err) => {
                     let rx = workspace.update_in(cx, |workspace, window, cx| {
-                        workspace.show_portal_error(err.to_string(), cx);
+                        workspace
+                            .show_error(workspace_error::PortalError::new(err.to_string()), cx);
 
                         let prompt = workspace.on_prompt_for_new_path.take().unwrap();
                         let rx = prompt(workspace, lister, suggested_name, window, cx);
@@ -3851,10 +3853,7 @@ impl Workspace {
     ) {
         let project = self.project.read(cx);
         if project.is_via_collab() {
-            self.show_error(
-                &anyhow!("You cannot add folders to someone else's project"),
-                cx,
-            );
+            self.show_error("You cannot add folders to someone else's project", cx);
             return;
         }
         let paths = self.prompt_for_open_path(
@@ -9641,7 +9640,7 @@ pub fn join_channel(
                             PromptLevel::Critical,
                             "Failed to join channel",
                             Some(&detail),
-                            &["Ok"],
+                            &["OK"],
                             cx,
                         )
                     })?
@@ -10133,7 +10132,7 @@ pub fn open_paths(
                 workspace.update(cx, |workspace, cx| {
                     for item in open_task.iter().flatten() {
                         if let Err(e) = item {
-                            workspace.show_error(&e, cx);
+                            workspace.show_error(format!("Error: {e}"), cx);
                         }
                     }
                 });
@@ -10468,10 +10467,10 @@ async fn open_remote_project_inner(
         for error in project_path_errors {
             if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                 if let Some(path) = error.error_tag("path") {
-                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                    workspace.show_error(format!("'{path}' does not exist"), cx)
                 }
             } else {
-                workspace.show_error(&error, cx)
+                workspace.show_error(format!("{error}"), cx)
             }
         }
     });
@@ -10687,6 +10686,12 @@ pub fn client_side_decorations(
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
     };
+    let corner_tiling = Tiling {
+        top: tiling.top || border_radius_tiling.top,
+        bottom: tiling.bottom || border_radius_tiling.bottom,
+        left: tiling.left || border_radius_tiling.left,
+        right: tiling.right || border_radius_tiling.right,
+    };
 
     match decorations {
         Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
@@ -10702,34 +10707,7 @@ pub fn client_side_decorations(
         .map(|div| match decorations {
             Decorations::Server => div,
             Decorations::Client { .. } => div
-                .when(
-                    !(tiling.top
-                        || tiling.right
-                        || border_radius_tiling.top
-                        || border_radius_tiling.right),
-                    |div| div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
-                .when(
-                    !(tiling.top
-                        || tiling.left
-                        || border_radius_tiling.top
-                        || border_radius_tiling.left),
-                    |div| div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
-                .when(
-                    !(tiling.bottom
-                        || tiling.right
-                        || border_radius_tiling.bottom
-                        || border_radius_tiling.right),
-                    |div| div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
-                .when(
-                    !(tiling.bottom
-                        || tiling.left
-                        || border_radius_tiling.bottom
-                        || border_radius_tiling.left),
-                    |div| div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
+                .rounded_client_corners(corner_tiling)
                 .when(!tiling.top, |div| {
                     div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
@@ -10784,34 +10762,7 @@ pub fn client_side_decorations(
                     Decorations::Server => div,
                     Decorations::Client { .. } => div
                         .border_color(cx.theme().colors().border)
-                        .when(
-                            !(tiling.top
-                                || tiling.right
-                                || border_radius_tiling.top
-                                || border_radius_tiling.right),
-                            |div| div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
-                        .when(
-                            !(tiling.top
-                                || tiling.left
-                                || border_radius_tiling.top
-                                || border_radius_tiling.left),
-                            |div| div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
-                        .when(
-                            !(tiling.bottom
-                                || tiling.right
-                                || border_radius_tiling.bottom
-                                || border_radius_tiling.right),
-                            |div| div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
-                        .when(
-                            !(tiling.bottom
-                                || tiling.left
-                                || border_radius_tiling.bottom
-                                || border_radius_tiling.left),
-                            |div| div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
+                        .rounded_client_corners(corner_tiling)
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))

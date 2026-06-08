@@ -756,6 +756,14 @@ pub struct EditPreview {
 }
 
 impl EditPreview {
+    pub fn unchanged(snapshot: &BufferSnapshot) -> Self {
+        Self {
+            old_snapshot: snapshot.text.clone(),
+            applied_edits_snapshot: snapshot.text.clone(),
+            syntax_snapshot: snapshot.syntax.clone(),
+        }
+    }
+
     pub fn as_unified_diff(
         &self,
         file: Option<&Arc<dyn File>>,
@@ -4592,7 +4600,7 @@ impl BufferSnapshot {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
             source_range_for_text: source_range_for_text.to_point(self),
-            text,
+            text: text.into(),
             highlight_ranges,
             name_ranges,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
@@ -4770,7 +4778,7 @@ impl BufferSnapshot {
                     })
                     .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
-                unique_closes.sort();
+                unique_closes.sort_unstable();
                 unique_closes.dedup();
 
                 // Build valid pairs by walking through closes in order

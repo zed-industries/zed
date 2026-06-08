@@ -3314,6 +3314,16 @@ impl BackgroundScannerState {
             .context("failed to add repository directory to watcher")
             .log_err();
 
+        // On Linux and FreeBSD, the native watcher is non-recursive, so subdirectories inside `.git` need explicit watching.
+        // For repos using the reftable backend, watch the `.git/reftable` directory so that ref changes are detected.
+        let reftable_path = common_dir_abs_path.join("reftable");
+        if fs.is_dir(&reftable_path).await {
+            watcher
+                .add(&reftable_path)
+                .context("failed to add reftable directory to watcher")
+                .log_err();
+        }
+
         let work_directory_id = work_dir_entry.id;
 
         let local_repository = LocalRepositoryEntry {

@@ -238,7 +238,7 @@ impl Render for CommitTooltip {
         let short_commit_id = self
             .commit
             .sha
-            .get(0..8)
+            .get(0..git::SHORT_SHA_LENGTH)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
