@@ -4,7 +4,7 @@ use crate::{
         Dock, PanelButtonLayout, panel_button_icon_size, render_panel_button,
         vertical_panel_button_container,
     },
-    status_bar::{HideStatusItem, add_hide_button_entry},
+    status_bar::{HideStatusItem, add_hide_button_entry, configure_status_bar_icon_button},
     workspace_settings::ActivityBarSettings,
 };
 use gpui::{
@@ -194,6 +194,14 @@ pub(crate) fn panel_button_shown_in_activity_bar(panel_key: &str, settings: &Act
     settings.enabled && !status_bar_buttons_contains(settings, panel_key)
 }
 
+pub(crate) fn status_bar_only_panel_keys(settings: &ActivityBarSettings) -> Option<&[String]> {
+    if settings.enabled {
+        Some(settings.status_bar_buttons.as_deref().unwrap_or(&[]))
+    } else {
+        None
+    }
+}
+
 fn render_project_search_button(
     icon_size: IconSize,
     active_border_color: Hsla,
@@ -213,8 +221,10 @@ fn render_project_search_button(
         .anchor(Anchor::RightCenter)
         .attach(Anchor::LeftCenter)
         .trigger(move |_active, _window, _cx| {
-            let button = IconButton::new("activity-bar-project-search", IconName::MagnifyingGlass)
-                .icon_size(icon_size)
+            let button = configure_status_bar_icon_button(
+                IconButton::new("activity-bar-project-search", IconName::MagnifyingGlass),
+                icon_size,
+            )
                 .tooltip(|_, cx| {
                     Tooltip::for_action("Project Search", &DeploySearch::default(), cx)
                 })
@@ -224,4 +234,42 @@ fn render_project_search_button(
 
             vertical_panel_button_container(false, active_border_color, button, vertical_padding)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use settings::ActivityBarIconSize;
+
+    fn activity_bar_settings(
+        enabled: bool,
+        status_bar_buttons: Option<Vec<String>>,
+    ) -> ActivityBarSettings {
+        ActivityBarSettings {
+            enabled,
+            icon_size: ActivityBarIconSize::Medium,
+            status_bar_buttons,
+            button_order: None,
+        }
+    }
+
+    #[test]
+    fn status_bar_only_panel_keys_none_when_activity_bar_disabled() {
+        let settings = activity_bar_settings(false, None);
+        assert!(status_bar_only_panel_keys(&settings).is_none());
+    }
+
+    #[test]
+    fn status_bar_only_panel_keys_empty_when_no_buttons_selected() {
+        let settings = activity_bar_settings(true, None);
+        let keys = status_bar_only_panel_keys(&settings).expect("should filter status bar buttons");
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn status_bar_only_panel_keys_lists_explicit_buttons() {
+        let settings = activity_bar_settings(true, Some(vec!["TerminalPanel".into()]));
+        let keys = status_bar_only_panel_keys(&settings).expect("should filter status bar buttons");
+        assert_eq!(keys, &["TerminalPanel"]);
+    }
 }

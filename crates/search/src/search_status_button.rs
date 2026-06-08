@@ -4,7 +4,7 @@ use settings::Settings as _;
 use ui::{ButtonCommon, Clickable, Context, Render, Tooltip, Window, prelude::*};
 use workspace::{
     HideStatusItem, ItemHandle, StatusItemView, activity_bar::activity_bar_hides_search_button,
-    status_bar::status_bar_icon_size,
+    status_bar::{configure_status_bar_icon_button, status_bar_icon_size},
 };
 
 pub const SEARCH_ICON: IconName = IconName::MagnifyingGlass;
@@ -31,8 +31,10 @@ impl Render for SearchButton {
 
         let focus_handle = self.pane_item_focus_handle.clone();
         button.child(
-            IconButton::new("project-search-indicator", SEARCH_ICON)
-                .icon_size(status_bar_icon_size(cx))
+            configure_status_bar_icon_button(
+                IconButton::new("project-search-indicator", SEARCH_ICON),
+                status_bar_icon_size(cx),
+            )
                 .tooltip(move |_window, cx| {
                     if let Some(focus_handle) = &focus_handle {
                         Tooltip::for_action_in(

@@ -66,6 +66,9 @@ use workspace::{
     NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
     Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
     notifications::NotificationId, sidebar_side_context_menu,
+    status_bar::{
+        apply_status_bar_chrome_styles, configure_status_bar_icon_button, status_bar_icon_size,
+    },
 };
 
 use zed_actions::OpenRecent;
@@ -6534,6 +6537,7 @@ impl Sidebar {
     }
 
     fn render_recent_projects_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let icon_size = status_bar_icon_size(cx);
         let multi_workspace = self.multi_workspace.upgrade();
 
         let workspace = multi_workspace
@@ -6567,9 +6571,11 @@ impl Sidebar {
                 })
             })
             .trigger_with_tooltip(
-                IconButton::new("open-project", IconName::OpenFolder)
-                    .icon_size(IconSize::Small)
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
+                configure_status_bar_icon_button(
+                    IconButton::new("open-project", IconName::OpenFolder),
+                    icon_size,
+                )
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
                 |_window, cx| {
                     Tooltip::for_action(
                         "Add Project",
@@ -7375,10 +7381,11 @@ impl Sidebar {
         )
     }
 
-    fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let on_right = AgentSettings::get_global(_cx).sidebar_side() == SidebarSide::Right;
+    fn render_sidebar_toggle_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let icon_size = status_bar_icon_size(cx);
+        let on_right = AgentSettings::get_global(cx).sidebar_side() == SidebarSide::Right;
 
-        sidebar_side_context_menu("sidebar-toggle-menu", _cx)
+        sidebar_side_context_menu("sidebar-toggle-menu", cx)
             .anchor(if on_right {
                 gpui::Anchor::BottomRight
             } else {
@@ -7395,8 +7402,10 @@ impl Sidebar {
                 } else {
                     IconName::ThreadsSidebarLeftOpen
                 };
-                IconButton::new("sidebar-close-toggle", icon)
-                    .icon_size(IconSize::Small)
+                configure_status_bar_icon_button(
+                    IconButton::new("sidebar-close-toggle", icon),
+                    icon_size,
+                )
                     .tooltip(Tooltip::element(move |_window, cx| {
                         v_flex()
                             .gap_1()
@@ -7430,19 +7439,17 @@ impl Sidebar {
     }
 
     fn render_sidebar_bottom_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let icon_size = status_bar_icon_size(cx);
         let is_archive = matches!(self.view, SidebarView::Archive(..));
         let on_right = self.side(cx) == SidebarSide::Right;
 
-        h_flex()
-            .p_1()
-            .gap_1()
+        apply_status_bar_chrome_styles(h_flex().gap_1(), cx)
             .when(on_right, |this| this.flex_row_reverse())
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .child(self.render_sidebar_toggle_button(cx))
             .child(
-                IconButton::new("history", IconName::Clock)
-                    .icon_size(IconSize::Small)
+                configure_status_bar_icon_button(IconButton::new("history", IconName::Clock), icon_size)
                     .toggle_state(is_archive)
                     .tooltip(move |_, cx| {
                         let label = if is_archive {

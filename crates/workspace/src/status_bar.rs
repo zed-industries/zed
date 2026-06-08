@@ -9,7 +9,10 @@ use gpui::{
 use settings::{ActivityBarIconSize, Settings, SettingsContent, SettingsStore, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
-use ui::{ContextMenu, Divider, IconPosition, Indicator, Tooltip, prelude::*, right_click_menu};
+use ui::{
+    ContextMenu, Divider, IconButton, IconButtonShape, IconPosition, Indicator, Tooltip, prelude::*,
+    right_click_menu,
+};
 
 /// Describes how a status-bar item can be hidden by the user.
 ///
@@ -109,6 +112,22 @@ pub fn status_bar_icon_size(cx: &App) -> IconSize {
     icon_size_from_setting(StatusBarSettings::get_global(cx).panel_button_icon_size)
 }
 
+pub fn configure_status_bar_icon_button(button: IconButton, icon_size: IconSize) -> IconButton {
+    let button = button.icon_size(icon_size);
+    if matches!(icon_size, IconSize::Custom(_)) {
+        button.shape(IconButtonShape::Square)
+    } else {
+        button
+    }
+}
+
+pub fn apply_status_bar_chrome_styles<S: Styled>(this: S, cx: &App) -> S {
+    this.items_center()
+        .px(DynamicSpacing::Base04.rems(cx))
+        .py(DynamicSpacing::Base02.rems(cx))
+        .bg(cx.theme().colors().status_bar_background)
+}
+
 pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
@@ -122,14 +141,13 @@ impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sidebar = SidebarStatus::query(&self.multi_workspace, cx);
 
-        h_flex()
-            .w_full()
-            .justify_between()
-            .items_center()
-            .gap(DynamicSpacing::Base08.rems(cx))
-            .px(DynamicSpacing::Base04.rems(cx))
-            .py(DynamicSpacing::Base02.rems(cx))
-            .bg(cx.theme().colors().status_bar_background)
+        apply_status_bar_chrome_styles(
+            h_flex()
+                .w_full()
+                .justify_between()
+                .gap(DynamicSpacing::Base08.rems(cx)),
+            cx,
+        )
             .map(|el| match window.window_decorations() {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el
@@ -229,15 +247,17 @@ impl StatusBar {
                 Anchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
-                IconButton::new(
-                    "toggle-workspace-sidebar",
-                    if on_right {
-                        IconName::ThreadsSidebarRightClosed
-                    } else {
-                        IconName::ThreadsSidebarLeftClosed
-                    },
+                configure_status_bar_icon_button(
+                    IconButton::new(
+                        "toggle-workspace-sidebar",
+                        if on_right {
+                            IconName::ThreadsSidebarRightClosed
+                        } else {
+                            IconName::ThreadsSidebarLeftClosed
+                        },
+                    ),
+                    icon_size,
                 )
-                .icon_size(icon_size)
                 .when(has_notifications, |this| {
                     this.indicator(Indicator::dot().color(Color::Accent))
                         .indicator_border_color(Some(indicator_border))
