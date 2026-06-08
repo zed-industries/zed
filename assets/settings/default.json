@@ -153,7 +153,7 @@
   // The default behavior when opening projects from the UI.
   //
   // May take 2 values:
-  //  1. Open projects in the current Zed window
+  //  1. Open projects as a new workspace in the current Zed window's sidebar
   //         "default_open_behavior": "existing_window"
   //  2. Open projects in a new window
   //         "default_open_behavior": "new_window"

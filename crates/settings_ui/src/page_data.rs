@@ -259,7 +259,7 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Default Open Behavior",
-                description: "How projects open from the UI when no alternate action is used.",
+                description: "How projects open from the UI by default.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("default_open_behavior"),
