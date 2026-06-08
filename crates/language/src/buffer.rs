@@ -4600,7 +4600,7 @@ impl BufferSnapshot {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
             source_range_for_text: source_range_for_text.to_point(self),
-            text,
+            text: text.into(),
             highlight_ranges,
             name_ranges,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
