@@ -719,15 +719,17 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let install_result = if cfg!(test) {
-            match cx
-                .try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
-                .map(|test_install| test_install(target_path, cx))
-            {
-                Some(result) => result,
-                None => return Ok(()),
-            }
-        } else {
+        #[cfg(test)]
+        let install_result = match cx
+            .try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
+            .map(|test_install| test_install(&target_path, cx))
+        {
+            Some(result) => result,
+            None => return Ok(()),
+        };
+
+        #[cfg(not(test))]
+        let install_result = {
             let running_app_path = cx.update(|cx| cx.app_path())?;
             let background_executor = cx.background_executor().clone();
             let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
@@ -839,6 +841,7 @@ impl AutoUpdater {
         Ok(installer_dir.path().join(filename))
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn install_release(
         installer_dir: InstallerDir,
         target_path: PathBuf,
