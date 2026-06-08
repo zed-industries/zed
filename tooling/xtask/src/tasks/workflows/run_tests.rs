@@ -70,6 +70,9 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests
             .and_not_in_merge_queue()
             .then(run_platform_tests(Platform::Mac)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(miri_scheduler()),
         should_run_tests.and_not_in_merge_queue().then(doctests()),
         should_run_tests
             .and_not_in_merge_queue()
@@ -391,15 +394,24 @@ pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
     .add_with(("file", TS_QUERY_LS_FILE))
 }
 
-pub(crate) fn run_ts_query_ls() -> Step<Run> {
+pub(crate) enum RunContext {
+    ZedRepository,
+    Extension,
+}
+
+pub(crate) fn run_ts_query_ls(context: RunContext) -> Step<Run> {
     named::bash(formatdoc!(
         r#"tar -xf "$GITHUB_WORKSPACE/{TS_QUERY_LS_FILE}" -C "$GITHUB_WORKSPACE"
-        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {{
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check {directory} || {{
             echo "Found unformatted queries, please format them with ts_query_ls."
             echo "For easy use, install the Tree-sitter query extension:"
             echo "zed://extension/tree-sitter-query"
             false
-        }}"#
+        }}"#,
+        directory = match context {
+            RunContext::Extension => "languages",
+            RunContext::ZedRepository => ".",
+        }
     ))
 }
 
@@ -425,7 +437,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
             .add_step(fetch_ts_query_ls())
-            .add_step(run_ts_query_ls()),
+            .add_step(run_ts_query_ls(RunContext::ZedRepository)),
     )
 }
 
@@ -678,6 +690,29 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(bufbuild_breaking_action())
             .add_step(buf_lint())
             .add_step(check_protobuf_formatting()),
+    )
+}
+
+fn miri_scheduler() -> NamedJob {
+    fn install_miri() -> Step<Run> {
+        named::bash(
+            "rustup toolchain install nightly --profile minimal --component miri --component rust-src",
+        )
+    }
+
+    fn run_scheduler_tests_under_miri() -> Step<Run> {
+        named::bash("cargo +nightly -q miri test -p scheduler")
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_miri())
+            .add_step(run_scheduler_tests_under_miri())
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 

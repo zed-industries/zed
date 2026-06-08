@@ -443,15 +443,20 @@ class ZedAgent(BaseInstalledAgent):
             env=env,
         )
 
-        # Only generate a patch if the workdir is a git repo
-        # (SWE-bench style). Terminal-bench containers aren't git repos.
+        # Only generate a patch if the workdir is a git repo with a valid HEAD
+        # (SWE-bench style). Terminal-bench containers aren't git repos, and
+        # some harnesses mount an initialized repo before creating the first commit.
         await self.exec_as_agent(
             environment,
             command=(
-                'if [ -d ".git" ]; then '
+                "if git rev-parse --git-dir >/dev/null 2>&1; then "
                 "git add -A && "
-                "git diff --cached HEAD > /logs/agent/patch.diff && "
+                "if git rev-parse --verify HEAD >/dev/null 2>&1; then "
+                "git diff --cached HEAD -- > /logs/agent/patch.diff && "
                 'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"; '
+                "else "
+                'echo "Git repo has no valid HEAD, skipping patch generation"; '
+                "fi; "
                 "else "
                 'echo "No git repo found, skipping patch generation"; '
                 "fi"

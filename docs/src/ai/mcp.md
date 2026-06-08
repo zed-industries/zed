@@ -16,6 +16,14 @@ We welcome contributions that help advance Zed's MCP feature coverage (Discovery
 
 Zed also handles the `notifications/tools/list_changed` notification from MCP servers. When a server adds, removes, or modifies its available tools at runtime, Zed automatically reloads the tool list without requiring a server restart.
 
+## Agent Path Support {#agent-path-support}
+
+| Agent path                                | MCP behavior                                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| [Zed Agent](./zed-agent.md)               | Uses Zed-configured MCP servers directly                                                |
+| [External Agents](./external-agents.md)   | Zed can forward configured MCP servers over ACP; agents may also read native MCP config |
+| [Terminal Threads](./terminal-threads.md) | Native CLIs/TUIs read their own MCP configuration                                       |
+
 ## Installing MCP Servers
 
 ### As Extensions
@@ -81,7 +89,7 @@ For example, the GitHub MCP extension requires you to add a [Personal Access Tok
 In the case of custom servers, make sure you check the provider documentation to determine what type of command, arguments, and environment variables need to be added to the JSON.
 
 To check if your MCP server is properly configured, go to the Agent Panel's settings view and watch the indicator dot next to its name.
-If they're running correctly, the indicator will be green and its tooltip will say "Server is active".
+If it's running correctly, the indicator will be green and its tooltip will say "Server is active".
 If not, other colors and tooltip messages will indicate what is happening.
 
 ### Agent Panel Usage
@@ -91,7 +99,7 @@ Once installation is complete, you can return to the Agent Panel and start promp
 How reliably MCP tools get called can vary from model to model.
 Mentioning the MCP server by name can help the model pick tools from that server.
 
-However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
+However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-profiles.md) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 
@@ -156,13 +164,13 @@ Learn more about [how tool permissions work](./tool-permissions.md), how to furt
 
 ### External Agents
 
-MCP servers configured in Zed are forwarded to [external agents](./external-agents.md) via the [Agent Client Protocol](https://agentclientprotocol.com/). External agents can also access MCP servers from their own native configuration files.
+MCP servers configured in Zed are forwarded to [External Agents](./external-agents.md) via the [Agent Client Protocol](https://agentclientprotocol.com/). External Agents can also access MCP servers from their own native configuration files.
 
-For details on what configuration is shared between Zed and external agents, see [Configuration Boundaries](./external-agents.md#configuration-boundaries).
+For details on what configuration is shared between Zed and External Agents, see [Configuration Boundaries](./external-agents.md#configuration-boundaries).
 
 ### Error Handling
 
-When a MCP server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails.
+When an MCP server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails.
 Common error scenarios include:
 
 - Invalid parameters passed to the tool

@@ -277,6 +277,7 @@ impl VsCodeSettings {
             code_lens: None,
             jupyter: None,
             lsp_document_colors: None,
+            lsp_document_links: self.read_bool("editor.links"),
             lsp_highlight_debounce: None,
             middle_click_paste: None,
             minimap: self.minimap_content(),
@@ -315,6 +316,7 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
+            completion_menu_item_kind: None,
             diff_view_style: None,
             minimum_split_diff_width: None,
         }
@@ -472,13 +474,12 @@ impl VsCodeSettings {
     }
 
     fn minimap_content(&self) -> Option<MinimapContent> {
-        let minimap_enabled = self.read_bool("editor.minimap.enabled");
-        let autohide = self.read_bool("editor.minimap.autohide");
+        let minimap_enabled = self.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let autohide = self.read_bool("editor.minimap.autohide").unwrap_or(false);
         let show = match (minimap_enabled, autohide) {
-            (Some(true), Some(false)) => Some(ShowMinimap::Always),
-            (Some(true), _) => Some(ShowMinimap::Auto),
-            (Some(false), _) => Some(ShowMinimap::Never),
-            _ => None,
+            (true, false) => Some(ShowMinimap::Always),
+            (true, true) => Some(ShowMinimap::Auto),
+            (false, _) => Some(ShowMinimap::Never),
         };
 
         skip_default(MinimapContent {
@@ -976,7 +977,9 @@ impl VsCodeSettings {
             buffer_font_features: None,
             agent_ui_font_size: None,
             agent_buffer_font_size: None,
+            git_commit_buffer_font_size: None,
             markdown_preview_font_family: None,
+            markdown_preview_code_font_family: None,
             markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
@@ -1033,7 +1036,7 @@ impl VsCodeSettings {
             restore_on_startup: None,
             window_decorations: None,
             show_call_status_icon: None,
-            use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
+            use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
             use_system_prompts: None,
             use_system_window_tabs: self.read_bool("window.nativeTabs"),
             when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {
@@ -1082,6 +1085,7 @@ impl VsCodeSettings {
                         .collect::<Vec<_>>()
                 })
                 .filter(|r| !r.is_empty()),
+            scan_symlinks: None,
             private_files: None,
             hidden_files: None,
             read_only_files: self

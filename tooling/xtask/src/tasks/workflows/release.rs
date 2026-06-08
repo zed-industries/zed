@@ -5,7 +5,10 @@ use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
-    steps::{self, FluentBuilder, NamedJob, TokenPermissions, dependant_job, named, release_job},
+    steps::{
+        self, DownloadArtifactStep, FluentBuilder, NamedJob, TokenPermissions, dependant_job,
+        named, release_job,
+    },
     vars::{self, JobOutput, StepOutput, assets},
 };
 
@@ -217,7 +220,7 @@ pub(crate) fn add_compliance_steps(
         .if_condition(Expression::new("always()"))
         .when(
             matches!(context, ComplianceContext::Release { .. }),
-            |step| step.add_with(("overwrite", true)),
+            |step| step.overwrite(true),
         );
 
     let (success_prefix, failure_prefix) = match context {
@@ -428,13 +431,8 @@ fn auto_release_preview(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
     (job, release_published)
 }
 
-pub(crate) fn download_workflow_artifacts() -> Step<Use> {
-    named::uses(
-        "actions",
-        "download-artifact",
-        "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
-    )
-    .add_with(("path", "./artifacts/"))
+pub(crate) fn download_workflow_artifacts() -> DownloadArtifactStep {
+    steps::download_artifact().path("./artifacts/")
 }
 
 pub(crate) fn prep_release_artifacts() -> Step<Run> {

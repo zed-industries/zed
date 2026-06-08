@@ -1588,6 +1588,8 @@ impl PickerDelegate for DebugDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .w_full()
+                        .min_w_0()
                         .items_start()
                         .child(highlighted_location.render(window, cx))
                         .when_some(subtitle, |this, subtitle_text| {

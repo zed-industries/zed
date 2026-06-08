@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashMap, btree_map, hash_map};
+use collections::{BTreeMap, HashMap, TypeIdHashMap, btree_map, hash_map};
 use fs::Fs;
 use futures::{
     FutureExt, StreamExt,
@@ -143,7 +143,7 @@ pub struct SettingsLocation<'a> {
 }
 
 pub struct SettingsStore {
-    setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
+    setting_values: TypeIdHashMap<Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
     user_settings: Option<UserSettingsContent>,
     global_settings: Option<Box<SettingsContent>>,
@@ -286,8 +286,16 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
+        Self::new_with_semantic_tokens(cx, default_settings)
+    }
+
+    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
         let default_settings = Self::parse_default_settings(default_settings).unwrap();
+        Self::from_settings_content(cx, default_settings)
+    }
+
+    fn from_settings_content(cx: &mut App, default_settings: SettingsContent) -> Self {
+        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         if !cx.has_global::<DefaultSemanticTokenRules>() {
             cx.set_global::<DefaultSemanticTokenRules>(
                 crate::parse_json_with_comments::<SemanticTokenRules>(
@@ -504,7 +512,11 @@ impl SettingsStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Self {
-        Self::new(cx, &crate::test_settings())
+        static CACHED_SETTINGS_CONTENT: std::sync::LazyLock<SettingsContent> =
+            std::sync::LazyLock::new(|| {
+                SettingsContent::parse_json_with_comments(crate::test_settings()).unwrap()
+            });
+        Self::from_settings_content(cx, CACHED_SETTINGS_CONTENT.clone())
     }
 
     /// Updates the value of a setting in the user's global configuration.
@@ -2177,6 +2189,9 @@ mod tests {
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "tab_size": 37
             }
             "#
@@ -2195,6 +2210,9 @@ mod tests {
             r#"{ "editor.tabSize": 42 }"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "tab_size": 42,
                 "preferred_line_length": 99,
             }
@@ -2215,6 +2233,9 @@ mod tests {
             r#"{}"#.to_owned(),
             r#"{
                 "base_keymap": "VSCode",
+                "minimap": {
+                    "show": "always"
+                },
                 "preferred_line_length": 99,
                 "tab_size": 42
             }
@@ -2241,6 +2262,9 @@ mod tests {
               "base_keymap": "VSCode",
               "tabs": {
                 "git_status": true
+              },
+              "minimap": {
+                "show": "always"
               }
             }
             "#
@@ -2265,7 +2289,10 @@ mod tests {
                 "sort_mode": "mixed",
                 "sort_order": "lower"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2282,6 +2309,9 @@ mod tests {
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "buffer_font_fallbacks": [
                 "Consolas",
                 "Courier New"
@@ -2305,7 +2335,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2324,7 +2357,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2343,7 +2379,10 @@ mod tests {
               "terminal": {
                 "bell": "system"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2362,7 +2401,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2385,7 +2427,10 @@ mod tests {
               "terminal": {
                 "bell": "off"
               },
-              "base_keymap": "VSCode"
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
             }
             "#
             .unindent(),
@@ -2406,6 +2451,9 @@ mod tests {
             .to_owned(),
             r#"{
               "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
               "hover_popover_hiding_delay": 500,
               "hover_popover_sticky": false
             }
