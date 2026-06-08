@@ -843,6 +843,111 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 
 /*
 **
+**              Backdrop Blur
+**
+*/
+
+struct BlurRect {
+    uint order;
+    uint pad;
+    Bounds bounds;
+    Bounds content_mask;
+    Corners corner_radii;
+    float blur_radius;
+    Hsla tint;
+};
+
+struct BlurPassVertexOutput {
+    float4 position: SV_Position;
+    float2 texture_position: TEXCOORD0;
+};
+
+BlurPassVertexOutput blur_downsample_vertex(uint vertex_id: SV_VertexID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+
+    BlurPassVertexOutput output;
+    output.position = float4(unit_vertex * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    output.texture_position = unit_vertex;
+    return output;
+}
+
+float4 blur_downsample_fragment(BlurPassVertexOutput input): SV_Target {
+    uint texture_width;
+    uint texture_height;
+    t_sprite.GetDimensions(texture_width, texture_height);
+    float2 texel = 1.0 / float2(texture_width, texture_height);
+    float2 uv = input.texture_position;
+
+    float4 color = t_sprite.Sample(s_sprite, uv) * 0.5;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2(-1.0, -1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0, -1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2(-1.0,  1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0,  1.0)) * 0.125;
+    return color;
+}
+
+BlurPassVertexOutput blur_upsample_vertex(uint vertex_id: SV_VertexID) {
+    return blur_downsample_vertex(vertex_id);
+}
+
+float4 blur_upsample_fragment(BlurPassVertexOutput input): SV_Target {
+    uint texture_width;
+    uint texture_height;
+    t_sprite.GetDimensions(texture_width, texture_height);
+    float2 texel = 1.0 / float2(texture_width, texture_height);
+    float2 uv = input.texture_position;
+
+    float4 color = 0.0;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2(-1.0,  0.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0,  0.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2( 0.0, -1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2( 0.0,  1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2(-1.0, -1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0, -1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2(-1.0,  1.0)) * 0.125;
+    color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0,  1.0)) * 0.125;
+    return color;
+}
+
+struct BlurRectVertexOutput {
+    nointerpolation uint blur_rect_id: TEXCOORD0;
+    float4 position: SV_Position;
+    float2 texture_position: TEXCOORD1;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+StructuredBuffer<BlurRect> blur_rects: register(t1);
+
+BlurRectVertexOutput blur_rect_vertex(uint vertex_id: SV_VertexID, uint blur_rect_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    BlurRect blur_rect = blur_rects[blur_rect_id];
+    float2 position = unit_vertex * blur_rect.bounds.size + blur_rect.bounds.origin;
+
+    BlurRectVertexOutput output;
+    output.position = to_device_position(unit_vertex, blur_rect.bounds);
+    output.texture_position = position / global_viewport_size;
+    output.blur_rect_id = blur_rect_id;
+    output.clip_distance = distance_from_clip_rect(unit_vertex, blur_rect.bounds, blur_rect.content_mask);
+    return output;
+}
+
+float4 blur_rect_fragment(BlurRectVertexOutput input): SV_Target {
+    BlurRect blur_rect = blur_rects[input.blur_rect_id];
+    float2 position = input.position.xy;
+
+    const float antialias_threshold = 0.5;
+    float sdf = quad_sdf(position, blur_rect.bounds, blur_rect.corner_radii);
+    float shape_alpha = saturate(antialias_threshold - sdf);
+
+    float4 blurred = t_sprite.Sample(s_sprite, input.texture_position);
+    float4 tint = hsla_to_rgba(blur_rect.tint);
+    float4 color = tint.a > 0.0 ? over(blurred, tint) : blurred;
+    color.a *= shape_alpha;
+    return color;
+}
+
+/*
+**
 **              Shadows
 **
 */

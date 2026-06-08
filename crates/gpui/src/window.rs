@@ -2,8 +2,8 @@
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    AsyncWindowContext, AvailableSpace, Background, BlurRect, BorderStyle, Bounds, BoxShadow,
+    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
@@ -3676,6 +3676,32 @@ impl Window {
         });
     }
 
+    /// Paint a backdrop blur rectangle into the scene at the current z-index.
+    ///
+    /// The blur samples pixels already rendered behind `bounds`, so renderers may need to break the
+    /// current pass when this primitive is encountered. Prefer one blur rect for a glass surface
+    /// rather than many small blur rects.
+    pub fn paint_blur_rect(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        effect: BlurEffect,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let opacity = self.element_opacity();
+        let scale_factor = self.scale_factor();
+        self.next_frame.scene.insert_primitive(BlurRect {
+            order: 0,
+            pad: 0,
+            bounds: self.snap_bounds(bounds),
+            content_mask: self.snapped_content_mask(),
+            corner_radii: corner_radii.scale(scale_factor),
+            blur_radius: effect.radius.scale(scale_factor),
+            tint: effect.tint.opacity(opacity),
+        });
+    }
+
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
@@ -6128,6 +6154,40 @@ pub struct PaintQuad {
     pub border_color: Hsla,
     /// The style of the quad's borders.
     pub border_style: BorderStyle,
+}
+
+/// Options for [`Window::paint_blur_rect`].
+#[derive(Clone, Copy, Debug)]
+pub struct BlurEffect {
+    /// Uniform CSS-like blur radius in logical pixels.
+    pub radius: Pixels,
+    /// Tint color composited over the blurred backdrop.
+    pub tint: Hsla,
+}
+
+impl BlurEffect {
+    /// Create a blur effect with a uniform CSS-like radius.
+    pub fn new(radius: Pixels) -> Self {
+        Self {
+            radius,
+            ..Self::default()
+        }
+    }
+
+    /// Set a tint color composited over the blurred backdrop.
+    pub fn tint(mut self, tint: Hsla) -> Self {
+        self.tint = tint;
+        self
+    }
+}
+
+impl Default for BlurEffect {
+    fn default() -> Self {
+        Self {
+            radius: px(20.),
+            tint: transparent_black(),
+        }
+    }
 }
 
 impl PaintQuad {
