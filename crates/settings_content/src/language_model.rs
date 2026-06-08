@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
+    pub command_code: Option<CommandCodeSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
@@ -209,6 +210,27 @@ pub struct LmStudioAvailableModel {
     pub max_tokens: u64,
     pub supports_tool_calls: bool,
     pub supports_images: bool,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct CommandCodeSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<CommandCodeAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct CommandCodeAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    pub supports_images: Option<bool>,
+    pub supports_tools: Option<bool>,
+    pub parallel_tool_calls: Option<bool>,
 }
 
 #[with_fallible_options]

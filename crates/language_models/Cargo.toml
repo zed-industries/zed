@@ -30,6 +30,7 @@ convert_case.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
 copilot_ui.workspace = true
+command_code = { workspace = true, features = ["schemars"] }
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 extension.workspace = true

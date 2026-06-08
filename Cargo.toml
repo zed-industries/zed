@@ -36,6 +36,7 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/command_code",
     "crates/component",
     "crates/component_preview",
     "crates/context_server",
@@ -298,6 +299,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+command_code = { path = "crates/command_code" }
 compliance = { path = "tooling/compliance" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }

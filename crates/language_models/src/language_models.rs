@@ -19,6 +19,7 @@ pub use crate::extension::init_proxy as init_extension_proxy;
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
+use crate::provider::command_code::CommandCodeLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
@@ -324,6 +325,14 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         Arc::new(OpenCodeLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(CommandCodeLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
             cx,

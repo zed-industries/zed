@@ -5,6 +5,7 @@ use http_client::http::{HeaderName, HeaderValue};
 pub mod anthropic;
 pub mod bedrock;
 pub mod cloud;
+pub mod command_code;
 pub mod copilot_chat;
 pub mod deepseek;
 pub mod google;

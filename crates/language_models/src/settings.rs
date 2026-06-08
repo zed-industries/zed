@@ -5,10 +5,11 @@ use settings::RegisterSetting;
 
 use crate::provider::{
     anthropic, anthropic::AnthropicSettings, bedrock, bedrock::AmazonBedrockSettings,
-    cloud::ZedDotDevSettings, deepseek::DeepSeekSettings, google::GoogleSettings,
-    lmstudio::LmStudioSettings, mistral, mistral::MistralSettings, ollama::OllamaSettings,
-    open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings, open_router,
-    open_router::OpenRouterSettings, opencode, opencode::OpenCodeSettings, resolve_custom_headers,
+    cloud::ZedDotDevSettings, command_code, command_code::CommandCodeSettings,
+    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings, mistral,
+    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
+    open_ai_compatible::OpenAiCompatibleSettings, open_router, open_router::OpenRouterSettings,
+    opencode, opencode::OpenCodeSettings, resolve_custom_headers,
     vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
@@ -16,6 +17,7 @@ use crate::provider::{
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
+    pub command_code: CommandCodeSettings,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
     pub lmstudio: LmStudioSettings,
@@ -53,6 +55,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let lmstudio = language_models.lmstudio.unwrap();
         let mistral = language_models.mistral.unwrap();
         let ollama = language_models.ollama.unwrap();
+        let command_code = language_models.command_code.unwrap();
         let opencode = language_models.opencode.unwrap();
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
@@ -116,6 +119,15 @@ impl settings::Settings for AllLanguageModelSettings {
                 available_models: ollama.available_models.unwrap_or_default(),
                 context_window: ollama.context_window,
                 custom_headers: custom_headers_from("Ollama", ollama.custom_headers, &[]),
+            },
+            command_code: CommandCodeSettings {
+                api_url: command_code.api_url.unwrap(),
+                available_models: command_code.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "Command Code",
+                    command_code.custom_headers,
+                    &[],
+                ),
             },
             opencode: OpenCodeSettings {
                 api_url: opencode.api_url.unwrap(),
