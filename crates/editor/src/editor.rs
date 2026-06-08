@@ -4072,12 +4072,12 @@ impl Editor {
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
-            breakpoint.as_ref().and_then(|bp| match bp.1.state {
+            breakpoint.as_ref().map(|bp| match bp.1.state {
                 BreakpointState::Enabled => {
-                    Some(("Disable", crate::actions::DisableBreakpoint.boxed_clone()))
+                    ("Disable", crate::actions::DisableBreakpoint.boxed_clone())
                 }
                 BreakpointState::Disabled => {
-                    Some(("Enable", crate::actions::EnableBreakpoint.boxed_clone()))
+                    ("Enable", crate::actions::EnableBreakpoint.boxed_clone())
                 }
             });
 
