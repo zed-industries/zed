@@ -3676,48 +3676,149 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn activity_bar_section() -> [SettingsPageItem; 3] {
-        [
-            SettingsPageItem::SectionHeader("Activity Bar"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Activity Bar",
-                description: "Show a VS Code-style vertical activity bar on the left for panel buttons. Use activity_bar.status_bar_buttons in settings.json to move specific buttons back to the status bar.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("activity_bar.enabled"),
-                    pick: |settings_content| {
-                        settings_content.activity_bar.as_ref()?.enabled.as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .activity_bar
-                            .get_or_insert_default()
-                            .enabled = value;
-                    },
+    fn activity_bar_section() -> Box<[SettingsPageItem]> {
+        concat_sections!(
+            @vec,
+            [
+                SettingsPageItem::SectionHeader("Activity Bar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Activity Bar",
+                    description: "Show a VS Code-style vertical activity bar on the left for panel buttons.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.enabled"),
+                        pick: |settings_content| {
+                            settings_content.activity_bar.as_ref()?.enabled.as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .activity_bar
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Activity Bar Icon Size",
-                description: "Size of icons in the activity bar.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("activity_bar.icon_size"),
-                    pick: |settings_content| {
-                        settings_content.activity_bar.as_ref()?.icon_size.as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .activity_bar
-                            .get_or_insert_default()
-                            .icon_size = value;
-                    },
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Activity Bar Icon Size",
+                    description: "Size of icons in the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.icon_size"),
+                        pick: |settings_content| {
+                            settings_content.activity_bar.as_ref()?.icon_size.as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .activity_bar
+                                .get_or_insert_default()
+                                .icon_size = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
+                SettingsPageItem::SectionHeader("Activity Bar Button Placement"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel in Status Bar",
+                    description: "Show the project panel button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.ProjectPanel"),
+                        pick: crate::pick_activity_bar_status_bar_button_project_panel,
+                        write: crate::write_activity_bar_status_bar_button_project_panel,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Search in Status Bar",
+                    description: "Show the project search button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.search"),
+                        pick: crate::pick_activity_bar_status_bar_button_search,
+                        write: crate::write_activity_bar_status_bar_button_search,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Source Control in Status Bar",
+                    description: "Show the source control button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.GitPanel"),
+                        pick: crate::pick_activity_bar_status_bar_button_git_panel,
+                        write: crate::write_activity_bar_status_bar_button_git_panel,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel in Status Bar",
+                    description: "Show the agent panel button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.agent_panel"),
+                        pick: crate::pick_activity_bar_status_bar_button_agent_panel,
+                        write: crate::write_activity_bar_status_bar_button_agent_panel,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Terminal in Status Bar",
+                    description: "Show the terminal button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.TerminalPanel"),
+                        pick: crate::pick_activity_bar_status_bar_button_terminal_panel,
+                        write: crate::write_activity_bar_status_bar_button_terminal_panel,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Outline in Status Bar",
+                    description: "Show the outline panel button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.OutlinePanel"),
+                        pick: crate::pick_activity_bar_status_bar_button_outline_panel,
+                        write: crate::write_activity_bar_status_bar_button_outline_panel,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration in Status Bar",
+                    description: "Show the collaboration panel button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.CollaborationPanel"),
+                        pick: crate::pick_activity_bar_status_bar_button_collaboration_panel,
+                        write: crate::write_activity_bar_status_bar_button_collaboration_panel,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Debugger in Status Bar",
+                    description: "Show the debugger button in the status bar instead of the activity bar.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("activity_bar.status_bar_buttons.DebugPanel"),
+                        pick: crate::pick_activity_bar_status_bar_button_debug_panel,
+                        write: crate::write_activity_bar_status_bar_button_debug_panel,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ]
+        )
+        .into()
     }
 
     fn status_bar_section() -> [SettingsPageItem; 12] {

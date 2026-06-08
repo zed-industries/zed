@@ -454,8 +454,237 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+macro_rules! activity_bar_status_bar_button {
+    ($type_name:ident, $panel_key:literal, $pick_fn:ident, $write_fn:ident) => {
+        #[derive(Clone, Copy)]
+        pub(crate) struct $type_name;
+
+        impl PartialEq for $type_name {
+            fn eq(&self, _: &Self) -> bool {
+                true
+            }
+        }
+
+        pub(crate) fn $pick_fn(_: &SettingsContent) -> Option<&$type_name> {
+            Some(&$type_name)
+        }
+
+        pub(crate) fn $write_fn(
+            _: &mut SettingsContent,
+            _: Option<$type_name>,
+            _: &App,
+        ) {
+        }
+    };
+}
+
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonProjectPanel,
+    "ProjectPanel",
+    pick_activity_bar_status_bar_button_project_panel,
+    write_activity_bar_status_bar_button_project_panel
+);
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonSearch,
+    "search",
+    pick_activity_bar_status_bar_button_search,
+    write_activity_bar_status_bar_button_search
+);
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonGitPanel,
+    "GitPanel",
+    pick_activity_bar_status_bar_button_git_panel,
+    write_activity_bar_status_bar_button_git_panel
+);
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonAgentPanel,
+    "agent_panel",
+    pick_activity_bar_status_bar_button_agent_panel,
+    write_activity_bar_status_bar_button_agent_panel
+);
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonTerminalPanel,
+    "TerminalPanel",
+    pick_activity_bar_status_bar_button_terminal_panel,
+    write_activity_bar_status_bar_button_terminal_panel
+);
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonOutlinePanel,
+    "OutlinePanel",
+    pick_activity_bar_status_bar_button_outline_panel,
+    write_activity_bar_status_bar_button_outline_panel
+);
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonCollaborationPanel,
+    "CollaborationPanel",
+    pick_activity_bar_status_bar_button_collaboration_panel,
+    write_activity_bar_status_bar_button_collaboration_panel
+);
+activity_bar_status_bar_button!(
+    ActivityBarStatusBarButtonDebugPanel,
+    "DebugPanel",
+    pick_activity_bar_status_bar_button_debug_panel,
+    write_activity_bar_status_bar_button_debug_panel
+);
+
+fn activity_bar_status_bar_buttons_contains(settings: &SettingsContent, panel_key: &str) -> bool {
+    settings
+        .activity_bar
+        .as_ref()
+        .and_then(|activity_bar| activity_bar.status_bar_buttons.as_ref())
+        .is_some_and(|buttons| buttons.iter().any(|button| button == panel_key))
+}
+
+fn set_activity_bar_status_bar_button(
+    settings: &mut SettingsContent,
+    panel_key: &str,
+    show_in_status_bar: bool,
+) {
+    let activity_bar = settings.activity_bar.get_or_insert_default();
+    let buttons = activity_bar
+        .status_bar_buttons
+        .get_or_insert_with(Vec::new);
+
+    if show_in_status_bar {
+        if !buttons.iter().any(|button| button == panel_key) {
+            buttons.push(panel_key.to_string());
+        }
+    } else {
+        buttons.retain(|button| button != panel_key);
+        if buttons.is_empty() {
+            activity_bar.status_bar_buttons = None;
+        }
+    }
+}
+
+fn render_activity_bar_status_bar_button(
+    panel_key: &'static str,
+) -> impl Fn(
+    &SettingsWindow,
+    &SettingItem,
+    SettingsUiFile,
+    Option<&SettingsFieldMetadata>,
+    bool,
+    &mut Window,
+    &mut Context<SettingsWindow>,
+) -> Stateful<Div> {
+    move |settings_window, item, settings_file, _, sub_field, _window, cx| {
+        let settings_content = SettingsStore::global(cx).merged_settings();
+        let activity_bar_enabled = settings_content
+            .activity_bar
+            .as_ref()
+            .and_then(|activity_bar| activity_bar.enabled)
+            .unwrap_or(false);
+        let in_status_bar = activity_bar_status_bar_buttons_contains(settings_content, panel_key);
+        let toggle_state = if in_status_bar {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        };
+
+        render_settings_item(
+            settings_window,
+            item,
+            settings_file.clone(),
+            Switch::new(
+                ElementId::Name(format!("activity-bar-status-bar-{panel_key}").into()),
+                toggle_state,
+            )
+            .tab_index(0_isize)
+            .disabled(!activity_bar_enabled)
+            .on_click({
+                let panel_key = panel_key;
+                move |state, window, cx| {
+                    let show_in_status_bar = *state == ToggleState::Selected;
+                    update_settings_file(
+                        settings_file.clone(),
+                        Some("activity_bar.status_bar_buttons"),
+                        window,
+                        cx,
+                        move |settings, _| {
+                            set_activity_bar_status_bar_button(
+                                settings,
+                                panel_key,
+                                show_in_status_bar,
+                            );
+                        },
+                    )
+                    .log_err();
+                }
+            })
+            .into_any_element(),
+            sub_field,
+            cx,
+        )
+    }
+}
+
+macro_rules! register_activity_bar_status_bar_button_renderer {
+    ($renderer:expr, $type_name:ident, $panel_key:literal) => {
+        $renderer.add_renderer::<$type_name>({
+            let render = render_activity_bar_status_bar_button($panel_key);
+            move |settings_window, item, _field, settings_file, metadata, sub_field, window, cx| {
+                render(
+                    settings_window,
+                    item,
+                    settings_file,
+                    metadata,
+                    sub_field,
+                    window,
+                    cx,
+                )
+            }
+        })
+    };
+}
+
+fn init_activity_bar_renderers(renderer: &mut SettingFieldRenderer) {
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonProjectPanel,
+        "ProjectPanel"
+    );
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonSearch,
+        "search"
+    );
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonGitPanel,
+        "GitPanel"
+    );
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonAgentPanel,
+        "agent_panel"
+    );
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonTerminalPanel,
+        "TerminalPanel"
+    );
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonOutlinePanel,
+        "OutlinePanel"
+    );
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonCollaborationPanel,
+        "CollaborationPanel"
+    );
+    register_activity_bar_status_bar_button_renderer!(
+        renderer,
+        ActivityBarStatusBarButtonDebugPanel,
+        "DebugPanel"
+    );
+}
+
 fn init_renderers(cx: &mut App) {
-    cx.default_global::<SettingFieldRenderer>()
+    let renderer = cx.default_global::<SettingFieldRenderer>();
+    init_activity_bar_renderers(renderer);
+    renderer
         .add_renderer::<UnimplementedSettingField>(
             |settings_window, item, _, settings_file, _, sub_field, _, cx| {
                 render_settings_item(
@@ -565,6 +794,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
+        .add_basic_renderer::<settings::ActivityBarIconSize>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
