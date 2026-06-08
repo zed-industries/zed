@@ -241,12 +241,15 @@ pub fn run_split_commit(
     let mut processed_commits = 0usize;
 
     for input_path in inputs {
-        let input: Box<dyn BufRead> = if input_path.as_os_str() == "-" {
-            Box::new(io::BufReader::new(io::stdin()))
+        let (mut stdin_reader, mut file_reader);
+        let input: &mut dyn BufRead = if input_path.as_os_str() == "-" {
+            stdin_reader = io::BufReader::new(io::stdin());
+            &mut stdin_reader
         } else {
             let file = fs::File::open(input_path)
                 .with_context(|| format!("failed to open input file {}", input_path.display()))?;
-            Box::new(io::BufReader::new(file))
+            file_reader = io::BufReader::new(file);
+            &mut file_reader
         };
 
         for (line_num, line_result) in input.lines().enumerate() {
@@ -400,9 +403,16 @@ pub fn generate_evaluation_example_from_ordered_commit(
         "commit contains submodule/gitlink hunk"
     );
 
-    let mut rng: Box<dyn rand::RngCore> = match seed {
-        Some(seed) => Box::new(rand::rngs::StdRng::seed_from_u64(seed)),
-        None => Box::new(rand::rngs::ThreadRng::default()),
+    let (mut seeded_rng, mut thread_rng);
+    let rng: &mut dyn rand::RngCore = match seed {
+        Some(seed) => {
+            seeded_rng = rand::rngs::StdRng::seed_from_u64(seed);
+            &mut seeded_rng
+        }
+        None => {
+            thread_rng = rand::rngs::ThreadRng::default();
+            &mut thread_rng
+        }
     };
 
     // Parse and normalize the commit
@@ -428,7 +438,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
     anyhow::ensure!(num_edits != 0, "no edits found in commit");
 
     let split = match split_point {
-        None => sample_split_point(&patch, rng.as_mut()),
+        None => sample_split_point(&patch, rng),
         Some(SplitPoint::Fraction(f)) => {
             let v = (f * num_edits as f64).floor() as usize;
             v.min(num_edits)
@@ -457,7 +467,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
     // Sample cursor position
     let cursor = match cursor_opt {
         Some(c) => c,
-        None => sample_cursor_position(&split_commit, rng.as_mut())
+        None => sample_cursor_position(&split_commit, rng)
             .context("failed to sample cursor position")?,
     };
 

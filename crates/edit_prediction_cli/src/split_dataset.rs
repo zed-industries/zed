@@ -149,13 +149,18 @@ fn parse_split_spec(spec: &str) -> Result<SplitSpec> {
 }
 
 fn read_lines_from_input(input: Option<&Path>) -> Result<Vec<String>> {
-    let reader: Box<dyn BufRead> = match input {
+    let (mut stdin_reader, mut file_reader);
+    let reader: &mut dyn BufRead = match input {
         Some(path) => {
             let file =
                 File::open(path).with_context(|| format!("failed to open '{}'", path.display()))?;
-            Box::new(BufReader::new(file))
+            file_reader = BufReader::new(file);
+            &mut file_reader
         }
-        None => Box::new(BufReader::new(io::stdin())),
+        None => {
+            stdin_reader = BufReader::new(io::stdin());
+            &mut stdin_reader
+        }
     };
 
     let lines: Vec<String> = reader
