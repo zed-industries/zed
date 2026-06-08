@@ -348,7 +348,7 @@ pub fn init(cx: &mut App) {
                         Please note that Zed currently does not support opening network share folders inside wsl.
                     "#};
 
-                    let _ = cx.prompt(gpui::PromptLevel::Critical, "Invalid path", Some(&message), &["Ok"]).await;
+                    let _ = cx.prompt(gpui::PromptLevel::Critical, "Invalid path", Some(&message), &["OK"]).await;
                     return;
                 }
 
@@ -492,7 +492,7 @@ pub fn init(cx: &mut App) {
                         gpui::PromptLevel::Critical,
                         "Cannot open Dev Container from remote project",
                         None,
-                        &["Ok"],
+                        &["OK"],
                     )
                     .await
                     .ok();
