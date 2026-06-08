@@ -4,9 +4,9 @@ use client::{RefreshLlmTokenListener, UserStore, test::FakeServer};
 use clock::FakeSystemClock;
 use clock::ReplicaId;
 use cloud_api_types::{
-    CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
-    OrganizationEditPredictionConfiguration, OrganizationId, SubmitEditPredictionSettledBody,
-    SubmitEditPredictionSettledResponse,
+    CreateLlmTokenResponse, EditPredictionTrigger, LlmToken, Organization,
+    OrganizationConfiguration, OrganizationEditPredictionConfiguration, OrganizationId,
+    SubmitEditPredictionSettledBody, SubmitEditPredictionSettledResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsRequestTrigger,
@@ -561,11 +561,10 @@ async fn test_zeta_request_sends_settled_body_when_data_collection_is_disabled(
         .now_or_never()
         .flatten()
         .expect("settled request should be sent");
+    assert_eq!(settled_request.trigger, EditPredictionTrigger::Prediction);
     assert!(!settled_request.can_collect_data);
     assert_eq!(settled_request.settled_editable_region, None);
-    assert!(settled_request.future_edit_history_events.is_empty());
-    assert_eq!(settled_request.next_edit_cursor_offset, None);
-    assert_eq!(settled_request.example, None);
+    assert_eq!(settled_request.sample_data, None);
 }
 
 #[gpui::test]
@@ -1592,9 +1591,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
         .expect("empty prediction should still send settled request");
     assert_eq!(settled_request.request_id, id);
     assert_eq!(settled_request.settled_editable_region, None);
-    assert!(settled_request.future_edit_history_events.is_empty());
-    assert_eq!(settled_request.next_edit_cursor_offset, None);
-    assert_eq!(settled_request.example, None);
+    assert_eq!(settled_request.sample_data, None);
 }
 
 #[gpui::test]
@@ -3873,11 +3870,13 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     ep_store.update(cx, |ep_store, cx| {
         ep_store.enqueue_settled_prediction(
             EditPredictionId("prediction-a".into()),
+            EditPredictionTrigger::Prediction,
             &project,
             &buffer,
             &snapshot_a,
             editable_region_a.clone(),
             &edit_preview_a,
+            None,
             None,
             None,
             Duration::from_secs(0),
@@ -3940,11 +3939,13 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     ep_store.update(cx, |ep_store, cx| {
         ep_store.enqueue_settled_prediction(
             EditPredictionId("prediction-b".into()),
+            EditPredictionTrigger::Prediction,
             &project,
             &buffer,
             &snapshot_b2,
             editable_region_b.clone(),
             &edit_preview_b,
+            None,
             None,
             None,
             Duration::from_secs(0),
@@ -3996,104 +3997,53 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     }
 }
 
-#[gpui::test]
-async fn test_edit_prediction_settled_omits_body_when_data_collection_is_disabled(
-    cx: &mut TestAppContext,
-) {
-    let (ep_store, mut requests) = init_test_with_fake_client(cx);
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "foo.md": "sensitive source\n"
-        }),
-    )
-    .await;
-    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
-            project.open_buffer(path, cx)
-        })
-        .await
-        .unwrap();
+const MIT_LICENSE: &str = indoc! {r#"
+    MIT License
 
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.register_buffer(&buffer, &project, cx);
-    });
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
 
-    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
-        cx.update(|cx| to_completion_edits([(0..9, "replacement".into())], &buffer, cx).into());
-    let edit_preview = buffer
-        .read_with(cx, |buffer, cx| buffer.preview_edits(edits, cx))
-        .await;
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
 
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.enqueue_settled_prediction(
-            EditPredictionId("prediction-private".into()),
-            &project,
-            &buffer,
-            &snapshot,
-            0..snapshot.len(),
-            &edit_preview,
-            Some(ExampleSpec {
-                name: "test example".to_string(),
-                repository_url: "https://example.com/repo".to_string(),
-                revision: "rev".to_string(),
-                tags: Vec::new(),
-                reasoning: None,
-                uncommitted_diff: String::new(),
-                recently_opened_files: Vec::new(),
-                recently_viewed_files: Vec::new(),
-                uncommitted_diff_contains_edit_history: false,
-                cursor_path: Path::new("foo.md").into(),
-                cursor_position: "0".to_string(),
-                edit_history: "sensitive edit history".to_string(),
-                expected_patches: vec!["sensitive patch".to_string()],
-                rejected_patch: None,
-                telemetry: None,
-                human_feedback: Vec::new(),
-                rating: None,
-            }),
-            Some("test-model".to_string()),
-            Duration::from_millis(42),
-            cx,
-        );
-    });
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+"#};
 
-    cx.run_until_parked();
-    cx.executor()
-        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
-    cx.run_until_parked();
-
-    let settled_request = requests
-        .settled
-        .next()
-        .await
-        .expect("settled request should be sent");
-    assert!(!settled_request.can_collect_data);
-    assert_eq!(settled_request.settled_editable_region, None);
-    assert!(settled_request.future_edit_history_events.is_empty());
-    assert_eq!(settled_request.next_edit_cursor_offset, None);
-    assert_eq!(settled_request.example, None);
+fn empty_captured_context() -> CapturedPredictionContext {
+    CapturedPredictionContext {
+        repository_url: None,
+        revision: None,
+        uncommitted_diff: None,
+        buffer_diagnostics: Vec::new(),
+    }
 }
 
-#[gpui::test]
-async fn test_edit_prediction_settled_includes_overlapping_future_events_and_next_cursor_offset(
+fn numbered_lines(count: u32) -> String {
+    (0..count).map(|ix| format!("line {ix}\n")).collect()
+}
+
+async fn init_sample_capture_test(
+    tree: serde_json::Value,
     cx: &mut TestAppContext,
+) -> (
+    Entity<EditPredictionStore>,
+    RequestChannels,
+    Entity<Project>,
+    Entity<Buffer>,
 ) {
-    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let (ep_store, requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "foo.md": (0..30)
-                .map(|ix| format!("line {ix}\n"))
-                .collect::<String>()
-        }),
-    )
-    .await;
+    fs.insert_tree("/root", tree).await;
     let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
     let buffer = project
         .update(cx, |project, cx| {
@@ -4102,70 +4052,355 @@ async fn test_edit_prediction_settled_includes_overlapping_future_events_and_nex
         })
         .await
         .unwrap();
-
     ep_store.update(cx, |ep_store, cx| {
         ep_store.register_buffer(&buffer, &project, cx);
     });
+    cx.run_until_parked();
+    (ep_store, requests, project, buffer)
+}
 
+fn prompt_history_boundary(
+    ep_store: &Entity<EditPredictionStore>,
+    project: &Entity<Project>,
+    cx: &mut TestAppContext,
+) -> PromptHistoryBoundary {
+    ep_store.update(cx, |ep_store, _cx| {
+        let project_state = ep_store.projects.get(&project.entity_id()).unwrap();
+        PromptHistoryBoundary {
+            first_event_seq: project_state
+                .last_event
+                .as_ref()
+                .map_or(project_state.next_last_event_seq, |last_event| {
+                    last_event.seq
+                }),
+            snapshot: project_state
+                .last_event
+                .as_ref()
+                .map(|last_event| last_event.new_snapshot.clone()),
+        }
+    })
+}
+
+/// Enqueues a settled prediction capture with injected sample data, as the
+/// real request path would when data collection is enabled. Returns the
+/// editable offset range.
+async fn enqueue_sample_capture(
+    ep_store: &Entity<EditPredictionStore>,
+    project: &Entity<Project>,
+    buffer: &Entity<Buffer>,
+    id: &str,
+    editable_point_range: Range<Point>,
+    context: CapturedPredictionContext,
+    prompt_history_boundary: Option<PromptHistoryBoundary>,
+    navigation_history: VecDeque<RecentFile>,
+    cx: &mut TestAppContext,
+) -> Range<usize> {
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-    let editable_region =
-        snapshot.point_to_offset(Point::new(1, 0))..snapshot.point_to_offset(Point::new(2, 0));
+    let editable_offset_range = snapshot.point_to_offset(editable_point_range.start)
+        ..snapshot.point_to_offset(editable_point_range.end);
     let empty_edits: Arc<[(Range<Anchor>, Arc<str>)]> = Vec::new().into();
     let edit_preview = buffer
         .read_with(cx, |buffer, cx| buffer.preview_edits(empty_edits, cx))
         .await;
-
     ep_store.update(cx, |ep_store, cx| {
         ep_store.enqueue_settled_prediction(
-            EditPredictionId("prediction-with-future-events".into()),
-            &project,
-            &buffer,
+            EditPredictionId(id.to_string().into()),
+            EditPredictionTrigger::Prediction,
+            project,
+            buffer,
             &snapshot,
-            editable_region,
+            editable_offset_range.clone(),
             &edit_preview,
+            None,
             None,
             None,
             Duration::from_secs(0),
             cx,
         );
-        let registered_buffer = ep_store
+        let pending_capture = ep_store
             .projects
             .get_mut(&project.entity_id())
             .unwrap()
-            .registered_buffers
-            .get_mut(&buffer.entity_id())
+            .pending_prediction_captures
+            .last_mut()
             .unwrap();
-        registered_buffer
-            .pending_settled_predictions
+        pending_capture.can_collect_data = true;
+        pending_capture.sample_data = Some(PendingPredictionCaptureSampleData {
+            context_task: Task::ready(Ok(context)),
+            editable_path: snapshot.file().unwrap().path().as_std_path().into(),
+            editable_offset_range: editable_offset_range.clone(),
+            next_edit_cursor_offset: None,
+            future_edit_history_events: Vec::new(),
+            navigation_history,
+            edit_events_before_quiescence: 0,
+            prompt_history_boundary,
+        });
+    });
+    editable_offset_range
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mut TestAppContext) {
+    let (ep_store, mut requests, project, buffer) = init_sample_capture_test(
+        json!({
+            "LICENSE": MIT_LICENSE,
+            "foo.md": numbered_lines(60),
+        }),
+        cx,
+    )
+    .await;
+
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(1, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "prompted ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let boundary = prompt_history_boundary(&ep_store, &project, cx);
+    let editable_offset_range = enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-sample",
+        Point::new(2, 0)..Point::new(3, 0),
+        CapturedPredictionContext {
+            repository_url: Some("https://example.com/repo.git".to_string()),
+            revision: Some("abc123".to_string()),
+            uncommitted_diff: Some("--- a/foo.md\n+++ b/foo.md\n".to_string()),
+            buffer_diagnostics: vec![zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(1),
+                message: "sample diagnostic".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 0..0,
+                diagnostic_range_in_snippet: 0..0,
+            }],
+        },
+        Some(boundary),
+        VecDeque::from([RecentFile {
+            path: Path::new("foo.md").into(),
+            cursor_position: Some(3),
+        }]),
+        cx,
+    )
+    .await;
+    let expected_next_edit_cursor_offset = editable_offset_range.start;
+
+    // A second capture whose user has data collection disabled; its sample
+    // and settled region must be redacted at send time.
+    let boundary = prompt_history_boundary(&ep_store, &project, cx);
+    enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-redacted",
+        Point::new(2, 0)..Point::new(3, 0),
+        empty_captured_context(),
+        Some(boundary),
+        VecDeque::new(),
+        cx,
+    )
+    .await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store
+            .projects
+            .get_mut(&project.entity_id())
+            .unwrap()
+            .pending_prediction_captures
             .last_mut()
             .unwrap()
-            .can_collect_data = true;
+            .can_collect_data = false;
     });
 
+    cx.executor().advance_clock(LAST_CHANGE_GROUPING_TIME * 2);
+    cx.run_until_parked();
+
+    for (ix, row) in [2, 20, 30, 40, 50].into_iter().enumerate() {
+        buffer.update(cx, |buffer, cx| {
+            let start = Point::new(row, 0).to_offset(buffer);
+            let end = Point::new(row, 4).to_offset(buffer);
+            buffer.edit(vec![(start..end, format!("future {ix}"))], None, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let mut settled_by_id = std::collections::HashMap::new();
+    for _ in 0..2 {
+        let request = requests
+            .settled
+            .next()
+            .await
+            .expect("settled request should be sent");
+        settled_by_id.insert(request.request_id.clone(), request);
+    }
+
+    let redacted_request = settled_by_id.remove("prediction-redacted").unwrap();
+    assert!(!redacted_request.can_collect_data);
+    assert_eq!(redacted_request.settled_editable_region, None);
+    assert_eq!(redacted_request.sample_data, None);
+
+    let settled_request = settled_by_id.remove("prediction-sample").unwrap();
+    let sample_data = settled_request
+        .sample_data
+        .expect("sample data should be sent after quiescence");
+    assert_eq!(
+        sample_data.repository_url.as_deref(),
+        Some("https://example.com/repo.git")
+    );
+    assert_eq!(sample_data.revision.as_deref(), Some("abc123"));
+    assert_eq!(
+        sample_data.uncommitted_diff.as_deref(),
+        Some("--- a/foo.md\n+++ b/foo.md\n")
+    );
+    assert_eq!(sample_data.editable_path.as_ref(), Path::new("foo.md"));
+    assert_eq!(sample_data.editable_offset_range, editable_offset_range);
+    assert_eq!(sample_data.buffer_diagnostics.len(), 1);
+    assert_eq!(sample_data.future_edit_history_events.len(), 4);
+    assert_eq!(sample_data.navigation_history.len(), 1);
+    assert_eq!(sample_data.edit_events_before_quiescence, 5);
+    assert_eq!(
+        sample_data.next_edit_cursor_offset,
+        Some(expected_next_edit_cursor_offset)
+    );
+
+    let future_event_diffs = sample_data
+        .future_edit_history_events
+        .iter()
+        .map(|event| match event.as_ref() {
+            zeta_prompt::Event::BufferChange { diff, .. } => diff.as_str(),
+        })
+        .collect::<Vec<_>>();
+    assert!(future_event_diffs.iter().all(|diff| {
+        diff.lines()
+            .all(|line| !line.starts_with("+prompted ") && line != "-line 1")
+    }));
+    assert!(
+        future_event_diffs
+            .iter()
+            .any(|diff| diff.contains("future 0"))
+    );
+    assert!(
+        !future_event_diffs
+            .iter()
+            .any(|diff| diff.contains("future 4"))
+    );
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_since_request(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests, project, buffer) = init_sample_capture_test(
+        json!({
+            "LICENSE": MIT_LICENSE,
+            "foo.md": numbered_lines(30),
+        }),
+        cx,
+    )
+    .await;
+
+    // Two predictions are requested while no event is pending.
+    let boundary_observed = prompt_history_boundary(&ep_store, &project, cx);
+    let boundary_missed = prompt_history_boundary(&ep_store, &project, cx);
+    assert!(boundary_observed.snapshot.is_none());
+
+    // The first capture is enqueued immediately, so it observes both
+    // subsequent events.
+    enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-observed",
+        Point::new(1, 0)..Point::new(2, 0),
+        empty_captured_context(),
+        Some(boundary_observed),
+        VecDeque::new(),
+        cx,
+    )
+    .await;
+
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(1, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "first ")], None, cx);
+    });
+    cx.run_until_parked();
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(20, 0).to_offset(buffer);
+        buffer.edit(vec![(offset..offset, "second ")], None, cx);
+    });
+    cx.run_until_parked();
+
+    // The second capture is enqueued only after the first event was
+    // finalized, so its future history has a gap and it must be dropped.
+    enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-missed",
+        Point::new(1, 0)..Point::new(2, 0),
+        empty_captured_context(),
+        Some(boundary_missed),
+        VecDeque::new(),
+        cx,
+    )
+    .await;
+
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let mut settled_by_id = std::collections::HashMap::new();
+    for _ in 0..2 {
+        let request = requests
+            .settled
+            .next()
+            .await
+            .expect("settled request should be sent");
+        settled_by_id.insert(request.request_id.clone(), request);
+    }
+
+    let observed_request = settled_by_id.remove("prediction-observed").unwrap();
+    let sample_data = observed_request
+        .sample_data
+        .expect("sample data should be sent");
+    assert_eq!(sample_data.edit_events_before_quiescence, 2);
+    assert_eq!(sample_data.future_edit_history_events.len(), 2);
+
+    let missed_request = settled_by_id.remove("prediction-missed").unwrap();
+    assert_eq!(missed_request.sample_data, None);
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_drops_future_events_when_their_oss_status_is_unknown(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests, project, buffer) =
+        init_sample_capture_test(json!({ "foo.md": numbered_lines(30) }), cx).await;
+
+    enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-non-oss",
+        Point::new(1, 0)..Point::new(2, 0),
+        empty_captured_context(),
+        None,
+        VecDeque::new(),
+        cx,
+    )
+    .await;
+
+    // There is no LICENSE file, so this event's open-source status is unknown
+    // and the sample must be dropped.
     buffer.update(cx, |buffer, cx| {
         let offset = Point::new(20, 0).to_offset(buffer);
         buffer.edit(vec![(offset..offset, "outside ")], None, cx);
     });
     cx.run_until_parked();
 
-    let next_edit_cursor_offset = buffer.read_with(cx, |buffer, _cx| {
-        buffer.snapshot().point_to_offset(Point::new(1, 5))
-    });
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit(
-            vec![(next_edit_cursor_offset..next_edit_cursor_offset, " inside")],
-            None,
-            cx,
-        );
-    });
-    cx.run_until_parked();
-
-    buffer.update(cx, |buffer, cx| {
-        let offset = Point::new(25, 0).to_offset(buffer);
-        buffer.edit(vec![(offset..offset, "later outside ")], None, cx);
-    });
-    cx.run_until_parked();
-
     cx.executor()
         .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
     cx.run_until_parked();
@@ -4175,27 +4410,7 @@ async fn test_edit_prediction_settled_includes_overlapping_future_events_and_nex
         .next()
         .await
         .expect("settled request should be sent");
-    assert_eq!(
-        settled_request.next_edit_cursor_offset,
-        Some(next_edit_cursor_offset)
-    );
-    assert_eq!(settled_request.future_edit_history_events.len(), 1);
-    let zeta_prompt::Event::BufferChange {
-        diff,
-        old_range,
-        new_range,
-        ..
-    } = settled_request.future_edit_history_events[0].as_ref();
-    assert_eq!(
-        old_range,
-        &(next_edit_cursor_offset..next_edit_cursor_offset)
-    );
-    assert_eq!(
-        new_range,
-        &(next_edit_cursor_offset..next_edit_cursor_offset + " inside".len())
-    );
-    assert!(diff.contains("inside"), "{diff}");
-    assert!(!diff.contains("outside"), "{diff}");
+    assert_eq!(settled_request.sample_data, None);
 }
 
 #[gpui::test]
