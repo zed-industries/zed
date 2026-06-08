@@ -64,6 +64,7 @@ pub fn get_provider_icon(name: &str) -> IconName {
         "GitHub" => IconName::Github,
         "GitLab" => IconName::Gitlab,
         "Gitea" => IconName::Gitea,
+        "SourceHut" => IconName::Sourcehut,
         _ => IconName::Link,
     }
 }

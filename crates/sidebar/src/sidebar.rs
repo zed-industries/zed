@@ -2272,6 +2272,8 @@ impl Sidebar {
     ) -> AnyElement {
         let host = key.host();
 
+        let has_filter = self.has_filter_query(cx);
+
         let id_prefix = if is_sticky { "sticky-" } else { "" };
         let id = SharedString::from(format!("{id_prefix}project-header-{ix}"));
         let group_name = SharedString::from(format!("{id_prefix}header-group-{ix}"));
@@ -2311,16 +2313,18 @@ impl Sidebar {
         let group_name_for_gradient = group_name.clone();
         let gradient_overlay = move || {
             GradientFade::new(base_bg, hover_solid, hover_solid)
-                .width(px(64.0))
+                .width(px(92.0))
                 .right(px(-2.0))
-                .gradient_stop(0.75)
-                .group_name(group_name_for_gradient.clone())
+                .gradient_stop(0.7)
+                .when(!has_filter, |this| {
+                    this.group_name(group_name_for_gradient.clone())
+                })
         };
 
         let header = h_flex()
             .id(id)
             .group(&group_name)
-            .cursor_pointer()
+            .when(!has_filter, |this| this.cursor_pointer())
             .relative()
             .h(Tab::content_height(cx))
             .w_full()
@@ -2335,7 +2339,7 @@ impl Sidebar {
                     this.border_color(gpui::transparent_black())
                 }
             })
-            .hover(|s| s.bg(hover_solid))
+            .when(!has_filter, |this| this.hover(|s| s.bg(hover_solid)))
             .child(
                 h_flex()
                     .relative()
@@ -2386,15 +2390,17 @@ impl Sidebar {
                             },
                         )
                     })
-                    .child(
-                        div()
-                            .when(!is_focused, |this| this.visible_on_hover(&group_name))
-                            .child(
-                                Icon::new(disclosure_icon)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                    ),
+                    .when(!has_filter, |this| {
+                        this.child(
+                            div()
+                                .when(!is_focused, |this| this.visible_on_hover(&group_name))
+                                .child(
+                                    Icon::new(disclosure_icon)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    }),
             )
             .child(gradient_overlay())
             .child(
@@ -2431,7 +2437,7 @@ impl Sidebar {
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                     if event.modifiers().secondary() {
                         this.activate_or_open_workspace_for_group(&key_for_focus, window, cx);
-                    } else {
+                    } else if !this.has_filter_query(cx) {
                         this.toggle_collapse(&key_for_toggle, window, cx);
                     }
                 }),

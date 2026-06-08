@@ -324,7 +324,9 @@ impl CommitView {
                             .or(first_worktree_id)
                     })
                     .context("project has no worktrees")?;
-                let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+                let short_sha = commit_sha
+                    .get(0..git::SHORT_SHA_LENGTH)
+                    .unwrap_or(&commit_sha);
                 let file_name = file
                     .path
                     .file_name()

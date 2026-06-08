@@ -20,7 +20,9 @@ use language::{
 use release_channel::AppVersion;
 use text::{Anchor, Bias, Point};
 use ui::SharedString;
-use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
+use workspace::notifications::simple_message_notification::MessageNotification;
+use workspace::notifications::{NotificationId, show_app_notification};
+use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{ops::Range, path::Path, sync::Arc};
@@ -503,14 +505,33 @@ fn handle_api_response<T>(
                     })
                     .ok();
 
-                    let error_message: SharedString = err.to_string().into();
+                    let message: SharedString = err.to_string().into();
+
+                    struct UpdateRequiredError {
+                        message: SharedString,
+                    }
+                    impl WorkspaceError for UpdateRequiredError {
+                        fn primary_message(&self) -> SharedString {
+                            self.message.clone()
+                        }
+                        fn severity(&self) -> ErrorSeverity {
+                            ErrorSeverity::Critical
+                        }
+                        fn primary_action(&self) -> ErrorAction {
+                            ErrorAction::link("Update Zed", "https://zed.dev/releases")
+                        }
+                    }
+
                     show_app_notification(
                         NotificationId::unique::<ZedUpdateRequiredError>(),
                         cx,
                         move |cx| {
-                            cx.new(|cx| {
-                                ErrorMessagePrompt::new(error_message.clone(), cx)
-                                    .with_link_button("Update Zed", "https://zed.dev/releases")
+                            cx.new({
+                                let message = message.clone();
+                                move |cx| {
+                                    let error = UpdateRequiredError { message };
+                                    MessageNotification::from_workspace_error(error, cx)
+                                }
                             })
                         },
                     );
