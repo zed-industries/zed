@@ -41,12 +41,33 @@ If you modify `.devcontainer/devcontainer.json`, Zed does not currently rebuild 
 Once connected, Zed operates inside the container environment for tasks, terminals, and language servers.
 Files are linked from your workspace into the container according to the dev container specification.
 
+## Extensions
+
+You can specify extensions in `.devcontainer/devcontainer.json` under the "customizations" field like so:
+
+```json
+{
+  ...
+  "customizations": {
+    "zed": {
+      "extensions": ["vue", "ruby"],
+    },
+    "vscode": {
+      ...
+    },
+    "codespaces": {
+      ...
+    },
+  }
+}
+```
+
+Note that extensions load for the Zed session, so these extensions will exist on your local Zed instances as well.
+
 ## Known Limitations
 
 > **Note:** This feature is still in development.
 
-- **Extensions:** Zed does not yet manage extensions separately for container environments. The host's extensions are used as-is.
-- **Port forwarding:** Only the `appPort` field is supported. `forwardPorts` and other advanced port-forwarding features are not implemented.
 - **Configuration changes:** Updates to `devcontainer.json` do not trigger automatic rebuilds or reloads; containers must be manually restarted.
 
 ## See also

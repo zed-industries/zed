@@ -709,25 +709,35 @@ impl PickerDelegate for OpenPathDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
         let candidate = self.get_entry(ix)?;
-        let mut match_positions = match &self.directory_state {
-            DirectoryState::List { .. } => self.string_matches.get(ix)?.positions.clone(),
+        let string_match = match &self.directory_state {
+            DirectoryState::List { .. } => self.string_matches.get(ix),
             DirectoryState::Create { user_input, .. } => {
                 if let Some(user_input) = user_input {
                     if !user_input.exists || !user_input.is_dir {
                         if ix == 0 {
-                            Vec::new()
+                            None
                         } else {
-                            self.string_matches.get(ix - 1)?.positions.clone()
+                            self.string_matches.get(ix - 1)
                         }
                     } else {
-                        self.string_matches.get(ix)?.positions.clone()
+                        self.string_matches.get(ix)
                     }
                 } else {
-                    self.string_matches.get(ix)?.positions.clone()
+                    self.string_matches.get(ix)
                 }
             }
-            DirectoryState::None { .. } => Vec::new(),
+            DirectoryState::None { .. } => None,
         };
+
+        // Directory entries and string matches can briefly go out of sync during
+        // async updates. When that happens, render the row without highlights.
+        let mut match_positions = string_match
+            .filter(|string_match| {
+                string_match.candidate_id == candidate.path.id
+                    && string_match.string == candidate.path.string
+            })
+            .map(|string_match| string_match.positions.clone())
+            .unwrap_or_default();
 
         let is_current_dir_candidate = candidate.path.string == self.current_dir();
 

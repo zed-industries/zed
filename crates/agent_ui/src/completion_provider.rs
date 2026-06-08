@@ -299,6 +299,26 @@ pub struct AvailableSkill {
     /// worktree root name for project-local skills.
     pub source: SharedString,
     pub skill_file_path: PathBuf,
+    pub warning: Option<SharedString>,
+}
+
+fn skill_completion_icon_path(
+    _skill: &AvailableSkill,
+    uri: &MentionUri,
+    cx: &mut App,
+) -> SharedString {
+    uri.icon_path(cx)
+}
+
+fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
+    if let Some(warning) = &skill.warning {
+        CompletionDocumentation::WarningAndMultiLinePlainText {
+            warning: "".into(),
+            plain_text: Some(warning.clone()),
+        }
+    } else {
+        CompletionDocumentation::MultiLinePlainText(skill.description.to_string().into())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -467,7 +487,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
-        let icon_path = uri.icon_path(cx);
+        let icon_path = skill_completion_icon_path(&skill, &uri, cx);
         let crease_text: SharedString = uri.name().into();
         let source_highlight_id = cx
             .theme()
@@ -479,9 +499,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             replace_range: source_range.clone(),
             new_text,
             label,
-            documentation: Some(CompletionDocumentation::MultiLinePlainText(
-                skill.description.into(),
-            )),
+            documentation: Some(skill_completion_documentation(&skill)),
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             match_start: None,
@@ -1325,7 +1343,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         };
                                         let new_text = format!("{} ", uri.as_link());
                                         let new_text_len = new_text.len();
-                                        let icon_path = uri.icon_path(cx);
+                                        let icon_path = skill_completion_icon_path(skill, &uri, cx);
                                         let crease_text: SharedString = uri.name().into();
                                         let confirm = confirm_completion_callback(
                                             crease_text,
@@ -1368,11 +1386,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     replace_range: source_range.clone(),
                                     new_text,
                                     label,
-                                    documentation: Some(
-                                        CompletionDocumentation::MultiLinePlainText(
-                                            skill.description.into(),
-                                        ),
-                                    ),
+                                    documentation: Some(skill_completion_documentation(&skill)),
                                     source: project::CompletionSource::Custom,
                                     icon_path: Some(icon_path),
                                     match_start: None,
@@ -1868,10 +1882,11 @@ impl MentionCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        // Find the rightmost '@' that has a word boundary before it and no whitespace immediately after
+        // Find the rightmost '@' that has a boundary before it and no whitespace immediately after.
+        // A boundary is the start of the line, whitespace, or an opening bracket.
         let mut last_mention_start = None;
         for (idx, _) in line.rmatch_indices('@') {
-            // No whitespace immediately after '@'
+            // No whitespace immediately after '@'.
             if line[idx + 1..]
                 .chars()
                 .next()
@@ -1880,12 +1895,11 @@ impl MentionCompletion {
                 continue;
             }
 
-            // Must be a word boundary before '@'
             if idx > 0
                 && line[..idx]
                     .chars()
                     .last()
-                    .is_some_and(|c| !c.is_whitespace())
+                    .is_some_and(|c| !c.is_whitespace() && !matches!(c, '(' | '[' | '{'))
             {
                 continue;
             }
@@ -2603,7 +2617,7 @@ fn completion_text_for_terminal_selections(
                     };
 
                     mention_set
-                        .update(cx, |mention_set, _| {
+                        .update(cx, |mention_set, cx| {
                             mention_set.insert_mention(
                                 crease_id,
                                 mention_uri.clone(),
@@ -2612,6 +2626,8 @@ fn completion_text_for_terminal_selections(
                                     tracked_buffers: vec![],
                                 }))
                                 .shared(),
+                                None,
+                                cx,
                             );
                         })
                         .ok();
@@ -2957,6 +2973,39 @@ mod tests {
                 argument: Some("https://example.com/@".to_string()),
             }),
             "Should parse URL ending with @ (even if URL is incomplete)"
+        );
+
+        // Bracketed mentions: opening brackets count as a boundary before '@' so
+        // typing `(@`, `[@`, or `{@` still opens the completion menu.
+
+        assert_eq!(
+            MentionCompletion::try_parse("(@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '('"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("[@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '['"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("{@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '{{'"
         );
     }
 

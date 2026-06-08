@@ -25,7 +25,7 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
+use command_palette_hooks::CommandPaletteFilter;
 
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
@@ -39,8 +39,9 @@ use project::{
     trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 
+use std::any::TypeId;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;
@@ -52,7 +53,8 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt,
+    MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
 use zed_actions::OpenRemote;
@@ -77,8 +79,23 @@ actions!(
     ]
 );
 
+actions!(
+    workspace,
+    [
+        /// Switches to the classic, editor-focused panel layout.
+        UseClassicLayout,
+        /// Switches to the agentic panel layout.
+        UseAgenticLayout,
+    ]
+);
+
 pub fn init(cx: &mut App) {
     platform_title_bar::PlatformTitleBar::init(cx);
+
+    update_layout_action_filter(cx);
+
+    cx.observe_global::<SettingsStore>(update_layout_action_filter)
+        .detach();
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -87,6 +104,14 @@ pub fn init(cx: &mut App) {
         let multi_workspace = workspace.multi_workspace().cloned();
         let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx);
+
+        workspace.register_action(|_workspace, _: &UseClassicLayout, _window, cx| {
+            set_window_layout(WindowLayout::Editor(None), cx);
+        });
+
+        workspace.register_action(|_workspace, _: &UseAgenticLayout, _window, cx| {
+            set_window_layout(WindowLayout::Agent(None), cx);
+        });
 
         workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
             if let Some(titlebar) = workspace
@@ -148,6 +173,28 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+/// Hides or shows the panel layout actions in the command palette based on
+/// whether AI is currently disabled.
+fn update_layout_action_filter(cx: &mut App) {
+    let disable_ai = project::DisableAiSettings::get_global(cx).disable_ai;
+    let layout_actions = [
+        TypeId::of::<UseClassicLayout>(),
+        TypeId::of::<UseAgenticLayout>(),
+    ];
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        if disable_ai {
+            filter.hide_action_types(&layout_actions);
+        } else {
+            filter.show_action_types(layout_actions.iter());
+        }
+    });
+}
+
+fn set_window_layout(layout: WindowLayout, cx: &App) {
+    let fs = <dyn fs::Fs>::global(cx);
+    drop(AgentSettings::set_layout(layout, fs, cx));
+}
+
 pub struct TitleBar {
     platform_titlebar: Entity<PlatformTitleBar>,
     project: Entity<Project>,
@@ -184,7 +231,7 @@ impl Render for TitleBar {
 
         let show_menus = show_menus(cx);
 
-        let mut children = <ArrayVec<_, 4>>::new();
+        let mut children = <ArrayVec<_, 5>>::new();
 
         let mut project_name = None;
         let mut repository = None;
@@ -315,7 +362,7 @@ impl Render for TitleBar {
                 })
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .children(self.render_call_controls(window, cx))
+                .child(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .child(self.update_version.clone())
                 .when(
@@ -455,22 +502,7 @@ impl TitleBar {
             titlebar
         });
 
-        // The banner label stays static ("Introducing: Skills") regardless
-        // of whether the user had Rules to migrate; the explainer modal
-        // is where the migration-specific summary surfaces. Keeping the
-        // label static avoids the rebuild-on-migration-completion plumbing
-        // we'd otherwise need to dodge the title-bar-vs-migration race.
-        let banner = Some(cx.new(|cx| {
-            OnboardingBanner::new(
-                "Skills Migration Announcement",
-                IconName::Sparkle,
-                "Skills",
-                Some("Introducing:".into()),
-                zed_actions::agent::OpenRulesToSkillsMigrationInfo.boxed_clone(),
-                cx,
-            )
-            .visible_when(|cx| cx.has_flag::<SkillsFeatureFlag>())
-        }));
+        let banner = None;
 
         let mut this = Self {
             platform_titlebar,
@@ -641,13 +673,8 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-            .map(|trusted_worktrees| {
-                trusted_worktrees
-                    .read(cx)
-                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
-            })
-            .unwrap_or(false);
+        let has_restricted_worktrees =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
         if !has_restricted_worktrees {
             return None;
         }
@@ -679,7 +706,7 @@ impl TitleBar {
                 })
             });
 
-        if cfg!(macos_sdk_26) {
+        if ui::utils::MACOS_SDK_26_OR_LATER {
             // Make up for Tahoe's traffic light buttons having less spacing around them
             Some(div().child(button).ml_0p5().into_any_element())
         } else {
@@ -1180,6 +1207,7 @@ impl TitleBar {
         let show_update_button = self.update_version.read(cx).show_update_in_menu_bar();
 
         let user_store = self.user_store.clone();
+        let workspace = self.workspace.clone();
         let user_store_read = user_store.read(cx);
         let user = user_store_read.current_user();
 
@@ -1246,13 +1274,13 @@ impl TitleBar {
                 let current_organization = current_organization.clone();
                 let organizations = organizations.clone();
                 let user_store = user_store.clone();
+                let workspace = workspace.clone();
 
                 let ai_enabled = !project::DisableAiSettings::get_global(cx).disable_ai;
                 let current_layout = AgentSettings::get_layout(cx);
                 let is_editor = matches!(current_layout, WindowLayout::Editor(_));
                 let is_agent = matches!(current_layout, WindowLayout::Agent(_));
                 let is_custom = matches!(current_layout, WindowLayout::Custom(_));
-                let fs = <dyn fs::Fs>::global(cx);
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(is_signed_in, |this| {
@@ -1337,11 +1365,13 @@ impl TitleBar {
                                 {
                                     let user_store = user_store.clone();
                                     let organization = organization.clone();
-                                    move |_window, cx| {
-                                        user_store.update(cx, |user_store, cx| {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        let task = user_store.update(cx, |user_store, cx| {
                                             user_store
-                                                .set_current_organization(organization.clone(), cx);
+                                                .set_current_organization(organization.clone(), cx)
                                         });
+                                        task.detach_and_notify_err(workspace.clone(), window, cx);
                                     }
                                 },
                             );
@@ -1364,36 +1394,26 @@ impl TitleBar {
                         zed_actions::Extensions::default().boxed_clone(),
                     )
                     .when(ai_enabled, |menu| {
-                        let fs = fs.clone();
                         menu.separator()
                             .submenu("Panel Layout", move |menu, _window, _cx| {
-                                let fs = fs.clone();
                                 menu.toggleable_entry(
                                     "Classic",
                                     is_editor,
                                     IconPosition::Start,
-                                    None,
-                                    {
-                                        let fs = fs.clone();
-                                        move |_window, cx| {
-                                            drop(AgentSettings::set_layout(
-                                                WindowLayout::Editor(None),
-                                                fs.clone(),
-                                                cx,
-                                            ));
-                                        }
+                                    Some(UseClassicLayout.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(UseClassicLayout.boxed_clone(), cx);
                                     },
                                 )
-                                .toggleable_entry("Agentic", is_agent, IconPosition::Start, None, {
-                                    let fs = fs.clone();
-                                    move |_window, cx| {
-                                        drop(AgentSettings::set_layout(
-                                            WindowLayout::Agent(None),
-                                            fs.clone(),
-                                            cx,
-                                        ));
-                                    }
-                                })
+                                .toggleable_entry(
+                                    "Agentic",
+                                    is_agent,
+                                    IconPosition::Start,
+                                    Some(UseAgenticLayout.boxed_clone()),
+                                    move |window, cx| {
+                                        window.dispatch_action(UseAgenticLayout.boxed_clone(), cx);
+                                    },
+                                )
                                 .when(is_custom, |menu| {
                                     menu.item(
                                         ContextMenuEntry::new("Custom")

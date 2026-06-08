@@ -2,9 +2,8 @@ use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use feature_flags::FeatureFlagAppExt;
 use futures::{AsyncReadExt, TryStreamExt};
-use gpui::{App, AppContext as _, SerializedThreadTaskTimings, TaskExt};
-use http_client::{self, AsyncBody, HttpClient, Request};
-use log::info;
+use gpui::{App, AppContext, TaskExt};
+use http_client::{AsyncBody, HttpClient, Request};
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
 use reqwest::{
@@ -13,20 +12,14 @@ use reqwest::{
 };
 use serde::Deserialize;
 use smol::stream::StreamExt;
-use std::{ffi::OsStr, fs, sync::Arc, thread::ThreadId, time::Duration};
+use std::{ffi::OsStr, fs, sync::Arc};
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 use util::ResultExt;
 
-use crate::STARTUP_TIME;
-
-const MAX_HANG_TRACES: usize = 3;
+mod hang_detection;
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    if cfg!(debug_assertions) {
-        log::info!("Debug assertions enabled, skipping hang monitoring");
-    } else {
-        monitor_hangs(cx);
-    }
+    hang_detection::start(client.clone(), cx);
 
     cx.on_flags_ready({
         let client = client.clone();
@@ -87,136 +80,6 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
         })
     })
     .detach();
-}
-
-fn monitor_hangs(cx: &App) {
-    let main_thread_id = std::thread::current().id();
-
-    let foreground_executor = cx.foreground_executor();
-    let background_executor = cx.background_executor();
-
-    // 3 seconds hang
-    let (mut tx, mut rx) = futures::channel::mpsc::channel(3);
-    foreground_executor
-        .spawn(async move { while (rx.next().await).is_some() {} })
-        .detach();
-
-    background_executor
-        .spawn({
-            let background_executor = background_executor.clone();
-            async move {
-                cleanup_old_hang_traces();
-
-                let mut hang_time = None;
-
-                let mut hanging = false;
-                loop {
-                    background_executor.timer(Duration::from_secs(1)).await;
-                    match tx.try_send(()) {
-                        Ok(_) => {
-                            hang_time = None;
-                            hanging = false;
-                            continue;
-                        }
-                        Err(e) => {
-                            let is_full = e.into_send_error().is_full();
-                            if is_full && !hanging {
-                                hanging = true;
-                                hang_time = Some(chrono::Local::now());
-                            }
-
-                            if is_full {
-                                save_hang_trace(
-                                    main_thread_id,
-                                    &background_executor,
-                                    hang_time.unwrap(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        })
-        .detach();
-}
-
-fn cleanup_old_hang_traces() {
-    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
-        let mut files: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
-            })
-            .collect();
-
-        if files.len() > MAX_HANG_TRACES {
-            files.sort_by_key(|entry| entry.file_name());
-            for entry in files.iter().take(files.len() - MAX_HANG_TRACES) {
-                std::fs::remove_file(entry.path()).log_err();
-            }
-        }
-    }
-}
-
-fn save_hang_trace(
-    main_thread_id: ThreadId,
-    background_executor: &gpui::BackgroundExecutor,
-    hang_time: chrono::DateTime<chrono::Local>,
-) {
-    let thread_timings = background_executor.dispatcher().get_all_timings();
-    let thread_timings = thread_timings
-        .into_iter()
-        .map(|mut timings| {
-            if timings.thread_id == main_thread_id {
-                timings.thread_name = Some("main".to_string());
-            }
-
-            SerializedThreadTaskTimings::convert(*STARTUP_TIME.get().unwrap(), timings)
-        })
-        .collect::<Vec<_>>();
-
-    let trace_path = paths::hang_traces_dir().join(&format!(
-        "hang-{}.miniprof.json",
-        hang_time.format("%Y-%m-%d_%H-%M-%S")
-    ));
-
-    let Some(timings) = serde_json::to_string(&thread_timings)
-        .context("hang timings serialization")
-        .log_err()
-    else {
-        return;
-    };
-
-    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
-        let mut files: Vec<_> = entries
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
-            })
-            .collect();
-
-        if files.len() >= MAX_HANG_TRACES {
-            files.sort_by_key(|entry| entry.file_name());
-            for entry in files.iter().take(files.len() - (MAX_HANG_TRACES - 1)) {
-                std::fs::remove_file(entry.path()).log_err();
-            }
-        }
-    }
-
-    std::fs::write(&trace_path, timings)
-        .context("hang trace file writing")
-        .log_err();
-
-    info!(
-        "hang detected, trace file saved at: {}",
-        trace_path.display()
-    );
 }
 
 pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()> {

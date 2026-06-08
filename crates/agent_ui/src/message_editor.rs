@@ -13,6 +13,7 @@ use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
+use base64::Engine as _;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
@@ -24,8 +25,8 @@ use editor::{
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
     AppContext, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt, TextStyle,
-    WeakEntity,
+    Focusable, Image, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt,
+    TextStyle, WeakEntity,
 };
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
@@ -33,10 +34,10 @@ use project::AgentId;
 use project::{
     CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
 };
-use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
 use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use text::LineEnding;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
@@ -206,6 +207,7 @@ pub enum MessageEditorEvent {
     Cancel,
     Focus,
     LostFocus,
+    Edited,
     /// Emitted when the user opens slash-command autocomplete in this
     /// editor. Used by `ThreadView` to fire the global-skills scan
     /// trigger; see `NativeAgent::ensure_skills_scan_started`.
@@ -453,7 +455,6 @@ impl MessageEditor {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
         placeholder: &str,
@@ -506,8 +507,7 @@ impl MessageEditor {
 
             editor
         });
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
+        let mention_set = cx.new(|_cx| MentionSet::new(project, thread_store.clone()));
         let completion_provider = Rc::new(PromptCompletionProvider::new(
             MessageEditorCompletionDelegate {
                 session_capabilities: session_capabilities.clone(),
@@ -559,6 +559,7 @@ impl MessageEditor {
                 if let EditorEvent::Edited { .. } = event
                     && !editor.read(cx).read_only(cx)
                 {
+                    cx.emit(MessageEditorEvent::Edited);
                     editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
                         this.mention_set
@@ -1119,6 +1120,7 @@ impl MessageEditor {
                     let mention_uri = MentionUri::Selection {
                         abs_path: Some(file_path.clone()),
                         line_range: line_range.clone(),
+                        column: None,
                     };
 
                     let mention_text = mention_uri.as_link().to_string();
@@ -1134,7 +1136,7 @@ impl MessageEditor {
                         (text_anchor, mention_text.len())
                     });
 
-                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                    let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                         text_anchor,
                         content_len,
                         crease_text.into(),
@@ -1181,8 +1183,14 @@ impl MessageEditor {
                         })
                         .shared();
 
-                    self.mention_set.update(cx, |mention_set, _cx| {
-                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                    self.mention_set.update(cx, |mention_set, cx| {
+                        mention_set.insert_mention(
+                            crease_id,
+                            mention_uri.clone(),
+                            mention_task,
+                            crease_entity,
+                            cx,
+                        )
                     });
                 }
             }
@@ -1241,7 +1249,7 @@ impl MessageEditor {
                     let http_client = workspace.read(cx).client().http_client();
 
                     for (anchor, content_len, mention_uri) in all_mentions {
-                        let Some((crease_id, tx)) = insert_crease_for_mention(
+                        let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                             snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                             content_len,
                             mention_uri.name().into(),
@@ -1271,8 +1279,14 @@ impl MessageEditor {
                             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
                             .shared();
 
-                        self.mention_set.update(cx, |mention_set, _cx| {
-                            mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
+                        self.mention_set.update(cx, |mention_set, cx| {
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                task.clone(),
+                                crease_entity,
+                                cx,
+                            )
                         });
 
                         // Drop the tx after inserting to signal the crease is ready
@@ -1463,7 +1477,7 @@ impl MessageEditor {
                         (text_anchor, mention_text.len())
                     });
 
-                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                    let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                         text_anchor,
                         content_len,
                         mention_uri.name().into(),
@@ -1488,12 +1502,73 @@ impl MessageEditor {
                         .spawn(async move |_cx| confirm_task.await.map_err(|e| e.to_string()))
                         .shared();
 
-                    mention_set.update(cx, |mention_set, _| {
-                        mention_set.insert_mention(crease_id, mention_uri, mention_task);
+                    mention_set.update(cx, |mention_set, cx| {
+                        mention_set.insert_mention(
+                            crease_id,
+                            mention_uri,
+                            mention_task,
+                            crease_entity,
+                            cx,
+                        );
                     });
                 })
             })
             .detach_and_log_err(cx);
+    }
+
+    pub fn insert_skill_crease(
+        &mut self,
+        skill: &AvailableSkill,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let mention_uri = MentionUri::Skill {
+            name: skill.name.to_string(),
+            source: skill.source.to_string(),
+            skill_file_path: skill.skill_file_path.clone(),
+        };
+
+        let link_text = mention_uri.as_link().to_string();
+        let content_len = link_text.len();
+        let mention_text = format!("{} ", link_text);
+        let crease_text: SharedString = mention_uri.name().into();
+
+        let start_anchor = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let buffer_snapshot = snapshot.as_singleton()?;
+            let cursor = editor.selections.newest_anchor().start;
+            let text_anchor = snapshot
+                .anchor_to_buffer_anchor(cursor)?
+                .0
+                .bias_left(buffer_snapshot);
+
+            editor.insert(&mention_text, window, cx);
+            Some(text_anchor)
+        });
+
+        let Some(start_anchor) = start_anchor else {
+            return;
+        };
+
+        self.mention_set
+            .update(cx, |mention_set, cx| {
+                mention_set.confirm_mention_completion(
+                    crease_text,
+                    start_anchor,
+                    content_len,
+                    mention_uri,
+                    false,
+                    self.editor.clone(),
+                    &workspace,
+                    window,
+                    cx,
+                )
+            })
+            .detach();
     }
 
     pub(crate) fn insert_selections(
@@ -1647,11 +1722,15 @@ impl MessageEditor {
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
+        let append_normalized = |text: &mut String, mut segment: String| {
+            LineEnding::normalize(&mut segment);
+            text.push_str(&segment);
+        };
 
         for chunk in message {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
-                    text.push_str(&text_content.text);
+                    append_normalized(&mut text, text_content.text);
                 }
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
@@ -1662,7 +1741,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1678,7 +1757,7 @@ impl MessageEditor {
                         MentionUri::parse(&resource.uri, path_style).log_err()
                     {
                         let start = text.len();
-                        write!(&mut text, "{}", mention_uri.as_link()).ok();
+                        append_normalized(&mut text, mention_uri.as_link().to_string());
                         let end = text.len();
                         mentions.push((start..end, mention_uri, Mention::Link));
                     }
@@ -1704,7 +1783,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    write!(&mut text, "{}", mention_uri.as_link()).ok();
+                    append_normalized(&mut text, mention_uri.as_link().to_string());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1744,7 +1823,8 @@ impl MessageEditor {
         for (range, mention_uri, mention) in mentions {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
-            let Some((crease_id, tx)) = insert_crease_for_mention(
+            let image_preview = image_preview_task_for_mention(&mention);
+            let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                 snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                 range.end - range.start,
                 mention_uri.name().into(),
@@ -1752,7 +1832,7 @@ impl MessageEditor {
                 mention_uri.tooltip_text(),
                 Some(mention_uri.clone()),
                 Some(self.workspace.clone()),
-                None,
+                image_preview,
                 self.editor.clone(),
                 window,
                 cx,
@@ -1761,11 +1841,13 @@ impl MessageEditor {
             };
             drop(tx);
 
-            self.mention_set.update(cx, |mention_set, _cx| {
+            self.mention_set.update(cx, |mention_set, cx| {
                 mention_set.insert_mention(
                     crease_id,
                     mention_uri.clone(),
                     Task::ready(Ok(mention)).shared(),
+                    crease_entity,
+                    cx,
                 )
             });
         }
@@ -2021,6 +2103,31 @@ fn build_chunks_from_creases(
     (chunks, tracked_buffers)
 }
 
+fn image_preview_task_for_mention(
+    mention: &Mention,
+) -> Option<futures::future::Shared<Task<Result<Arc<Image>, String>>>> {
+    let Mention::Image(mention_image) = mention else {
+        return None;
+    };
+
+    let bytes =
+        match base64::engine::general_purpose::STANDARD.decode(mention_image.data.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                log::error!("failed to decode image mention: {error}");
+                return None;
+            }
+        };
+
+    Some(
+        Task::ready(Ok::<Arc<Image>, String>(Arc::new(Image::from_bytes(
+            mention_image.format,
+            bytes,
+        ))))
+        .shared(),
+    )
+}
+
 fn mention_to_content_block(
     uri: &MentionUri,
     mention: Option<&Mention>,
@@ -2175,6 +2282,7 @@ mod tests {
             description: "Deploy the app".into(),
             source: "".into(),
             skill_file_path: skill_file_path.clone(),
+            warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
             acp::PromptCapabilities::default(),
@@ -2197,6 +2305,7 @@ mod tests {
             description: "desc".into(),
             source: source.into(),
             skill_file_path: PathBuf::from(format!("/tmp/{source}-{name}/SKILL.md")),
+            warning: None,
         };
 
         // Global skills carry an empty scope (so the popup inserts
@@ -2399,7 +2508,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -2500,7 +2608,6 @@ mod tests {
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     session_capabilities.clone(),
                     "Claude Agent".into(),
                     "Test",
@@ -2666,7 +2773,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
@@ -2839,7 +2945,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     None,
-                    None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
@@ -2988,7 +3093,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
@@ -3480,7 +3584,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3581,7 +3684,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3650,7 +3752,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3703,7 +3804,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3760,7 +3860,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3818,7 +3917,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3880,7 +3978,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4040,7 +4137,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4160,7 +4256,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store.clone()),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4239,7 +4334,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4322,10 +4416,12 @@ mod tests {
         let first_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 0..=1,
+            column: None,
         };
         let second_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 2..=3,
+            column: None,
         };
 
         source_message_editor.update_in(&mut cx, |message_editor, window, cx| {
@@ -4349,7 +4445,7 @@ mod tests {
                     "line 3\nline 4\n".to_string(),
                 ),
             ] {
-                let Some((crease_id, tx)) = insert_crease_for_mention(
+                let Some((crease_id, tx, _crease_entity)) = insert_crease_for_mention(
                     snapshot
                         .anchor_to_buffer_anchor(
                             snapshot.anchor_before(MultiBufferOffset(range.start)),
@@ -4371,7 +4467,7 @@ mod tests {
                 };
                 drop(tx);
 
-                message_editor.mention_set.update(cx, |mention_set, _cx| {
+                message_editor.mention_set.update(cx, |mention_set, cx| {
                     mention_set.insert_mention(
                         crease_id,
                         uri,
@@ -4380,6 +4476,8 @@ mod tests {
                             tracked_buffers: Vec::new(),
                         }))
                         .shared(),
+                        None,
+                        cx,
                     );
                 });
             }
@@ -4413,7 +4511,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -4481,10 +4578,12 @@ mod tests {
         let first_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 0..=1,
+            column: None,
         };
         let second_uri = MentionUri::Selection {
             abs_path: Some(path!("/project/file.rs").into()),
             line_range: 2..=3,
+            column: None,
         };
 
         let buffer_len = message_editor.update_in(&mut cx, |message_editor, window, cx| {
@@ -4508,7 +4607,7 @@ mod tests {
                     "line 3\nline 4\n".to_string(),
                 ),
             ] {
-                let Some((crease_id, tx)) = insert_crease_for_mention(
+                let Some((crease_id, tx, _crease_entity)) = insert_crease_for_mention(
                     snapshot
                         .anchor_to_buffer_anchor(
                             snapshot.anchor_before(MultiBufferOffset(range.start)),
@@ -4530,7 +4629,7 @@ mod tests {
                 };
                 drop(tx);
 
-                message_editor.mention_set.update(cx, |mention_set, _cx| {
+                message_editor.mention_set.update(cx, |mention_set, cx| {
                     mention_set.insert_mention(
                         crease_id,
                         uri,
@@ -4539,6 +4638,8 @@ mod tests {
                             tracked_buffers: Vec::new(),
                         }))
                         .shared(),
+                        None,
+                        cx,
                     );
                 });
             }
@@ -4821,7 +4922,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -5076,7 +5176,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -5169,7 +5268,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -5205,6 +5303,33 @@ mod tests {
         let text = message_editor.update(cx, |editor, cx| editor.text(cx));
         assert_eq!(text, "hello world");
         assert!(!message_editor.update(cx, |editor, cx| editor.is_empty(cx)));
+    }
+
+    #[gpui::test]
+    async fn test_set_message_normalizes_crlf_before_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_message(
+                vec![
+                    acp::ContentBlock::Text(acp::TextContent::new("before\r\n".to_string())),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                        "file.txt",
+                        "file:///project/file.txt",
+                    )),
+                ],
+                window,
+                cx,
+            );
+        });
+
+        let text = message_editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "before\n[@file.txt](file:///project/file.txt)");
+
+        let mention_uris =
+            message_editor.update(cx, |editor, cx| editor.mention_set.read(cx).mentions());
+        assert_eq!(mention_uris.len(), 1);
     }
 
     #[gpui::test]
@@ -5317,7 +5442,6 @@ mod tests {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
