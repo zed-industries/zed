@@ -2224,44 +2224,52 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet =
-                                if let Some((task_range, MarkdownEvent::TaskListMarker(checked))) =
-                                    parsed_markdown.events.get(index.saturating_add(1))
-                                {
-                                    let source = &parsed_markdown.source()[range.clone()];
-                                    let checked = *checked;
-                                    let toggle_state = if checked {
-                                        ToggleState::Selected
-                                    } else {
-                                        ToggleState::Unselected
-                                    };
+                            // check offset 1 and 2 from MarkdownTag::Item because pulldown-cmark parser
+                            // may insert Paragraph between Item and TaskListMarker
+                            let task_list_marker = (1..=2).find_map(|offset| match parsed_markdown
+                                .events
+                                .get(index.saturating_add(offset))
+                            {
+                                Some((range, MarkdownEvent::TaskListMarker(checked))) => {
+                                    Some((range, *checked))
+                                }
+                                _ => None,
+                            });
 
-                                    let checkbox = Checkbox::new(
-                                        ElementId::Name(source.to_string().into()),
-                                        toggle_state,
-                                    )
-                                    .fill();
-
-                                    if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
-                                        let task_source_range = task_range.clone();
-                                        checkbox
-                                            .on_click(move |_state, window, cx| {
-                                                on_toggle(
-                                                    task_source_range.clone(),
-                                                    !checked,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .into_any_element()
-                                    } else {
-                                        checkbox.visualization_only(true).into_any_element()
-                                    }
-                                } else if let Some(bullet_index) = builder.next_bullet_index() {
-                                    div().child(format!("{}.", bullet_index)).into_any_element()
+                            let bullet = if let Some((task_range, checked)) = task_list_marker {
+                                let source = &parsed_markdown.source()[range.clone()];
+                                let toggle_state = if checked {
+                                    ToggleState::Selected
                                 } else {
-                                    div().child("•").into_any_element()
+                                    ToggleState::Unselected
                                 };
+
+                                let checkbox = Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    toggle_state,
+                                )
+                                .fill();
+
+                                if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                    let task_source_range = task_range.clone();
+                                    checkbox
+                                        .on_click(move |_state, window, cx| {
+                                            on_toggle(
+                                                task_source_range.clone(),
+                                                !checked,
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .into_any_element()
+                                } else {
+                                    checkbox.visualization_only(true).into_any_element()
+                                }
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                div().child(format!("{}.", bullet_index)).into_any_element()
+                            } else {
+                                div().child("•").into_any_element()
+                            };
                             self.push_markdown_list_item(&mut builder, bullet, range, markdown_end);
                         }
                         MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
@@ -4827,5 +4835,86 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
+    }
+
+    #[gpui::test]
+    fn test_checkboxes(cx: &mut TestAppContext) {
+        struct TestWindow {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        border: false,
+                    })
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let markdown_examples = [
+            ("- [x] a\n", vec![r#"checkbox_Name("- [x] a\n")"#]),
+            (
+                "- [x] a\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n- [ ] b\n\n- [ ] c",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n")"#,
+                    r#"checkbox_Name("- [ ] b\n\n")"#,
+                    r#"checkbox_Name("- [ ] c")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n\n\n\n\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n\n\n\n\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n\n<br><br><br>\n\n\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
+        ];
+
+        for (markdown, expected_debug_bounds) in markdown_examples {
+            let (_, cx) = cx.add_window_view(|_, cx| {
+                let markdown = cx.new(|cx| {
+                    Markdown::new_with_options(
+                        markdown.to_string().into(),
+                        None,
+                        None,
+                        MarkdownOptions::default(),
+                        cx,
+                    )
+                });
+
+                TestWindow { markdown }
+            });
+
+            cx.run_until_parked();
+
+            for debug_bounds in expected_debug_bounds {
+                assert!(cx.debug_bounds(debug_bounds).is_some())
+            }
+        }
     }
 }

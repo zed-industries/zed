@@ -253,6 +253,7 @@ impl RenderOnce for Checkbox {
             );
 
         h_flex()
+            .debug_selector(|| format!("checkbox_{:?}", self.id))
             .id(self.id)
             .map(|this| {
                 if self.disabled {
