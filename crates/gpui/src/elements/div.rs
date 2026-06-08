@@ -2063,7 +2063,13 @@ impl Interactivity {
                                         }
 
                                         self.paint_keyboard_listeners(window, cx);
-                                        f(&style, window, cx);
+                                        if style.glass_content {
+                                            window.with_glass_content(|window| {
+                                                f(&style, window, cx)
+                                            });
+                                        } else {
+                                            f(&style, window, cx);
+                                        }
 
                                         if let Some(_hitbox) = hitbox {
                                             #[cfg(any(feature = "inspector", debug_assertions))]

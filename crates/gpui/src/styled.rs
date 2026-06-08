@@ -716,6 +716,19 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Paints this element's content as "glass content".
+    ///
+    /// The element's own background is painted normally (it establishes the
+    /// translucent surface), while its content only blends RGB and preserves
+    /// the destination alpha. Use this on a translucent surface (e.g. a sidebar
+    /// over a window glass background) so rounded, anti-aliased child elements
+    /// don't punch through the glass along their edges. See
+    /// [`crate::Window::with_glass_content`].
+    fn glass(mut self) -> Self {
+        self.style().glass_content = Some(true);
+        self
+    }
+
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(GridTemplate {

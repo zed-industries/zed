@@ -297,6 +297,12 @@ pub struct Style {
     /// The opacity of this element
     pub opacity: Option<f32>,
 
+    /// Paint this element's content as "glass content": it only blends RGB and
+    /// preserves the destination alpha, so rounded anti-aliased edges drawn on
+    /// top of a translucent glass surface don't punch through it. See
+    /// [`crate::Window::with_glass_content`].
+    pub glass_content: bool,
+
     /// The grid columns of this element
     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<GridTemplate>,
@@ -820,6 +826,7 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            glass_content: false,
             grid_rows: None,
             grid_cols: None,
             grid_location: None,

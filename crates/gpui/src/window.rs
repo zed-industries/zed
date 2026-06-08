@@ -954,6 +954,7 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
+    pub(crate) glass_content: bool,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
@@ -1566,6 +1567,7 @@ impl Window {
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
+            glass_content: false,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -2977,6 +2979,24 @@ impl Window {
         result
     }
 
+    /// Paints everything inside `f` as "glass content".
+    ///
+    /// Glass content only blends its RGB and preserves the destination alpha
+    /// channel, so rounded, anti-aliased edges painted on top of a translucent
+    /// glass surface (a window using a system glass/blur background) don't punch
+    /// a hole through that surface along their anti-aliased edge. Use this for
+    /// the content drawn on top of a translucent surface (sidebars, panels)
+    /// when the window background is a system glass effect.
+    pub fn with_glass_content<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.invalidator.debug_assert_paint_or_prepaint();
+
+        let previous = self.glass_content;
+        self.glass_content = true;
+        let result = f(self);
+        self.glass_content = previous;
+        result
+    }
+
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
@@ -3370,11 +3390,15 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
+        let mut background = quad.background.opacity(opacity);
+        if self.glass_content {
+            background = background.glass_content();
+        }
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
-            background: quad.background.opacity(opacity),
+            background,
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(scale_factor),
             border_widths: quad.border_widths.scale(scale_factor),
