@@ -709,9 +709,8 @@ impl SkillCreatorPage {
             .child(self.url_editor.clone())
             .child(match &self.url_import_status {
                 UrlImportStatus::Idle => Label::new(
-                    "Paste a GitHub .md URL. Zed will fetch it and fill out the skill form. \
-                     If the file isn't publicly accessible, Zed retries using the GITHUB_TOKEN \
-                     environment variable, if set.",
+                    "Paste a GitHub .md URL to fetch it and fill out the form. \
+                     For private files, Zed retries using GITHUB_TOKEN, if set.",
                 )
                 .size(LabelSize::Small)
                 .color(Color::Muted)
