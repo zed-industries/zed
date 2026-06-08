@@ -18,6 +18,8 @@ pub enum TransportError {
     /// The server returned 401 and token refresh either wasn't possible or
     /// failed. The caller should initiate the OAuth authorization flow.
     AuthRequired { www_authenticate: WwwAuthenticate },
+    /// The server returned 403 and there are insufficient scopes for this request.
+    InsufficientScope { www_authenticate: WwwAuthenticate },
 }
 
 impl std::fmt::Display for TransportError {
@@ -25,6 +27,9 @@ impl std::fmt::Display for TransportError {
         match self {
             TransportError::AuthRequired { .. } => {
                 write!(f, "OAuth authorization required")
+            }
+            TransportError::InsufficientScope { .. } => {
+                write!(f, "Scope Permission Required")
             }
         }
     }
@@ -149,9 +154,10 @@ impl HttpTransport {
 
         let request = self.build_request(message.as_bytes())?;
         let mut response = self.http_client.send(request).await?;
+        let status = response.status().as_u16();
 
         // On 401, try refreshing the token and retry once.
-        if response.status().as_u16() == 401 {
+        if status == 401 || status == 403 {
             let www_auth_header = response
                 .headers()
                 .get("www-authenticate")
@@ -165,6 +171,15 @@ impl HttpTransport {
                     error: None,
                     error_description: None,
                 });
+
+            if status == 403 {
+                let required_scopes = www_authenticate.scope.clone().unwrap_or_default();
+                log::warn!(
+                    "Server returned 403 Forbidden. Authorization header lacks the required scopes for this server. Required Scopes {:?}",
+                    required_scopes
+                );
+                return Err(TransportError::InsufficientScope { www_authenticate }.into());
+            }
 
             if let Some(ref provider) = self.token_provider {
                 if provider.try_refresh().await.unwrap_or(false) {
@@ -709,6 +724,11 @@ mod tests {
                     Some(vec!["read".to_string(), "write".to_string()]),
                 );
             }
+            TransportError::InsufficientScope { .. } => {
+                panic!(
+                    "Expected TransportError::AuthRequired, got TransportError::InsufficientScope"
+                );
+            }
         }
         assert_eq!(provider.refresh_count(), 1);
     }
@@ -746,6 +766,11 @@ mod tests {
                 assert!(www_authenticate.resource_metadata.is_none());
                 assert!(www_authenticate.scope.is_none());
             }
+            TransportError::InsufficientScope { .. } => {
+                panic!(
+                    "Expected TransportError::AuthRequired, got TransportError::InsufficientScope"
+                );
+            }
         }
     }
 
@@ -782,5 +807,68 @@ mod tests {
             .expect("error should be TransportError");
         // Refresh was attempted exactly once.
         assert_eq!(provider.refresh_count(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_403_returns_insufficient_scope_successfully(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(403)
+                    .header(
+                        "WWW-Authenticate",
+                        r#"Bearer error="insufficient_scope", scope="files:read files:write user:profile", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource", error_description="Additional file write permission required""#,
+                    )
+                    .body(AsyncBody::from(b"Forbidden".to_vec()))
+                    .unwrap())
+            })
+        });
+
+        let provider = FakeTokenProvider::new(Some("token"), true);
+        let transport = HttpTransport::new_with_token_provider(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+            Some(provider.clone()),
+        );
+
+        let err = transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_string())
+            .await
+            .unwrap_err();
+
+        let transport_err = err
+            .downcast_ref::<TransportError>()
+            .expect("error should be TransportError");
+
+        match transport_err {
+            TransportError::InsufficientScope { www_authenticate } => {
+                assert_eq!(
+                    www_authenticate.error,
+                    Some(oauth::BearerError::InsufficientScope)
+                );
+                assert_eq!(
+                    www_authenticate.scope,
+                    Some(vec![
+                        "files:read".to_string(),
+                        "files:write".to_string(),
+                        "user:profile".to_string()
+                    ])
+                );
+                assert_eq!(
+                    www_authenticate
+                        .resource_metadata
+                        .as_ref()
+                        .map(|u| u.as_str()),
+                    Some("https://mcp.example.com/.well-known/oauth-protected-resource"),
+                );
+                assert_eq!(
+                    www_authenticate.error_description.as_deref(),
+                    Some("Additional file write permission required")
+                );
+            }
+            _ => panic!("Expected TransportError::InsufficientScope"),
+        }
     }
 }

@@ -212,6 +212,7 @@ pub struct OAuthSession {
     pub resource: Url,
     pub client_registration: OAuthClientRegistration,
     pub tokens: OAuthTokens,
+    pub granted_scopes: Vec<String>,
 }
 
 impl std::fmt::Debug for OAuthSession {
@@ -2718,6 +2719,7 @@ mod tests {
                 refresh_token: refresh_token.map(String::from),
                 expires_at,
             },
+            granted_scopes: Vec::new(),
         }
     }
 
