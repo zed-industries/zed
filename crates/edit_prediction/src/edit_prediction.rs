@@ -2386,6 +2386,7 @@ impl EditPredictionStore {
                                 EditPredictionResult {
                                     id: prediction_result.id,
                                     prediction: Err(EditPredictionRejectReason::CurrentPreferred),
+                                    display_prediction: None,
                                     model_version: prediction_result.model_version,
                                     e2e_latency: prediction_result.e2e_latency,
                                 }
@@ -2575,14 +2576,18 @@ impl EditPredictionStore {
                 let new_current_prediction = if !is_cancelled
                     && let Some((prediction_result, requested_by)) = new_prediction_result
                 {
-                    match prediction_result.prediction {
-                        Ok(prediction) => {
+                    match prediction_result {
+                        EditPredictionResult {
+                            prediction: Ok(prediction),
+                            e2e_latency,
+                            ..
+                        } => {
                             let new_prediction = CurrentEditPrediction {
                                 requested_by,
                                 prediction,
                                 was_shown: false,
                                 shown_with: None,
-                                e2e_latency: prediction_result.e2e_latency,
+                                e2e_latency,
                             };
 
                             if let Some(current_prediction) =
@@ -2612,15 +2617,39 @@ impl EditPredictionStore {
                                 Some(new_prediction)
                             }
                         }
-                        Err(reject_reason) => {
+                        EditPredictionResult {
+                            id,
+                            prediction: Err(reject_reason),
+                            display_prediction,
+                            model_version,
+                            e2e_latency,
+                        } => {
+                            let should_show_rejected_prediction = matches!(
+                                reject_reason,
+                                EditPredictionRejectReason::Empty
+                                    | EditPredictionRejectReason::InterpolatedEmpty
+                            );
+
                             this.reject_prediction(
-                                prediction_result.id,
+                                id,
                                 reject_reason,
                                 false,
-                                prediction_result.model_version,
-                                Some(prediction_result.e2e_latency),
+                                model_version,
+                                Some(e2e_latency),
                                 cx,
                             );
+
+                            if should_show_rejected_prediction
+                                && let Some(display_prediction) = display_prediction
+                            {
+                                this.shown_predictions.push_front(display_prediction);
+                                if this.shown_predictions.len() > 50
+                                    && let Some(completion) = this.shown_predictions.pop_back()
+                                {
+                                    this.rated_predictions.remove(&completion.id);
+                                }
+                            }
+
                             None
                         }
                     }
