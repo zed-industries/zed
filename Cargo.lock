@@ -18270,6 +18270,7 @@ dependencies = [
  "task",
  "terminal",
  "theme",
+ "theme_selector",
  "theme_settings",
  "ui",
  "util",

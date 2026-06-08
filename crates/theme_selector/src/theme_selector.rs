@@ -3,8 +3,8 @@ mod icon_theme_selector;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
-    Window, actions,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, SharedString,
+    UpdateGlobal, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -55,6 +55,39 @@ fn toggle_theme_selector(
             cx.entity().downgrade(),
             fs,
             toggle.themes_filter.as_ref(),
+            None,
+            None,
+            cx,
+        );
+        ThemeSelector::new(delegate, window, cx)
+    });
+}
+
+/// Applies a previewed/selected theme override by name (`None` clears it). Used
+/// to drive a per-target override (e.g. a single terminal) instead of mutating
+/// the global theme settings.
+type ApplyThemeOverride = Box<dyn Fn(Option<SharedString>, &mut App)>;
+
+/// Open the theme selector scoped to a single override target rather than the
+/// global theme. Navigation previews live via `apply_override`, dismiss reverts
+/// to `current_override`, and confirm keeps the selection without persisting to
+/// the settings file.
+pub fn toggle_theme_selector_for_override(
+    workspace: &mut Workspace,
+    current_override: Option<SharedString>,
+    apply_override: impl Fn(Option<SharedString>, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let fs = workspace.app_state().fs.clone();
+    let apply_override: ApplyThemeOverride = Box::new(apply_override);
+    workspace.toggle_modal(window, cx, move |window, cx| {
+        let delegate = ThemeSelectorDelegate::new(
+            cx.entity().downgrade(),
+            fs,
+            None,
+            current_override,
+            Some(apply_override),
             cx,
         );
         ThemeSelector::new(delegate, window, cx)
@@ -148,6 +181,12 @@ struct ThemeSelectorDelegate {
     selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
     selector: WeakEntity<ThemeSelector>,
+    /// The override the target carried before the selector opened; restored on
+    /// dismiss. Only meaningful in override (per-target) mode.
+    original_override: Option<SharedString>,
+    /// When set, the selector drives a per-target override via this callback
+    /// instead of mutating global theme settings.
+    apply_override: Option<ApplyThemeOverride>,
 }
 
 impl ThemeSelectorDelegate {
@@ -155,6 +194,8 @@ impl ThemeSelectorDelegate {
         selector: WeakEntity<ThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
+        original_override: Option<SharedString>,
+        apply_override: Option<ApplyThemeOverride>,
         cx: &mut Context<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
@@ -197,10 +238,16 @@ impl ThemeSelectorDelegate {
             })
             .collect();
 
-        // The current theme is likely in this list, so default to first showing that.
+        // The current theme is likely in this list, so default to first showing
+        // that — or the target's existing override when one is set.
         let selected_index = matches
             .iter()
-            .position(|mat| mat.string == original_theme.name)
+            .position(|mat| Some(mat.string.as_str()) == original_override.as_deref())
+            .or_else(|| {
+                matches
+                    .iter()
+                    .position(|mat| mat.string == original_theme.name)
+            })
             .unwrap_or(0);
 
         Self {
@@ -215,6 +262,8 @@ impl ThemeSelectorDelegate {
             selection_completed: false,
             selected_theme: None,
             selector,
+            original_override,
+            apply_override,
         }
     }
 
@@ -248,24 +297,33 @@ impl ThemeSelectorDelegate {
     }
 
     fn revert_theme(&mut self, cx: &mut App) {
-        if !self.selection_completed {
+        if self.selection_completed {
+            return;
+        }
+        if let Some(apply) = &self.apply_override {
+            apply(self.original_override.clone(), cx);
+        } else {
             SettingsStore::update_global(cx, |store, _| {
                 store.override_global(self.original_theme_settings.clone());
             });
-            self.selection_completed = true;
         }
+        self.selection_completed = true;
     }
 
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
-        // Update the global (in-memory) theme settings.
-        SettingsStore::update_global(cx, |store, _| {
-            override_global_theme(
-                store,
-                &new_theme,
-                &self.original_theme_settings.theme,
-                self.original_system_appearance,
-            )
-        });
+        if let Some(apply) = &self.apply_override {
+            apply(Some(new_theme.name.clone()), cx);
+        } else {
+            // Update the global (in-memory) theme settings.
+            SettingsStore::update_global(cx, |store, _| {
+                override_global_theme(
+                    store,
+                    &new_theme,
+                    &self.original_theme_settings.theme,
+                    self.original_system_appearance,
+                )
+            });
+        }
 
         self.new_theme = new_theme;
     }
@@ -394,15 +452,19 @@ impl PickerDelegate for ThemeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
-        let theme_name: Arc<str> = self.new_theme.name.as_str().into();
-        let theme_appearance = self.new_theme.appearance;
-        let system_appearance = SystemAppearance::global(cx).0;
+        // Per-target override mode: the theme was already applied live during
+        // preview; nothing is persisted to the settings file (session-scoped).
+        if self.apply_override.is_none() {
+            let theme_name: Arc<str> = self.new_theme.name.as_str().into();
+            let theme_appearance = self.new_theme.appearance;
+            let system_appearance = SystemAppearance::global(cx).0;
 
-        telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
+            telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
-        update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme_settings::set_theme(settings, theme_name, theme_appearance, system_appearance);
-        });
+            update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                theme_settings::set_theme(settings, theme_name, theme_appearance, system_appearance);
+            });
+        }
 
         self.selector
             .update(cx, |_, cx| {
@@ -573,6 +635,8 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use theme::{Appearance, ThemeFamily, ThemeRegistry, default_color_scales};
     use util::path;
     use workspace::MultiWorkspace;
@@ -711,6 +775,72 @@ mod tests {
             previewed_theme_name(&picker, cx),
             "Test Light",
             "previewed theme should be preserved after clearing an empty filter"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_theme_selector_override_mode_previews_and_reverts(cx: &mut TestAppContext) {
+        let app_state = setup_test(cx).await;
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        // Record every override the selector applies through the callback.
+        let applied: Rc<RefCell<Vec<Option<String>>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let picker = {
+            let applied = applied.clone();
+            workspace.update_in(cx, |workspace, window, cx| {
+                super::toggle_theme_selector_for_override(
+                    workspace,
+                    None,
+                    move |name, _cx| applied.borrow_mut().push(name.map(|n| n.to_string())),
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .active_modal::<ThemeSelector>(cx)
+                    .expect("theme selector should be open in override mode")
+                    .read(cx)
+                    .picker
+                    .clone()
+            })
+        };
+
+        // Previewing a theme applies it to the target via the override callback,
+        // not to global settings.
+        let target_index = picker.read_with(cx, |picker, _| {
+            picker
+                .delegate
+                .matches
+                .iter()
+                .position(|m| m.string == "Test Light")
+                .unwrap()
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(target_index, None, true, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            applied.borrow().last().cloned().flatten().as_deref(),
+            Some("Test Light"),
+            "previewing should apply the theme to the target via the override callback"
+        );
+
+        // Dismissing without confirming reverts to the original (None) override.
+        picker.update_in(cx, |picker, window, cx| {
+            picker.delegate.dismissed(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            applied.borrow().last().cloned().flatten(),
+            None,
+            "dismiss should revert the target to its original override"
         );
     }
 }

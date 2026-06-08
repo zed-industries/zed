@@ -32,6 +32,7 @@ use std::{
     time::Duration,
 };
 use task::TaskId;
+use theme::{Theme, ThemeRegistry};
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, Paste, PasteText, Point, Range,
     ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
@@ -141,6 +142,10 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
     custom_title: Option<String>,
+    // Per-terminal theme override (name + resolved theme). Resolved once at set
+    // time and re-resolved on settings change so the render path never resolves
+    // by name per frame.
+    theme_override: Option<(SharedString, Arc<Theme>)>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -294,6 +299,7 @@ impl TerminalView {
             scroll_handle,
             needs_serialize: false,
             custom_title: None,
+            theme_override: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
@@ -313,6 +319,68 @@ impl TerminalView {
             max_lines_when_unfocused,
         };
         cx.notify();
+    }
+
+    /// Set or clear this terminal's per-terminal theme override by name. An
+    /// unresolvable name is logged and leaves the terminal on the window theme.
+    pub fn set_theme_override(
+        &mut self,
+        theme_name: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.theme_override = theme_name.and_then(|name| {
+            ThemeRegistry::global(cx)
+                .get(name.as_ref())
+                .log_err()
+                .map(|theme| (name, theme))
+        });
+        cx.notify();
+    }
+
+    pub fn theme_override_name(&self) -> Option<&SharedString> {
+        self.theme_override.as_ref().map(|(name, _)| name)
+    }
+
+    /// The theme this terminal renders with: its per-terminal override when set,
+    /// otherwise the window/global active theme.
+    pub fn effective_theme(&self, cx: &App) -> Arc<Theme> {
+        self.theme_override
+            .as_ref()
+            .map(|(_, theme)| theme.clone())
+            .unwrap_or_else(|| cx.theme().clone())
+    }
+
+    fn set_terminal_theme(
+        &mut self,
+        _: &zed_actions::theme::Terminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.theme_override_name().cloned();
+        let view = self.self_handle.clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                theme_selector::toggle_theme_selector_for_override(
+                    workspace,
+                    current,
+                    move |theme_name, cx| {
+                        view.update(cx, |view, cx| view.set_theme_override(theme_name, cx))
+                            .log_err();
+                    },
+                    window,
+                    cx,
+                );
+            })
+            .log_err();
+    }
+
+    fn clear_terminal_theme(
+        &mut self,
+        _: &zed_actions::theme::ClearTerminal,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_override(None, cx);
     }
 
     const MAX_EMBEDDED_LINES: usize = 1_000;
@@ -587,6 +655,14 @@ impl TerminalView {
         if breadcrumb_visibility_changed {
             cx.emit(ItemEvent::UpdateBreadcrumbs);
         }
+
+        if let Some((name, _)) = &self.theme_override {
+            let name = name.clone();
+            if let Some(theme) = ThemeRegistry::global(cx).get(name.as_ref()).log_err() {
+                self.theme_override = Some((name, theme));
+            }
+        }
+
         cx.notify();
     }
 
@@ -1332,6 +1408,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
             .on_action(cx.listener(TerminalView::rename_terminal))
+            .on_action(cx.listener(TerminalView::set_terminal_theme))
+            .on_action(cx.listener(TerminalView::clear_terminal_theme))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -2858,6 +2936,105 @@ mod tests {
 
         terminal_view.update(cx, |view, _cx| {
             assert!(view.custom_title().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_per_terminal_theme_override(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, _workspace, window) = init_test_with_window(cx).await;
+
+        // Register two themes that differ only in their terminal background, so
+        // we can prove each terminal resolves its own theme.
+        let (bg_a, bg_b) = cx.update(|cx| {
+            let registry = ThemeRegistry::global(cx);
+            let base = registry.get("One Dark").unwrap();
+
+            let mut theme_a = (*base).clone();
+            theme_a.id = "per-terminal-a".to_string();
+            theme_a.name = "Per Terminal A".into();
+            theme_a.styles.colors.terminal_background = gpui::hsla(0.1, 0.5, 0.5, 1.0);
+
+            let mut theme_b = (*base).clone();
+            theme_b.id = "per-terminal-b".to_string();
+            theme_b.name = "Per Terminal B".into();
+            theme_b.styles.colors.terminal_background = gpui::hsla(0.6, 0.5, 0.5, 1.0);
+
+            let bg_a = theme_a.colors().terminal_background;
+            let bg_b = theme_b.colors().terminal_background;
+
+            registry.register_test_themes([theme::ThemeFamily {
+                id: "per-terminal-family".to_string(),
+                name: "Per Terminal Family".into(),
+                author: "test".into(),
+                themes: vec![theme_a, theme_b],
+                scales: theme::default_color_scales(),
+            }]);
+            (bg_a, bg_b)
+        });
+
+        // Two terminals living in the same window.
+        let (_pane_a, _term_a, view_a) = add_display_only_terminal(&project, window, false, cx);
+        let (_pane_b, _term_b, view_b) = add_display_only_terminal(&project, window, false, cx);
+
+        view_a.update(cx, |view, cx| {
+            view.set_theme_override(Some("Per Terminal A".into()), cx)
+        });
+        view_b.update(cx, |view, cx| {
+            view.set_theme_override(Some("Per Terminal B".into()), cx)
+        });
+
+        // AC-1: each terminal renders with its own theme.
+        cx.update(|cx| {
+            let ta = view_a.read(cx).effective_theme(cx);
+            let tb = view_b.read(cx).effective_theme(cx);
+            assert_eq!(ta.name.as_ref(), "Per Terminal A");
+            assert_eq!(tb.name.as_ref(), "Per Terminal B");
+            assert_eq!(ta.colors().terminal_background, bg_a);
+            assert_eq!(tb.colors().terminal_background, bg_b);
+            assert_ne!(
+                ta.colors().terminal_background,
+                tb.colors().terminal_background
+            );
+        });
+
+        // AC-2: clearing one terminal falls back to the window/global theme and
+        // leaves the other terminal's override intact.
+        view_a.update(cx, |view, cx| view.set_theme_override(None, cx));
+        cx.update(|cx| {
+            let global_name = cx.theme().name.clone();
+            let ta = view_a.read(cx).effective_theme(cx);
+            assert_eq!(ta.name, global_name);
+            assert!(view_a.read(cx).theme_override_name().is_none());
+
+            let tb = view_b.read(cx).effective_theme(cx);
+            assert_eq!(tb.name.as_ref(), "Per Terminal B");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_theme_override_invalid_name_falls_back(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, _workspace, window) = init_test_with_window(cx).await;
+        let (_pane, _term, view) = add_display_only_terminal(&project, window, false, cx);
+
+        view.update(cx, |view, cx| {
+            view.set_theme_override(Some("No Such Theme 12345".into()), cx);
+            assert!(
+                view.theme_override_name().is_none(),
+                "an unresolvable theme name is not stored as an override"
+            );
+        });
+
+        cx.update(|cx| {
+            let effective = view.read(cx).effective_theme(cx);
+            assert_eq!(
+                effective.name,
+                cx.theme().name,
+                "an unresolved override falls back to the window/global theme"
+            );
         });
     }
 
