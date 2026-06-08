@@ -183,6 +183,28 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: "system"
     pub bell: Option<TerminalBell>,
+    /// Automatically switch each terminal's theme based on its activity: one
+    /// theme while a command is running, another while idle at the shell
+    /// prompt. Both theme names are required when this is set.
+    ///
+    /// Activity is detected heuristically (Zed does not parse OSC 133 prompt
+    /// markers), so shell builtins and very short commands may not register.
+    /// A theme chosen manually with the `theme: terminal` action takes
+    /// precedence over activity switching for that terminal.
+    ///
+    /// Example: `{ "busy": "Ayu Dark", "idle": "Ayu Light" }`
+    ///
+    /// Default: null
+    pub activity_theme: Option<ActivityThemeContent>,
+}
+
+/// A pair of theme names selected by terminal activity state.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ActivityThemeContent {
+    /// Theme applied while the terminal is running a command.
+    pub busy: String,
+    /// Theme applied while the terminal is idle at the shell prompt.
+    pub idle: String,
 }
 
 /// Shell configuration to open the terminal with.

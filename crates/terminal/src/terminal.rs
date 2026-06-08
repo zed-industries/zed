@@ -940,6 +940,8 @@ impl TerminalBuilder {
             path_style,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            activity_override: None,
         };
 
         TerminalBuilder {
@@ -1163,6 +1165,8 @@ impl TerminalBuilder {
                 path_style,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
+                #[cfg(any(test, feature = "test-support"))]
+                activity_override: None,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -1322,6 +1326,8 @@ pub struct Terminal {
     path_style: PathStyle,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
+    #[cfg(any(test, feature = "test-support"))]
+    activity_override: Option<TerminalActivity>,
 }
 
 struct CopyTemplate {
@@ -1366,6 +1372,37 @@ impl TaskStatus {
             success: error_code == 0,
         };
     }
+}
+
+/// Whether a terminal is actively running a command (`Busy`) or sitting at the
+/// shell prompt (`Idle`).
+///
+/// This is a heuristic: Zed does not parse OSC 133 shell-integration prompt
+/// markers, so the state is derived from task status and the PTY foreground
+/// process group. Shell builtins and sub-second commands can misread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalActivity {
+    Idle,
+    Busy,
+}
+
+fn derive_activity(task_running: bool, has_foreground_process: bool) -> TerminalActivity {
+    if task_running || has_foreground_process {
+        TerminalActivity::Busy
+    } else {
+        TerminalActivity::Idle
+    }
+}
+
+/// Known interactive shell program names, compared case-insensitively against
+/// the terminal's foreground process to decide whether it is sitting at the
+/// prompt (a shell) or running a command (anything else).
+fn is_shell_program(name: &str) -> bool {
+    const SHELLS: &[&str] = &[
+        "bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "nushell", "pwsh",
+        "powershell", "cmd", "xonsh", "elvish",
+    ];
+    SHELLS.iter().any(|shell| name.eq_ignore_ascii_case(shell))
 }
 
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
@@ -2538,6 +2575,48 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    /// Whether this terminal is busy running a command or idle at the prompt.
+    /// See [`TerminalActivity`] for the heuristic's limitations.
+    pub fn activity_state(&self) -> TerminalActivity {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(activity_override) = self.activity_override {
+            return activity_override;
+        }
+
+        let task_running = matches!(
+            self.task().map(|task| task.status),
+            Some(TaskStatus::Running)
+        );
+        derive_activity(task_running, self.has_foreground_process())
+    }
+
+    /// Whether a command other than the shell currently occupies the terminal
+    /// foreground. At the prompt the foreground process is the shell; while a
+    /// command runs it is that command. This is the heuristic's core (Zed does
+    /// not parse OSC 133), so an unrecognized shell or a shell builtin can
+    /// misread.
+    pub fn has_foreground_process(&self) -> bool {
+        match self.foreground_process_command_name() {
+            Some(ref name) => !is_shell_program(name),
+            None => false,
+        }
+    }
+
+    /// Refresh the cached foreground process info from the live PTY foreground
+    /// process group, emitting [`Event::TitleChanged`] if it changed. The info
+    /// is otherwise only refreshed on terminal output, so a silent command
+    /// (e.g. `sleep`) would not register; activity-driven theming polls this.
+    pub fn poll_foreground_process_info(&self, cx: &mut Context<Self>) {
+        if let TerminalType::Pty { info, .. } = &self.terminal_type {
+            info.emit_title_changed_if_changed(cx);
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_activity_for_test(&mut self, activity: Option<TerminalActivity>) {
+        self.activity_override = activity;
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
@@ -2898,6 +2977,30 @@ mod tests {
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+
+    #[test]
+    fn test_activity_state() {
+        use TerminalActivity::*;
+        // A running task marks the terminal busy.
+        assert_eq!(derive_activity(true, false), Busy);
+        // A non-shell foreground process marks the terminal busy.
+        assert_eq!(derive_activity(false, true), Busy);
+        // Neither signal: the terminal is idle at the prompt.
+        assert_eq!(derive_activity(false, false), Idle);
+        assert_eq!(derive_activity(true, true), Busy);
+    }
+
+    #[test]
+    fn test_is_shell_program() {
+        // The foreground being a shell means the terminal is at the prompt.
+        assert!(is_shell_program("zsh"));
+        assert!(is_shell_program("Bash"));
+        assert!(is_shell_program("PowerShell"));
+        // A real command means the terminal is busy.
+        assert!(!is_shell_program("sleep"));
+        assert!(!is_shell_program("npm"));
+        assert!(!is_shell_program("cargo"));
+    }
 
     #[test]
     fn test_normalize_path_command_name() {

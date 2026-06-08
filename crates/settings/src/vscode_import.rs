@@ -869,6 +869,7 @@ impl VsCodeSettings {
     fn terminal_settings_content(&self) -> Option<TerminalSettingsContent> {
         let (font_family, font_fallbacks) = self.read_fonts("terminal.integrated.fontFamily");
         skip_default(TerminalSettingsContent {
+            activity_theme: None,
             alternate_scroll: None,
             blinking: self
                 .read_bool("terminal.integrated.cursorBlinking")

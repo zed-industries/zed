@@ -1904,6 +1904,17 @@
       //    "never"
       "show": null,
     },
+    // Automatically switch each terminal's theme based on its activity: one
+    // theme while a command is running, another while idle at the shell prompt.
+    // Both theme names are required. Omitting this setting (the default) keeps
+    // terminals on the window theme. Activity is detected heuristically, so
+    // shell builtins and very short commands may not register. A theme chosen
+    // manually with the `theme: terminal` action takes precedence over activity
+    // switching for that terminal.
+    // "activity_theme": {
+    //   "busy": "Ayu Dark",
+    //   "idle": "Ayu Light"
+    // },
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,
