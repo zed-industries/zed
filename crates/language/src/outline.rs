@@ -263,10 +263,10 @@ impl<T> Outline<T> {
 /// can render the parent chain as tree context above the match.
 ///
 /// `matches` must be sorted ascending by `candidate_id` (which is what
-/// [`Outline::search`] produces), this is so that we preserve the tree strucure
-/// of the outline. `depth_at` returns the tree depth for the item at a given
-/// candidate index. Ancestors that already appear earlier in the output —
-/// either as their own match or as an ancestor of an earlier match — are not
+/// [`Outline::search`] produces), this is so that we preserve the tree
+/// structure of the outline. `depth_at` returns the tree depth for the item at
+/// a given candidate index. Ancestors that already appear earlier in the output
+/// either as their own match or as an ancestor of an earlier match, are not
 /// duplicated.
 fn expand_tree(
     depth_at: impl Fn(usize) -> usize,

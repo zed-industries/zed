@@ -12392,7 +12392,6 @@ dependencies = [
  "language",
  "lsp",
  "menu",
- "ordered-float 2.10.1",
  "picker",
  "project",
  "rope",
