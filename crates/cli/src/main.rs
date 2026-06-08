@@ -422,6 +422,53 @@ mod tests {
         .unwrap();
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn test_collect_files_excludes_git() {
+        // A `.git` object key makes `TempTree` run a real `git init`, so the
+        // tree contains genuine VCS metadata (HEAD, config, objects, etc.).
+        let temp_tree = TempTree::new(json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "README.md": "hello",
+            ".git": {},
+        }));
+
+        let files = collect_files(temp_tree.path()).unwrap();
+        let collected: BTreeSet<PathBuf> = files.keys().cloned().collect();
+
+        let expected: BTreeSet<PathBuf> = [
+            PathBuf::from("README.md"),
+            PathBuf::from(path!("src/main.rs")),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(collected, expected);
+
+        assert!(
+            !collected.iter().any(|path| path
+                .components()
+                .any(|component| component.as_os_str() == ".git")),
+            "collected files should not include any `.git` entries: {collected:?}"
+        );
+    }
+
+    // A linked git worktree stores its `.git` as a regular file (a gitfile)
+    // rather than a directory. Ensure that variant is excluded too.
+    #[test]
+    fn test_collect_files_excludes_git_file() {
+        let temp_tree = TempTree::new(json!({
+            "file.txt": "contents",
+            ".git": "gitdir: /some/other/path/.git/worktrees/foo",
+        }));
+
+        let files = collect_files(temp_tree.path()).unwrap();
+        let collected: BTreeSet<PathBuf> = files.keys().cloned().collect();
+
+        let expected: BTreeSet<PathBuf> = [PathBuf::from("file.txt")].into_iter().collect();
+        assert_eq!(collected, expected);
+    }
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
