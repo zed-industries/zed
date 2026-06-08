@@ -781,10 +781,14 @@ pub struct SettingsWindow {
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
-    pub(crate) expanded_provider_configurations:
-        HashMap<language_model::LanguageModelProviderId, bool>,
-    pub(crate) provider_configuration_views:
-        HashMap<language_model::LanguageModelProviderId, gpui::AnyView>,
+    /// Cached configuration views per provider, created lazily. Holds the
+    /// provider's chosen presentation ([`Inline`] or [`SubPage`]).
+    pub(crate) provider_configuration_views: HashMap<
+        language_model::LanguageModelProviderId,
+        language_model::ProviderConfigurationView,
+    >,
+    /// The provider whose configuration sub-page is currently open, if any.
+    pub(crate) configuring_provider: Option<language_model::LanguageModelProviderId>,
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
@@ -796,6 +800,10 @@ pub struct SettingsWindow {
     pub(crate) mcp_add_server_focus_handle: FocusHandle,
     /// State for the active "add/edit custom external agent" form sub-page, if open.
     pub(crate) custom_agent_form: Option<CustomAgentForm>,
+    /// Stable focus handle for the external agents "Add Agent" button, so it can
+    /// show a focus ring when the page auto-focuses it on open (which happens via
+    /// mouse, where `focus_visible` styling would otherwise be suppressed).
+    pub(crate) external_agent_add_focus_handle: FocusHandle,
 }
 
 struct SearchDocument {
@@ -1825,12 +1833,13 @@ impl SettingsWindow {
             regex_validation_error: None,
             list_state,
             last_copied_link_path: None,
-            expanded_provider_configurations: HashMap::default(),
             provider_configuration_views: HashMap::default(),
+            configuring_provider: None,
             last_copied_skill_directory_path: None,
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
+            external_agent_add_focus_handle: cx.focus_handle(),
         };
 
         this.fetch_files(window, cx);
@@ -4732,12 +4741,13 @@ pub mod test {
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
                 last_copied_link_path: None,
-                expanded_provider_configurations: HashMap::default(),
                 provider_configuration_views: HashMap::default(),
+                configuring_provider: None,
                 last_copied_skill_directory_path: None,
                 mcp_server_form: None,
                 mcp_add_server_focus_handle: cx.focus_handle(),
                 custom_agent_form: None,
+                external_agent_add_focus_handle: cx.focus_handle(),
             }
         }
     }
@@ -4865,12 +4875,13 @@ pub mod test {
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             last_copied_link_path: None,
-            expanded_provider_configurations: HashMap::default(),
             provider_configuration_views: HashMap::default(),
+            configuring_provider: None,
             last_copied_skill_directory_path: None,
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
+            external_agent_add_focus_handle: cx.focus_handle(),
         };
 
         settings_window.build_filter_table();

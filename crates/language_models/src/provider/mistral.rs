@@ -6,11 +6,12 @@ use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
@@ -234,6 +235,30 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
+    }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://console.mistral.ai/api-keys",
+                    "Paste your Mistral API key",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
     }
 }
 

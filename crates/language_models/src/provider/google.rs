@@ -7,7 +7,8 @@ pub use google_ai::completion::{GoogleEventMapper, into_google};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModelCompletionError,
+    AuthenticateError, ConfigurationViewTargetAgent, EnvVar,
+    LanguageModelCompletionError, ProviderConfigurationView,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
 };
 use language_model::{
@@ -234,6 +235,30 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
+    }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://aistudio.google.com/app/apikey",
+                    "AIza...",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
     }
 }
 

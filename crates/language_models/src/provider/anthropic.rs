@@ -8,11 +8,13 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState,
+    AuthenticateError,
     ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    ProviderConfigurationView, RateLimiter,
     env_var,
 };
 use settings::{Settings, SettingsStore};
@@ -288,6 +290,30 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
+    }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://console.anthropic.com/settings/keys",
+                    "sk-ant-...",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
     }
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use gpui::{AnyView, ScrollHandle, prelude::*};
+use gpui::{ScrollHandle, prelude::*};
 use language_model::{
     ConfigurationViewTargetAgent, IconOrSvg, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry,
+    LanguageModelRegistry, ProviderConfigurationView,
 };
-use ui::{Disclosure, Divider, DividerColor, prelude::*};
+use ui::{Divider, DividerColor, prelude::*};
 
 use crate::SettingsWindow;
 
@@ -22,20 +22,19 @@ pub(crate) fn render_llm_providers_page(
         .size_full()
         .pt_2p5()
         .px_8()
-        .pb_16() .track_scroll(scroll_handle)
+        .pb_16()
+        .track_scroll(scroll_handle)
         .overflow_y_scroll()
         .children(
             providers
                 .iter()
-                .map(|provider| {
-                    render_provider_block(settings_window, provider, window, cx)
-                })
+                .map(|provider| render_provider_row(settings_window, provider, window, cx))
                 .collect::<Vec<_>>(),
         )
         .into_any_element()
 }
 
-fn render_provider_block(
+fn render_provider_row(
     settings_window: &SettingsWindow,
     provider: &Arc<dyn LanguageModelProvider>,
     window: &mut Window,
@@ -43,32 +42,45 @@ fn render_provider_block(
 ) -> AnyElement {
     let provider_id = provider.id();
     let provider_name = provider.name().0;
-    let disclosure_id = SharedString::from(format!("provider-disclosure-{}", provider_id.0));
-
-    let is_expanded = settings_window
-        .expanded_provider_configurations
-        .get(&provider_id)
-        .copied()
-        .unwrap_or(false);
-
-    let configuration_view = if is_expanded {
-        Some(get_or_create_configuration_view(
-            settings_window,
-            &provider_id,
-            provider,
-            window,
-            cx,
-        ))
-    } else {
-        None
-    };
-
     let is_authenticated = provider.is_authenticated(cx);
+
+    let icon = match provider.icon() {
+        IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+        IconOrSvg::Icon(name) => Icon::new(name),
+    }
+    .size(IconSize::Small)
+    .color(Color::Muted);
+
+    let left = h_flex()
+        .flex_none()
+        .gap_1p5()
+        .child(icon)
+        .child(Label::new(provider_name))
+        .when(is_authenticated, |this| {
+            this.child(
+                Icon::new(IconName::Check)
+                    .size(IconSize::Small)
+                    .color(Color::Success),
+            )
+        });
+
+    // The provider tells us how it wants to be presented: a compact inline
+    // control, or a richer view that belongs on its own sub-page.
+    let control =
+        match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
+        {
+            ProviderConfigurationView::Inline(view) => v_flex()
+                .min_w_0()
+                .w_full()
+                .max_w(rems(24.))
+                .child(view)
+                .into_any_element(),
+            ProviderConfigurationView::SubPage(_) => render_configure_button(&provider_id, cx),
+        };
 
     v_flex()
         .min_w_0()
         .w_full()
-        .when(is_expanded, |this| this.mb_2())
         .child(
             div()
                 .px_2()
@@ -76,73 +88,94 @@ fn render_provider_block(
         )
         .child(
             h_flex()
-                .map(|this| {
-                    if is_expanded {
-                        this.mt_2().mb_1()
-                    } else {
-                        this.my_2()
-                    }
-                })
                 .w_full()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .id(disclosure_id.clone())
-                        .px_2()
-                        .py_0p5()
-                        .w_full()
-                        .justify_between()
-                        .rounded_sm()
-                        .hover(|hover| hover.bg(cx.theme().colors().element_hover))
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_1p5()
-                                .child(
-                                    match provider.icon() {
-                                        IconOrSvg::Svg(path) => Icon::from_external_svg(path),
-                                        IconOrSvg::Icon(name) => Icon::new(name),
-                                    }
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                                )
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .gap_1()
-                                        .child(Label::new(provider_name))
-                                        .when(is_authenticated && !is_expanded, |this| {
-                                            this.child(
-                                                Icon::new(IconName::Check).color(Color::Success),
-                                            )
-                                        }),
-                                ),
-                        )
-                        .child(
-                            Disclosure::new(disclosure_id, is_expanded)
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown),
-                        )
-                        .on_click(cx.listener({
-                            let provider_id = provider_id.clone();
-                            move |this, _event, _window, _cx| {
-                                let is_expanded = this
-                                    .expanded_provider_configurations
-                                    .entry(provider_id.clone())
-                                    .or_insert(false);
-                                *is_expanded = !*is_expanded;
-                            }
-                        })),
-                ),
-        )
-        .child(
-            v_flex()
-                .min_w_0()
-                .w_full()
+                .py_2()
                 .px_2()
-                .gap_1()
-                .when_some(configuration_view, |this, view| this.child(view)),
+                .gap_6()
+                .justify_between()
+                .items_start()
+                .child(left)
+                .child(control),
         )
+        .into_any_element()
+}
+
+fn render_configure_button(
+    provider_id: &LanguageModelProviderId,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let provider_id = provider_id.clone();
+    Button::new(
+        SharedString::from(format!("configure-{}", provider_id.0)),
+        "Configure",
+    )
+    .style(ButtonStyle::Outlined)
+    .label_size(LabelSize::Small)
+    .tab_index(0isize)
+    .on_click(cx.listener(move |this, _, window, cx| {
+        open_provider_configuration(this, provider_id.clone(), window, cx);
+    }))
+    .into_any_element()
+}
+
+fn open_provider_configuration(
+    settings_window: &mut SettingsWindow,
+    provider_id: LanguageModelProviderId,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) {
+    let title = LanguageModelRegistry::read_global(cx)
+        .provider(&provider_id)
+        .map(|provider| provider.name().0)
+        .unwrap_or_else(|| provider_id.0.clone());
+
+    settings_window.configuring_provider = Some(provider_id);
+
+    settings_window.push_dynamic_sub_page(
+        title,
+        "Agent Configuration",
+        Some("llm_providers"),
+        false,
+        render_provider_config_sub_page,
+        window,
+        cx,
+    );
+}
+
+fn render_provider_config_sub_page(
+    settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let Some(provider_id) = settings_window.configuring_provider.clone() else {
+        return div().into_any_element();
+    };
+    let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&provider_id) else {
+        return div().into_any_element();
+    };
+
+    // A provider routed to a sub-page always provides a `SubPage` view; fall
+    // back to whatever view it returns otherwise.
+    let view = match get_or_create_configuration_view(
+        settings_window,
+        &provider_id,
+        &provider,
+        window,
+        cx,
+    ) {
+        ProviderConfigurationView::Inline(view) | ProviderConfigurationView::SubPage(view) => view,
+    };
+
+    v_flex()
+        .id("provider-config-sub-page")
+        .size_full()
+        .pt_2p5()
+        .px_8()
+        .pb_16()
+        .track_scroll(scroll_handle)
+        .overflow_y_scroll()
+        .child(view)
         .into_any_element()
 }
 
@@ -152,16 +185,15 @@ fn get_or_create_configuration_view(
     provider: &Arc<dyn LanguageModelProvider>,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
-) -> AnyView {
-    if let Some(view) = settings_window.provider_configuration_views.get(provider_id) {
+) -> ProviderConfigurationView {
+    if let Some(view) = settings_window
+        .provider_configuration_views
+        .get(provider_id)
+    {
         return view.clone();
     }
 
-    let view = provider.configuration_view(
-        ConfigurationViewTargetAgent::ZedAgent,
-        window,
-        cx,
-    );
+    let view = provider.configuration_view_v2(ConfigurationViewTargetAgent::ZedAgent, window, cx);
 
     // Store the view for future renders by deferring a mutation
     let provider_id = provider_id.clone();
