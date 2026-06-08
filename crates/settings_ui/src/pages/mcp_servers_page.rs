@@ -8,6 +8,7 @@ use gpui::{Action as _, Entity, Focusable as _, ScrollHandle, WeakEntity, prelud
 use project::context_server_store::{
     ContextServerConfiguration, ContextServerStatus, ContextServerStore,
 };
+use project::project_settings::ContextServerSettings;
 use settings::{ContextServerCommand, ContextServerSettingsContent, OAuthClientSettings};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, Divider, DividerColor,
@@ -187,17 +188,16 @@ fn render_context_server(
         None
     };
 
-    // Build gear menu. Use the editable configuration (which falls back to the
-    // configured settings) so "Configure Server" pre-fills correctly even when a
-    // custom server is disabled or has not been started this session.
-    let editable_configuration = store
-        .read(cx)
-        .editable_configuration_for_server(context_server_id);
+    // Build gear menu. Pre-fill "Configure Server" from the raw configured
+    // settings (not the resolved runtime configuration) so the form is editable
+    // even when the settings contain invalid data (e.g. an unparseable URL) or
+    // the server is disabled / not yet started.
+    let server_settings = store.read(cx).settings_for_server(context_server_id).cloned();
     let gear_menu = render_gear_menu(
         context_server_id,
         store,
         cx.entity().downgrade(),
-        editable_configuration,
+        server_settings.clone(),
         provided_by_extension,
         should_show_logout,
     );
@@ -205,13 +205,12 @@ fn render_context_server(
     // Build toggle switch
     let toggle_switch = render_toggle_switch(context_server_id, store, is_running);
 
-    // Build details (error/auth feedback)
-    let details = render_status_details(
-        &server_status,
-        context_server_id,
-        store,
-        should_show_logout,
-    );
+    // Surface invalid settings (which prevent the server from starting at all)
+    // ahead of runtime status feedback, so the misconfiguration is visible.
+    let details = match settings_validation_error(server_settings.as_ref()) {
+        Some(error) => Some(render_form_error(error).into_any_element()),
+        None => render_status_details(&server_status, context_server_id, store, should_show_logout),
+    };
 
     AiSettingItem::new(item_id, display_name, status, source)
         .action(gear_menu)
@@ -258,7 +257,7 @@ fn render_gear_menu(
     context_server_id: &ContextServerId,
     store: &Entity<ContextServerStore>,
     settings_window: WeakEntity<SettingsWindow>,
-    configuration: Option<Arc<ContextServerConfiguration>>,
+    server_settings: Option<ContextServerSettings>,
     provided_by_extension: bool,
     should_show_logout: bool,
 ) -> impl IntoElement {
@@ -285,22 +284,22 @@ fn render_gear_menu(
             let context_server_id = context_server_id.clone();
             let store = store.clone();
             let settings_window = settings_window.clone();
-            let configuration = configuration.clone();
+            let server_settings = server_settings.clone();
 
             Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
                 menu.when(!provided_by_extension, |this| {
                     this.entry("Configure Server", None, {
                         let settings_window = settings_window.clone();
                         let context_server_id = context_server_id.clone();
-                        let configuration = configuration.clone();
+                        let server_settings = server_settings.clone();
                         move |window, cx| {
-                            let transport = match configuration.as_deref() {
-                                Some(ContextServerConfiguration::Http { .. }) => McpTransport::Http,
+                            let transport = match &server_settings {
+                                Some(ContextServerSettings::Http { .. }) => McpTransport::Http,
                                 _ => McpTransport::Stdio,
                             };
-                            let existing = configuration
+                            let existing = server_settings
                                 .clone()
-                                .map(|config| (context_server_id.clone(), config));
+                                .map(|settings| (context_server_id.clone(), settings));
                             settings_window
                                 .update(cx, |this, cx| {
                                     open_mcp_server_form(this, transport, existing, window, cx);
@@ -739,12 +738,12 @@ pub(crate) struct McpServerForm {
 impl McpServerForm {
     fn new(
         transport: McpTransport,
-        existing: Option<(ContextServerId, Arc<ContextServerConfiguration>)>,
+        existing: Option<(ContextServerId, ContextServerSettings)>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> Self {
         let original_id = existing.as_ref().map(|(id, _)| id.clone());
-        let config = existing.map(|(_, config)| config);
+        let settings = existing.map(|(_, settings)| settings);
         let name_initial = original_id.as_ref().map(|id| id.0.to_string());
 
         let mut command_initial = None;
@@ -755,10 +754,12 @@ impl McpServerForm {
         let mut env = Vec::new();
         let mut headers = Vec::new();
 
-        if let Some(config) = config.as_deref() {
-            match config {
-                ContextServerConfiguration::Custom { command, .. }
-                | ContextServerConfiguration::Extension { command, .. } => {
+        // Pre-fill from the raw settings so invalid values (e.g. a malformed URL
+        // the user typed directly into settings.json) still load into the form
+        // for correction, rather than being dropped during resolution.
+        if let Some(settings) = settings.as_ref() {
+            match settings {
+                ContextServerSettings::Stdio { command, .. } => {
                     command_initial = Some(command.path.to_string_lossy().to_string());
                     if !command.args.is_empty() {
                         args_initial = Some(command.args.join(" "));
@@ -770,19 +771,21 @@ impl McpServerForm {
                         }
                     }
                 }
-                ContextServerConfiguration::Http {
+                ContextServerSettings::Http {
                     url,
                     headers: header_map,
                     timeout,
                     oauth,
+                    ..
                 } => {
-                    url_initial = Some(url.to_string());
+                    url_initial = Some(url.clone());
                     timeout_initial = timeout.map(|timeout| timeout.to_string());
                     for (key, value) in sorted_pairs(header_map) {
                         headers.push(new_kv_row(Some(&key), Some(&value), window, cx));
                     }
                     oauth_initial = oauth.as_ref().map(|oauth| oauth.client_id.clone());
                 }
+                ContextServerSettings::Extension { .. } => {}
             }
         }
 
@@ -850,7 +853,7 @@ fn new_kv_row(
 pub(crate) fn open_mcp_server_form(
     settings_window: &mut SettingsWindow,
     transport: McpTransport,
-    existing: Option<(ContextServerId, Arc<ContextServerConfiguration>)>,
+    existing: Option<(ContextServerId, ContextServerSettings)>,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) {
@@ -1230,6 +1233,18 @@ fn build_settings_from_values(
     Ok((ContextServerId(name.into()), values.original_id.clone(), content))
 }
 
+/// Returns a human-readable error when a server's configured settings are
+/// invalid in a way that prevents it from starting (currently: an HTTP server
+/// whose URL cannot be parsed). Used to surface misconfiguration in the list.
+fn settings_validation_error(settings: Option<&ContextServerSettings>) -> Option<SharedString> {
+    match settings? {
+        ContextServerSettings::Http { url, .. } if url::Url::parse(url).is_err() => {
+            Some("Invalid URL in settings.".into())
+        }
+        _ => None,
+    }
+}
+
 /// Returns whether saving under `id` would overwrite a *different* existing
 /// server. Editing a server in place (`id == original_id`) is allowed.
 fn name_collides_with_other_server(
@@ -1439,6 +1454,25 @@ mod tests {
                 }),
             }
         );
+    }
+
+    #[test]
+    fn flags_invalid_url_in_settings() {
+        let http = |url: &str| ContextServerSettings::Http {
+            enabled: true,
+            url: url.into(),
+            headers: HashMap::default(),
+            timeout: None,
+            oauth: None,
+        };
+        assert_eq!(
+            settings_validation_error(Some(&http("not a url")))
+                .unwrap()
+                .as_ref(),
+            "Invalid URL in settings."
+        );
+        assert!(settings_validation_error(Some(&http("https://example.com/mcp"))).is_none());
+        assert!(settings_validation_error(None).is_none());
     }
 
     #[test]

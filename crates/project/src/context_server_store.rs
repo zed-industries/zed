@@ -562,52 +562,6 @@ impl ContextServerStore {
         }
     }
 
-    /// Returns a configuration suitable for pre-filling the "edit custom server"
-    /// UI. Prefers the live runtime configuration, but falls back to building one
-    /// synchronously from the configured settings when the server has no runtime
-    /// state (e.g. it is disabled or has not been started this session).
-    ///
-    /// Returns `None` for extension-provided servers, which are not edited via
-    /// the custom-server form, and for HTTP servers whose configured URL cannot
-    /// be parsed.
-    pub fn editable_configuration_for_server(
-        &self,
-        id: &ContextServerId,
-    ) -> Option<Arc<ContextServerConfiguration>> {
-        if let Some(configuration) = self.configuration_for_server(id) {
-            return Some(configuration);
-        }
-
-        match self.context_server_settings.get(&id.0)? {
-            ContextServerSettings::Stdio {
-                command, remote, ..
-            } => Some(Arc::new(ContextServerConfiguration::Custom {
-                command: command.clone(),
-                remote: *remote,
-            })),
-            ContextServerSettings::Http {
-                url,
-                headers,
-                timeout,
-                oauth,
-                ..
-            } => {
-                // Parse failures are expected here (e.g. an invalid URL that the
-                // user is still editing). This runs on every render, so fail
-                // silently rather than logging; the invalid URL is surfaced via
-                // the server's error status instead.
-                let url = url::Url::parse(url).ok()?;
-                Some(Arc::new(ContextServerConfiguration::Http {
-                    url,
-                    headers: headers.clone(),
-                    timeout: *timeout,
-                    oauth: oauth.clone(),
-                }))
-            }
-            ContextServerSettings::Extension { .. } => None,
-        }
-    }
-
     /// Returns a sorted slice of available unique context server IDs. Within the
     /// slice, context servers which have `mcp-server-` as a prefix in their ID will
     /// appear after servers that do not have this prefix in their ID.
