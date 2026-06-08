@@ -126,7 +126,7 @@ impl TextDiffView {
         });
 
         let task = window.spawn(cx, async move |cx| {
-            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
@@ -247,7 +247,7 @@ impl TextDiffView {
                     }
 
                     log::trace!("start recalculating");
-                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -286,11 +286,8 @@ async fn update_diff_buffer(
     source_buffer: &Entity<Buffer>,
     clipboard_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) {
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let language = source_buffer_snapshot.language().cloned();
-    let language_registry = source_buffer.read_with(cx, |buffer, _| buffer.language_registry());
-
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let base_text = Arc::<str>::from(base_buffer_snapshot.text());
 
@@ -305,11 +302,7 @@ async fn update_diff_buffer(
         })
         .await;
 
-    diff.update(cx, |diff, cx| {
-        diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update, cx)
-    });
-    Ok(())
+    diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));
 }
 
 impl EventEmitter<EditorEvent> for TextDiffView {}

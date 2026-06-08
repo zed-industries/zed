@@ -1712,6 +1712,13 @@ impl BufferDiff {
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let base_text = base_text.map(|t| text::LineEnding::normalize_arc(t));
+        debug_assert_eq!(
+            base_text.as_deref().unwrap_or_default(),
+            &base_text_snapshot.text()
+        );
+        debug_assert_eq!(base_text_snapshot.remote_id(), self.base_text.remote_id());
+        debug_assert_eq!(buffer.remote_id(), self.buffer_snapshot.remote_id());
+
         let language = base_text_snapshot.language();
         let diff_options = build_diff_options(
             language.map(|l| l.name()),
@@ -1721,9 +1728,14 @@ impl BufferDiff {
         let buffer_snapshot = buffer.clone();
         let base_text_snapshot = base_text_snapshot.clone();
         let base_text_exists = base_text.is_some();
+        let base_text_changed = self.base_text.version() != base_text_snapshot.version();
+        let buffer_changed = self.buffer_snapshot.version() != buffer_snapshot.version();
+        let prev_hunks = self.hunks.clone();
 
         cx.background_executor().spawn(async move {
-            let hunks = if let Some(base_text) = base_text {
+            let hunks = if !base_text_changed && !buffer_changed {
+                prev_hunks
+            } else if let Some(base_text) = base_text {
                 compute_hunks(
                     Some((base_text, base_text_snapshot.as_rope().clone())),
                     &buffer,
@@ -1740,31 +1752,6 @@ impl BufferDiff {
                 buffer_snapshot,
             }
         })
-    }
-
-    /// Set the language of the base text buffer without recalculating hunks
-    #[ztracing::instrument(skip_all)]
-    pub fn language_changed(
-        &mut self,
-        language: Option<Arc<Language>>,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &mut Context<Self>,
-    ) {
-        let fut = self.base_text_buffer.update(cx, |base_text, cx| {
-            if let Some(language_registry) = language_registry {
-                base_text.set_language_registry(language_registry);
-            }
-            base_text.set_language_async(language, cx);
-            base_text.parsing_idle()
-        });
-        cx.spawn(async move |this, cx| {
-            fut.await;
-            this.update(cx, |_, cx| {
-                cx.emit(BufferDiffEvent::LanguageChanged);
-            })
-            .ok();
-        })
-        .detach();
     }
 
     pub fn set_snapshot_with_secondary(

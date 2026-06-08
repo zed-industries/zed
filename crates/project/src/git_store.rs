@@ -4060,8 +4060,7 @@ impl BufferGitState {
                 buffer.remote_id()
             );
 
-            let mut edited_index_text = None;
-            if index_text_buffer_language_enabled && language_changed {
+            if index_text_buffer_language_enabled {
                 index_text_buffer.update(cx, |index_text_buffer, cx| {
                     if let Some(language_registry) = language_registry.clone() {
                         index_text_buffer.set_language_registry(language_registry);
@@ -4069,8 +4068,26 @@ impl BufferGitState {
                     index_text_buffer.set_language_async(language.clone(), cx);
                 });
             }
+            head_text_buffer.update(cx, |head_text_buffer, cx| {
+                if let Some(language_registry) = language_registry.clone() {
+                    head_text_buffer.set_language_registry(language_registry);
+                }
+                head_text_buffer.set_language_async(language.clone(), cx);
+            });
+
+            for (_, _, base_text_buffer, _) in &oid_diffs {
+                base_text_buffer.update(cx, |base_text_buffer, cx| {
+                    if let Some(language_registry) = language_registry.clone() {
+                        base_text_buffer.set_language_registry(language_registry);
+                    }
+                    base_text_buffer.set_language_async(language.clone(), cx);
+                });
+            }
+
+            let mut edited_index_text = None;
+
             let index_text_snapshot = if unstaged_diff.is_some() || staged_diff.is_some() {
-                Some(if index_changed {
+                let index_text_snapshot = if index_changed || language_changed {
                     let new_index_text = index.clone().unwrap_or_default();
                     let index_text_diff = index_text_buffer
                         .update(cx, |index_text_buffer, cx| {
@@ -4087,11 +4104,14 @@ impl BufferGitState {
                     snapshot
                 } else {
                     index_text_buffer.read_with(cx, |buffer, _| buffer.snapshot())
-                })
+                };
+                Some(index_text_snapshot)
             } else {
                 None
             };
+
             let mut new_unstaged_diff = None;
+
             if let (Some(unstaged_diff), Some(index_text_snapshot)) =
                 (unstaged_diff.as_ref(), index_text_snapshot.as_ref())
             {
@@ -4116,14 +4136,6 @@ impl BufferGitState {
             let mut new_staged_diff = None;
             let mut new_uncommitted_diff = None;
             if staged_diff.is_some() || uncommitted_diff.is_some() {
-                if language_changed {
-                    head_text_buffer.update(cx, |head_text_buffer, cx| {
-                        if let Some(language_registry) = language_registry.clone() {
-                            head_text_buffer.set_language_registry(language_registry);
-                        }
-                        head_text_buffer.set_language_async(language.clone(), cx);
-                    });
-                }
                 let head_base_text_exists = head.is_some();
                 let head_text_snapshot = if head_changed {
                     let new_head_text = head.clone().unwrap_or_default();
@@ -4272,14 +4284,6 @@ impl BufferGitState {
             yield_now().await;
 
             for (oid, oid_diff, base_text_buffer, base_text) in oid_diffs {
-                if language_changed {
-                    base_text_buffer.update(cx, |base_text_buffer, cx| {
-                        if let Some(language_registry) = language_registry.clone() {
-                            base_text_buffer.set_language_registry(language_registry);
-                        }
-                        base_text_buffer.set_language_async(language.clone(), cx);
-                    });
-                }
                 let base_text_snapshot =
                     base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
                 let new_oid_diff = cx
