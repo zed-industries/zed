@@ -2,11 +2,15 @@ use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use etagere::{BucketedAtlasAllocator, size2};
 use gpui::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, AtlasTileKeepAlive,
+    AtlasTileRef, Bounds, DevicePixels, PlatformAtlas, Point, Size,
 };
 use parking_lot::Mutex;
-use std::{borrow::Cow, ops, sync::Arc};
+use std::{
+    borrow::Cow,
+    ops,
+    sync::{Arc, Weak},
+};
 
 use crate::WgpuContext;
 
@@ -21,7 +25,9 @@ fn etagere_point_to_device(point: etagere::Point) -> Point<DevicePixels> {
     }
 }
 
-pub struct WgpuAtlas(Mutex<WgpuAtlasState>);
+pub struct WgpuAtlas {
+    state: Arc<Mutex<WgpuAtlasState>>,
+}
 
 struct PendingUpload {
     id: AtlasTextureId,
@@ -35,8 +41,27 @@ struct WgpuAtlasState {
     max_texture_size: u32,
     color_texture_format: wgpu::TextureFormat,
     storage: WgpuAtlasStorage,
-    tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    tiles_by_key: FxHashMap<AtlasKey, AtlasTileRef>,
     pending_uploads: Vec<PendingUpload>,
+}
+
+/// Backend [`AtlasTileKeepAlive`] for this atlas; see [`AtlasTileRef`] for
+/// the contract.
+#[derive(Debug)]
+struct WgpuAtlasTileKeepAlive {
+    state: Weak<Mutex<WgpuAtlasState>>,
+    texture_id: AtlasTextureId,
+}
+
+impl AtlasTileKeepAlive for WgpuAtlasTileKeepAlive {}
+
+impl Drop for WgpuAtlasTileKeepAlive {
+    fn drop(&mut self) {
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        state.lock().release_slot(self.texture_id);
+    }
 }
 
 pub struct WgpuTextureInfo {
@@ -50,15 +75,26 @@ impl WgpuAtlas {
         color_texture_format: wgpu::TextureFormat,
     ) -> Self {
         let max_texture_size = device.limits().max_texture_dimension_2d;
-        WgpuAtlas(Mutex::new(WgpuAtlasState {
-            device,
-            queue,
-            max_texture_size,
-            color_texture_format,
-            storage: WgpuAtlasStorage::default(),
-            tiles_by_key: Default::default(),
-            pending_uploads: Vec::new(),
-        }))
+        WgpuAtlas {
+            state: Arc::new(Mutex::new(WgpuAtlasState {
+                device,
+                queue,
+                max_texture_size,
+                color_texture_format,
+                storage: WgpuAtlasStorage::default(),
+                tiles_by_key: Default::default(),
+                pending_uploads: Vec::new(),
+            })),
+        }
+    }
+
+    /// Wrap a freshly allocated tile in an [`AtlasTileRef`].
+    fn make_tile_ref(&self, tile: AtlasTile) -> AtlasTileRef {
+        let keep_alive: Arc<dyn AtlasTileKeepAlive> = Arc::new(WgpuAtlasTileKeepAlive {
+            state: Arc::downgrade(&self.state),
+            texture_id: tile.texture_id,
+        });
+        AtlasTileRef::new(tile, keep_alive)
     }
 
     pub fn from_context(context: &WgpuContext) -> Self {
@@ -70,12 +106,12 @@ impl WgpuAtlas {
     }
 
     pub fn before_frame(&self) {
-        let mut lock = self.0.lock();
+        let mut lock = self.state.lock();
         lock.flush_uploads();
     }
 
     pub fn get_texture_info(&self, id: AtlasTextureId) -> WgpuTextureInfo {
-        let lock = self.0.lock();
+        let lock = self.state.lock();
         let texture = &lock.storage[id];
         WgpuTextureInfo {
             view: texture.view.clone(),
@@ -85,7 +121,7 @@ impl WgpuAtlas {
     /// Clears all cached textures and tiles, forcing them to be recreated.
     /// Use this for incremental recovery when the device is still valid.
     pub fn clear(&self) {
-        let mut lock = self.0.lock();
+        let mut lock = self.state.lock();
         lock.storage = WgpuAtlasStorage::default();
         lock.tiles_by_key.clear();
         lock.pending_uploads.clear();
@@ -94,7 +130,7 @@ impl WgpuAtlas {
     /// Handles device lost by clearing all textures and cached tiles.
     /// The atlas will lazily recreate textures as needed on subsequent frames.
     pub fn handle_device_lost(&self, context: &WgpuContext) {
-        let mut lock = self.0.lock();
+        let mut lock = self.state.lock();
         lock.device = context.device.clone();
         lock.queue = context.queue.clone();
         lock.color_texture_format = context.color_texture_format();
@@ -109,41 +145,49 @@ impl PlatformAtlas for WgpuAtlas {
         &self,
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
-    ) -> Result<Option<AtlasTile>> {
-        let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(*tile))
-        } else {
-            profiling::scope!("new tile");
-            let Some((size, bytes)) = build()? else {
-                return Ok(None);
-            };
-            let tile = lock
-                .allocate(size, key.texture_kind())
-                .context("failed to allocate")?;
-            lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile);
-            Ok(Some(tile))
+    ) -> Result<Option<AtlasTileRef>> {
+        let mut lock = self.state.lock();
+        if let Some(tile_ref) = lock.tiles_by_key.get(key) {
+            return Ok(Some(tile_ref.clone()));
         }
+        profiling::scope!("new tile");
+        let Some((size, bytes)) = build()? else {
+            return Ok(None);
+        };
+        let tile = lock
+            .allocate(size, key.texture_kind())
+            .context("failed to allocate")?;
+        lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
+        drop(lock);
+        let tile_ref = self.make_tile_ref(tile);
+        self.state
+            .lock()
+            .tiles_by_key
+            .insert(key.clone(), tile_ref.clone());
+        Ok(Some(tile_ref))
     }
 
     fn remove(&self, key: &AtlasKey) {
-        let mut lock = self.0.lock();
+        // See `MetalAtlas::remove`.
+        self.state.lock().tiles_by_key.remove(key);
+    }
+}
 
-        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
-            return;
-        };
-
-        let Some(texture_slot) = lock.storage[id.kind].textures.get_mut(id.index as usize) else {
+impl WgpuAtlasState {
+    /// Free a tile's slot. Called from the keep-alive's `Drop`. If the slot
+    /// held the last tile in its texture, the texture itself is returned to
+    /// the free list.
+    fn release_slot(&mut self, id: AtlasTextureId) {
+        let Some(texture_slot) = self.storage[id.kind].textures.get_mut(id.index as usize) else {
             return;
         };
 
         if let Some(mut texture) = texture_slot.take() {
             texture.decrement_ref_count();
             if texture.is_unreferenced() {
-                lock.pending_uploads
+                self.pending_uploads
                     .retain(|upload| upload.id != texture.id);
-                lock.storage[id.kind]
+                self.storage[id.kind]
                     .free_list
                     .push(texture.id.index as usize);
             } else {
@@ -151,9 +195,7 @@ impl PlatformAtlas for WgpuAtlas {
             }
         }
     }
-}
 
-impl WgpuAtlasState {
     fn allocate(
         &mut self,
         size: Size<DevicePixels>,
