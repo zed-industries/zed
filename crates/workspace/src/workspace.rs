@@ -111,7 +111,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{
-    CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
+    CenteredPaddingSettings, DefaultOpenBehavior, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
 };
 
 use sqlez::{
@@ -786,7 +787,11 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window,
+                action.create_new_window
+                    || matches!(
+                        WorkspaceSettings::get_global(cx).default_open_behavior,
+                        DefaultOpenBehavior::NewWindow
+                    ),
                 cx,
             );
         })

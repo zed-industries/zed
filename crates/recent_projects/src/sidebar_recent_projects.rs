@@ -10,13 +10,14 @@ use picker::{
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 use remote::RemoteConnectionOptions;
-use settings::Settings;
+use settings::{DefaultOpenBehavior, Settings};
 use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     MultiWorkspace, OpenMode, OpenOptions, ProjectGroupKey, RecentWorkspace,
-    SerializedWorkspaceLocation, Workspace, WorkspaceDb, notifications::DetachAndPromptErr,
+    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceSettings,
+    notifications::DetachAndPromptErr,
 };
 
 use zed_actions::OpenRemote;
@@ -135,7 +136,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search projects…".into()
+        "Search recent projects…".into()
     }
 
     fn render_editor(
@@ -244,10 +245,23 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             return;
         };
 
+        let open_in_new_window = matches!(
+            WorkspaceSettings::get_global(cx).default_open_behavior,
+            DefaultOpenBehavior::NewWindow
+        );
+
         match &recent_workspace.location {
             SerializedWorkspaceLocation::Local => {
-                if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
-                    let paths = recent_workspace.paths.paths().to_vec();
+                let paths = recent_workspace.paths.paths().to_vec();
+                if open_in_new_window {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
+                                .detach_and_log_err(cx);
+                        })
+                        .log_err();
+                } else if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
@@ -264,7 +278,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 let mut connection = connection.clone();
                 workspace.update(cx, |workspace, cx| {
                     let app_state = workspace.app_state().clone();
-                    let replace_window = window.window_handle().downcast::<MultiWorkspace>();
+                    let replace_window = if open_in_new_window {
+                        None
+                    } else {
+                        window.window_handle().downcast::<MultiWorkspace>()
+                    };
                     let open_options = OpenOptions {
                         requesting_window: replace_window,
                         ..Default::default()
@@ -378,12 +396,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         .child(highlighted_match.render(window, cx)),
                 )
                 .tooltip(move |_, cx| {
-                    Tooltip::with_meta(
-                        "Open Project in This Window",
-                        None,
-                        tooltip_path.clone(),
-                        cx,
-                    )
+                    let tooltip = match WorkspaceSettings::get_global(cx).default_open_behavior {
+                        DefaultOpenBehavior::ExistingWindow => "Open Project in This Window",
+                        DefaultOpenBehavior::NewWindow => "Open Project in New Window",
+                    };
+                    Tooltip::with_meta(tooltip, None, tooltip_path.clone(), cx)
                 })
                 .into_any_element(),
         )
@@ -410,7 +427,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .child(Label::new("Open Local Folders"))
+                                .child(Label::new("Add Local Folders"))
                                 .child(KeyBinding::for_action_in(&open_action, &focus_handle, cx)),
                         )
                         .on_click(cx.listener(move |_, _, window, cx| {
@@ -425,7 +442,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .child(Label::new("Open Remote Folder"))
+                                .child(Label::new("Add Remote Folder"))
                                 .child(KeyBinding::for_action(
                                     &OpenRemote {
                                         from_existing_connection: false,

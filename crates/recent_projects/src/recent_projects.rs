@@ -35,7 +35,7 @@ use picker::{
 use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
-use settings::{Settings, WorktreeId};
+use settings::{DefaultOpenBehavior, Settings, WorktreeId};
 use ui_input::ErasedEditor;
 use workspace::ProjectGroupKey;
 
@@ -468,7 +468,11 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|open_remote: &OpenRemote, cx| {
         let from_existing_connection = open_remote.from_existing_connection;
-        let create_new_window = open_remote.create_new_window;
+        let create_new_window = open_remote.create_new_window
+            || matches!(
+                workspace::WorkspaceSettings::get_global(cx).default_open_behavior,
+                DefaultOpenBehavior::NewWindow
+            );
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             if from_existing_connection {
                 cx.propagate();
@@ -674,6 +678,12 @@ impl RecentProjects {
         let open_folders = get_open_folders(workspace, cx);
         let fs = Some(workspace.app_state().fs.clone());
 
+        let create_new_window = create_new_window
+            || matches!(
+                workspace::WorkspaceSettings::get_global(cx).default_open_behavior,
+                DefaultOpenBehavior::NewWindow
+            );
+
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = RecentProjectsDelegate::new(
                 weak,
@@ -706,6 +716,12 @@ impl RecentProjects {
                 )
             })
             .unwrap_or_else(|| (Vec::new(), None));
+
+        let create_new_window = create_new_window
+            || matches!(
+                workspace::WorkspaceSettings::get_global(cx).default_open_behavior,
+                DefaultOpenBehavior::NewWindow
+            );
 
         cx.new(|cx| {
             let delegate = RecentProjectsDelegate::new(
@@ -1504,6 +1520,21 @@ impl PickerDelegate for RecentProjectsDelegate {
                 };
 
                 let focus_handle = self.focus_handle.clone();
+                let secondary_confirm_tooltip = if self.create_new_window {
+                    "Open Project in This Window"
+                } else {
+                    "Open Project in New Window"
+                };
+                let primary_confirm_tooltip = if self.create_new_window {
+                    "Open Project in New Window"
+                } else {
+                    "Open Project in This Window"
+                };
+                let secondary_confirm_icon = if self.create_new_window {
+                    IconName::Screen
+                } else {
+                    IconName::ArrowUpRight
+                };
 
                 let secondary_actions = h_flex()
                     .gap_px()
@@ -1534,12 +1565,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                     })
                     .child(
-                        IconButton::new("open_new_window", IconName::ArrowUpRight)
+                        IconButton::new("alternate_open", secondary_confirm_icon)
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 move |_, cx| {
                                     Tooltip::for_action_in(
-                                        "Open Project in New Window",
+                                        secondary_confirm_tooltip,
                                         &menu::SecondaryConfirm,
                                         &focus_handle,
                                         cx,
@@ -1595,7 +1626,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 })
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
-                                        "Open Project in This Window",
+                                        primary_confirm_tooltip,
                                         None,
                                         tooltip_path.clone(),
                                         cx,
@@ -1788,6 +1819,29 @@ impl PickerDelegate for RecentProjectsDelegate {
                         })
                         .child(
                             Button::new("activate", "Activate")
+                                .key_binding(KeyBinding::for_action_in(
+                                    &menu::Confirm,
+                                    &focus_handle,
+                                    cx,
+                                ))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                                }),
+                        )
+                    } else if self.create_new_window {
+                        this.child(
+                            Button::new("open_here", "Open")
+                                .key_binding(KeyBinding::for_action_in(
+                                    &menu::SecondaryConfirm,
+                                    &focus_handle,
+                                    cx,
+                                ))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                                }),
+                        )
+                        .child(
+                            Button::new("open_new_window", "New Window")
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &focus_handle,
