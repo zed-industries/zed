@@ -81,10 +81,17 @@ impl ActionStatistics {
 
     pub fn save_action_timing(&mut self) {
         let now = Instant::now();
-        let (action, started) = self
-            .running
-            .take()
-            .expect("only called after `update_running_action`");
+
+        let Some((action, started)) = self.running.take() else {
+            // Actions are ran only on the foreground executor and therefore
+            // sequentially _except_ in tests where they can run concurrently.
+            //
+            // When ran sequentially self.running will always be Some. When ran
+            // concurrently that is no longer true. But that is fine, we do not
+            // need to track action timings in tests.
+            cold_path();
+            return;
+        };
 
         let runtime = now.duration_since(started);
         if runtime >= self.runtime_to_beat {
