@@ -3922,6 +3922,9 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["update-plan-tool".to_string()]);
+    });
     thread.update(cx, |thread, _cx| thread.add_tool(UpdatePlanTool));
     let fake_model = model.as_fake();
 
