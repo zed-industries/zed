@@ -1,11 +1,9 @@
-use agent_skills::{MAX_SKILL_DESCRIPTION_LEN, Skill, SkillIndex, encode_skill_share_link};
+use agent_skills::{Skill, SkillIndex, encode_skill_share_link};
 use fs::RemoveOptions;
 use gpui::{Action as _, App, ClipboardItem, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
-
-use std::borrow::Cow;
 
 use crate::{SettingsUiFile, SettingsWindow};
 
@@ -184,7 +182,19 @@ fn render_skill_row(
                 .detach();
             }))
         })
-        .child(Label::new(skill.name.clone()));
+        .child(Label::new(skill.name.clone()))
+        .when_some(warning_message, |this, warning_message| {
+            this.child(
+                h_flex()
+                    .id(SharedString::from(format!("warning-{}", skill.name)))
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::XSmall)
+                            .color(Color::Warning),
+                    )
+                    .tooltip(Tooltip::text(warning_message)),
+            )
+        });
 
     h_flex()
         .group(group)
@@ -194,35 +204,12 @@ fn render_skill_row(
         .px_8()
         .gap_4()
         .child(
-            v_flex()
-                .gap_0p5()
-                .min_w_0()
-                .flex_1()
-                .child(title)
-                .when_some(warning_message, |this, warning_message| {
-                    this.child(
-                        h_flex()
-                            .id(SharedString::from(format!("warning-{}", skill.name)))
-                            .min_w_0()
-                            .gap_1()
-                            .items_start()
-                            .child(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Warning),
-                            )
-                            .child(
-                                Label::new(warning_message)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Warning),
-                            ),
-                    )
-                })
-                .child(
-                    Label::new(truncated_skill_description(&skill.description))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+            v_flex().gap_0p5().min_w_0().flex_1().child(title).child(
+                Label::new(skill.description.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .line_clamp(5),
+            ),
         )
         .child(
             h_flex()
@@ -312,59 +299,4 @@ fn render_skill_row(
                 ),
         )
         .into_any_element()
-}
-
-fn truncated_skill_description(description: &str) -> Cow<'_, str> {
-    if description.len() <= MAX_SKILL_DESCRIPTION_LEN {
-        return Cow::Borrowed(description);
-    }
-
-    let mut end = MAX_SKILL_DESCRIPTION_LEN;
-    while !description.is_char_boundary(end) {
-        end -= 1;
-    }
-    let hidden_bytes = description.len() - end;
-    let truncated = &description[..end];
-    if hidden_bytes > 100 {
-        Cow::Owned(format!("{truncated}... ({hidden_bytes} bytes not shown)"))
-    } else {
-        Cow::Owned(format!("{truncated}..."))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn truncated_skill_description_preserves_char_boundaries() {
-        let mut description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN - 1);
-        description.push('é');
-
-        let truncated = truncated_skill_description(&description);
-
-        assert!(truncated.starts_with(&"a".repeat(MAX_SKILL_DESCRIPTION_LEN - 1)));
-        assert!(truncated.ends_with("..."));
-    }
-
-    #[test]
-    fn truncated_skill_description_leaves_short_descriptions_untouched() {
-        let description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN);
-        assert_eq!(truncated_skill_description(&description), description);
-    }
-
-    #[test]
-    fn truncated_skill_description_reports_hidden_bytes_over_100() {
-        let description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 101);
-        let truncated = truncated_skill_description(&description);
-        assert!(truncated.ends_with("... (101 bytes not shown)"));
-    }
-
-    #[test]
-    fn truncated_skill_description_omits_byte_count_at_or_under_100() {
-        let description = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 100);
-        let truncated = truncated_skill_description(&description);
-        assert!(truncated.ends_with("..."));
-        assert!(!truncated.contains("not shown"));
-    }
 }
