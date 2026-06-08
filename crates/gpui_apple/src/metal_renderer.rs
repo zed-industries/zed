@@ -4,7 +4,7 @@ use block2::RcBlock;
 use core_graphics::geometry::CGSize;
 use gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
-    PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Size, point, size,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
@@ -120,6 +120,9 @@ pub struct MetalRenderer {
     path_sprites_pipeline_state: metal::RenderPipelineState,
     shadows_pipeline_state: metal::RenderPipelineState,
     quads_pipeline_state: metal::RenderPipelineState,
+    // Same as `quads_pipeline_state` but preserves the destination alpha, used
+    // for quads painted as glass content (see `Window::with_glass_content`).
+    quads_glass_pipeline_state: metal::RenderPipelineState,
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
@@ -327,6 +330,15 @@ impl MetalRenderer {
             "quad_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let quads_glass_pipeline_state = build_pipeline_state_with_blend(
+            &device,
+            &library,
+            "quads_glass",
+            "quad_vertex",
+            "quad_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+            metal::MTLBlendFactor::Zero,
+        );
         let underlines_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -395,6 +407,7 @@ impl MetalRenderer {
             path_sprites_pipeline_state,
             shadows_pipeline_state,
             quads_pipeline_state,
+            quads_glass_pipeline_state,
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
@@ -734,7 +747,13 @@ impl MetalRenderer {
                     self.draw_shadows(range, instance_bindings, viewport_size, command_encoder)
                 }
                 PrimitiveBatch::Quads(range) => {
-                    self.draw_quads(range, instance_bindings, viewport_size, command_encoder)
+                    self.draw_quads(
+                        &scene.quads[range.clone()],
+                        range.start,
+                        instance_bindings,
+                        viewport_size,
+                        command_encoder,
+                    )
                 }
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
@@ -915,7 +934,8 @@ impl MetalRenderer {
 
     fn draw_quads(
         &self,
-        quads: Range<usize>,
+        quads: &[Quad],
+        base_instance: usize,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -924,7 +944,6 @@ impl MetalRenderer {
             return;
         }
 
-        command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -946,13 +965,34 @@ impl MetalRenderer {
             &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
-        command_encoder.draw_primitives_instanced_base_instance(
-            metal::MTLPrimitiveType::Triangle,
-            0,
-            6,
-            quads.len() as u64,
-            quads.start as u64,
-        );
+        // Paint runs of consecutive quads that share the same glass flag, so
+        // glass-content quads use the alpha-preserving pipeline while ordinary
+        // quads use the standard one. Splitting by run keeps draw order intact.
+        let mut start = 0;
+        while start < quads.len() {
+            let is_glass = quads[start].background.is_glass_content();
+            let mut end = start + 1;
+            while end < quads.len() && quads[end].background.is_glass_content() == is_glass {
+                end += 1;
+            }
+
+            let pipeline = if is_glass {
+                &self.quads_glass_pipeline_state
+            } else {
+                &self.quads_pipeline_state
+            };
+            command_encoder.set_render_pipeline_state(pipeline);
+
+            command_encoder.draw_primitives_instanced_base_instance(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                6,
+                (end - start) as u64,
+                (base_instance + start) as u64,
+            );
+
+            start = end;
+        }
     }
 
     fn draw_paths_from_intermediate(
@@ -1346,6 +1386,28 @@ fn build_pipeline_state(
     fragment_fn_name: &str,
     pixel_format: metal::MTLPixelFormat,
 ) -> metal::RenderPipelineState {
+    build_pipeline_state_with_blend(
+        device,
+        library,
+        label,
+        vertex_fn_name,
+        fragment_fn_name,
+        pixel_format,
+        // Standard premultiplied-style "over" blend; the source alpha is added
+        // into the destination so stacked translucent elements accumulate.
+        metal::MTLBlendFactor::One,
+    )
+}
+
+fn build_pipeline_state_with_blend(
+    device: &metal::DeviceRef,
+    library: &metal::LibraryRef,
+    label: &str,
+    vertex_fn_name: &str,
+    fragment_fn_name: &str,
+    pixel_format: metal::MTLPixelFormat,
+    source_alpha_blend_factor: metal::MTLBlendFactor,
+) -> metal::RenderPipelineState {
     let vertex_fn = library
         .get_function(vertex_fn_name, None)
         .expect("error locating vertex function");
@@ -1363,9 +1425,18 @@ fn build_pipeline_state(
     color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
     color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
     color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
-    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
+    // With `Zero`, this quad keeps the destination alpha unchanged (used for
+    // glass content, so its anti-aliased edge does not punch through the
+    // translucent glass surface beneath it).
+    color_attachment.set_source_alpha_blend_factor(source_alpha_blend_factor);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.set_destination_alpha_blend_factor(
+        if source_alpha_blend_factor == metal::MTLBlendFactor::Zero {
+            metal::MTLBlendFactor::One
+        } else {
+            metal::MTLBlendFactor::OneMinusSourceAlpha
+        },
+    );
 
     device
         .new_render_pipeline_state(&descriptor)
