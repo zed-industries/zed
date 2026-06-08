@@ -84,10 +84,10 @@ When your changes affect UI, consult this checklist:
 
 - Do all keyboard shortcuts work as intended?
 - Are shortcuts discoverable (tooltips, menus, docs)?
-- Do all mouse actions work (drag, context menus, resizing, scrolling)?
-- Does the feature look great in light mode and dark mode?
-- Are hover states, focus rings, and active states clear and consistent?
 - Is it usable without a mouse (keyboard-only navigation)?
+- Do all mouse actions work (drag, context menus, resizing, scrolling)?
+- Does the feature look great in light and dark mode themes?
+- Are hover states and focus indicators clear and consistent?
 
 **Responsiveness**
 
@@ -100,7 +100,7 @@ When your changes affect UI, consult this checklist:
 
 **Platform Consistency**
 
-- Is the feature fully usable on Windows, Linux, and Mac?
+- Is the feature fully usable on Windows, Linux, and macOS?
 - Does it respect system-level settings (fonts, scaling, input methods)?
 
 **Performance**
@@ -113,6 +113,7 @@ When your changes affect UI, consult this checklist:
 **Consistency**
 
 - Does it match Zed’s design language (spacing, typography, icons)?
+  - Make sure to visit [the icon design guidelines](https://github.com/zed-industries/zed/blob/main/crates/icons/README.md)
 - Are terminology, labels, and tone consistent with the rest of Zed?
 - Are interactions consistent (e.g., how tabs close, how modals dismiss, how errors show)?
 
