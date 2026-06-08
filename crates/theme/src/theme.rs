@@ -51,7 +51,7 @@ pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
 pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
 
 /// Styling helpers for elements that follow client-side window decorations.
-pub trait ClientDecorations: Styled + Sized {
+pub trait ClientDecorationsExt: Styled {
     /// Rounds each corner whose two adjacent edges are both untiled.
     fn rounded_client_corners(mut self, tiling: Tiling) -> Self {
         if !tiling.top && !tiling.left {
@@ -70,7 +70,7 @@ pub trait ClientDecorations: Styled + Sized {
     }
 }
 
-impl<T: Styled + Sized> ClientDecorations for T {}
+impl<T: Styled> ClientDecorationsExt for T {}
 
 /// The appearance of the theme.
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]

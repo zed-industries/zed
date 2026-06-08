@@ -5,7 +5,7 @@ use gpui::{
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
-use theme::ClientDecorations;
+use theme::ClientDecorationsExt;
 use theme_settings::ThemeSettings;
 use ui::{FluentBuilder, TintColor, prelude::*};
 use workspace::WorkspaceSettings;
@@ -158,8 +158,9 @@ impl Render for ZedPromptRenderer {
         let decorations = window.window_decorations();
         let inset = window.client_inset().unwrap_or(Pixels::ZERO);
 
-        div().size_full().occlude().child(
+        div().size_full().child(
             v_flex()
+                .occlude()
                 .absolute()
                 .inset_0()
                 .bg(gpui::black().opacity(0.2))
