@@ -719,8 +719,12 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let install_result = if let Some(result) = Self::test_install(&target_path, cx) {
-            result
+        let install_result = if cfg!(test) {
+            match cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
+            .map(|test_install| test_install(target_path, cx)) {
+                Some(result) => result,
+                None => return Ok(()),
+            }
         } else {
             let running_app_path = cx.update(|cx| cx.app_path())?;
             let background_executor = cx.background_executor().clone();
