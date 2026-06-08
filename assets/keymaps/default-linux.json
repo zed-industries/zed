@@ -261,7 +261,7 @@
       "ctrl-n": "agent::NewThread",
       "ctrl--": "pane::GoBack",
       "ctrl-alt-p": "agent::ManageProfiles",
-      "ctrl-alt-l": "agent::OpenRulesLibrary",
+      "ctrl-alt-l": "agent::ManageSkills",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",

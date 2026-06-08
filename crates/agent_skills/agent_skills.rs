@@ -2,9 +2,10 @@ use anyhow::{Context as _, Result};
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{Global, SharedString};
+use gpui::{App, Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use url::Url;
 use util::paths::component_matches_ignore_ascii_case;
@@ -195,6 +196,11 @@ pub struct ProjectSkillGroup {
 
 impl Global for SkillIndex {}
 
+/// Rescan skill agent skill directories when skills are created or modified via UI
+pub struct SkillsUpdatedHook(pub Rc<dyn Fn(&mut App)>);
+
+impl Global for SkillsUpdatedHook {}
+
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
@@ -204,7 +210,7 @@ pub struct SkillMetadata {
     pub disable_model_invocation: bool,
 }
 
-/// Minimal skill info for system prompt (not full content).
+/// Minimal skill info for system prompt.
 ///
 /// `Serialize` is required for handlebars rendering of the system prompt
 /// template (see `ProjectContext` in `prompt_store`). `PartialEq, Eq` lets
