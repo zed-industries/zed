@@ -274,21 +274,18 @@ impl Component for Tooltip {
         ComponentScope::DataDisplay
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A tooltip that appears when hovering over an element, optionally showing a keybinding or additional metadata.",
-        )
+    fn description() -> &'static str {
+        "A tooltip that appears when hovering over an element, \
+        optionally showing a keybinding or additional metadata."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            example_group(vec![single_example(
-                "Text only",
-                Button::new("delete-example", "Delete")
-                    .tooltip(Tooltip::text("This is a tooltip!"))
-                    .into_any_element(),
-            )])
-            .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        example_group(vec![single_example(
+            "Text only",
+            Button::new("delete-example", "Delete")
+                .tooltip(Tooltip::text("This is a tooltip!"))
+                .into_any_element(),
+        )])
+        .into_any_element()
     }
 }

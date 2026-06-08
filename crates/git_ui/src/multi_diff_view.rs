@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
-use project::Project;
+use project::{Project, ProjectPath};
 use std::{
     any::{Any, TypeId},
     path::{Path, PathBuf},
@@ -311,6 +311,10 @@ impl Item for MultiDiffView {
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(

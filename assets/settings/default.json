@@ -521,14 +521,6 @@
     "button_layout": "platform_default",
   },
   "audio": {
-    // Automatically increase or decrease you microphone's volume. This affects how
-    // loud you sound to others.
-    //
-    // Recommended: off (default)
-    // Microphones are too quite in zed, until everyone is on experimental
-    // audio and has auto speaker volume on this will make you very loud
-    // compared to other speakers.
-    "experimental.auto_microphone_volume": false,
     // Select specific output audio device.
     // `null` means use system default.
     // Any unrecognized output device will fall back to system default.
@@ -1116,6 +1108,7 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
+          "create_thread": true,
           "delete_path": true,
           "diagnostics": true,
           "apply_code_action": true,
@@ -1126,6 +1119,7 @@
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
+          "list_agents_and_models": true,
           "list_directory": true,
           "move_path": true,
           "rename_symbol": true,
@@ -1134,8 +1128,6 @@
           "skill": true,
           "spawn_agent": true,
           "terminal": true,
-          "update_plan": true,
-          "update_title": true,
           "search_web": true,
         },
       },
@@ -1144,8 +1136,10 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "create_thread": true,
           "diagnostics": true,
           "fetch": true,
+          "list_agents_and_models": true,
           "list_directory": true,
           "find_path": true,
           "find_references": true,
@@ -1155,8 +1149,6 @@
           "grep": true,
           "skill": true,
           "spawn_agent": true,
-          "update_plan": true,
-          "update_title": true,
           "search_web": true,
         },
       },
@@ -1500,6 +1492,10 @@
   // 4. Draw a background behind the color text..
   //      "lsp_document_colors": "background",
   "lsp_document_colors": "inlay",
+  // Whether to query and display LSP `textDocument/documentLink` links in the editor.
+  //
+  // Default: true
+  "lsp_document_links": true,
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show the project diagnostics button in the status bar.
@@ -1555,6 +1551,13 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // When to scan content of linked directories.
+  // May take 2 values:
+  //  1. Only scan symlinked directories when they've been expanded in the workspace:
+  //         "scan_symlinks": "expanded"
+  //  2. Always scan symlinked directories:
+  //         "scan_symlinks": "always"
+  "scan_symlinks": "expanded",
   // Globs to match files that will be considered "hidden". These files can be hidden from the
   // project panel by toggling the "hide_hidden" setting.
   "hidden_files": ["**/.*"],
@@ -2132,7 +2135,7 @@
       },
     },
     "CSharp": {
-      "language_servers": ["roslyn", "!omnisharp", "..."],
+      "language_servers": ["roslyn", "!csharp-ls", "!omnisharp", "..."],
     },
     "CSS": {
       "prettier": {

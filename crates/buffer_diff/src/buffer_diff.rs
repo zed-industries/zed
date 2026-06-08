@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
-use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
+use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
 use language::{
     Capability, Diff, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
@@ -1132,17 +1132,6 @@ fn compute_hunks(
     if let Some((diff_base, diff_base_rope)) = diff_base {
         let buffer_text = buffer.as_rope().to_string();
 
-        let mut options = GitOptions::default();
-        options.context_lines(0);
-        let patch = GitPatch::from_buffers(
-            diff_base.as_bytes(),
-            None,
-            buffer_text.as_bytes(),
-            None,
-            Some(&mut options),
-        )
-        .log_err();
-
         // A common case in Zed is that the empty buffer is represented as just a newline,
         // but if we just compute a naive diff you get a "preserved" line in the middle,
         // which is a bit odd.
@@ -1161,19 +1150,14 @@ fn compute_hunks(
             return tree;
         }
 
-        if let Some(patch) = patch {
-            let mut divergence = 0;
-            for hunk_index in 0..patch.num_hunks() {
-                let hunk = process_patch_hunk(
-                    &patch,
-                    hunk_index,
-                    &diff_base_rope,
-                    buffer,
-                    &mut divergence,
-                    diff_options.as_ref(),
-                );
-                tree.push(hunk, buffer);
-            }
+        let input = InternedInput::new(
+            lines_with_terminator(diff_base.as_ref()),
+            lines_with_terminator(buffer_text.as_str()),
+        );
+        let sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
+        let hunks = imara_diff::diff(Algorithm::Histogram, &input, sink);
+        for hunk in hunks {
+            tree.push(hunk, buffer);
         }
     } else {
         tree.push(
@@ -1189,6 +1173,115 @@ fn compute_hunks(
     }
 
     tree
+}
+struct HunkSink<'a> {
+    diff_base_rope: &'a Rope,
+    buffer: &'a text::BufferSnapshot,
+    diff_options: Option<&'a DiffOptions>,
+    old_line_offsets: Vec<usize>,
+    hunks: Vec<InternalDiffHunk>,
+}
+
+impl<'a> HunkSink<'a> {
+    fn new(
+        diff_base: &'a str,
+        diff_base_rope: &'a Rope,
+        buffer: &'a text::BufferSnapshot,
+        diff_options: Option<&'a DiffOptions>,
+    ) -> Self {
+        let old_line_offsets = Self::compute_line_offsets(diff_base);
+        Self {
+            diff_base_rope,
+            buffer,
+            diff_options,
+            old_line_offsets,
+            hunks: Vec::new(),
+        }
+    }
+
+    fn compute_line_offsets(text: &str) -> Vec<usize> {
+        let mut offsets = vec![0];
+        let mut offset = 0;
+        for line in lines_with_terminator(text) {
+            offset += line.len();
+            offsets.push(offset);
+        }
+        offsets
+    }
+}
+
+impl Sink for HunkSink<'_> {
+    type Out = Vec<InternalDiffHunk>;
+
+    fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
+        let old_start = before.start as usize;
+        let old_end = before.end as usize;
+        let new_start = after.start as usize;
+        let new_end = after.end as usize;
+
+        let diff_base_byte_range = self.old_line_offsets[old_start]..self.old_line_offsets[old_end];
+
+        let buffer_row_range = (new_start as u32)..(new_end as u32);
+
+        let start = Point::new(buffer_row_range.start, 0);
+        let end = Point::new(buffer_row_range.end, 0);
+        let buffer_range = self.buffer.anchor_before(start)..self.buffer.anchor_before(end);
+
+        let base_line_count = old_end - old_start;
+        let buffer_line_count = new_end - new_start;
+
+        let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = self.diff_options
+            && !buffer_row_range.is_empty()
+            && base_line_count == buffer_line_count
+            && diff_options.max_word_diff_line_count >= base_line_count
+        {
+            let base_text: String = self
+                .diff_base_rope
+                .chunks_in_range(diff_base_byte_range.clone())
+                .collect();
+            let buffer_text: String = self.buffer.text_for_range(buffer_range.clone()).collect();
+
+            let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
+                &base_text,
+                &buffer_text,
+                DiffOptions {
+                    language_scope: diff_options.language_scope.clone(),
+                    ..*diff_options
+                },
+            );
+
+            let buffer_start_offset = buffer_range.start.to_offset(self.buffer);
+            let buffer_word_diffs = buffer_word_diffs_relative
+                .into_iter()
+                .map(|range| {
+                    let start = self.buffer.anchor_after(buffer_start_offset + range.start);
+                    let end = self.buffer.anchor_after(buffer_start_offset + range.end);
+                    start..end
+                })
+                .collect();
+
+            (base_word_diffs, buffer_word_diffs)
+        } else {
+            (Vec::default(), Vec::default())
+        };
+
+        self.hunks.push(InternalDiffHunk {
+            buffer_range,
+            diff_base_byte_range: diff_base_byte_range.clone(),
+            diff_base_point_range: self
+                .diff_base_rope
+                .offset_to_point(diff_base_byte_range.start)
+                ..self
+                    .diff_base_rope
+                    .offset_to_point(diff_base_byte_range.end),
+            base_word_diffs,
+            buffer_word_diffs,
+        });
+    }
+
+    fn finish(self) -> Self::Out {
+        self.hunks
+    }
 }
 
 fn compare_hunks(
@@ -1380,125 +1473,6 @@ fn compare_hunks(
         changed_range,
         base_text_changed_range,
         extended_range,
-    }
-}
-
-fn process_patch_hunk(
-    patch: &GitPatch<'_>,
-    hunk_index: usize,
-    diff_base: &Rope,
-    buffer: &text::BufferSnapshot,
-    buffer_row_divergence: &mut i64,
-    diff_options: Option<&DiffOptions>,
-) -> InternalDiffHunk {
-    let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
-    assert!(line_item_count > 0);
-
-    let mut first_deletion_buffer_row: Option<u32> = None;
-    let mut buffer_row_range: Option<Range<u32>> = None;
-    let mut diff_base_byte_range: Option<Range<usize>> = None;
-    let mut first_addition_old_row: Option<u32> = None;
-
-    for line_index in 0..line_item_count {
-        let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
-        let kind = line.origin_value();
-        let content_offset = line.content_offset() as isize;
-        let content_len = line.content().len() as isize;
-        match kind {
-            GitDiffLineType::Addition => {
-                if first_addition_old_row.is_none() {
-                    first_addition_old_row = Some(
-                        (line.new_lineno().unwrap() as i64 - *buffer_row_divergence - 1) as u32,
-                    );
-                }
-                *buffer_row_divergence += 1;
-                let row = line.new_lineno().unwrap().saturating_sub(1);
-
-                match &mut buffer_row_range {
-                    Some(Range { end, .. }) => *end = row + 1,
-                    None => buffer_row_range = Some(row..row + 1),
-                }
-            }
-            GitDiffLineType::Deletion => {
-                let end = content_offset + content_len;
-
-                match &mut diff_base_byte_range {
-                    Some(head_byte_range) => head_byte_range.end = end as usize,
-                    None => diff_base_byte_range = Some(content_offset as usize..end as usize),
-                }
-
-                if first_deletion_buffer_row.is_none() {
-                    let old_row = line.old_lineno().unwrap().saturating_sub(1);
-                    let row = old_row as i64 + *buffer_row_divergence;
-                    first_deletion_buffer_row = Some(row as u32);
-                }
-
-                *buffer_row_divergence -= 1;
-            }
-            _ => {}
-        }
-    }
-
-    let buffer_row_range = buffer_row_range.unwrap_or_else(|| {
-        // Pure deletion hunk without addition.
-        let row = first_deletion_buffer_row.unwrap();
-        row..row
-    });
-    let diff_base_byte_range = diff_base_byte_range.unwrap_or_else(|| {
-        // Pure addition hunk without deletion.
-        let row = first_addition_old_row.unwrap();
-        let offset = diff_base.point_to_offset(Point::new(row, 0));
-        offset..offset
-    });
-
-    let start = Point::new(buffer_row_range.start, 0);
-    let end = Point::new(buffer_row_range.end, 0);
-    let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
-
-    let base_line_count = line_item_count.saturating_sub(buffer_row_range.len());
-
-    let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
-        && !buffer_row_range.is_empty()
-        && base_line_count == buffer_row_range.len()
-        && diff_options.max_word_diff_line_count >= base_line_count
-    {
-        let base_text: String = diff_base
-            .chunks_in_range(diff_base_byte_range.clone())
-            .collect();
-
-        let buffer_text: String = buffer.text_for_range(buffer_range.clone()).collect();
-
-        let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
-            &base_text,
-            &buffer_text,
-            DiffOptions {
-                language_scope: diff_options.language_scope.clone(),
-                ..*diff_options
-            },
-        );
-
-        let buffer_start_offset = buffer_range.start.to_offset(buffer);
-        let buffer_word_diffs = buffer_word_diffs_relative
-            .into_iter()
-            .map(|range| {
-                let start = buffer.anchor_after(buffer_start_offset + range.start);
-                let end = buffer.anchor_after(buffer_start_offset + range.end);
-                start..end
-            })
-            .collect();
-
-        (base_word_diffs, buffer_word_diffs)
-    } else {
-        (Vec::default(), Vec::default())
-    };
-
-    InternalDiffHunk {
-        buffer_range,
-        diff_base_byte_range: diff_base_byte_range.clone(),
-        diff_base_point_range: diff_base.offset_to_point(diff_base_byte_range.start)
-            ..diff_base.offset_to_point(diff_base_byte_range.end),
-        base_word_diffs,
-        buffer_word_diffs,
     }
 }
 
@@ -2194,7 +2168,7 @@ mod tests {
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }

@@ -1,7 +1,7 @@
 use gpui::{Action, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -17,7 +17,7 @@ pub fn init() {}
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens a zed:// URL within the application.
@@ -25,7 +25,7 @@ pub struct OpenBrowser {
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens the keymap to either add a keybinding or change an existing one
@@ -67,6 +67,8 @@ actions!(
         OpenDocs,
         /// Views open source licenses.
         OpenLicenses,
+        /// Opens the Zed status page.
+        OpenStatusPage,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -141,6 +143,20 @@ pub struct IncreaseBufferFontSize {
 pub struct OpenSettingsAt {
     /// A path to a specific setting (e.g. `theme.mode`)
     pub path: String,
+    /// The settings file to select before opening `path`. When omitted, the
+    /// existing settings file selection is preserved.
+    #[serde(default)]
+    pub target: Option<OpenSettingsAtTarget>,
+}
+
+/// `OpenSettingsAt` path of the agent skills page in the settings UI.
+pub const AGENT_SKILLS_SETTINGS_PATH: &str = "agent.skills";
+
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenSettingsAtTarget {
+    User,
+    Project { worktree_id: usize },
 }
 
 /// Resets the buffer font size to the default value.
@@ -262,6 +278,11 @@ pub enum NewWorktreeBranchTarget {
     CurrentBranch,
     /// Create a detached worktree at the tip of an existing branch.
     ExistingBranch { name: String },
+    /// Create a detached worktree at the tip of a remote-tracking branch.
+    RemoteBranch {
+        remote_name: String,
+        branch_name: String,
+    },
 }
 
 /// Creates a new git worktree and switches the workspace to it.
@@ -559,7 +580,6 @@ pub mod assistant {
     use gpui::{Action, actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
-    use uuid::Uuid;
 
     actions!(
         agent,
@@ -571,17 +591,19 @@ pub mod assistant {
             FocusAgent,
             /// Opens the skill creator window for creating a new skill.
             OpenSkillCreator,
+            /// Opens the skill creator window to import a skill from a GitHub URL.
+            CreateSkillFromUrl,
+            /// Opens the user-global AGENTS.md rules file.
+            #[action(name = "OpenGlobalAGENTS.mdRules")]
+            OpenGlobalAgentsMdRules,
+            /// Opens the project AGENTS.md rules file.
+            #[action(name = "OpenProjectAGENTS.mdRules")]
+            OpenProjectAgentsMdRules,
+            /// Opens the skills manager in the settings window.
+            #[action(deprecated_aliases = ["agent::OpenRulesLibrary", "assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
+            ManageSkills,
         ]
     );
-
-    /// Opens the rules library for managing agent rules and prompts.
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-    #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
-    #[serde(deny_unknown_fields)]
-    pub struct OpenRulesLibrary {
-        #[serde(skip)]
-        pub prompt_to_select: Option<Uuid>,
-    }
 
     /// Deploys the assistant interface with the specified configuration.
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema, Action)]

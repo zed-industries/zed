@@ -166,7 +166,13 @@ impl Editor {
             provider: Arc::new(provider),
         });
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(false, false, window, cx);
+        self.refresh_edit_prediction(
+            false,
+            false,
+            EditPredictionRequestTrigger::Other,
+            window,
+            cx,
+        );
     }
 
     pub fn set_edit_predictions_hidden_for_vim_mode(
@@ -180,7 +186,13 @@ impl Editor {
             if hidden {
                 self.update_visible_edit_prediction(window, cx);
             } else {
-                self.refresh_edit_prediction(true, false, window, cx);
+                self.refresh_edit_prediction(
+                    true,
+                    false,
+                    EditPredictionRequestTrigger::Other,
+                    window,
+                    cx,
+                );
             }
         }
     }
@@ -211,7 +223,13 @@ impl Editor {
         if let Some(false) = show_edit_predictions {
             self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
         } else {
-            self.refresh_edit_prediction(false, true, window, cx);
+            self.refresh_edit_prediction(
+                false,
+                true,
+                EditPredictionRequestTrigger::Explicit,
+                window,
+                cx,
+            );
         }
     }
 
@@ -219,6 +237,7 @@ impl Editor {
         &mut self,
         debounce: bool,
         user_requested: bool,
+        trigger: EditPredictionRequestTrigger,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
@@ -251,8 +270,13 @@ impl Editor {
             return None;
         }
 
-        self.edit_prediction_provider()?
-            .refresh(buffer, cursor_buffer_position, debounce, cx);
+        self.edit_prediction_provider()?.refresh(
+            buffer,
+            cursor_buffer_position,
+            debounce,
+            trigger,
+            cx,
+        );
         Some(())
     }
 
@@ -311,7 +335,13 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if !self.has_active_edit_prediction() {
-            self.refresh_edit_prediction(false, true, window, cx);
+            self.refresh_edit_prediction(
+                false,
+                true,
+                EditPredictionRequestTrigger::Explicit,
+                window,
+                cx,
+            );
             return;
         }
 
@@ -457,7 +487,13 @@ impl Editor {
 
                         self.update_visible_edit_prediction(window, cx);
                         if self.active_edit_prediction.is_none() {
-                            self.refresh_edit_prediction(true, true, window, cx);
+                            self.refresh_edit_prediction(
+                                true,
+                                true,
+                                EditPredictionRequestTrigger::PredictionAccepted,
+                                window,
+                                cx,
+                            );
                         }
                         cx.notify();
                     }
@@ -510,7 +546,13 @@ impl Editor {
                             });
 
                             self.replace_selections(&text_to_insert, None, window, cx, false);
-                            self.refresh_edit_prediction(true, true, window, cx);
+                            self.refresh_edit_prediction(
+                                true,
+                                true,
+                                EditPredictionRequestTrigger::PredictionPartiallyAccepted,
+                                window,
+                                cx,
+                            );
                             cx.notify();
                         } else {
                             self.accept_partial_edit_prediction(
@@ -1956,6 +1998,7 @@ impl Editor {
 
         let mut element = h_flex()
             .items_start()
+            .debug_selector(|| "edit_prediction_diff_popover".into())
             .child(
                 h_flex()
                     .bg(cx.theme().colors().editor_background)
@@ -1979,6 +2022,7 @@ impl Editor {
                         offset: point(px(1.), px(1.)),
                         blur_radius: px(2.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                     .border(BORDER_WIDTH)
@@ -2022,6 +2066,7 @@ impl Editor {
                 right: -right_margin,
                 ..Default::default()
             });
+        let popover_right_bound = cmp::min(text_bounds.right(), viewport_bounds.right());
 
         let x_after_longest = Pixels::from(
             ScrollPixelOffset::from(
@@ -2031,14 +2076,12 @@ impl Editor {
 
         let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-        // Fully visible if it can be displayed within the window (allow overlapping other
-        // panes). However, this is only allowed if the popover starts within text_bounds.
         let can_position_to_the_right = x_after_longest < text_bounds.right()
-            && x_after_longest + element_bounds.width < viewport_bounds.right();
+            && element_bounds.width <= popover_right_bound - text_bounds.left();
 
         let mut origin = if can_position_to_the_right {
             point(
-                x_after_longest,
+                x_after_longest.min(popover_right_bound - element_bounds.width),
                 text_bounds.origin.y
                     + Pixels::from(
                         edit_start.row().as_f64() * ScrollPixelOffset::from(line_height)

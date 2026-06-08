@@ -12,9 +12,9 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -161,8 +161,6 @@ impl FakeGitRepository {
 }
 
 impl GitRepository for FakeGitRepository {
-    fn reload_index(&self) {}
-
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         let fut = self.with_state_async(false, move |state| {
             state
@@ -489,11 +487,11 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
+    fn stash_entries(&self) -> BoxFuture<'static, Result<git::stash::GitStash>> {
         self.with_state_async(false, |state| Ok(state.stash_entries.clone()))
     }
 
-    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
+    fn branches(&self) -> BoxFuture<'_, Result<git::repository::BranchesScanResult>> {
         self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
             let mut branches = state
@@ -518,7 +516,7 @@ impl GitRepository for FakeGitRepository {
             // compute snapshot expects these to be sorted by ref_name
             // because that's what git itself does
             branches.sort_by(|a, b| a.ref_name.cmp(&b.ref_name));
-            Ok(branches)
+            Ok(branches.into())
         })
     }
 
@@ -1127,7 +1125,7 @@ impl GitRepository for FakeGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
+    ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
             if s.is_empty() {
                 0
@@ -1502,6 +1500,14 @@ impl GitRepository for FakeGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        _commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
+        async move { Ok(vec![FileHistoryChangedFileSets::default(); paths.len()]) }.boxed()
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
