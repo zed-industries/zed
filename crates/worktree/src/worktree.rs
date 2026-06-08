@@ -1177,7 +1177,6 @@ impl LocalWorktree {
                 };
                 let fs_case_sensitive = fs.is_case_sensitive().await;
 
-                let is_single_file = snapshot.snapshot.root_dir().is_none();
                 let mut scanner = BackgroundScanner {
                     fs,
                     fs_case_sensitive,
@@ -1203,7 +1202,6 @@ impl LocalWorktree {
                     settings,
                     watcher,
                     track_git_repositories,
-                    is_single_file,
                     defer_watch,
                 };
 
@@ -3983,9 +3981,6 @@ struct BackgroundScanner {
     settings: WorktreeSettings,
     share_private_files: bool,
     track_git_repositories: bool,
-    /// Whether this is a single-file worktree (root is a file, not a directory).
-    /// Used to determine if we should give up after repeated canonicalization failures.
-    is_single_file: bool,
     defer_watch: bool,
 }
 
@@ -4167,20 +4162,28 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            self.process_events(
-                paths
-                    .into_iter()
-                    .filter(|event| event.kind.is_some())
-                    .collect(),
-            )
-            .await;
+            if !self
+                .process_events(
+                    paths
+                        .into_iter()
+                        .filter(|event| event.kind.is_some())
+                        .collect(),
+                )
+                .await
+            {
+                return;
+            }
         }
         if let Some(abs_path) = containing_git_repository {
-            self.process_events(vec![PathEvent {
-                path: abs_path,
-                kind: Some(fs::PathEventKind::Changed),
-            }])
-            .await;
+            if !self
+                .process_events(vec![PathEvent {
+                    path: abs_path,
+                    kind: Some(fs::PathEventKind::Changed),
+                }])
+                .await
+            {
+                return;
+            }
         }
 
         // Continue processing events until the worktree is dropped.
@@ -4210,12 +4213,15 @@ impl BackgroundScanner {
                             state.snapshot.absolutize(&request.path)
                         };
 
-                        if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
-                            self.process_events(vec![PathEvent {
-                                path: abs_path,
-                                kind: Some(fs::PathEventKind::Changed),
-                            }])
-                            .await;
+                        if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err()
+                            && !self
+                                .process_events(vec![PathEvent {
+                                    path: abs_path,
+                                    kind: Some(fs::PathEventKind::Changed),
+                                }])
+                                .await
+                        {
+                            return;
                         }
                     }
                     self.send_status_update(false, request.done, &[]).await;
@@ -4226,7 +4232,9 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().filter(|event| event.kind.is_some()).collect()).await;
+                    if !self.process_events(paths.into_iter().filter(|event| event.kind.is_some()).collect()).await {
+                        return;
+                    }
                 }
 
                 _ = global_gitignore_events.next().fuse() => {
@@ -4347,7 +4355,7 @@ impl BackgroundScanner {
         events
     }
 
-    async fn process_events(&self, mut events: Vec<PathEvent>) {
+    async fn process_events(&self, mut events: Vec<PathEvent>) -> bool {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
@@ -4380,21 +4388,15 @@ impl BackgroundScanner {
                         .unbounded_send(ScanState::RootUpdated { new_path })
                         .ok();
                 } else {
-                    log::error!("root path could not be canonicalized: {err:#}");
-
-                    // For single-file worktrees, if we can't canonicalize and the file handle
-                    // fallback also failed, the file is gone - close the worktree
-                    if self.is_single_file {
-                        log::info!(
-                            "single-file worktree root {:?} no longer exists, marking as deleted",
-                            root_path.as_path()
-                        );
-                        self.status_updates_tx
-                            .unbounded_send(ScanState::RootDeleted)
-                            .ok();
-                    }
+                    log::info!(
+                        "worktree root {:?} no longer exists, marking as deleted: {err:#}",
+                        root_path.as_path()
+                    );
+                    self.status_updates_tx
+                        .unbounded_send(ScanState::RootDeleted)
+                        .ok();
                 }
-                return;
+                return false;
             }
         };
 
@@ -4603,7 +4605,7 @@ impl BackgroundScanner {
         }
 
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
-            return;
+            return true;
         }
 
         if !work_dirs_needing_exclude_update.is_empty() {
@@ -4671,6 +4673,7 @@ impl BackgroundScanner {
         }
         self.send_status_update(false, SmallVec::new(), &relative_paths)
             .await;
+        true
     }
 
     async fn update_global_gitignore(&self, abs_path: &Path) {

@@ -922,7 +922,7 @@ impl WorktreeStore {
         self.send_project_updates(cx);
 
         let handle_id = worktree.entity_id();
-        cx.subscribe(worktree, |_, worktree, event, cx| {
+        cx.subscribe(worktree, |this, worktree, event, cx| {
             let worktree_id = worktree.read(cx).id();
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
@@ -941,8 +941,7 @@ impl WorktreeStore {
                     cx.emit(WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, *id))
                 }
                 worktree::Event::Deleted => {
-                    // The worktree root itself has been deleted (for single-file worktrees)
-                    // The worktree will be removed via the observe_release callback
+                    this.remove_worktree(worktree_id, cx);
                 }
                 worktree::Event::UpdatedRootRepoCommonDir { .. } => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(

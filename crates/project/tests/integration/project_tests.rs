@@ -27,7 +27,7 @@ use buffer_diff::{
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
 use fs::{FakeFs, PathEventKind};
-use futures::{StreamExt, future};
+use futures::{FutureExt as _, StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
@@ -5955,6 +5955,42 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
                 rel_path("d/file4"),
             ]
         );
+    });
+}
+
+#[gpui::test]
+async fn test_removed_worktree_root_is_removed_from_project(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        "file.txt": "contents"
+    }));
+    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let mut project_events = cx.events(&project);
+
+    std::fs::remove_dir_all(dir.path()).unwrap();
+
+    let removed = async {
+        while let Some(event) = project_events.next().await {
+            if matches!(event, Event::WorktreeRemoved(id) if id == worktree_id) {
+                break;
+            }
+        }
+    };
+    let timeout = cx
+        .background_executor
+        .timer(std::time::Duration::from_secs(5));
+    futures::select_biased! {
+        _ = removed.fuse() => {}
+        _ = timeout.fuse() => panic!("timed out waiting for removed worktree root to be removed from project"),
+    }
+
+    project.read_with(cx, |project, cx| {
+        assert!(project.worktrees(cx).next().is_none());
     });
 }
 
