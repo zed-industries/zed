@@ -198,7 +198,7 @@ impl PartialEq<str> for LanguageServerName {
 pub enum Subscription {
     Notification {
         method: &'static str,
-        notification_handlers: Option<Arc<Mutex<HashMap<&'static str, NotificationHandler>>>>,
+        notification_handlers: Option<Weak<Mutex<HashMap<&'static str, NotificationHandler>>>>,
     },
     Io {
         id: i32,
@@ -1217,7 +1217,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: Some(self.notification_handlers.clone()),
+            notification_handlers: Some(Arc::downgrade(&self.notification_handlers)),
         }
     }
 
@@ -1296,7 +1296,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: Some(self.notification_handlers.clone()),
+            notification_handlers: Some(Arc::downgrade(&self.notification_handlers)),
         }
     }
 
@@ -1803,7 +1803,7 @@ impl Drop for Subscription {
                 method,
                 notification_handlers,
             } => {
-                if let Some(handlers) = notification_handlers {
+                if let Some(handlers) = notification_handlers.as_ref().and_then(|h| h.upgrade()) {
                     handlers.lock().remove(method);
                 }
             }
@@ -2172,6 +2172,75 @@ mod tests {
         drop(server);
         cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
+    }
+
+    #[gpui::test]
+    async fn test_subscription_leaks_handlers_after_server_drop(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, mut fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        let detached_payload = Arc::new(());
+        let detached_payload_handle = Arc::downgrade(&detached_payload);
+        server
+            .on_notification::<notification::ShowMessage, _>(move |_, _| {
+                let _payload = &detached_payload;
+            })
+            .detach();
+
+        let retained_payload = Arc::new(());
+        let retained_payload_handle = Arc::downgrade(&retained_payload);
+        let subscription =
+            server.on_notification::<notification::PublishDiagnostics, _>(move |_, _| {
+                let _payload = &retained_payload;
+            });
+
+        let server = cx
+            .update(|cx| {
+                let params = server.default_initialize_params(false, false, cx);
+                let configuration = DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                server.initialize(
+                    params,
+                    configuration.into(),
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        drop(server);
+        cx.run_until_parked();
+        fake.receive_notification::<notification::Exit>().await;
+        drop(fake);
+        cx.run_until_parked();
+
+        assert!(
+            detached_payload_handle.upgrade().is_none(),
+            "detached handler was kept alive after the server was dropped, \
+            because an unrelated retained subscription pins the whole handler map"
+        );
+        assert!(
+            retained_payload_handle.upgrade().is_none(),
+            "handler with a retained subscription was kept alive after the server was dropped"
+        );
+
+        drop(subscription);
+        assert!(detached_payload_handle.upgrade().is_none());
+        assert!(retained_payload_handle.upgrade().is_none());
     }
 
     #[gpui::test]
