@@ -19,7 +19,7 @@ use crate::{
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
         MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes,
-        ScrollbarDiagnostics, ShowMinimap,
+        ScrollbarDiagnostics, ShowMinimap, CurrentColumnHighlight
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -1742,7 +1742,10 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         cx: &mut App,
     ) -> Vec<(DisplayPoint, Hsla)> {
-        let editor = self.editor.read(cx);
+        let Some(editor_entity) = self.editor_with_selections(cx) else {
+            return Vec::new();
+        };
+        let editor = editor_entity.read(cx);
         let mut cursors = Vec::new();
         let mut skip_local = false;
         let mut add_cursor = |anchor: Anchor, color| {
@@ -6051,6 +6054,33 @@ impl EditorElement {
                             };
                             window.paint_quad(fill(bounds, active_line_bg));
                         }
+                    }
+                }
+
+                if layout.position_map.snapshot.current_column_highlight
+                    == CurrentColumnHighlight::Column
+                {
+                    let active_column_bg = cx.theme().colors().editor_active_column_background;
+                    let mut painted_columns = HashSet::default();
+
+                    for (column, _) in &layout.cursors {
+                        let column = column.column();
+                        if !painted_columns.insert(column) {
+                            continue;
+                        }
+
+                        let x = column_pixels(&self.style, column as usize, window);
+                        let next_x = column_pixels(&self.style, column as usize + 1, window);
+                        let column_width = next_x - x;
+                        let bounds = Bounds {
+                            origin: point(
+                                layout.content_origin.x + x
+                                    - Pixels::from(layout.position_map.scroll_pixel_position.x),
+                                layout.position_map.text_hitbox.top(),
+                            ),
+                            size: size(column_width, layout.position_map.text_hitbox.size.height),
+                        };
+                        window.paint_quad(fill(bounds, active_column_bg));
                     }
                 }
 

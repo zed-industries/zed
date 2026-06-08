@@ -8,7 +8,7 @@ pub use settings::{
     DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder,
     MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap,
-    SnippetSortOrder,
+    SnippetSortOrder, CurrentColumnHighlight
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::ShowScrollbar;
@@ -20,6 +20,7 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
+    pub current_column_highlight: CurrentColumnHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
     pub lsp_highlight_debounce: DelayMs,
@@ -110,6 +111,7 @@ pub struct Minimap {
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    pub current_column_highlight: Option<CurrentColumnHighlight>,
     pub max_width_columns: num::NonZeroU32,
 }
 
@@ -207,6 +209,7 @@ impl Settings for EditorSettings {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
             current_line_highlight: editor.current_line_highlight.unwrap(),
+            current_column_highlight: editor.current_column_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),
             lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap(),
@@ -247,6 +250,7 @@ impl Settings for EditorSettings {
                 thumb: minimap.thumb.unwrap(),
                 thumb_border: minimap.thumb_border.unwrap(),
                 current_line_highlight: minimap.current_line_highlight,
+                current_column_highlight: minimap.current_column_highlight,
                 max_width_columns: minimap.max_width_columns.unwrap(),
             },
             gutter: Gutter {

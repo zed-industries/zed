@@ -97,6 +97,7 @@ pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
     DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
     ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    CurrentColumnHighlight
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -990,6 +991,7 @@ pub struct Editor {
     /// selected (needed for vim visual mode)
     cursor_offset_on_selection: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
+    current_column_highlight: Option<CurrentColumnHighlight>,
     /// Whether to collapse search match ranges to just their start position.
     /// When true, navigating to a match positions the cursor at the match
     /// without selecting the matched text.
@@ -1176,6 +1178,7 @@ pub struct EditorSnapshot {
     scroll_anchor: SharedScrollAnchor,
     ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
+    current_column_highlight: CurrentColumnHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
 }
@@ -2187,6 +2190,7 @@ impl Editor {
                 .unwrap_or_default(),
             cursor_offset_on_selection: false,
             current_line_highlight: None,
+            current_column_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
@@ -2859,6 +2863,9 @@ impl Editor {
             current_line_highlight: self
                 .current_line_highlight
                 .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
+            current_column_highlight: self
+                .current_column_highlight
+                .unwrap_or_else(|| EditorSettings::get_global(cx).current_column_highlight),
             gutter_hovered: self.gutter_hovered,
         }
     }
@@ -2979,6 +2986,13 @@ impl Editor {
         current_line_highlight: Option<CurrentLineHighlight>,
     ) {
         self.current_line_highlight = current_line_highlight;
+    }
+
+    pub fn set_current_column_highlight(
+        &mut self,
+        current_column_highlight: Option<CurrentColumnHighlight>,
+    ) {
+        self.current_column_highlight = current_column_highlight;
     }
 
     pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
@@ -8282,6 +8296,10 @@ impl Editor {
             .current_line_highlight
             .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight);
         self.set_current_line_highlight(Some(current_line_highlight));
+        let current_column_highlight = minimap_settings
+            .current_column_highlight
+            .unwrap_or_else(|| EditorSettings::get_global(cx).current_column_highlight);
+        self.set_current_column_highlight(Some(current_column_highlight));
     }
 
     pub fn minimap(&self) -> Option<&Entity<Self>> {

@@ -258,6 +258,7 @@ impl VsCodeSettings {
                 "all" => Some(CurrentLineHighlight::All),
                 _ => None,
             }),
+            current_column_highlight: None,
             diagnostics_max_severity: None,
             double_click_in_multibuffer: None,
             drag_and_drop_selection: None,

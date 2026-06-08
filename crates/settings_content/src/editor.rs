@@ -30,6 +30,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: all
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    /// How to highlight the current column in the editor.
+    ///
+    /// Default: none
+    pub current_column_highlight: Option<CurrentColumnHighlight>,
     /// Whether to highlight all occurrences of the selected text in an editor.
     ///
     /// Default: true
@@ -452,6 +456,11 @@ pub struct MinimapContent {
     /// Default: inherits editor line highlights setting
     pub current_line_highlight: Option<CurrentLineHighlight>,
 
+    /// How to highlight the current column in the minimap.
+    ///
+    /// Default: inherits editor column highlights setting
+    pub current_column_highlight: Option<CurrentColumnHighlight>,
+
     /// Maximum number of columns to display in the minimap.
     ///
     /// Default: 80
@@ -594,6 +603,27 @@ pub enum CurrentLineHighlight {
     Line,
     // Highlight the full line.
     All,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CurrentColumnHighlight {
+    // Don't highlight the current column.
+    None,
+    // Highlight the curren column
+    Column,
 }
 
 /// When to populate a new search's query based on the text under the cursor.

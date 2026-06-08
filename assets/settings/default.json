@@ -269,6 +269,7 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  "current_column_highlight": "none",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
   // Whether the text selection should have rounded corners.

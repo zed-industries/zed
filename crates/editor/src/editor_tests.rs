@@ -37700,3 +37700,142 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
         );
     });
 }
+
+#[test]
+fn test_current_column_highlight_serialization() {
+    let none: CurrentColumnHighlight = serde_json::from_str("\"none\"").unwrap();
+    assert_eq!(none, CurrentColumnHighlight::None);
+
+    let column: CurrentColumnHighlight = serde_json::from_str("\"column\"").unwrap();
+    assert_eq!(column, CurrentColumnHighlight::Column);
+
+    assert_eq!(
+        serde_json::to_string(&CurrentColumnHighlight::None).unwrap(),
+        "\"none\""
+    );
+    assert_eq!(
+        serde_json::to_string(&CurrentColumnHighlight::Column).unwrap(),
+        "\"column\""
+    );
+}
+
+#[gpui::test]
+async fn test_current_column_highlight_defaults_to_none(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot.current_column_highlight,
+            CurrentColumnHighlight::None,
+            "current_column_highlight should default to None"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_current_column_highlight_snapshot_reflects_global_setting(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.current_column_highlight = Some(CurrentColumnHighlight::Column);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot.current_column_highlight,
+            CurrentColumnHighlight::Column,
+            "snapshot should reflect the global current_column_highlight setting"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_set_current_column_highlight_overrides_global_setting(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        editor.set_current_column_highlight(Some(CurrentColumnHighlight::Column));
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot.current_column_highlight,
+            CurrentColumnHighlight::Column,
+            "editor-level override should take precedence over global None setting"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_set_current_column_highlight_none_falls_back_to_global(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.current_column_highlight = Some(CurrentColumnHighlight::Column);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        editor.set_current_column_highlight(None);
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot.current_column_highlight,
+            CurrentColumnHighlight::Column,
+            "when editor override is None, global setting should be used"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_minimap_current_column_highlight_inherits_global_setting(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.current_column_highlight = Some(CurrentColumnHighlight::Column);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        let mut minimap_settings = EditorSettings::get_global(cx).minimap.clone();
+        minimap_settings.current_column_highlight = None;
+        editor.update_minimap_configuration(minimap_settings, cx);
+
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot.current_column_highlight,
+            CurrentColumnHighlight::Column,
+            "minimap should inherit Column from global editor setting when not explicitly set"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_minimap_current_column_highlight_overrides_global_setting(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.current_column_highlight = Some(CurrentColumnHighlight::Column);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        let mut minimap_settings = EditorSettings::get_global(cx).minimap.clone();
+        minimap_settings.current_column_highlight = Some(CurrentColumnHighlight::None);
+        editor.update_minimap_configuration(minimap_settings, cx);
+
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot.current_column_highlight,
+            CurrentColumnHighlight::None,
+            "minimap-specific setting should override global editor setting"
+        );
+    });
+}
+

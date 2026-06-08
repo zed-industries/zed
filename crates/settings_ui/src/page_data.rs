@@ -1158,7 +1158,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn highlighting_section() -> [SettingsPageItem; 6] {
+    fn highlighting_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Highlighting"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1184,6 +1184,21 @@ fn appearance_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.current_line_highlight = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Current Column Highlight",
+                description: "How to highlight the current column.",
+                field: Box::new(SettingField {
+                    json_path: Some("current_column_highlight"),
+                    pick: |settings_content| {
+                        settings_content.editor.current_column_highlight.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.current_column_highlight = value;
                     },
                 }),
                 metadata: None,
@@ -2313,7 +2328,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn minimap_section() -> [SettingsPageItem; 7] {
+    fn minimap_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Minimap"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2417,6 +2432,30 @@ fn editor_page() -> SettingsPage {
                             .minimap
                             .get_or_insert_default()
                             .current_line_highlight = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Current Column Highlight",
+                description: "How to highlight the current column in the minimap.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimap.current_column_highlight"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()
+                            .and_then(|minimap| minimap.current_column_highlight.as_ref())
+                            .or(settings_content.editor.current_column_highlight.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .current_column_highlight = value;
                     },
                 }),
                 metadata: None,
