@@ -108,6 +108,21 @@ To disable this behavior use:
 }
 ```
 
+Use these panel keys in `status_bar_buttons` and `button_order`. You can also configure placement in **Settings → Window & Layout → Activity Bar Button Placement** without editing JSON.
+
+| Key | Button |
+| --- | --- |
+| `ProjectPanel` | Project panel (file explorer) |
+| `search` | Project search |
+| `GitPanel` | Source control |
+| `agent_panel` | Agent panel |
+| `TerminalPanel` | Terminal |
+| `OutlinePanel` | Outline |
+| `CollaborationPanel` | Collaboration |
+| `DebugPanel` | Debugger |
+
+Keys not listed in `button_order` appear after the listed buttons, sorted by default priority.
+
 ### Status Bar
 
 ```json [settings]

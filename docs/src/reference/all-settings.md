@@ -1754,6 +1754,23 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
   - Default: VS Code-inspired default order
   - Values: array of strings
 
+**Panel keys**
+
+Use these strings in `status_bar_buttons` and `button_order`. Placement can also be changed in **Settings → Window & Layout → Activity Bar Button Placement** without JSON.
+
+| Key | Button |
+| --- | --- |
+| `ProjectPanel` | Project panel (file explorer) |
+| `search` | Project search |
+| `GitPanel` | Source control |
+| `agent_panel` | Agent panel |
+| `TerminalPanel` | Terminal |
+| `OutlinePanel` | Outline |
+| `CollaborationPanel` | Collaboration |
+| `DebugPanel` | Debugger |
+
+Keys not listed in `button_order` appear after the listed buttons, sorted by default priority.
+
 ## Status Bar
 
 - Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
