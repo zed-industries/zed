@@ -167,7 +167,7 @@ impl Settings for ActivityBarSettings {
             enabled: activity_bar.enabled.unwrap(),
             icon_size: activity_bar.icon_size.unwrap(),
             status_bar_buttons: activity_bar.status_bar_buttons.clone(),
-            button_order: activity_bar.button_order.clone(),
+            button_order: activity_bar.button_order,
         }
     }
 }
