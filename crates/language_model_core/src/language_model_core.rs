@@ -449,6 +449,12 @@ pub enum ModelMode {
     Thinking {
         budget_tokens: Option<u32>,
     },
+    /// Adaptive thinking: the provider chooses how much to think on each
+    /// request. Providers that support this expose a set of effort levels
+    /// (low/medium/high/xhigh/max) through `supported_effort_levels`, which
+    /// the UI surfaces as a selector. Providers that do not support adaptive
+    /// thinking should treat this the same as `Default`.
+    Adaptive,
 }
 
 /// Settings-layer–free reasoning-effort enum.
