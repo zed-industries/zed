@@ -10,14 +10,13 @@ use picker::{
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 use remote::RemoteConnectionOptions;
-use settings::{DefaultOpenBehavior, Settings};
+use settings::Settings;
 use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     MultiWorkspace, OpenMode, OpenOptions, ProjectGroupKey, RecentWorkspace,
-    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceSettings,
-    notifications::DetachAndPromptErr,
+    SerializedWorkspaceLocation, Workspace, WorkspaceDb, notifications::DetachAndPromptErr,
 };
 
 use zed_actions::OpenRemote;
@@ -245,21 +244,10 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             return;
         };
 
-        let open_in_new_window = matches!(
-            WorkspaceSettings::get_global(cx).default_open_behavior,
-            DefaultOpenBehavior::NewWindow
-        );
-
         match &recent_workspace.location {
             SerializedWorkspaceLocation::Local => {
-                let paths = recent_workspace.paths.paths().to_vec();
-                if open_in_new_window {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
-                            .detach_and_log_err(cx);
-                    });
-                } else if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
+                if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
+                    let paths = recent_workspace.paths.paths().to_vec();
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
@@ -276,11 +264,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 let mut connection = connection.clone();
                 workspace.update(cx, |workspace, cx| {
                     let app_state = workspace.app_state().clone();
-                    let replace_window = if open_in_new_window {
-                        None
-                    } else {
-                        window.window_handle().downcast::<MultiWorkspace>()
-                    };
+                    let replace_window = window.window_handle().downcast::<MultiWorkspace>();
                     let open_options = OpenOptions {
                         requesting_window: replace_window,
                         ..Default::default()
@@ -394,11 +378,12 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         .child(highlighted_match.render(window, cx)),
                 )
                 .tooltip(move |_, cx| {
-                    let tooltip = match WorkspaceSettings::get_global(cx).default_open_behavior {
-                        DefaultOpenBehavior::ExistingWindow => "Open Project in This Window",
-                        DefaultOpenBehavior::NewWindow => "Open Project in New Window",
-                    };
-                    Tooltip::with_meta(tooltip, None, tooltip_path.clone(), cx)
+                    Tooltip::with_meta(
+                        "Open Project in This Window",
+                        None,
+                        tooltip_path.clone(),
+                        cx,
+                    )
                 })
                 .into_any_element(),
         )
@@ -416,7 +401,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child({
                     let open_action = workspace::Open {
-                        create_new_window: Some(false),
+                        create_new_window: false,
                     };
 
                     ButtonLike::new("open_local_folder")
@@ -444,7 +429,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .child(KeyBinding::for_action(
                                     &OpenRemote {
                                         from_existing_connection: false,
-                                        create_new_window: Some(false),
+                                        create_new_window: false,
                                     },
                                     cx,
                                 )),
@@ -453,7 +438,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
-                                    create_new_window: Some(false),
+                                    create_new_window: false,
                                 }
                                 .boxed_clone(),
                                 cx,
