@@ -7,10 +7,11 @@ use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_paths,
 };
+use action_log::ActionLog;
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
-use gpui::{App, Entity, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,11 +51,55 @@ pub struct CopyPathToolInput {
 
 pub struct CopyPathTool {
     project: Entity<Project>,
+    action_log: Entity<ActionLog>,
 }
 
 impl CopyPathTool {
-    pub fn new(project: Entity<Project>) -> Self {
-        Self { project }
+    pub fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
+        Self {
+            project,
+            action_log,
+        }
+    }
+
+    async fn mark_copied_project_paths_in_action_log(
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+        fs: Arc<dyn fs::Fs>,
+        destination_absolute_path: std::path::PathBuf,
+        event_stream: &ToolCallEventStream,
+        cx: &mut AsyncApp,
+    ) -> Result<(), String> {
+        let copied_paths = fs::read_dir_items(fs.as_ref(), &destination_absolute_path)
+            .await
+            .map_err(|error| format!("Reading copied paths: {error}"))?;
+        let copied_paths = project.read_with(cx, |project, cx| {
+            copied_paths
+                .into_iter()
+                .filter_map(|(path, is_dir)| {
+                    (!is_dir)
+                        .then(|| project.find_project_path(path, cx))
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+        });
+
+        for project_path in copied_paths {
+            let buffer = futures::select! {
+                result = project.update(cx, |project, cx| project.open_buffer(project_path.clone(), cx)).fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    return Err("Copy cancelled by user".to_string());
+                }
+            };
+
+            if let Ok(buffer) = buffer {
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_created_with_current_content(buffer, cx);
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -89,6 +134,7 @@ impl AgentTool for CopyPathTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
+        let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
             let paths = vec![input.source_path.clone(), input.destination_path.clone()];
@@ -228,23 +274,29 @@ impl AgentTool for CopyPathTool {
                 ));
             }
 
-            let copy_task = project.update(cx, |project, cx| {
-                match project
-                    .find_project_path(&input.source_path, cx)
-                    .and_then(|project_path| project.entry_for_path(&project_path, cx))
-                {
-                    Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                        Some(project_path) => Ok(project.copy_entry(entity.id, project_path, cx)),
-                        None => Err(format!(
-                            "Destination path {} was outside the project.",
-                            input.destination_path
-                        )),
-                    },
-                    None => Err(format!(
-                        "Source path {} was not found in the project.",
-                        input.source_path
-                    )),
-                }
+            let (copy_task, destination_absolute_path) = project.update(cx, |project, cx| {
+                let source_project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
+                    format!("Source path {} was not found in the project.", input.source_path)
+                })?;
+                let entity = project.entry_for_path(&source_project_path, cx).ok_or_else(|| {
+                    format!("Source path {} was not found in the project.", input.source_path)
+                })?;
+                let destination_project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
+                    format!(
+                        "Destination path {} was outside the project.",
+                        input.destination_path
+                    )
+                })?;
+                let destination_absolute_path = project.absolute_path(&destination_project_path, cx).ok_or_else(|| {
+                    format!(
+                        "Destination path {} could not be resolved.",
+                        input.destination_path
+                    )
+                })?;
+                Result::<_, String>::Ok((
+                    project.copy_entry(entity.id, destination_project_path, cx),
+                    destination_absolute_path,
+                ))
             })?;
 
             let result = futures::select! {
@@ -259,6 +311,17 @@ impl AgentTool for CopyPathTool {
                     input.source_path, input.destination_path
                 )
             })?;
+
+            Self::mark_copied_project_paths_in_action_log(
+                project,
+                action_log,
+                fs,
+                destination_absolute_path,
+                &event_stream,
+                cx,
+            )
+            .await?;
+
             Ok(format!(
                 "Copied {} to {}",
                 input.source_path, input.destination_path
@@ -270,8 +333,9 @@ impl AgentTool for CopyPathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use action_log::ActionLog;
     use fs::Fs as _;
-    use gpui::TestAppContext;
+    use gpui::{AppContext as _, TestAppContext};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -291,6 +355,135 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_path_tracks_created_file_in_action_log(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({
+                "source.txt": "copied content"
+            }),
+        )
+        .await;
+        let destination_path = path!("/root/project/destination.txt");
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log.clone()));
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CopyPathToolInput {
+                    source_path: path!("/root/project/source.txt").to_string(),
+                    destination_path: destination_path.to_string(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(result.is_ok(), "should copy file: {result:?}");
+        assert_eq!(
+            fs.load(destination_path.as_ref()).await.unwrap(),
+            "copied content"
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            action_log.read_with(cx, |action_log, cx| action_log.changed_buffers(cx).count()),
+            1,
+            "copied file should be present in the action log"
+        );
+
+        action_log
+            .update(cx, |action_log, cx| action_log.reject_all_edits(None, cx))
+            .await;
+        cx.run_until_parked();
+
+        assert!(
+            !fs.is_file(destination_path.as_ref()).await,
+            "copied file should be deleted when rejecting action-log edits"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_path_tracks_created_directory_files_in_action_log(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({
+                "source": {
+                    "one.txt": "one",
+                    "nested": {
+                        "two.txt": "two"
+                    }
+                }
+            }),
+        )
+        .await;
+        let destination_path = path!("/root/project/destination");
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log.clone()));
+        let (event_stream, _event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CopyPathToolInput {
+                    source_path: path!("/root/project/source").to_string(),
+                    destination_path: destination_path.to_string(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        assert!(result.is_ok(), "should copy directory: {result:?}");
+        assert_eq!(
+            fs.load(path!("/root/project/destination/one.txt").as_ref())
+                .await
+                .unwrap(),
+            "one"
+        );
+        assert_eq!(
+            fs.load(path!("/root/project/destination/nested/two.txt").as_ref())
+                .await
+                .unwrap(),
+            "two"
+        );
+        cx.run_until_parked();
+        cx.background_executor.run_until_parked();
+        cx.run_until_parked();
+        assert_eq!(
+            action_log.read_with(cx, |action_log, cx| action_log.changed_buffers(cx).count()),
+            2,
+            "copied directory files should be present in the action log"
+        );
+
+        action_log
+            .update(cx, |action_log, cx| action_log.reject_all_edits(None, cx))
+            .await;
+        cx.run_until_parked();
+
+        assert!(
+            !fs.is_file(path!("/root/project/destination/one.txt").as_ref())
+                .await,
+            "copied top-level file should be deleted when rejecting action-log edits"
+        );
+        assert!(
+            !fs.is_file(path!("/root/project/destination/nested/two.txt").as_ref())
+                .await,
+            "copied nested file should be deleted when rejecting action-log edits"
+        );
+    }
+
+    #[gpui::test]
     async fn test_copy_path_global_skill_directory_to_project(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -302,7 +495,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log));
         let input_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -368,7 +562,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log));
         let destination_path = PathBuf::from("~")
             .join(".agents")
             .join("skills")
@@ -450,7 +645,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),
@@ -507,7 +703,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),
@@ -559,7 +756,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),
@@ -638,7 +836,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let tool = Arc::new(CopyPathTool::new(project));
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(CopyPathTool::new(project, action_log));
 
         let input = CopyPathToolInput {
             source_path: "project/link_to_external".into(),

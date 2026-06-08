@@ -148,6 +148,31 @@ impl ActionLog {
             TrackedBufferStatus::Modified
         };
 
+        self.track_buffer_with_status(buffer, status, is_created, cx)
+    }
+
+    fn track_created_buffer_without_existing_file_content(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> &mut TrackedBuffer {
+        self.track_buffer_with_status(
+            buffer,
+            TrackedBufferStatus::Created {
+                existing_file_content: None,
+            },
+            true,
+            cx,
+        )
+    }
+
+    fn track_buffer_with_status(
+        &mut self,
+        buffer: Entity<Buffer>,
+        status: TrackedBufferStatus,
+        is_created: bool,
+        cx: &mut Context<Self>,
+    ) -> &mut TrackedBuffer {
         let tracked_buffer = self
             .tracked_buffers
             .entry(buffer.clone())
@@ -561,6 +586,15 @@ impl ActionLog {
         self.buffer_created_impl(buffer, true, cx);
     }
 
+    pub fn buffer_created_with_current_content(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer_created_without_existing_file_content_impl(buffer.clone(), true, cx);
+        self.buffer_edited(buffer, cx);
+    }
+
     fn buffer_created_impl(
         &mut self,
         buffer: Entity<Buffer>,
@@ -577,6 +611,24 @@ impl ActionLog {
             self.update_file_read_time(&buffer, cx);
         }
         self.track_buffer_internal(buffer, true, cx);
+    }
+
+    fn buffer_created_without_existing_file_content_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        record_file_read_time: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(linked_action_log) = &self.linked_action_log {
+            // We don't want to share read times since the other agent hasn't read it necessarily
+            linked_action_log.update(cx, |log, cx| {
+                log.buffer_created_without_existing_file_content_impl(buffer.clone(), false, cx);
+            });
+        }
+        if record_file_read_time {
+            self.update_file_read_time(&buffer, cx);
+        }
+        self.track_created_buffer_without_existing_file_content(buffer, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
