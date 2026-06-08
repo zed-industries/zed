@@ -471,6 +471,18 @@ pub struct ActivityBarSettingsContent {
     ///
     /// Default: medium
     pub icon_size: Option<ActivityBarIconSize>,
+    /// Panel buttons to show in the status bar instead of the activity bar. Use panel keys
+    /// (e.g. "ProjectPanel", "GitPanel") and "search" for the project search button. Buttons
+    /// appear at their dock position in the status bar (left or right).
+    ///
+    /// Default: null (all buttons in the activity bar)
+    pub status_bar_buttons: Option<Vec<String>>,
+    /// Order of buttons in the activity bar. Use panel keys (e.g. "ProjectPanel", "GitPanel")
+    /// and "search" for the project search button. Buttons not listed appear after these, sorted
+    /// by their default priority.
+    ///
+    /// Default: null (uses a VS Code-inspired default order)
+    pub button_order: Option<Vec<String>>,
 }
 
 #[derive(
@@ -492,6 +504,7 @@ pub enum ActivityBarIconSize {
     Small,
     #[default]
     Medium,
+    Large,
 }
 
 #[with_fallible_options]
@@ -522,6 +535,10 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
+    /// Size of panel button icons in the status bar.
+    ///
+    /// Default: small
+    pub panel_button_icon_size: Option<ActivityBarIconSize>,
 }
 
 #[derive(

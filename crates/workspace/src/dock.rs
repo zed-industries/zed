@@ -3,7 +3,7 @@ use crate::persistence::model::DockData;
 use crate::status_bar::HideStatusItem;
 use crate::{
     DraggedDock, Event, FocusFollowsMouse, ModalLayer, Pane, WorkspaceSettings,
-    workspace_settings::ActivityBarSettings,
+    workspace_settings::{ActivityBarSettings, StatusBarSettings},
 };
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
@@ -11,10 +11,10 @@ use client::proto;
 use db::kvp::KeyValueStore;
 
 use gpui::{
-    Action, Anchor, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
-    Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
-    px,
+    Action, Anchor, AnyView, App, Axis, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Hsla, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    deferred, div, px,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, TerminalDockPosition};
@@ -367,6 +367,31 @@ pub(crate) enum PanelButtonLayout {
     Vertical,
 }
 
+pub(crate) fn panel_button_icon_size(
+    icon_size: settings::ActivityBarIconSize,
+) -> IconSize {
+    match icon_size {
+        settings::ActivityBarIconSize::Small => IconSize::Small,
+        settings::ActivityBarIconSize::Medium => IconSize::Custom(rems_from_px(18.)),
+        settings::ActivityBarIconSize::Large => IconSize::Custom(rems_from_px(22.)),
+    }
+}
+
+pub(crate) fn vertical_panel_button_container(
+    is_active: bool,
+    active_border_color: Hsla,
+    button: impl IntoElement,
+) -> Div {
+    div()
+        .relative()
+        .w_full()
+        .flex()
+        .justify_center()
+        .py_0p5()
+        .when(is_active, |this| this.border_l_2().border_color(active_border_color))
+        .child(button)
+}
+
 pub(crate) struct PanelButtonEntry {
     pub panel_index: usize,
     pub panel: Arc<dyn PanelHandle>,
@@ -543,16 +568,9 @@ pub(crate) fn render_panel_button(
 
                 let button_container = match layout {
                     PanelButtonLayout::Horizontal => div().relative().child(button),
-                    PanelButtonLayout::Vertical => div()
-                        .relative()
-                        .w_full()
-                        .flex()
-                        .justify_center()
-                        .py_0p5()
-                        .when(is_active_button, |this| {
-                            this.border_l_2().border_color(active_border_color)
-                        })
-                        .child(button),
+                    PanelButtonLayout::Vertical => {
+                        vertical_panel_button_container(is_active_button, active_border_color, button)
+                    }
                 };
 
                 button_container.when_some(
@@ -572,6 +590,7 @@ pub(crate) fn render_panel_buttons(
     icon_size: IconSize,
     window: &mut Window,
     cx: &App,
+    only_panel_keys: Option<&[String]>,
 ) -> Vec<AnyElement> {
     let dock_position = dock.read(cx).position;
     let mut buttons: Vec<AnyElement> = dock
@@ -579,6 +598,12 @@ pub(crate) fn render_panel_buttons(
         .panel_button_entries()
         .into_iter()
         .filter_map(|entry| {
+            let panel_key = entry.panel.panel_key();
+            if let Some(keys) = only_panel_keys {
+                if !keys.iter().any(|key| key == panel_key) {
+                    return None;
+                }
+            }
             render_panel_button(
                 dock.clone(),
                 entry.panel_index,
@@ -1451,17 +1476,22 @@ impl PanelButtons {
 
 impl Render for PanelButtons {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if ActivityBarSettings::get_global(cx).enabled {
-            return h_flex();
-        }
+        let activity_bar_settings = ActivityBarSettings::get_global(cx);
+        let only_panel_keys = if activity_bar_settings.enabled {
+            activity_bar_settings.status_bar_buttons.as_deref()
+        } else {
+            None
+        };
 
         let dock_position = self.dock.read(cx).position;
+        let icon_size = panel_button_icon_size(StatusBarSettings::get_global(cx).panel_button_icon_size);
         let buttons = render_panel_buttons(
             self.dock.clone(),
             PanelButtonLayout::Horizontal,
-            IconSize::Small,
+            icon_size,
             window,
             cx,
+            only_panel_keys,
         );
         let has_buttons = !buttons.is_empty();
 

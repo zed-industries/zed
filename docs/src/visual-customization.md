@@ -98,8 +98,12 @@ To disable this behavior use:
   // Show a VS Code-style vertical activity bar on the left for panel buttons.
   "activity_bar": {
     "enabled": false,
-    // Icon size in the activity bar: "small" or "medium"
-    "icon_size": "medium"
+    // Icon size in the activity bar: "small", "medium", or "large"
+    "icon_size": "medium",
+    // Move specific buttons back to the status bar (left/right by dock position)
+    // "status_bar_buttons": ["TerminalPanel", "search"],
+    // Optional button order using panel keys and "search"
+    // "button_order": ["ProjectPanel", "search", "GitPanel", "agent_panel", "TerminalPanel"]
   }
 }
 ```

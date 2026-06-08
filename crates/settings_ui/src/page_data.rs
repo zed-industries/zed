@@ -3681,7 +3681,7 @@ fn window_and_layout_page() -> SettingsPage {
             SettingsPageItem::SectionHeader("Activity Bar"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Activity Bar",
-                description: "Show a VS Code-style vertical activity bar on the left for panel buttons.",
+                description: "Show a VS Code-style vertical activity bar on the left for panel buttons. Use activity_bar.status_bar_buttons in settings.json to move specific buttons back to the status bar.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("activity_bar.enabled"),
@@ -3720,9 +3720,32 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn status_bar_section() -> [SettingsPageItem; 11] {
+    fn status_bar_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Panel Button Icon Size",
+                description: "Size of panel button icons in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("status_bar.panel_button_icon_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .panel_button_icon_size
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .panel_button_icon_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Panel Button",
                 description: "Show the project panel button in the status bar.",

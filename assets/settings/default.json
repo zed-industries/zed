@@ -1735,8 +1735,13 @@
   "activity_bar": {
     // Whether to show a VS Code-style vertical activity bar on the left for panel buttons.
     "enabled": false,
-    // Size of icons in the activity bar: "small" or "medium".
+    // Size of icons in the activity bar: "small", "medium", or "large".
     "icon_size": "medium",
+    // Panel buttons to show in the status bar instead of the activity bar.
+    // "status_bar_buttons": ["TerminalPanel", "search"],
+    // Order of buttons in the activity bar. Use panel keys (e.g. "ProjectPanel", "GitPanel")
+    // and "search" for the project search button. Omit to use the default order.
+    // "button_order": ["ProjectPanel", "search", "GitPanel", "agent_panel", "TerminalPanel"],
   },
   "status_bar": {
     // Whether to show the status bar.
@@ -1751,6 +1756,8 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
+    // Size of panel button icons in the status bar: "small", "medium", or "large".
+    "panel_button_icon_size": "small",
   },
   // Settings specific to the terminal
   "terminal": {

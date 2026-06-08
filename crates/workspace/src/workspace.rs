@@ -20,7 +20,7 @@ pub mod security_modal;
 pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
-mod activity_bar;
+pub mod activity_bar;
 mod status_bar;
 pub mod tasks;
 mod theme_preview;

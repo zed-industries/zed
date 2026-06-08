@@ -156,6 +156,8 @@ impl Settings for TabBarSettings {
 pub struct ActivityBarSettings {
     pub enabled: bool,
     pub icon_size: settings::ActivityBarIconSize,
+    pub status_bar_buttons: Option<Vec<String>>,
+    pub button_order: Option<Vec<String>>,
 }
 
 impl Settings for ActivityBarSettings {
@@ -164,6 +166,8 @@ impl Settings for ActivityBarSettings {
         ActivityBarSettings {
             enabled: activity_bar.enabled.unwrap(),
             icon_size: activity_bar.icon_size.unwrap(),
+            status_bar_buttons: activity_bar.status_bar_buttons.clone(),
+            button_order: activity_bar.button_order.clone(),
         }
     }
 }
@@ -176,6 +180,7 @@ pub struct StatusBarSettings {
     pub cursor_position_button: bool,
     pub line_endings_button: bool,
     pub active_encoding_button: EncodingDisplayOptions,
+    pub panel_button_icon_size: settings::ActivityBarIconSize,
 }
 
 impl Settings for StatusBarSettings {
@@ -188,6 +193,7 @@ impl Settings for StatusBarSettings {
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
             line_endings_button: status_bar.line_endings_button.unwrap(),
             active_encoding_button: status_bar.active_encoding_button.unwrap(),
+            panel_button_icon_size: status_bar.panel_button_icon_size.unwrap(),
         }
     }
 }

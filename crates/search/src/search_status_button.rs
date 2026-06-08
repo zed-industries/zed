@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::{App, FocusHandle};
 use settings::Settings as _;
 use ui::{ButtonCommon, Clickable, Context, Render, Tooltip, Window, prelude::*};
-use workspace::{ActivityBarSettings, HideStatusItem, ItemHandle, StatusItemView};
+use workspace::{HideStatusItem, ItemHandle, StatusItemView, activity_bar::activity_bar_hides_search_button};
 
 pub const SEARCH_ICON: IconName = IconName::MagnifyingGlass;
 
@@ -22,8 +22,7 @@ impl Render for SearchButton {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let button = div();
 
-        if !EditorSettings::get_global(cx).search.button || ActivityBarSettings::get_global(cx).enabled
-        {
+        if !EditorSettings::get_global(cx).search.button || activity_bar_hides_search_button(cx) {
             return button.hidden();
         }
 

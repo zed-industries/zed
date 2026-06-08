@@ -1731,7 +1731,7 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 {
   "activity_bar": {
     "enabled": false,
-    "icon_size": "medium"
+    "icon_size": "medium",
   }
 }
 ```
@@ -1744,7 +1744,15 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 - `icon_size`:
   - Description: Size of icons in the activity bar.
   - Default: `medium`
-  - Values: `small`, `medium`
+  - Values: `small`, `medium`, `large`
+- `status_bar_buttons`:
+  - Description: Panel buttons to show in the status bar instead of the activity bar. Use panel keys (e.g. `ProjectPanel`, `GitPanel`) and `search` for the project search button. Buttons appear at their dock position in the status bar.
+  - Default: `null` (all buttons in the activity bar)
+  - Values: array of strings
+- `button_order`:
+  - Description: Order of buttons in the activity bar. Use panel keys (e.g. `ProjectPanel`, `GitPanel`) and `search` for the project search button.
+  - Default: VS Code-inspired default order
+  - Values: array of strings
 
 ## Status Bar
 
@@ -1757,10 +1765,16 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
   "status_bar": {
     "active_language_button": true,
     "cursor_position_button": true,
-    "line_endings_button": false
+    "line_endings_button": false,
+    "panel_button_icon_size": "small"
   }
 }
 ```
+
+- `panel_button_icon_size`:
+  - Description: Size of panel button icons in the status bar.
+  - Default: `small`
+  - Values: `small`, `medium`, `large`
 
 There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
 
