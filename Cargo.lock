@@ -19505,6 +19505,7 @@ dependencies = [
  "markdown",
  "menu",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "workspace",
