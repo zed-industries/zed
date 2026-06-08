@@ -6,10 +6,7 @@ use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
-use project::{
-    CodeAction, TaskSourceKind,
-    lsp_store::code_lens::{CodeLensActionId, CodeLensActions},
-};
+use project::{CodeAction, TaskSourceKind, lsp_store::code_lens::CodeLensActions};
 use task::TaskContext;
 use text::ToOffset as _;
 
@@ -45,7 +42,6 @@ pub(super) struct CodeLensState {
     pub(super) blocks: HashMap<BufferId, Vec<CodeLensBlock>>,
     actions: HashMap<BufferId, CodeLensActions>,
     resolve_task: Task<()>,
-    resolving: HashSet<(BufferId, CodeLensActionId)>,
 }
 
 impl Default for CodeLensState {
@@ -54,7 +50,6 @@ impl Default for CodeLensState {
             blocks: HashMap::default(),
             actions: HashMap::default(),
             resolve_task: Task::ready(()),
-            resolving: HashSet::default(),
         }
     }
 }
@@ -234,6 +229,7 @@ impl Editor {
 
             editor
                 .update(cx, |editor, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
                     for (buffer_id, result) in code_lens_per_buffer {
                         let actions = match result {
                             Ok(Some(actions)) => actions,
@@ -245,37 +241,12 @@ impl Editor {
                                 continue;
                             }
                         };
-                        editor.apply_lens_actions_for_buffer(buffer_id, actions, cx);
+                        editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
                     }
                     editor.resolve_visible_code_lenses(cx);
                 })
                 .ok();
         });
-    }
-
-    pub(super) fn reapply_code_lenses_for_fold_change(&mut self, cx: &mut Context<Self>) {
-        if self
-            .code_lens
-            .as_ref()
-            .is_none_or(|state| state.actions.is_empty())
-        {
-            return;
-        }
-
-        let actions = std::mem::take(&mut self.code_lens.as_mut().unwrap().actions);
-        for (buffer_id, buffer_actions) in actions {
-            self.apply_lens_actions_for_buffer(buffer_id, buffer_actions, cx);
-        }
-        let has_unresolved = self.code_lens.as_ref().is_some_and(|state| {
-            state
-                .actions
-                .values()
-                .flatten()
-                .any(|(_, action)| !action.resolved)
-        });
-        if has_unresolved {
-            self.resolve_visible_code_lenses(cx);
-        }
     }
 
     /// Reconcile blocks for `buffer_id` against the latest `actions`.
@@ -294,9 +265,9 @@ impl Editor {
         &mut self,
         buffer_id: BufferId,
         actions: CodeLensActions,
+        snapshot: &MultiBufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.buffer().read(cx).snapshot(cx);
         let mut all_lenses = Vec::new();
         for (_, action) in actions.iter().sorted_by_key(|(id, _)| **id) {
             let Some(position) = snapshot.anchor_in_excerpt(action.range.start) else {
@@ -321,12 +292,9 @@ impl Editor {
             }
         }
 
-        let mut new_lines_by_row = group_lenses_by_row(all_lenses, &snapshot)
-            .map(|line| (MultiBufferRow(line.position.to_point(&snapshot).row), line))
+        let mut new_lines_by_row = group_lenses_by_row(all_lenses, snapshot)
+            .map(|line| (MultiBufferRow(line.position.to_point(snapshot).row), line))
             .collect::<HashMap<_, _>>();
-
-        let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        new_lines_by_row.retain(|row, _| !display_snapshot.is_line_folded(*row));
 
         let editor_handle = cx.entity().downgrade();
         let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
@@ -338,7 +306,7 @@ impl Editor {
         let mut covered_rows = HashSet::default();
 
         for old in old_blocks {
-            let row = MultiBufferRow(old.anchor.to_point(&snapshot).row);
+            let row = MultiBufferRow(old.anchor.to_point(snapshot).row);
             let Some(new_line) = new_lines_by_row.remove(&row) else {
                 blocks_to_remove.insert(old.block_id);
                 continue;
@@ -465,7 +433,7 @@ impl Editor {
 
         let lsp_store = project.read(cx).lsp_store();
 
-        let mut items_to_resolve = Vec::new();
+        let mut pending_resolves = Vec::new();
         for (buffer_snapshot, visible_range, _) in self.visible_buffer_ranges(cx) {
             let buffer_id = buffer_snapshot.remote_id();
             let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
@@ -491,25 +459,17 @@ impl Editor {
                 if action_offset < visible_range.start.0 || action_offset > visible_range.end.0 {
                     continue;
                 }
-                items_to_resolve.push((buffer_id, *lens_id, action.server_id, buffer.clone()));
+                let resolve_task = lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.resolve_code_lens(&buffer, action.server_id, *lens_id, cx)
+                });
+                pending_resolves.push((buffer_id, resolve_task));
             }
-        }
-
-        let mut pending_resolves = Vec::new();
-        let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
-        for (buffer_id, lens_id, server_id, buffer) in items_to_resolve {
-            if !code_lens.resolving.insert((buffer_id, lens_id)) {
-                continue;
-            }
-            let resolve_task = lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store.resolve_code_lens(&buffer, server_id, lens_id, cx)
-            });
-            pending_resolves.push((buffer_id, resolve_task));
         }
         if pending_resolves.is_empty() {
             return;
         }
 
+        let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
         code_lens.resolve_task = cx.spawn(async move |editor, cx| {
             let mut resolves_in_progress = pending_resolves
                 .into_iter()
@@ -521,9 +481,7 @@ impl Editor {
                 };
                 editor
                     .update(cx, |editor, cx| {
-                        if let Some(code_lens) = editor.code_lens.as_mut() {
-                            code_lens.resolving.remove(&(buffer_id, resolved_id));
-                        }
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
                         let Some(mut actions) = editor
                             .code_lens
                             .as_ref()
@@ -535,7 +493,7 @@ impl Editor {
                         if let Some(slot) = actions.get_mut(&resolved_id) {
                             *slot = resolved;
                         }
-                        editor.apply_lens_actions_for_buffer(buffer_id, actions, cx);
+                        editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
                     })
                     .ok();
             }

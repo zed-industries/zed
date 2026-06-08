@@ -129,10 +129,12 @@ impl Editor {
                 .iter()
                 .any(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
 
-            if should_unfold {
-                self.unfold_buffers(buffer_ids, cx);
-            } else {
-                self.fold_buffers(buffer_ids, cx);
+            for buffer_id in buffer_ids {
+                if should_unfold {
+                    self.unfold_buffer(buffer_id, cx);
+                } else {
+                    self.fold_buffer(buffer_id, cx);
+                }
             }
         }
     }
@@ -345,7 +347,9 @@ impl Editor {
                 editor
                     .update_in(cx, |editor, _, cx| {
                         let snapshot = editor.buffer.read(cx).snapshot(cx);
-                        editor.fold_buffers(snapshot.all_buffer_ids(), cx);
+                        for buffer_id in snapshot.all_buffer_ids() {
+                            editor.fold_buffer(buffer_id, cx);
+                        }
                     })
                     .ok();
             });
@@ -461,7 +465,9 @@ impl Editor {
                 .disjoint_anchor_ranges()
                 .flat_map(|range| multi_buffer_snapshot.buffer_ids_for_range(range))
                 .collect::<HashSet<_>>();
-            self.unfold_buffers(buffer_ids, cx);
+            for buffer_id in buffer_ids {
+                self.unfold_buffer(buffer_id, cx);
+            }
         }
     }
 
@@ -530,7 +536,9 @@ impl Editor {
                 editor
                     .update(cx, |editor, cx| {
                         let snapshot = editor.buffer.read(cx).snapshot(cx);
-                        editor.unfold_buffers(snapshot.all_buffer_ids(), cx);
+                        for buffer_id in snapshot.all_buffer_ids() {
+                            editor.unfold_buffer(buffer_id, cx);
+                        }
                     })
                     .ok();
             });
@@ -589,7 +597,6 @@ impl Editor {
         self.scrollbar_marker_state.dirty = true;
         self.update_data_on_scroll(false, window, cx);
         self.folds_did_change(cx);
-        self.reapply_code_lenses_for_fold_change(cx);
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.
@@ -604,7 +611,6 @@ impl Editor {
             map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx);
         });
         self.folds_did_change(cx);
-        self.reapply_code_lenses_for_fold_change(cx);
     }
 
     pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
@@ -645,41 +651,20 @@ impl Editor {
             folded: true,
         });
         cx.notify();
-        self.reapply_code_lenses_for_fold_change(cx);
     }
 
     pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        self.unfold_buffers([buffer_id], cx);
-    }
-
-    pub fn unfold_buffers(
-        &mut self,
-        buffer_ids: impl IntoIterator<Item = BufferId>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.buffer().read(cx).is_singleton() {
+        if self.buffer().read(cx).is_singleton() || !self.is_buffer_folded(buffer_id, cx) {
             return;
         }
-
-        let ids_to_unfold: Vec<BufferId> = buffer_ids
-            .into_iter()
-            .filter(|id| self.is_buffer_folded(*id, cx))
-            .collect();
-
-        if ids_to_unfold.is_empty() {
-            return;
-        }
-
         self.display_map.update(cx, |display_map, cx| {
-            display_map.unfold_buffers(ids_to_unfold.iter().copied(), cx)
+            display_map.unfold_buffers([buffer_id], cx);
         });
-
         cx.emit(EditorEvent::BufferFoldToggled {
-            ids: ids_to_unfold,
+            ids: vec![buffer_id],
             folded: false,
         });
         cx.notify();
-        self.reapply_code_lenses_for_fold_change(cx);
     }
 
     pub fn is_buffer_folded(&self, buffer: BufferId, cx: &App) -> bool {
@@ -716,7 +701,6 @@ impl Editor {
             map.remove_folds_with_type(ranges.iter().cloned(), type_id, cx)
         });
         self.folds_did_change(cx);
-        self.reapply_code_lenses_for_fold_change(cx);
     }
 
     pub fn update_renderer_widths(
@@ -814,7 +798,9 @@ impl Editor {
             .disjoint_anchor_ranges()
             .flat_map(|range| snapshot.buffer_ids_for_range(range))
             .collect();
-        self.unfold_buffers(buffer_ids, cx);
+        for buffer_id in buffer_ids {
+            self.unfold_buffer(buffer_id, cx);
+        }
     }
 
     pub(super) fn folds_did_change(&mut self, cx: &mut Context<Self>) {
@@ -983,7 +969,6 @@ impl Editor {
                     display_map.remove_folds_with_type(existing_newlines, type_id, cx);
                     display_map.fold(creases, cx);
                 });
-                this.reapply_code_lenses_for_fold_change(cx);
             })
             .ok();
         });
