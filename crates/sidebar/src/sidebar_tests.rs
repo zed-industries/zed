@@ -6347,6 +6347,182 @@ async fn test_git_worktree_added_live_updates_sidebar(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_thread_on_live_worktree_is_not_reset_when_workspace_opens_at_worktree(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt/rosewood"),
+            ref_name: Some("refs/heads/rosewood".into()),
+            sha: "abc".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    // Simulate a restart with a workspace restored at the linked worktree
+    // itself. The repository snapshot of this project excludes the repo's
+    // own working directory from its linked-worktree list, which must not
+    // make the worktree look deleted.
+    let project = project::Project::test(fs.clone(), ["/wt/rosewood".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_thread_metadata_with_main_paths(
+        "wt-thread",
+        "Worktree Thread",
+        PathList::new(&[PathBuf::from("/wt/rosewood")]),
+        PathList::new(&[PathBuf::from("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    // Change the repo's worktree list (an unrelated worktree appears) so
+    // GitWorktreeListChanged fires with the thread metadata already loaded.
+    // The open worktree is absent from this repo's linked-worktree list, so
+    // a naive reset would wrongly treat it as deleted.
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        true,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt/other"),
+            ref_name: Some("refs/heads/other".into()),
+            sha: "def".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Worktree Thread {rosewood}"]
+    );
+
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let store = store.read(cx);
+        let session = acp::SessionId::new("wt-thread");
+        let entry = store
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session))
+            .unwrap();
+        assert_eq!(
+            entry.folder_paths().paths(),
+            &[PathBuf::from("/wt/rosewood")],
+            "thread attached to a still-valid worktree must not be reset to main"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_thread_resets_to_main_when_git_worktree_deleted(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    // Register the linked worktree in the repo's git state before the
+    // project scans, so the initial repository snapshot includes it.
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt/rosewood"),
+            ref_name: Some("refs/heads/rosewood".into()),
+            sha: "abc".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_thread_metadata_with_main_paths(
+        "wt-thread",
+        "Worktree Thread",
+        PathList::new(&[PathBuf::from("/wt/rosewood")]),
+        PathList::new(&[PathBuf::from("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Worktree Thread {rosewood}"]
+    );
+
+    // Delete the linked worktree, as `git worktree remove` would (whether
+    // through Zed's worktree picker or externally in a terminal).
+    fs.remove_worktree_for_repo(Path::new("/project/.git"), true, "refs/heads/rosewood")
+        .await;
+    cx.run_until_parked();
+
+    // The thread was repointed at the main checkout; the chip is gone.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Worktree Thread"]
+    );
+
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let store = store.read(cx);
+        let session = acp::SessionId::new("wt-thread");
+        let entry = store
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session))
+            .unwrap();
+        assert_eq!(entry.folder_paths().paths(), &[PathBuf::from("/project")]);
+        assert_eq!(
+            entry.main_worktree_paths().paths(),
+            &[PathBuf::from("/project")]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

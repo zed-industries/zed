@@ -301,6 +301,68 @@ impl TerminalThreadMetadataStore {
         cx.notify();
     }
 
+    /// For every terminal thread that has a `(main, folder)` worktree pair
+    /// where `main` equals `main_worktree_path`, `folder` differs from `main`
+    /// (i.e. it was a linked worktree), and `folder` is not in
+    /// `live_folder_paths`, rewrite each such pair to `(main, main)`, dedupe
+    /// pairs, re-index, and persist. Only terminals matching
+    /// `remote_connection` identity are affected. The terminal's
+    /// `working_directory` is intentionally left untouched; terminal restore
+    /// already tolerates missing directories.
+    ///
+    /// Used to repoint terminal threads at the main repo checkout when their
+    /// linked git worktree has been deleted. Returns the affected terminal ids.
+    pub fn reset_deleted_worktree_folder_paths<S: std::hash::BuildHasher>(
+        &mut self,
+        main_worktree_path: &Path,
+        live_folder_paths: &std::collections::HashSet<PathBuf, S>,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        cx: &mut Context<Self>,
+    ) -> Vec<TerminalId> {
+        let mut deleted_folder_paths: HashSet<PathBuf> = HashSet::default();
+        let mut terminal_ids = Vec::new();
+        for terminal in self.terminals.values() {
+            if !same_remote_connection_identity(
+                terminal.remote_connection.as_ref(),
+                remote_connection,
+            ) {
+                continue;
+            }
+            let dead_folder_paths = terminal
+                .worktree_paths
+                .ordered_pairs()
+                .filter(|(main, folder)| {
+                    main.as_path() == main_worktree_path
+                        && folder != main
+                        && !live_folder_paths.contains(folder.as_path())
+                })
+                .map(|(_, folder)| folder.clone())
+                .collect::<Vec<_>>();
+            if !dead_folder_paths.is_empty() {
+                terminal_ids.push(terminal.terminal_id);
+                deleted_folder_paths.extend(dead_folder_paths);
+            }
+        }
+
+        if terminal_ids.is_empty() {
+            return terminal_ids;
+        }
+
+        for terminal_id in &terminal_ids {
+            if let Some(mut terminal) = self.terminals.get(terminal_id).cloned() {
+                for folder_path in &deleted_folder_paths {
+                    terminal
+                        .worktree_paths
+                        .reset_folder_path_to_main(folder_path);
+                }
+                self.save_internal(terminal);
+            }
+        }
+
+        cx.notify();
+        terminal_ids
+    }
+
     fn save_internal(&mut self, metadata: TerminalThreadMetadata) {
         if let Some(existing) = self.terminals.get(&metadata.terminal_id) {
             if existing.folder_paths() != metadata.folder_paths()
@@ -718,6 +780,93 @@ mod tests {
                     .main_worktree_paths()
                     .paths(),
                 old_main_paths.paths()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_deleted_worktree_folder_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let main_path = Path::new("/repo");
+        let main_paths = PathList::new(&[main_path]);
+        let dead_paths = PathList::new(&[Path::new("/wt-dead")]);
+        let live_paths = PathList::new(&[Path::new("/wt-live")]);
+
+        // Terminal on the deleted worktree; its working directory must be
+        // preserved even though the worktree paths are rewritten.
+        let mut dead_terminal = metadata(
+            "Dev Server",
+            WorktreePaths::from_path_lists(main_paths.clone(), dead_paths.clone()).unwrap(),
+        );
+        dead_terminal.working_directory = Some(PathBuf::from("/wt-dead/src"));
+        let dead_terminal_id = dead_terminal.terminal_id;
+
+        // Terminal on a worktree that still exists.
+        let live_terminal = metadata(
+            "Logs",
+            WorktreePaths::from_path_lists(main_paths.clone(), live_paths.clone()).unwrap(),
+        );
+        let live_terminal_id = live_terminal.terminal_id;
+
+        // Remote terminal on the deleted worktree must be left alone when
+        // resetting for the local connection.
+        let mut remote_terminal = metadata(
+            "Remote",
+            WorktreePaths::from_path_lists(main_paths.clone(), dead_paths.clone()).unwrap(),
+        );
+        remote_terminal.remote_connection = Some(RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 1 },
+        ));
+        let remote_terminal_id = remote_terminal.terminal_id;
+
+        cx.update(|cx| {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(dead_terminal, cx);
+                store.save(live_terminal, cx);
+                store.save(remote_terminal, cx);
+            });
+        });
+
+        let live_folder_paths = HashSet::from_iter([PathBuf::from("/wt-live")]);
+        let affected = cx.update(|cx| {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.reset_deleted_worktree_folder_paths(main_path, &live_folder_paths, None, cx)
+            })
+        });
+        cx.run_until_parked();
+
+        assert_eq!(affected, vec![dead_terminal_id]);
+
+        cx.update(|cx| {
+            let store = TerminalThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let dead_entry = store.entry(dead_terminal_id).unwrap();
+            assert_eq!(dead_entry.folder_paths(), &main_paths);
+            assert_eq!(dead_entry.main_worktree_paths(), &main_paths);
+            assert_eq!(
+                dead_entry.working_directory,
+                Some(PathBuf::from("/wt-dead/src"))
+            );
+
+            assert_eq!(
+                store.entry(live_terminal_id).unwrap().folder_paths(),
+                &live_paths
+            );
+            assert_eq!(
+                store.entry(remote_terminal_id).unwrap().folder_paths(),
+                &dead_paths
+            );
+
+            // The path index reflects the rewrite.
+            assert!(store.entries_for_path(&dead_paths, None).next().is_none());
+            assert_eq!(
+                store
+                    .entries_for_path(&main_paths, None)
+                    .map(|entry| entry.terminal_id)
+                    .collect::<Vec<_>>(),
+                vec![dead_terminal_id]
             );
         });
     }

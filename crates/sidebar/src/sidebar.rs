@@ -986,23 +986,36 @@ impl Sidebar {
         .detach();
 
         let git_store = workspace.read(cx).project().read(cx).git_store().clone();
-        cx.subscribe_in(
-            &git_store,
-            window,
-            |this, _, event: &project::git_store::GitStoreEvent, _window, cx| {
-                if matches!(
-                    event,
+        cx.subscribe_in(&git_store, window, {
+            let workspace = workspace.downgrade();
+            move |this, git_store, event: &project::git_store::GitStoreEvent, _window, cx| {
+                match event {
+                    project::git_store::GitStoreEvent::RepositoryUpdated(
+                        repository_id,
+                        project::git_store::RepositoryEvent::GitWorktreeListChanged,
+                        _,
+                    ) => {
+                        if let Some(workspace) = workspace.upgrade() {
+                            this.reset_threads_for_deleted_git_worktrees(
+                                &workspace,
+                                git_store,
+                                *repository_id,
+                                cx,
+                            );
+                        }
+                        this.schedule_update_entries(false, cx);
+                    }
                     project::git_store::GitStoreEvent::RepositoryUpdated(
                         _,
-                        project::git_store::RepositoryEvent::GitWorktreeListChanged
-                            | project::git_store::RepositoryEvent::HeadChanged,
+                        project::git_store::RepositoryEvent::HeadChanged,
                         _,
-                    )
-                ) {
-                    this.schedule_update_entries(false, cx);
+                    ) => {
+                        this.schedule_update_entries(false, cx);
+                    }
+                    _ => {}
                 }
-            },
-        )
+            }
+        })
         .detach();
 
         cx.subscribe_in(
@@ -1083,6 +1096,62 @@ impl Sidebar {
                 &old_folder_paths,
                 remote_connection.as_ref(),
                 &apply_path_changes,
+                store_cx,
+            );
+        });
+    }
+
+    /// When a repository's linked-worktree list changes, repoint any
+    /// non-archived threads whose folder path was a now-deleted linked
+    /// worktree of this repository back at the main repo checkout. This
+    /// covers worktrees deleted via Zed's worktree picker as well as ones
+    /// removed externally (e.g. `git worktree remove` in a terminal).
+    fn reset_threads_for_deleted_git_worktrees(
+        &self,
+        workspace: &Entity<Workspace>,
+        git_store: &Entity<project::git_store::GitStore>,
+        repository_id: project::git_store::RepositoryId,
+        cx: &mut Context<Self>,
+    ) {
+        let project = workspace.read(cx).project().clone();
+        let Some(repository) = git_store
+            .read(cx)
+            .repositories()
+            .get(&repository_id)
+            .cloned()
+        else {
+            return;
+        };
+        let snapshot = repository.read(cx).snapshot();
+        let Some(main_worktree_path) = snapshot.main_worktree_abs_path().map(Path::to_path_buf)
+        else {
+            return;
+        };
+        let mut live_folder_paths: HashSet<PathBuf> = snapshot
+            .linked_worktrees()
+            .iter()
+            .map(|worktree| worktree.path.clone())
+            .collect();
+        // The snapshot's linked-worktree list excludes the repo's own working
+        // directory, so when this project is itself opened at a linked
+        // worktree, that worktree must be counted as live or its threads
+        // would be wrongly reset to main.
+        live_folder_paths.insert(snapshot.work_directory_abs_path.to_path_buf());
+        let remote_connection = project.read(cx).remote_connection_options(cx);
+
+        ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            store.reset_deleted_worktree_folder_paths(
+                &main_worktree_path,
+                &live_folder_paths,
+                remote_connection.as_ref(),
+                store_cx,
+            );
+        });
+        TerminalThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            store.reset_deleted_worktree_folder_paths(
+                &main_worktree_path,
+                &live_folder_paths,
+                remote_connection.as_ref(),
                 store_cx,
             );
         });

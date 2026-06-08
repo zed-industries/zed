@@ -137,6 +137,34 @@ impl WorktreePaths {
         self.paths = PathList::new(&folders);
     }
 
+    /// Rewrite every pair whose folder path matches the given path to
+    /// `(main, main)`, then drop duplicate pairs that can result from the
+    /// rewrite (e.g. when the pair `(main, main)` was already present).
+    pub fn reset_folder_path_to_main(&mut self, folder_path: &Path) {
+        let mut mains: Vec<PathBuf> = Vec::new();
+        let mut folders: Vec<PathBuf> = Vec::new();
+        for (main, folder) in self.ordered_pairs() {
+            let new_folder = if folder.as_path() == folder_path {
+                main.clone()
+            } else {
+                folder.clone()
+            };
+            let is_duplicate =
+                mains
+                    .iter()
+                    .zip(&folders)
+                    .any(|(existing_main, existing_folder)| {
+                        existing_main == main && *existing_folder == new_folder
+                    });
+            if !is_duplicate {
+                mains.push(main.clone());
+                folders.push(new_folder);
+            }
+        }
+        self.main_paths = PathList::new(&mains);
+        self.paths = PathList::new(&folders);
+    }
+
     /// Remove all pairs whose folder path matches the given path.
     /// This removes the corresponding entries from both lists.
     pub fn remove_folder_path(&mut self, folder_path: &Path) {
@@ -1394,5 +1422,91 @@ impl WorktreeHandle {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use util::path;
+
+    fn pairs(worktree_paths: &WorktreePaths) -> Vec<(PathBuf, PathBuf)> {
+        worktree_paths
+            .ordered_pairs()
+            .map(|(main, folder)| (main.clone(), folder.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn test_reset_folder_path_to_main_rewrites_matching_pair() {
+        let mut worktree_paths = WorktreePaths::from_path_lists(
+            PathList::new(&[path!("/main")]),
+            PathList::new(&[path!("/worktrees/feature")]),
+        )
+        .unwrap();
+
+        worktree_paths.reset_folder_path_to_main(Path::new(path!("/worktrees/feature")));
+
+        assert_eq!(
+            pairs(&worktree_paths),
+            vec![(PathBuf::from(path!("/main")), PathBuf::from(path!("/main")))]
+        );
+    }
+
+    #[test]
+    fn test_reset_folder_path_to_main_leaves_other_pairs_untouched() {
+        let mut worktree_paths = WorktreePaths::from_path_lists(
+            PathList::new(&[path!("/main"), path!("/other")]),
+            PathList::new(&[path!("/worktrees/feature"), path!("/other")]),
+        )
+        .unwrap();
+
+        worktree_paths.reset_folder_path_to_main(Path::new(path!("/worktrees/feature")));
+
+        assert_eq!(
+            pairs(&worktree_paths),
+            vec![
+                (PathBuf::from(path!("/main")), PathBuf::from(path!("/main"))),
+                (
+                    PathBuf::from(path!("/other")),
+                    PathBuf::from(path!("/other"))
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_reset_folder_path_to_main_dedupes_resulting_pairs() {
+        // A thread that references both the main checkout and a linked
+        // worktree of the same repo must end up with a single (main, main)
+        // pair after the worktree is reset.
+        let mut worktree_paths =
+            WorktreePaths::from_folder_paths(&PathList::new(&[path!("/main")]));
+        worktree_paths.add_path(
+            Path::new(path!("/main")),
+            Path::new(path!("/worktrees/feature")),
+        );
+        assert_eq!(pairs(&worktree_paths).len(), 2);
+
+        worktree_paths.reset_folder_path_to_main(Path::new(path!("/worktrees/feature")));
+
+        assert_eq!(
+            pairs(&worktree_paths),
+            vec![(PathBuf::from(path!("/main")), PathBuf::from(path!("/main")))]
+        );
+    }
+
+    #[test]
+    fn test_reset_folder_path_to_main_is_noop_for_unknown_path() {
+        let mut worktree_paths = WorktreePaths::from_path_lists(
+            PathList::new(&[path!("/main")]),
+            PathList::new(&[path!("/worktrees/feature")]),
+        )
+        .unwrap();
+        let before = pairs(&worktree_paths);
+
+        worktree_paths.reset_folder_path_to_main(Path::new(path!("/worktrees/unrelated")));
+
+        assert_eq!(pairs(&worktree_paths), before);
     }
 }

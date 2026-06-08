@@ -1002,6 +1002,61 @@ impl ThreadMetadataStore {
         self.mutate_thread_paths(&thread_ids, mutate, cx);
     }
 
+    /// For every non-archived thread that has a `(main, folder)` worktree
+    /// pair where `main` equals `main_worktree_path`, `folder` differs from
+    /// `main` (i.e. it was a linked worktree), and `folder` is not in
+    /// `live_folder_paths`, rewrite each such pair to `(main, main)`, dedupe
+    /// pairs, re-index, and persist. Only threads matching
+    /// `remote_connection` identity are affected.
+    ///
+    /// Used to repoint threads at the main repo checkout when their linked
+    /// git worktree has been deleted. Returns the affected thread ids.
+    pub fn reset_deleted_worktree_folder_paths<S: std::hash::BuildHasher>(
+        &mut self,
+        main_worktree_path: &Path,
+        live_folder_paths: &std::collections::HashSet<PathBuf, S>,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        cx: &mut Context<Self>,
+    ) -> Vec<ThreadId> {
+        let mut deleted_folder_paths: HashSet<PathBuf> = HashSet::default();
+        let mut thread_ids = Vec::new();
+        for thread in self.threads.values() {
+            if thread.archived
+                || !same_remote_connection_identity(
+                    thread.remote_connection.as_ref(),
+                    remote_connection,
+                )
+            {
+                continue;
+            }
+            let dead_folder_paths = thread
+                .worktree_paths
+                .ordered_pairs()
+                .filter(|(main, folder)| {
+                    main.as_path() == main_worktree_path
+                        && folder != main
+                        && !live_folder_paths.contains(folder.as_path())
+                })
+                .map(|(_, folder)| folder.clone())
+                .collect::<Vec<_>>();
+            if !dead_folder_paths.is_empty() {
+                thread_ids.push(thread.thread_id);
+                deleted_folder_paths.extend(dead_folder_paths);
+            }
+        }
+
+        self.mutate_thread_paths(
+            &thread_ids,
+            |paths| {
+                for folder_path in &deleted_folder_paths {
+                    paths.reset_folder_path_to_main(folder_path);
+                }
+            },
+            cx,
+        );
+        thread_ids
+    }
+
     fn mutate_thread_paths(
         &mut self,
         thread_ids: &[ThreadId],
@@ -3192,6 +3247,159 @@ mod tests {
                 remote_main_entries,
                 vec!["remote-a-session", "remote-linked"]
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_deleted_worktree_folder_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let now = Utc::now();
+        let main_path = Path::new("/project");
+        let main_paths = PathList::new(&[main_path]);
+        let dead_paths = PathList::new(&[Path::new("/wt-dead")]);
+        let live_paths = PathList::new(&[Path::new("/wt-live")]);
+        let remote = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 1 });
+
+        // Thread whose only folder is the deleted worktree.
+        let mut dead_thread = make_metadata("dead-session", "Dead", now, PathList::default());
+        dead_thread.worktree_paths =
+            WorktreePaths::from_path_lists(main_paths.clone(), dead_paths.clone()).unwrap();
+        let dead_thread_id = dead_thread.thread_id;
+
+        // Thread that references both the main checkout and the deleted
+        // worktree (built via the production `add_path` route).
+        let mut dual_thread = make_metadata("dual-session", "Dual", now, main_paths.clone());
+        dual_thread
+            .worktree_paths
+            .add_path(main_path, Path::new("/wt-dead"));
+        let dual_thread_id = dual_thread.thread_id;
+
+        // Thread on a worktree that still exists.
+        let mut live_thread = make_metadata("live-session", "Live", now, PathList::default());
+        live_thread.worktree_paths =
+            WorktreePaths::from_path_lists(main_paths.clone(), live_paths.clone()).unwrap();
+
+        // Archived thread on the deleted worktree must be left alone.
+        let mut archived_thread =
+            make_metadata("archived-session", "Archived", now, PathList::default());
+        archived_thread.worktree_paths =
+            WorktreePaths::from_path_lists(main_paths.clone(), dead_paths.clone()).unwrap();
+        archived_thread.archived = true;
+
+        // Remote thread on the same paths must be left alone when resetting
+        // for the local connection.
+        let mut remote_thread = make_metadata("remote-session", "Remote", now, PathList::default());
+        remote_thread.worktree_paths =
+            WorktreePaths::from_path_lists(main_paths.clone(), dead_paths.clone()).unwrap();
+        remote_thread.remote_connection = Some(remote.clone());
+        let remote_thread_id = remote_thread.thread_id;
+
+        // Thread in a different repo whose folder also doesn't exist in the
+        // live set; untouched because its main path doesn't match.
+        let mut other_repo_thread =
+            make_metadata("other-session", "Other", now, PathList::default());
+        other_repo_thread.worktree_paths = WorktreePaths::from_path_lists(
+            PathList::new(&[Path::new("/other")]),
+            PathList::new(&[Path::new("/other-wt")]),
+        )
+        .unwrap();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(dead_thread, cx);
+                store.save(dual_thread, cx);
+                store.save(live_thread, cx);
+                store.save(archived_thread, cx);
+                store.save(remote_thread, cx);
+                store.save(other_repo_thread, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let live_folder_paths = HashSet::from_iter([PathBuf::from("/wt-live")]);
+        let affected = cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.reset_deleted_worktree_folder_paths(main_path, &live_folder_paths, None, cx)
+            })
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            HashSet::from_iter(affected),
+            HashSet::from_iter([dead_thread_id, dual_thread_id])
+        );
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let entry_by_session = |session: &str| {
+                let session = acp::SessionId::new(session);
+                store
+                    .entries()
+                    .find(|e| e.session_id.as_ref() == Some(&session))
+                    .unwrap()
+            };
+
+            let dead = entry_by_session("dead-session");
+            assert_eq!(dead.folder_paths(), &main_paths);
+            assert_eq!(dead.main_worktree_paths(), &main_paths);
+
+            let dual = entry_by_session("dual-session");
+            assert_eq!(dual.worktree_paths.ordered_pairs().count(), 1);
+            assert_eq!(dual.folder_paths(), &main_paths);
+            assert_eq!(dual.main_worktree_paths(), &main_paths);
+
+            assert_eq!(entry_by_session("live-session").folder_paths(), &live_paths);
+            assert_eq!(
+                entry_by_session("archived-session").folder_paths(),
+                &dead_paths
+            );
+            assert_eq!(
+                entry_by_session("remote-session").folder_paths(),
+                &dead_paths
+            );
+            assert_eq!(
+                entry_by_session("other-session").folder_paths(),
+                &PathList::new(&[Path::new("/other-wt")])
+            );
+
+            // The path index reflects the rewrite.
+            assert!(store.entries_for_path(&dead_paths, None).next().is_none());
+            let mut main_path_sessions: Vec<_> = store
+                .entries_for_path(&main_paths, None)
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            main_path_sessions.sort();
+            assert_eq!(main_path_sessions, vec!["dead-session", "dual-session"]);
+        });
+
+        // Resetting with the matching remote identity affects the remote
+        // thread that was previously skipped.
+        let affected = cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.reset_deleted_worktree_folder_paths(
+                    main_path,
+                    &live_folder_paths,
+                    Some(&remote),
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        assert_eq!(affected, vec![remote_thread_id]);
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let session = acp::SessionId::new("remote-session");
+            let remote_entry = store
+                .entries()
+                .find(|e| e.session_id.as_ref() == Some(&session))
+                .unwrap();
+            assert_eq!(remote_entry.folder_paths(), &main_paths);
         });
     }
 

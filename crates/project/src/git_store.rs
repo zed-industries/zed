@@ -9571,7 +9571,7 @@ async fn compute_snapshot(
     };
     let worktrees_future = {
         let backend = backend.clone();
-        async move { backend.worktrees().await.log_err().unwrap_or_default() }
+        async move { backend.worktrees().await.log_err() }
     };
     let (branches, head_commit, all_worktrees) =
         futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
@@ -9584,10 +9584,16 @@ async fn compute_snapshot(
     let branch = branches.iter().find(|branch| branch.is_head).cloned();
     let branch_list: Arc<[Branch]> = branches.into();
 
-    let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
-        .into_iter()
-        .filter(|wt| wt.path != *work_directory_abs_path)
-        .collect();
+    let linked_worktrees: Arc<[GitWorktree]> = match all_worktrees {
+        Some(all_worktrees) => all_worktrees
+            .into_iter()
+            .filter(|wt| wt.path != *work_directory_abs_path)
+            .collect(),
+        // Keep the previous list when listing fails: a transient git error
+        // must not make the linked worktrees appear deleted to observers of
+        // `GitWorktreeListChanged`.
+        None => prev_snapshot.linked_worktrees.clone(),
+    };
 
     let remote_origin_url = backend.remote_url("origin").await;
     let remote_upstream_url = backend.remote_url("upstream").await;
