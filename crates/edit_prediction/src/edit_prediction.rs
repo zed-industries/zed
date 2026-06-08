@@ -142,6 +142,10 @@ pub struct EditPredictionJumpsFeatureFlag;
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
     type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
