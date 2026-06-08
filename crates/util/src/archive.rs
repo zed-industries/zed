@@ -1,10 +1,30 @@
 use std::path::Path;
+#[cfg(unix)]
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    ffi::{OsStr, OsString},
+    path::{Component, PathBuf},
+};
 
 use anyhow::{Context as _, Result};
 use async_zip::base::read;
-#[cfg(not(windows))]
-use futures::AsyncSeek;
 use futures::{AsyncRead, io::BufReader};
+#[cfg(not(windows))]
+use futures::{AsyncReadExt, AsyncSeek};
+#[cfg(unix)]
+use unicase::UniCase;
+#[cfg(unix)]
+use unicode_normalization::UnicodeNormalization as _;
+
+#[cfg(unix)]
+const MAX_SYMLINK_TARGET_BYTES: u64 = 4096;
+
+#[cfg(unix)]
+enum SymlinkTargetComponent {
+    CurDir,
+    ParentDir,
+    Normal(OsString),
+}
 
 #[cfg(any(unix, windows))]
 fn archive_path_is_normal(filename: &str) -> bool {
@@ -14,6 +34,232 @@ fn archive_path_is_normal(filename: &str) -> bool {
             std::path::Component::Normal(_) | std::path::Component::CurDir
         )
     })
+}
+
+#[cfg(unix)]
+fn zip_entry_is_symlink(unix_permissions: Option<u16>) -> bool {
+    const S_IFMT: u16 = 0o170000;
+    const S_IFLNK: u16 = 0o120000;
+
+    unix_permissions.is_some_and(|permissions| permissions & S_IFMT == S_IFLNK)
+}
+
+#[cfg(unix)]
+fn normalized_case_folded_component(component: &OsStr) -> String {
+    let normalized = component.to_string_lossy().nfc().collect::<String>();
+    UniCase::new(normalized).to_folded_case().nfc().collect()
+}
+
+#[cfg(unix)]
+fn path_with_normalized_case_folded_components(path: impl AsRef<Path>) -> PathBuf {
+    let path = crate::normalize_path(path.as_ref());
+    let mut normalized_path = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                normalized_path.push(normalized_case_folded_component(prefix.as_os_str()));
+            }
+            Component::RootDir => normalized_path.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized_path.pop();
+            }
+            Component::Normal(component) => {
+                normalized_path.push(normalized_case_folded_component(component));
+            }
+        }
+    }
+    normalized_path
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct ArchiveSymlinkPaths {
+    exact_paths: HashSet<PathBuf>,
+    normalized_paths: HashSet<PathBuf>,
+}
+
+#[cfg(unix)]
+impl ArchiveSymlinkPaths {
+    fn insert(&mut self, path: PathBuf) {
+        self.normalized_paths
+            .insert(path_with_normalized_case_folded_components(&path));
+        self.exact_paths.insert(path);
+    }
+
+    fn contains(&self, path: &Path) -> bool {
+        self.exact_paths.contains(path)
+            || self
+                .normalized_paths
+                .contains(&path_with_normalized_case_folded_components(path))
+    }
+}
+
+#[cfg(unix)]
+fn symlink_target_components(
+    target: &Path,
+    link_path: &Path,
+) -> Result<VecDeque<SymlinkTargetComponent>> {
+    let mut components = VecDeque::new();
+    for component in target.components() {
+        match component {
+            Component::CurDir => components.push_back(SymlinkTargetComponent::CurDir),
+            Component::ParentDir => components.push_back(SymlinkTargetComponent::ParentDir),
+            Component::Normal(component) => {
+                components.push_back(SymlinkTargetComponent::Normal(component.to_os_string()));
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                anyhow::bail!(
+                    "symlink target contains unsupported component {component:?} for path {link_path:?}: {target:?}"
+                );
+            }
+        }
+    }
+    Ok(components)
+}
+
+#[cfg(unix)]
+fn validate_symlink_target(
+    link_path: &Path,
+    target: &Path,
+    destination: &Path,
+    archive_symlink_paths: &ArchiveSymlinkPaths,
+    archive_symlinks: &HashMap<PathBuf, PathBuf>,
+) -> Result<()> {
+    anyhow::ensure!(
+        destination.is_absolute(),
+        "destination must be absolute when validating symlink target for path {link_path:?}: {destination:?}"
+    );
+    anyhow::ensure!(
+        !target.as_os_str().is_empty(),
+        "symlink target cannot be empty for path {link_path:?}"
+    );
+    anyhow::ensure!(
+        !target.is_absolute(),
+        "symlink target cannot be absolute for path {link_path:?}: {target:?}"
+    );
+
+    let link_parent = link_path
+        .parent()
+        .with_context(|| format!("no parent directory for symlink {link_path:?}"))?;
+    let destination = crate::normalize_path(destination);
+    let mut resolved_target = crate::normalize_path(link_parent);
+    let mut target_components = symlink_target_components(target, link_path)?;
+    let mut target_contains_unresolved_archive_symlink = false;
+    let mut symlink_expansion_count = 0;
+    anyhow::ensure!(
+        resolved_target.starts_with(&destination),
+        "symlink target escapes destination for path {link_path:?}: {target:?}"
+    );
+
+    while let Some(component) = target_components.pop_front() {
+        match component {
+            SymlinkTargetComponent::CurDir => {}
+            SymlinkTargetComponent::ParentDir => {
+                anyhow::ensure!(
+                    !target_contains_unresolved_archive_symlink,
+                    "symlink target traverses parent after unresolved archive symlink component for path {link_path:?}: {target:?}"
+                );
+                resolved_target.pop();
+                anyhow::ensure!(
+                    resolved_target.starts_with(&destination),
+                    "symlink target escapes destination for path {link_path:?}: {target:?}"
+                );
+            }
+            SymlinkTargetComponent::Normal(component) => {
+                resolved_target.push(component);
+                anyhow::ensure!(
+                    resolved_target.starts_with(&destination),
+                    "symlink target escapes destination for path {link_path:?}: {target:?}"
+                );
+
+                if let Some(archive_target) = archive_symlinks.get(&resolved_target) {
+                    symlink_expansion_count += 1;
+                    anyhow::ensure!(
+                        symlink_expansion_count <= archive_symlinks.len(),
+                        "symlink target resolves through too many archive symlinks for path {link_path:?}: {target:?}"
+                    );
+                    let symlink_parent = resolved_target.parent().with_context(|| {
+                        format!("no parent directory for symlink target {resolved_target:?}")
+                    })?;
+                    let mut archive_target_components =
+                        symlink_target_components(archive_target, &resolved_target)?;
+                    archive_target_components.append(&mut target_components);
+                    target_components = archive_target_components;
+                    resolved_target = crate::normalize_path(symlink_parent);
+                    target_contains_unresolved_archive_symlink = false;
+                    continue;
+                }
+
+                match std::fs::symlink_metadata(&resolved_target) {
+                    Ok(metadata) => {
+                        anyhow::ensure!(
+                            !metadata.file_type().is_symlink(),
+                            "symlink target crosses symlinked component {resolved_target:?} for path {link_path:?}: {target:?}"
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        if archive_symlink_paths.contains(&resolved_target) {
+                            target_contains_unresolved_archive_symlink = true;
+                        }
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "reading metadata for symlink target component {resolved_target:?}"
+                            )
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn ensure_no_symlinked_path_components(path: &Path, destination: &Path) -> Result<()> {
+    let path = crate::normalize_path(path);
+    let destination = crate::normalize_path(destination);
+    anyhow::ensure!(
+        path.starts_with(&destination),
+        "archive path escapes destination: {path:?}"
+    );
+
+    let relative_path = path
+        .strip_prefix(&destination)
+        .with_context(|| format!("checking archive path {path:?} under {destination:?}"))?;
+    let mut component_path = destination;
+    for component in relative_path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(component) => {
+                component_path.push(component);
+                match std::fs::symlink_metadata(&component_path) {
+                    Ok(metadata) => {
+                        anyhow::ensure!(
+                            !metadata.file_type().is_symlink(),
+                            "archive path contains symlinked component {component_path:?} for path {path:?}"
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "reading metadata for archive path component {component_path:?}"
+                            )
+                        });
+                    }
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                anyhow::bail!("archive path contains unsupported component {component:?}: {path:?}")
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -90,10 +336,25 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
     let mut reader = read::seek::ZipFileReader::new(BufReader::new(reader))
         .await
         .context("reading the zip archive")?;
+    std::fs::create_dir_all(destination)
+        .with_context(|| format!("creating extraction destination {destination:?}"))?;
     let destination = &destination
         .canonicalize()
-        .unwrap_or_else(|_| destination.to_path_buf());
-    for (i, entry) in reader.file().entries().to_vec().into_iter().enumerate() {
+        .with_context(|| format!("canonicalizing extraction destination {destination:?}"))?;
+    let mut archive_symlinks = HashMap::new();
+    let entries = reader.file().entries().to_vec();
+    let mut archive_symlink_paths = ArchiveSymlinkPaths::default();
+    for entry in &entries {
+        let Ok(filename) = entry.filename().as_str() else {
+            continue;
+        };
+
+        if archive_path_is_normal(filename) && zip_entry_is_symlink(entry.unix_permissions()) {
+            archive_symlink_paths.insert(crate::normalize_path(&destination.join(filename)));
+        }
+    }
+
+    for (i, entry) in entries.into_iter().enumerate() {
         let filename = entry
             .filename()
             .as_str()
@@ -109,33 +370,72 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
             .dir()
             .with_context(|| format!("reading zip entry metadata for path {path:?}"))?
         {
+            ensure_no_symlinked_path_components(&path, destination)?;
             std::fs::create_dir_all(&path)
                 .with_context(|| format!("creating directory {path:?}"))?;
         } else {
             let parent_dir = path
                 .parent()
                 .with_context(|| format!("no parent directory for {path:?}"))?;
+            ensure_no_symlinked_path_components(parent_dir, destination)?;
             std::fs::create_dir_all(parent_dir)
                 .with_context(|| format!("creating parent directory {parent_dir:?}"))?;
-            let mut file = smol::fs::File::create(&path)
-                .await
-                .with_context(|| format!("creating file {path:?}"))?;
+            ensure_no_symlinked_path_components(parent_dir, destination)?;
             let mut entry_reader = reader
                 .reader_with_entry(i)
                 .await
                 .with_context(|| format!("reading entry for path {path:?}"))?;
-            futures::io::copy(&mut entry_reader, &mut file)
-                .await
-                .with_context(|| format!("extracting into file {path:?}"))?;
+            let unix_permissions = entry.unix_permissions();
 
-            if let Some(perms) = entry.unix_permissions()
-                && perms != 0o000
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let permissions = std::fs::Permissions::from_mode(u32::from(perms));
-                file.set_permissions(permissions)
+            if zip_entry_is_symlink(unix_permissions) {
+                use std::os::unix::ffi::OsStringExt as _;
+
+                anyhow::ensure!(
+                    entry.uncompressed_size() <= MAX_SYMLINK_TARGET_BYTES,
+                    "symlink target is too large for path {path:?}: {} bytes",
+                    entry.uncompressed_size()
+                );
+                let mut target_bytes = Vec::new();
+                let mut limited_reader = entry_reader.take(MAX_SYMLINK_TARGET_BYTES + 1);
+                limited_reader
+                    .read_to_end(&mut target_bytes)
                     .await
-                    .with_context(|| format!("setting permissions for file {path:?}"))?;
+                    .with_context(|| format!("reading symlink target for path {path:?}"))?;
+                anyhow::ensure!(
+                    target_bytes.len() as u64 <= MAX_SYMLINK_TARGET_BYTES,
+                    "symlink target is too large for path {path:?}: {} bytes",
+                    target_bytes.len()
+                );
+                let target = PathBuf::from(std::ffi::OsString::from_vec(target_bytes));
+                ensure_no_symlinked_path_components(&path, destination)?;
+                validate_symlink_target(
+                    &path,
+                    &target,
+                    destination,
+                    &archive_symlink_paths,
+                    &archive_symlinks,
+                )?;
+                std::os::unix::fs::symlink(&target, &path)
+                    .with_context(|| format!("creating symlink {path:?} -> {target:?}"))?;
+                archive_symlinks.insert(crate::normalize_path(&path), target);
+            } else {
+                ensure_no_symlinked_path_components(&path, destination)?;
+                let mut file = smol::fs::File::create(&path)
+                    .await
+                    .with_context(|| format!("creating file {path:?}"))?;
+                futures::io::copy(&mut entry_reader, &mut file)
+                    .await
+                    .with_context(|| format!("extracting into file {path:?}"))?;
+
+                if let Some(perms) = unix_permissions
+                    && perms != 0o000
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let permissions = std::fs::Permissions::from_mode(u32::from(perms));
+                    file.set_permissions(permissions)
+                        .await
+                        .with_context(|| format!("setting permissions for file {path:?}"))?;
+                }
             }
         }
     }
@@ -344,6 +644,31 @@ mod tests {
         buf
     }
 
+    #[cfg(unix)]
+    async fn build_zip_with_unix_entries(entries: &[(&str, &[u8], u16)]) -> Cursor<Vec<u8>> {
+        let entries = entries
+            .iter()
+            .map(|(name, data, permissions)| ((*name).into(), *data, *permissions))
+            .collect::<Vec<(async_zip::ZipString, &[u8], u16)>>();
+        build_zip_with_unix_zip_string_entries(&entries).await
+    }
+
+    #[cfg(unix)]
+    async fn build_zip_with_unix_zip_string_entries(
+        entries: &[(async_zip::ZipString, &[u8], u16)],
+    ) -> Cursor<Vec<u8>> {
+        let mut buf = Cursor::new(Vec::new());
+        let mut writer = ZipFileWriter::new(&mut buf);
+        for (name, data, permissions) in entries {
+            let builder = ZipEntryBuilder::new(name.clone(), async_zip::Compression::Stored)
+                .unix_permissions(*permissions);
+            writer.write_entry_whole(builder, data).await.unwrap();
+        }
+        writer.close().await.unwrap();
+        buf.set_position(0);
+        buf
+    }
+
     #[test]
     fn test_extract_zip_skips_path_traversal_entries() {
         smol::block_on(async {
@@ -377,6 +702,376 @@ mod tests {
             assert!(
                 !absolute_target.exists(),
                 "absolute path entry should have been skipped"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_extracts_entries_before_invalid_raw_filename() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_zip_string_entries(&[
+                ("valid.txt".into(), b"valid file", 0o100644),
+                (
+                    async_zip::ZipString::new(
+                        b"invalid-\xff.txt".to_vec(),
+                        async_zip::StringEncoding::Raw,
+                    ),
+                    b"invalid file",
+                    0o100644,
+                ),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("reading zip entry file name"),
+                "unexpected error: {error:#}"
+            );
+            assert_file_content(&extract_dir.path().join("valid.txt"), "valid file");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_preserves_symlinks() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[
+                ("java.base/LICENSE", b"license", 0o100644),
+                ("java.compiler/LICENSE", b"../java.base/LICENSE", 0o120755),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            extract_zip(extract_dir.path(), reader).await.unwrap();
+
+            let link_path = extract_dir.path().join("java.compiler/LICENSE");
+            let metadata = std::fs::symlink_metadata(&link_path).unwrap();
+            assert!(
+                metadata.file_type().is_symlink(),
+                "expected {link_path:?} to be extracted as a symlink"
+            );
+            assert_eq!(
+                std::fs::read_link(&link_path).unwrap(),
+                PathBuf::from("../java.base/LICENSE")
+            );
+            assert_eq!(std::fs::read_to_string(&link_path).unwrap(), "license");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_allows_archive_owned_symlink_chains() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[
+                ("lib.so.1", b"lib.so.1.2", 0o120755),
+                ("lib.so", b"lib.so.1", 0o120755),
+                ("lib.so.1.2", b"library", 0o100644),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            extract_zip(extract_dir.path(), reader).await.unwrap();
+
+            assert_eq!(
+                std::fs::read_link(extract_dir.path().join("lib.so.1")).unwrap(),
+                PathBuf::from("lib.so.1.2")
+            );
+            assert_eq!(
+                std::fs::read_link(extract_dir.path().join("lib.so")).unwrap(),
+                PathBuf::from("lib.so.1")
+            );
+            assert_file_content(&extract_dir.path().join("lib.so"), "library");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_targets_outside_destination() {
+        smol::block_on(async {
+            let reader =
+                build_zip_with_unix_entries(&[("links/outside", b"../../outside", 0o120755)]).await;
+
+            let base_dir = tempfile::tempdir().unwrap();
+            let extract_dir = base_dir.path().join("extract");
+            std::fs::create_dir_all(&extract_dir).unwrap();
+
+            let error = extract_zip(&extract_dir, reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("symlink target escapes destination"),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.join("links/outside")).is_err(),
+                "escaping symlink should not be created"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_target_through_existing_symlink() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[("link", b"escape/file", 0o120755)]).await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let outside_dir = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(outside_dir.path(), extract_dir.path().join("escape"))
+                .unwrap();
+
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("symlink target crosses symlinked component"),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("link")).is_err(),
+                "symlink target through existing symlink should not be created"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_target_through_existing_symlink_before_parent() {
+        smol::block_on(async {
+            let reader =
+                build_zip_with_unix_entries(&[("link", b"escape/../safe", 0o120755)]).await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let outside_dir = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(outside_dir.path(), extract_dir.path().join("escape"))
+                .unwrap();
+
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("symlink target crosses symlinked component"),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("link")).is_err(),
+                "symlink target through existing symlink should not be created"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_target_parent_after_unresolved_component() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[
+                ("link", b"escape/../outside", 0o120755),
+                ("escape", b".", 0o120755),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains(
+                    "symlink target traverses parent after unresolved archive symlink component"
+                ),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("link")).is_err(),
+                "symlink target with unresolved parent traversal should not be created"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_target_parent_after_case_aliased_unresolved_component() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[
+                ("link", b"a/../outside", 0o120755),
+                ("A", b".", 0o120755),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains(
+                    "symlink target traverses parent after unresolved archive symlink component"
+                ),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("link")).is_err(),
+                "symlink target with case-aliased parent traversal should not be created"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_target_parent_after_normalized_unresolved_component() {
+        smol::block_on(async {
+            let decomposed_target = "dir/e\u{301}/../outside";
+            let reader = build_zip_with_unix_entries(&[
+                ("link", decomposed_target.as_bytes(), 0o120755),
+                ("dir/\u{e9}", b"..", 0o120755),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains(
+                    "symlink target traverses parent after unresolved archive symlink component"
+                ),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("link")).is_err(),
+                "symlink target with normalized parent traversal should not be created"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_allows_symlink_target_parent_after_missing_non_archive_component() {
+        smol::block_on(async {
+            let reader =
+                build_zip_with_unix_entries(&[("link", b"missing/../safe", 0o120755)]).await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            extract_zip(extract_dir.path(), reader).await.unwrap();
+            assert_eq!(
+                std::fs::read_link(extract_dir.path().join("link")).unwrap(),
+                PathBuf::from("missing/../safe")
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlinked_ancestor_for_symlink_entry() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[
+                ("a", b".", 0o120755),
+                ("a/b/c/link", b"../../../outside", 0o120755),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("archive path contains symlinked component"),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("a"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "first symlink should have been created"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("b/c/link")).is_err(),
+                "symlinked ancestor should not be followed while creating the link"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlinked_ancestor_for_file_entry() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[
+                ("a", b".", 0o120755),
+                ("a/file", b"payload", 0o100644),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("archive path contains symlinked component"),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("file")).is_err(),
+                "symlinked ancestor should not be followed while creating the file"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_regular_file_over_existing_symlink() {
+        smol::block_on(async {
+            let reader = build_zip_with_unix_entries(&[
+                ("target", b"original", 0o100644),
+                ("link", b"target", 0o120755),
+                ("link", b"replacement", 0o100644),
+            ])
+            .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("archive path contains symlinked component"),
+                "unexpected error: {error:#}"
+            );
+            assert_file_content(&extract_dir.path().join("target"), "original");
+            assert_eq!(
+                std::fs::read_link(extract_dir.path().join("link")).unwrap(),
+                PathBuf::from("target")
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_relative_destination_symlink_escape() {
+        smol::block_on(async {
+            let base_dir = tempfile::Builder::new()
+                .prefix("archive-symlink-test-")
+                .tempdir_in(".")
+                .unwrap();
+            let base_dir_name = base_dir.path().file_name().unwrap().to_os_string();
+            let relative_extract_dir = PathBuf::from(&base_dir_name).join("extract");
+            let target = format!("../../../{}/extract/file", base_dir_name.to_string_lossy());
+            let reader =
+                build_zip_with_unix_entries(&[("link", target.as_bytes(), 0o120755)]).await;
+
+            let error = extract_zip(&relative_extract_dir, reader)
+                .await
+                .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("symlink target escapes destination"),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(relative_extract_dir.join("link")).is_err(),
+                "escaping symlink should not be created"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_oversized_symlink_target() {
+        smol::block_on(async {
+            let oversized_target = vec![b'a'; MAX_SYMLINK_TARGET_BYTES as usize + 1];
+            let reader =
+                build_zip_with_unix_entries(&[("link", oversized_target.as_slice(), 0o120755)])
+                    .await;
+
+            let extract_dir = tempfile::tempdir().unwrap();
+            let error = extract_zip(extract_dir.path(), reader).await.unwrap_err();
+            assert!(
+                format!("{error:#}").contains("symlink target is too large"),
+                "unexpected error: {error:#}"
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("link")).is_err(),
+                "oversized symlink should not be created"
             );
         });
     }
