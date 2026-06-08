@@ -316,7 +316,7 @@ mod tests {
             depth: 0,
             range: range.clone(),
             source_range_for_text: range,
-            text: "completion".to_string(),
+            text: "completion".into(),
             highlight_ranges: Vec::new(),
             name_ranges: Vec::new(),
             body_range: None,
