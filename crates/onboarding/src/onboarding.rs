@@ -501,7 +501,7 @@ pub async fn handle_import_vscode_settings(
                 truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
             ),
             None,
-            &["OK", "Cancel"],
+            &["Import", "Cancel"],
         );
         let result = cx.spawn(async move |_| prompt.await.ok()).await;
         if result != Some(0) {
