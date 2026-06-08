@@ -3676,6 +3676,50 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
+    fn activity_bar_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Activity Bar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Activity Bar",
+                description: "Show a VS Code-style vertical activity bar on the left for panel buttons.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("activity_bar.enabled"),
+                    pick: |settings_content| {
+                        settings_content.activity_bar.as_ref()?.enabled.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .activity_bar
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Activity Bar Icon Size",
+                description: "Size of icons in the activity bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("activity_bar.icon_size"),
+                    pick: |settings_content| {
+                        settings_content.activity_bar.as_ref()?.icon_size.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .activity_bar
+                            .get_or_insert_default()
+                            .icon_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn status_bar_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
@@ -4824,6 +4868,7 @@ fn window_and_layout_page() -> SettingsPage {
     SettingsPage {
         title: "Window & Layout",
         items: concat_sections![
+            activity_bar_section(),
             status_bar_section(),
             title_bar_section(),
             tab_bar_section(),

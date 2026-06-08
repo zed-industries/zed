@@ -1721,6 +1721,31 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 
 `boolean` values
 
+## Activity Bar
+
+- Description: Show a VS Code-style vertical activity bar on the left for panel buttons.
+- Setting: `activity_bar`
+- Default:
+
+```json [settings]
+{
+  "activity_bar": {
+    "enabled": false,
+    "icon_size": "medium"
+  }
+}
+```
+
+**Options**
+
+- `enabled`:
+  - Description: Whether to show the activity bar.
+  - Default: `false`
+- `icon_size`:
+  - Description: Size of icons in the activity bar.
+  - Default: `medium`
+  - Values: `small`, `medium`
+
 ## Status Bar
 
 - Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
@@ -3245,7 +3270,6 @@ Examples:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action

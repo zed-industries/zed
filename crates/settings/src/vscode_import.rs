@@ -211,6 +211,7 @@ impl VsCodeSettings {
             server_url: None,
             session: None,
             status_bar: self.status_bar_settings_content(),
+            activity_bar: None,
             tab_bar: self.tab_bar_settings_content(),
             tabs: self.item_settings_content(),
             telemetry: self.telemetry_settings_content(),

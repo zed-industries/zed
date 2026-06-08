@@ -1732,6 +1732,12 @@
     "hour_format": "hour12",
   },
   // Status bar-related settings.
+  "activity_bar": {
+    // Whether to show a VS Code-style vertical activity bar on the left for panel buttons.
+    "enabled": false,
+    // Size of icons in the activity bar: "small" or "medium".
+    "icon_size": "medium",
+  },
   "status_bar": {
     // Whether to show the status bar.
     "experimental.show": true,

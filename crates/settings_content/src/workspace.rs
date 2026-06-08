@@ -462,6 +462,40 @@ pub struct TabBarSettingsContent {
 
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
+pub struct ActivityBarSettingsContent {
+    /// Whether to show a VS Code-style vertical activity bar on the left for panel buttons.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Size of icons in the activity bar.
+    ///
+    /// Default: medium
+    pub icon_size: Option<ActivityBarIconSize>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantNames,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityBarIconSize {
+    Small,
+    #[default]
+    Medium,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
 pub struct StatusBarSettingsContent {
     /// Whether to show the status bar.
     ///

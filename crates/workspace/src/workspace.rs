@@ -20,6 +20,7 @@ pub mod security_modal;
 pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
+mod activity_bar;
 mod status_bar;
 pub mod tasks;
 mod theme_preview;
@@ -154,8 +155,9 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
-    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    ActivityBarSettings, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions,
+    FocusFollowsMouse, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
+    WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -1367,6 +1369,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
+    activity_bar: Entity<activity_bar::ActivityBar>,
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
@@ -1726,6 +1729,14 @@ impl Workspace {
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let activity_bar = cx.new(|cx| {
+            activity_bar::ActivityBar::new(
+                left_dock.clone(),
+                right_dock.clone(),
+                bottom_dock.clone(),
+                cx,
+            )
+        });
         let multi_workspace = window
             .root::<MultiWorkspace>()
             .flatten()
@@ -1814,6 +1825,7 @@ impl Workspace {
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
             status_bar,
+            activity_bar,
             modal_layer,
             toast_layer,
             titlebar_item: None,
@@ -2582,6 +2594,14 @@ impl Workspace {
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
         StatusBarSettings::get_global(cx).show
+    }
+
+    pub fn activity_bar_visible(&self, cx: &App) -> bool {
+        ActivityBarSettings::get_global(cx).enabled
+    }
+
+    pub fn activity_bar(&self) -> &Entity<activity_bar::ActivityBar> {
+        &self.activity_bar
     }
 
     pub fn multi_workspace(&self) -> Option<&WeakEntity<MultiWorkspace>> {
@@ -8668,19 +8688,27 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .child(
-                        div()
-                            .id("workspace")
-                            .bg(colors.background)
-                            .relative()
+                        h_flex()
                             .flex_1()
                             .w_full()
-                            .flex()
-                            .flex_col()
                             .overflow_hidden()
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(colors.border)
-                            .child({
+                            .when(self.activity_bar_visible(cx), |row| {
+                                row.child(self.activity_bar.clone())
+                            })
+                            .child(
+                                div()
+                                    .id("workspace")
+                                    .bg(colors.background)
+                                    .relative()
+                                    .flex_1()
+                                    .h_full()
+                                    .flex()
+                                    .flex_col()
+                                    .overflow_hidden()
+                                    .border_t_1()
+                                    .border_b_1()
+                                    .border_color(colors.border)
+                                    .child({
                                 let this = cx.entity();
                                 canvas(
                                     move |bounds, window, cx| {
@@ -9025,6 +9053,7 @@ impl Render for Workspace {
                                 })
                             }))
                             .children(self.render_notifications(window, cx)),
+                            ),
                     )
                     .when(self.status_bar_visible(cx), |parent| {
                         parent.child(self.status_bar.clone())
@@ -15666,6 +15695,39 @@ mod tests {
                 .await;
             assert!(handle.is_err());
         }
+    }
+
+    #[gpui::test]
+    async fn test_activity_bar_visibility(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, _cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                !workspace.activity_bar_visible(cx),
+                "Activity bar should be disabled by default"
+            );
+        });
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .activity_bar
+                    .get_or_insert_default()
+                    .enabled = Some(true);
+            });
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace.activity_bar_visible(cx),
+                "Activity bar should be visible when enabled is true"
+            );
+        });
     }
 
     #[gpui::test]

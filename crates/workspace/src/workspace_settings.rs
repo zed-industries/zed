@@ -153,6 +153,22 @@ impl Settings for TabBarSettings {
 }
 
 #[derive(Deserialize, RegisterSetting)]
+pub struct ActivityBarSettings {
+    pub enabled: bool,
+    pub icon_size: settings::ActivityBarIconSize,
+}
+
+impl Settings for ActivityBarSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let activity_bar = content.activity_bar.clone().unwrap();
+        ActivityBarSettings {
+            enabled: activity_bar.enabled.unwrap(),
+            icon_size: activity_bar.icon_size.unwrap(),
+        }
+    }
+}
+
+#[derive(Deserialize, RegisterSetting)]
 pub struct StatusBarSettings {
     pub show: bool,
     pub show_active_file: bool,

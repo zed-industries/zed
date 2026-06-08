@@ -91,6 +91,19 @@ To disable this behavior use:
 }
 ```
 
+### Activity Bar
+
+```json [settings]
+{
+  // Show a VS Code-style vertical activity bar on the left for panel buttons.
+  "activity_bar": {
+    "enabled": false,
+    // Icon size in the activity bar: "small" or "medium"
+    "icon_size": "medium"
+  }
+}
+```
+
 ### Status Bar
 
 ```json [settings]
