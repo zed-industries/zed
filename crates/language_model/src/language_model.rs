@@ -117,12 +117,6 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
-    /// Whether this model supports the send_to_user tool, which bypasses summarization
-    /// to deliver content to the user verbatim.
-    fn supports_send_to_user_tool(&self) -> bool {
-        false
-    }
-
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }

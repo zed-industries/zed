@@ -3,8 +3,8 @@ use crate::{
     CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
     FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
-    RenameTool, SandboxedTerminalTool, SendToUserTool, SpawnAgentTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
+    RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -1928,7 +1928,6 @@ impl Thread {
             environment.clone(),
         ));
         self.add_tool(WebSearchTool);
-        self.add_tool(SendToUserTool);
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
 
@@ -3556,9 +3555,6 @@ impl Thread {
                 }
             })
             .filter(|(tool_name, _)| crate::tools::tool_feature_flag_enabled(tool_name, cx))
-            .filter(|(tool_name, _)| {
-                tool_name.as_ref() != SendToUserTool::NAME || model.supports_send_to_user_tool()
-            })
             .collect::<BTreeMap<_, _>>();
 
         let mut context_server_tools = Vec::new();

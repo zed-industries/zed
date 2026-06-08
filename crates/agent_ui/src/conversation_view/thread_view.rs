@@ -7078,9 +7078,7 @@ impl ThreadView {
         let has_terminals = tool_call.terminals().next().is_some();
 
         div().w_full().map(|this| {
-            if tool_call.tool_name.as_deref() == Some("send_to_user") {
-                this.child(self.render_send_to_user_tool_call(tool_call, window, cx))
-            } else if tool_call.is_subagent() {
+            if tool_call.is_subagent() {
                 this.child(
                     self.render_subagent_tool_call(
                         active_session_id,
@@ -7120,39 +7118,6 @@ impl ThreadView {
                 ))
             }
         })
-    }
-
-    /// `send_to_user` delivers content the user must see verbatim, so we render
-    /// its message as a first-class markdown block (streaming in as it arrives)
-    /// rather than tucking it inside a collapsible tool-call card.
-    fn render_send_to_user_tool_call(
-        &self,
-        tool_call: &ToolCall,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> Div {
-        let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
-        let messages = tool_call.content.iter().filter_map(|content| {
-            let ToolCallContent::ContentBlock(block) = content else {
-                return None;
-            };
-            let markdown = block.markdown()?;
-            if markdown.read(cx).source().trim().is_empty() {
-                return None;
-            }
-            Some(
-                self.render_markdown(markdown.clone(), style.clone(), cx)
-                    .into_any_element(),
-            )
-        });
-
-        v_flex()
-            .px_5()
-            .py_1p5()
-            .w_full()
-            .gap_2()
-            .text_ui(cx)
-            .children(messages)
     }
 
     fn render_tool_call(
