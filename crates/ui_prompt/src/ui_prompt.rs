@@ -5,6 +5,7 @@ use gpui::{
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
+use theme::ClientDecorations;
 use theme_settings::ThemeSettings;
 use ui::{FluentBuilder, TintColor, prelude::*};
 use workspace::WorkspaceSettings;
@@ -154,33 +155,22 @@ impl Render for ZedPromptRenderer {
                     })),
             );
 
-        let tiling = match window.window_decorations() {
-            Decorations::Server => gpui::Tiling::tiled(),
-            Decorations::Client { tiling } => tiling,
-        };
+        let decorations = window.window_decorations();
         let inset = window.client_inset().unwrap_or(Pixels::ZERO);
-        let inset_for_edge = |is_tiled| if is_tiled { Pixels::ZERO } else { inset };
-        let rounding = theme::CLIENT_SIDE_DECORATION_ROUNDING;
 
         div().size_full().occlude().child(
             v_flex()
                 .absolute()
+                .inset_0()
                 .bg(gpui::black().opacity(0.2))
-                .top(inset_for_edge(tiling.top))
-                .right(inset_for_edge(tiling.right))
-                .bottom(inset_for_edge(tiling.bottom))
-                .left(inset_for_edge(tiling.left))
-                .when(!tiling.top && !tiling.left, |this| {
-                    this.rounded_tl(rounding)
-                })
-                .when(!tiling.top && !tiling.right, |this| {
-                    this.rounded_tr(rounding)
-                })
-                .when(!tiling.bottom && !tiling.left, |this| {
-                    this.rounded_bl(rounding)
-                })
-                .when(!tiling.bottom && !tiling.right, |this| {
-                    this.rounded_br(rounding)
+                .map(|this| match decorations {
+                    Decorations::Server => this,
+                    Decorations::Client { tiling } => this
+                        .when(!tiling.top, |this| this.top(inset))
+                        .when(!tiling.bottom, |this| this.bottom(inset))
+                        .when(!tiling.left, |this| this.left(inset))
+                        .when(!tiling.right, |this| this.right(inset))
+                        .rounded_client_corners(tiling),
                 })
                 .items_center()
                 .justify_center()
