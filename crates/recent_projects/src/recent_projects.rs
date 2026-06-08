@@ -1539,7 +1539,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     "Open Project in This Window"
                 };
                 let secondary_confirm_icon = if self.create_new_window {
-                    IconName::Screen
+                    IconName::ThisWindow
                 } else {
                     IconName::ArrowUpRight
                 };
@@ -1595,7 +1595,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new("delete", IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Delete from Recent Projects"))
+                            .tooltip(Tooltip::text("Remove from Recent Projects"))
                             .on_click(cx.listener(move |this, _event, window, cx| {
                                 cx.stop_propagation();
                                 window.prevent_default();
@@ -1777,7 +1777,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .into_any_element(),
             ),
             Some(ProjectPickerEntry::RecentProject(_)) => Some(
-                Button::new("delete_recent", "Delete")
+                Button::new("delete_recent", "Remove")
                     .key_binding(KeyBinding::for_action_in(
                         &RemoveSelected,
                         &focus_handle,
@@ -1841,7 +1841,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                     } else if self.create_new_window {
                         this.child(
-                            Button::new("open_here", "Open")
+                            Button::new("open_here", "This Window")
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::SecondaryConfirm,
                                     &focus_handle,
@@ -1852,7 +1852,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("open_new_window", "New Window")
+                            Button::new("open_new_window", "Open")
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &focus_handle,
