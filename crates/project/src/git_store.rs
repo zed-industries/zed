@@ -4282,6 +4282,11 @@ impl BufferGitState {
             yield_now().await;
 
             for (oid, oid_diff, base_text_buffer, base_text) in oid_diffs {
+                if language_changed {
+                    base_text_buffer
+                        .read_with(cx, |buffer, _| buffer.parsing_idle())
+                        .await;
+                }
                 let base_text_snapshot =
                     base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
                 let new_oid_diff = cx
