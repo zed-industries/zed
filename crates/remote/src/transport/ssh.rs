@@ -1863,9 +1863,9 @@ fn build_command_posix(
         ));
     }
 
-    // -q suppresses the "Connection to ... closed." message that SSH prints when
-    // the connection terminates with -t (pseudo-terminal allocation)
-    args.push("-q".into());
+    // LogLevel=ERROR suppresses the "Connection to ... closed." message while
+    // preserving SSH errors.
+    args.extend(["-o".into(), "LogLevel=ERROR".into()]);
     match interactive {
         // -t forces pseudo-TTY allocation (for interactive use)
         Interactive::Yes => args.push("-t".into()),
@@ -1958,9 +1958,9 @@ fn build_command_windows(
         ));
     }
 
-    // -q suppresses the "Connection to ... closed." message that SSH prints when
-    // the connection terminates with -t (pseudo-terminal allocation)
-    args.push("-q".into());
+    // LogLevel=ERROR suppresses the "Connection to ... closed." message while
+    // preserving SSH errors.
+    args.extend(["-o".into(), "LogLevel=ERROR".into()]);
     match interactive {
         // -t forces pseudo-TTY allocation (for interactive use)
         Interactive::Yes => args.push("-t".into()),
@@ -2039,7 +2039,8 @@ mod tests {
             [
                 "-p",
                 "2222",
-                "-q",
+                "-o",
+                "LogLevel=ERROR",
                 "-t",
                 "user@host",
                 "cd \"$HOME\"/work && exec env 'INPUT_VA=val' remote_program arg1 arg2"
@@ -2075,7 +2076,8 @@ mod tests {
                 "2222",
                 "-L",
                 "1:foo:2",
-                "-q",
+                "-o",
+                "LogLevel=ERROR",
                 "-t",
                 "user@host",
                 "cd && exec env 'INPUT_VA=val' /bin/fish -l"
