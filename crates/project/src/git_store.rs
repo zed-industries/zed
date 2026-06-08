@@ -1196,7 +1196,6 @@ impl GitStore {
 
             cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
             diff_state.update(cx, |diff_state, cx| {
-                diff_state.language_changed = true;
                 diff_state.language = language;
                 diff_state.language_registry = language_registry;
 
@@ -1206,7 +1205,6 @@ impl GitStore {
                     }
                     DiffKind::Staged => {
                         diff_state.index_text_buffer_language_enabled = true;
-                        diff_state.language_changed = true;
                         diff_state.staged_diff = Some(diff.downgrade());
                     }
                     DiffKind::Uncommitted => {
@@ -4137,7 +4135,7 @@ impl BufferGitState {
             let mut new_uncommitted_diff = None;
             if staged_diff.is_some() || uncommitted_diff.is_some() {
                 let head_base_text_exists = head.is_some();
-                let head_text_snapshot = if head_changed {
+                let head_text_snapshot = if head_changed || language_changed {
                     let new_head_text = head.clone().unwrap_or_default();
                     let head_text_diff = head_text_buffer
                         .update(cx, |head_text_buffer, cx| {

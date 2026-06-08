@@ -1503,7 +1503,6 @@ pub struct DiffChanged {
 pub enum BufferDiffEvent {
     BaseTextChanged,
     DiffChanged(DiffChanged),
-    LanguageChanged,
     HunksStagedOrUnstaged(Option<Rope>),
 }
 
