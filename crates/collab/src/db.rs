@@ -730,6 +730,10 @@ fn db_status_to_proto(
         }),
         diff_stat_added: entry.lines_added.map(|v| v as u32),
         diff_stat_deleted: entry.lines_deleted.map(|v| v as u32),
+        staged_diff_stat_added: entry.staged_lines_added.map(|v| v as u32),
+        staged_diff_stat_deleted: entry.staged_lines_deleted.map(|v| v as u32),
+        unstaged_diff_stat_added: entry.unstaged_lines_added.map(|v| v as u32),
+        unstaged_diff_stat_deleted: entry.unstaged_lines_deleted.map(|v| v as u32),
     })
 }
 
