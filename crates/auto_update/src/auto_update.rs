@@ -837,16 +837,6 @@ impl AutoUpdater {
         Ok(installer_dir.path().join(filename))
     }
 
-    #[cfg(test)]
-    fn test_install(target_path: &Path, cx: &AsyncApp) -> Option<Result<Option<PathBuf>>> {
-        cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
-            .map(|test_install| test_install(target_path, cx))
-    }
-
-    #[cfg(not(test))]
-    fn test_install(_target_path: &Path, _cx: &AsyncApp) -> Option<Result<Option<PathBuf>>> {
-        None
-    }
 
     async fn install_release(
         installer_dir: InstallerDir,
