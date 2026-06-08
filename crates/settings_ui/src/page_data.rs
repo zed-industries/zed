@@ -13,7 +13,7 @@ use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page,
+        open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
         render_llm_providers_page, render_mcp_servers_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
     },
@@ -7499,10 +7499,17 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
-        let mut items = vec![
-            SettingsPageItem::SectionHeader("Agent Configuration"),
-            SettingsPageItem::SubPageLink(SubPageLink {
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        // The LLM provider and MCP server pages are gated behind a feature flag
+        // while their configuration is being moved out of the agent panel.
+        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
+        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
                 title: "LLM Providers".into(),
                 r#type: Default::default(),
                 json_path: Some("llm_providers"),
@@ -7510,7 +7517,10 @@ fn ai_page(cx: &App) -> SettingsPage {
                 in_json: false,
                 files: USER,
                 render: render_llm_providers_page,
-            }),
+            }));
+        }
+
+        items.extend([
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Skills".into(),
                 r#type: Default::default(),
@@ -7529,16 +7539,33 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
-            SettingsPageItem::SubPageLink(SubPageLink {
+        ]);
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
                 title: "MCP Servers".into(),
                 r#type: Default::default(),
                 json_path: Some("context_servers"),
-                description: Some("View, add, configure, and remove Model Context Protocol servers.".into()),
+                description: Some(
+                    "View, add, configure, and remove Model Context Protocol servers.".into(),
+                ),
                 in_json: false,
                 files: USER,
                 render: render_mcp_servers_page,
-            }),
-        ];
+            }));
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "External Agents".into(),
+                r#type: Default::default(),
+                json_path: Some("agent_servers"),
+                description: Some(
+                    "View, add, and remove agents connected through the Agent Client Protocol."
+                        .into(),
+                ),
+                in_json: false,
+                files: USER,
+                render: render_external_agents_page,
+            }));
+        }
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
