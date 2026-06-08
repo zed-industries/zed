@@ -254,13 +254,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             SerializedWorkspaceLocation::Local => {
                 let paths = recent_workspace.paths.paths().to_vec();
                 if open_in_new_window {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace
-                                .open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
-                                .detach_and_log_err(cx);
-                        })
-                        .log_err();
+                    workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
+                            .detach_and_log_err(cx);
+                    });
                 } else if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
                         if let Some(task) = handle

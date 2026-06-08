@@ -261,6 +261,7 @@ fn general_page(cx: &App) -> SettingsPage {
                 title: "Default Open Behavior",
                 description: "How projects open from the UI when no alternate action is used.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("default_open_behavior"),
                     pick: |settings_content| {
                         settings_content.workspace.default_open_behavior.as_ref()
