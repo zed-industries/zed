@@ -37,7 +37,6 @@ use worktree_settings_file::LocalSettingsKind;
 
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
-pub use tables::user::Model as User;
 pub use tables::*;
 
 #[cfg(feature = "test-support")]
@@ -364,13 +363,6 @@ pub struct WaitlistSummary {
     pub mac_count: i64,
     pub windows_count: i64,
     pub unknown_count: i64,
-}
-
-/// The parameters to create a new user.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NewUserParams {
-    pub github_login: String,
-    pub github_user_id: i32,
 }
 
 /// The result of creating a new user.

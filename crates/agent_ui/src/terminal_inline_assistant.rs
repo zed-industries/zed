@@ -1,5 +1,4 @@
 use crate::{
-    ThreadHistory,
     context::load_context,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
@@ -23,7 +22,7 @@ use language_models::provider::anthropic::telemetry::{
     AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
 };
 use project::Project;
-use prompt_store::{PromptBuilder, PromptStore};
+use prompt_store::PromptBuilder;
 use std::sync::Arc;
 use terminal_view::TerminalView;
 use ui::prelude::*;
@@ -65,8 +64,6 @@ impl TerminalInlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -91,8 +88,6 @@ impl TerminalInlineAssistant {
                 session_id,
                 self.fs.clone(),
                 thread_store.clone(),
-                prompt_store.clone(),
-                history,
                 project.clone(),
                 workspace.clone(),
                 window,

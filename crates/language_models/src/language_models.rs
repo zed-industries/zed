@@ -27,8 +27,8 @@ use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
+use crate::provider::openai_subscribed::OpenAiSubscribedProvider;
 use crate::provider::opencode::OpenCodeLanguageModelProvider;
-use crate::provider::vercel::VercelLanguageModelProvider;
 use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
@@ -118,19 +118,6 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
             cx,
         );
     });
-
-    cx.subscribe(
-        &registry,
-        |_registry, event: &language_model::Event, cx| match event {
-            language_model::Event::ProviderStateChanged(_)
-            | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
-                update_environment_fallback_model(cx);
-            }
-            _ => {}
-        },
-    )
-    .detach();
 
     let registry = registry.downgrade();
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -320,14 +307,6 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
-        Arc::new(VercelLanguageModelProvider::new(
-            client.http_client(),
-            credentials_provider.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
         Arc::new(VercelAiGatewayLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
@@ -346,10 +325,18 @@ fn register_language_model_providers(
     registry.register_provider(
         Arc::new(OpenCodeLanguageModelProvider::new(
             client.http_client(),
-            credentials_provider,
+            credentials_provider.clone(),
             cx,
         )),
         cx,
     );
     registry.register_provider(Arc::new(CopilotChatLanguageModelProvider::new(cx)), cx);
+    registry.register_provider(
+        Arc::new(OpenAiSubscribedProvider::new(
+            client.http_client(),
+            credentials_provider,
+            cx,
+        )),
+        cx,
+    );
 }

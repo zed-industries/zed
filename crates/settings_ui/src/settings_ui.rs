@@ -2,7 +2,9 @@ mod components;
 mod page_data;
 pub mod pages;
 
+use agent_skills::SkillIndex;
 use anyhow::{Context as _, Result};
+use cloud_api_types::OrganizationConfiguration;
 use editor::{Editor, EditorEvent};
 use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
@@ -29,6 +31,7 @@ use std::{
     collections::{HashMap, HashSet},
     num::{NonZero, NonZeroU32},
     ops::Range,
+    path::PathBuf,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
@@ -42,9 +45,10 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
+    client_side_decorations,
 };
-use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
+use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt, OpenSettingsAtTarget};
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
@@ -100,7 +104,12 @@ struct FocusFile(pub u32);
 
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
-    write: fn(&mut SettingsContent, Option<T>),
+    write: fn(&mut SettingsContent, Option<T>, &App),
+    /// Tells us whether the setting is overridden by the currently selected
+    /// organization's settings. Takes the organization configuration and the
+    /// resolved settings value, and returns `Some(...)` if the organization
+    /// overrides the setting, otherwise `None`.
+    organization_override: Option<fn(&OrganizationConfiguration) -> Option<&T>>,
 
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
@@ -149,7 +158,8 @@ impl<T: 'static> SettingField<T> {
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
-            write: |_, _| unreachable!(),
+            write: |_, _, _| unreachable!(),
+            organization_override: None,
             json_path: self.json_path,
         }
     }
@@ -169,6 +179,8 @@ trait AnySettingField {
     ) -> Option<Box<dyn Fn(&mut Window, &mut App)>>;
 
     fn json_path(&self) -> Option<&'static str>;
+
+    fn is_overridden_by_organization(&self, cx: &App) -> bool;
 }
 
 impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingField<T> {
@@ -232,8 +244,8 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 None,
                 window,
                 cx,
-                move |settings, _| {
-                    (this.write)(settings, value_to_set);
+                move |settings, app| {
+                    (this.write)(settings, value_to_set, app);
                 },
             )
             // todo(settings_ui): Don't log err
@@ -243,6 +255,19 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
 
     fn json_path(&self) -> Option<&'static str> {
         self.json_path
+    }
+
+    fn is_overridden_by_organization(&self, cx: &App) -> bool {
+        let Some(org_override) = self.organization_override else {
+            return false;
+        };
+
+        let user_store = AppState::global(cx).user_store.read(cx);
+        let Some(org_config) = user_store.current_organization_configuration() else {
+            return false;
+        };
+
+        (org_override)(&org_config).is_some()
     }
 }
 
@@ -398,9 +423,14 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
-            .register_action(|_, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+            .register_action(|_, action: &OpenSettingsAt, window, cx| {
                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
-                open_settings_editor(Some(&path), None, window_handle, cx);
+                open_settings_editor_at_target(
+                    Some(&action.path),
+                    action.target.as_ref().map(SettingsFileTarget::from),
+                    window_handle,
+                    cx,
+                );
             })
             .register_action(|_, _: &OpenSettings, window, cx| {
                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
@@ -483,6 +513,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
         .add_basic_renderer::<settings::GoToDefinitionFallback>(render_dropdown)
+        .add_basic_renderer::<settings::GoToDefinitionScrollStrategy>(render_dropdown)
         .add_basic_renderer::<settings::ActivateOnClose>(render_dropdown)
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
@@ -491,6 +522,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ProjectPanelSortOrder>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
+        .add_basic_renderer::<settings::LineEndingSetting>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideBackgroundColoring>(render_dropdown)
         .add_basic_renderer::<settings::FileFinderWidthContent>(render_dropdown)
@@ -498,11 +530,13 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
         .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
         .add_basic_renderer::<settings::CompletionDetailAlignment>(render_dropdown)
+        .add_basic_renderer::<settings::CompletionMenuItemKind>(render_dropdown)
         .add_basic_renderer::<settings::DiffViewStyle>(render_dropdown)
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
-        .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionPromptFormatContent>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
         .add_basic_renderer::<f32>(render_editable_number_field)
         .add_basic_renderer::<u32>(render_editable_number_field)
         .add_basic_renderer::<u64>(render_editable_number_field)
@@ -527,7 +561,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
         .add_basic_renderer::<settings::PlaySoundWhenAgentDone>(render_dropdown)
-        .add_basic_renderer::<settings::NewThreadLocation>(render_dropdown)
         .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
@@ -535,6 +568,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::CodeLens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ThemeAppearanceMode>(render_dropdown)
@@ -551,6 +585,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ScanSymlinksSetting>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -558,8 +593,26 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
         .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
+        .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
+}
+
+#[derive(Clone, Copy)]
+enum SettingsFileTarget {
+    User,
+    Project(WorktreeId),
+}
+
+impl From<&OpenSettingsAtTarget> for SettingsFileTarget {
+    fn from(target: &OpenSettingsAtTarget) -> Self {
+        match target {
+            OpenSettingsAtTarget::User => Self::User,
+            OpenSettingsAtTarget::Project { worktree_id } => {
+                Self::Project(WorktreeId::from_usize(*worktree_id))
+            }
+        }
+    }
 }
 
 pub fn open_settings_editor(
@@ -568,7 +621,39 @@ pub fn open_settings_editor(
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
+    open_settings_editor_at_target(
+        path,
+        target_worktree_id.map(SettingsFileTarget::Project),
+        workspace_handle,
+        cx,
+    );
+}
+
+fn open_settings_editor_at_target(
+    path: Option<&str>,
+    target_file: Option<SettingsFileTarget>,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
+    cx: &mut App,
+) {
     telemetry::event!("Settings Viewed");
+
+    fn select_target_file(
+        target_file: SettingsFileTarget,
+        settings_window: &mut SettingsWindow,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let file_index = settings_window
+            .files
+            .iter()
+            .position(|(file, _)| match target_file {
+                SettingsFileTarget::User => matches!(file, SettingsUiFile::User),
+                SettingsFileTarget::Project(worktree_id) => file.worktree_id() == Some(worktree_id),
+            });
+        if let Some(file_index) = file_index {
+            settings_window.change_file(file_index, window, cx);
+        }
+    }
 
     /// Assumes a settings GUI window is already open
     fn open_path(
@@ -625,15 +710,12 @@ pub fn open_settings_editor(
                 settings_window.original_window = workspace_handle;
 
                 window.activate_window();
+                if let Some(target_file) = target_file {
+                    select_target_file(target_file, settings_window, window, cx);
+                }
                 if let Some(path) = path {
                     open_path(path, settings_window, window, cx);
-                } else if let Some(target_id) = target_worktree_id
-                    && let Some(file_index) = settings_window
-                        .files
-                        .iter()
-                        .position(|(file, _)| file.worktree_id() == Some(target_id))
-                {
-                    settings_window.change_file(file_index, window, cx);
+                } else if target_file.is_some() {
                     cx.notify();
                 }
             })
@@ -657,7 +739,10 @@ pub fn open_settings_editor(
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
             Ok(val) if val == "server" => gpui::WindowDecorations::Server,
             Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-            _ => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
         };
 
         cx.open_window(
@@ -688,15 +773,11 @@ pub fn open_settings_editor(
                 let settings_window =
                     cx.new(|cx| SettingsWindow::new(workspace_handle, window, cx));
                 settings_window.update(cx, |settings_window, cx| {
+                    if let Some(target_file) = target_file {
+                        select_target_file(target_file, settings_window, window, cx);
+                    }
                     if let Some(path) = path {
                         open_path(&path, settings_window, window, cx);
-                    } else if let Some(target_id) = target_worktree_id
-                        && let Some(file_index) = settings_window
-                            .files
-                            .iter()
-                            .position(|(file, _)| file.worktree_id() == Some(target_id))
-                    {
-                        settings_window.change_file(file_index, window, cx);
                     }
                 });
 
@@ -758,7 +839,12 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
+    pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
+    last_copied_link_path: Option<&'static str>,
+    /// Directory path of the skill whose share link was most recently copied,
+    /// used to show a transient "copied" checkmark on its share button.
+    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
 }
 
 struct SearchDocument {
@@ -1031,6 +1117,7 @@ impl SettingsPageItem {
                             sub_page_link.title.clone(),
                             sub_page_link.json_path,
                             false,
+                            settings_window,
                             cx,
                         )),
                 )
@@ -1218,12 +1305,40 @@ fn render_settings_item(
                         .render_code_spans(),
                 ),
         )
-        .child(control)
+        .child(if setting_item.field.is_overridden_by_organization(cx) {
+            h_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .id(format!(
+                            "{}-organization-configuration-warning",
+                            setting_item.title
+                        ))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                        .tooltip(|_, cx| {
+                            Tooltip::with_meta(
+                                "Overridden by Organization",
+                                None,
+                                "Contact your organization admins to adjust this setting.",
+                                cx,
+                            )
+                        }),
+                )
+                .child(control)
+                .into_any_element()
+        } else {
+            control.into_any_element()
+        })
         .when(settings_window.sub_page_stack.is_empty(), |this| {
             this.child(render_settings_item_link(
                 setting_item.description,
                 setting_item.field.json_path(),
                 sub_field,
+                settings_window,
                 cx,
             ))
         })
@@ -1233,16 +1348,13 @@ fn render_settings_item_link(
     id: impl Into<ElementId>,
     json_path: Option<&'static str>,
     sub_field: bool,
+    settings_window: &SettingsWindow,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> impl IntoElement {
-    let clipboard_has_link = cx
-        .read_from_clipboard()
-        .and_then(|entry| entry.text())
-        .map_or(false, |maybe_url| {
-            json_path.is_some() && maybe_url.strip_prefix("zed://settings/") == json_path
-        });
+    let copied_link_matches =
+        json_path.is_some() && json_path == settings_window.last_copied_link_path;
 
-    let (link_icon, link_icon_color) = if clipboard_has_link {
+    let (link_icon, link_icon_color) = if copied_link_matches {
         (IconName::Check, Color::Success)
     } else {
         (IconName::Link, Color::Muted)
@@ -1267,9 +1379,10 @@ fn render_settings_item_link(
                 .shape(IconButtonShape::Square)
                 .tooltip(Tooltip::text("Copy Link"))
                 .when_some(json_path, |this, path| {
-                    this.on_click(cx.listener(move |_, _, _, cx| {
+                    this.on_click(cx.listener(move |this, _, _, cx| {
                         let link = format!("zed://settings/{}", path);
                         cx.write_to_clipboard(ClipboardItem::new_string(link));
+                        this.last_copied_link_path = Some(path);
                         cx.notify();
                     }))
                 }),
@@ -1532,6 +1645,28 @@ impl SettingsWindow {
         })
         .detach();
 
+        cx.observe_global_in::<SkillIndex>(window, |this, _window, cx| {
+            if let Some(skill_index) = cx.try_global::<SkillIndex>() {
+                this.hidden_deleted_skill_directory_paths
+                    .retain(|directory_path| {
+                        skill_index
+                            .global_skills
+                            .iter()
+                            .chain(
+                                skill_index
+                                    .project_skills
+                                    .iter()
+                                    .flat_map(|group| group.skills.iter()),
+                            )
+                            .any(|skill| skill.directory_path.as_path() == directory_path.as_path())
+                    });
+            } else {
+                this.hidden_deleted_skill_directory_paths.clear();
+            }
+            cx.notify();
+        })
+        .detach();
+
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
@@ -1679,8 +1814,11 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             list_state,
+            last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -1721,6 +1859,35 @@ impl SettingsWindow {
         *expanded = !*expanded;
         self.navbar_entry = nav_entry_index;
         self.reset_list_state();
+    }
+
+    fn toggle_and_focus_navbar_entry(
+        &mut self,
+        nav_entry_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_navbar_entry(nav_entry_index);
+        window.focus(&self.navbar_entries[nav_entry_index].focus_handle, cx);
+        cx.notify();
+    }
+
+    fn toggle_navbar_entry_on_double_click(
+        &mut self,
+        nav_entry_index: usize,
+        event: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(entry) = self.navbar_entries.get(nav_entry_index) else {
+            return false;
+        };
+        if !entry.is_root || event.click_count() != 2 {
+            return false;
+        }
+
+        self.toggle_and_focus_navbar_entry(nav_entry_index, window, cx);
+        true
     }
 
     fn build_navbar(&mut self, cx: &App) {
@@ -1946,11 +2113,14 @@ impl SettingsWindow {
                 async move {
                     let query_lower = query.to_lowercase();
                     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+                    if query_words.is_empty() {
+                        return Vec::new();
+                    }
                     search_index
                         .documents
                         .iter()
                         .filter(|doc| {
-                            query_words.iter().any(|query_word| {
+                            query_words.iter().all(|query_word| {
                                 doc.words
                                     .iter()
                                     .any(|doc_word| doc_word.starts_with(query_word))
@@ -2254,6 +2424,10 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        // Navigating to another page dismisses the transient "copied share
+        // link" checkmark shown on a Skills page row.
+        self.last_copied_skill_directory_path = None;
+
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
@@ -2357,6 +2531,74 @@ impl SettingsWindow {
         } else {
             self.open_first_nav_page();
         };
+    }
+
+    /// Changes the current settings file like [`Self::change_file`], but keeps
+    /// the currently open sub-page stack when every sub-page in it is
+    /// available in the new file's scope (e.g. switching a Skills sub-page
+    /// between the user scope and a project scope).
+    fn change_file_in_sub_page(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        if ix >= self.files.len() || self.files[ix].0 == self.current_file {
+            return;
+        }
+        self.current_file = self.files[ix].0.clone();
+
+        if let SettingsUiFile::Project((_, _)) = &self.current_file {
+            telemetry::event!("Setting Project Clicked");
+        }
+
+        self.last_copied_skill_directory_path = None;
+
+        let sub_page_stack = std::mem::take(&mut self.sub_page_stack);
+        self.build_ui(window, cx);
+
+        let file_mask = self.current_file.mask();
+        if let Some(first_sub_page) = sub_page_stack.first()
+            && sub_page_stack
+                .iter()
+                .all(|sub_page| sub_page.link.files.contains(file_mask))
+        {
+            if !self.is_nav_entry_visible(self.navbar_entry) {
+                // The previously selected page may be filtered out in the new
+                // scope (e.g. after deep-linking into a sub-page). Re-anchor
+                // the navbar to the page containing the open sub-page, which
+                // is visible because its sub-page link supports this scope.
+                let anchor_entry = self
+                    .pages
+                    .iter()
+                    .position(|page| {
+                        page.items.iter().any(|item| {
+                            matches!(item, SettingsPageItem::SubPageLink(link) if link == &first_sub_page.link)
+                        })
+                    })
+                    .and_then(|page_index| {
+                        self.navbar_entries
+                            .iter()
+                            .position(|entry| entry.is_root && entry.page_index == page_index)
+                    });
+                if let Some(anchor_entry) = anchor_entry
+                    && self.is_nav_entry_visible(anchor_entry)
+                {
+                    self.open_navbar_entry_page(anchor_entry);
+                }
+            }
+            if self.is_nav_entry_visible(self.navbar_entry) {
+                self.sub_page_stack = sub_page_stack;
+                cx.notify();
+                return;
+            }
+        }
+
+        if self.is_nav_entry_visible(self.navbar_entry) {
+            self.open_and_scroll_to_navbar_entry(self.navbar_entry, None, true, window, cx);
+        } else {
+            self.open_first_nav_page();
+        }
     }
 
     fn render_files_header(
@@ -2469,7 +2711,7 @@ impl SettingsWindow {
                                     .style(DropdownStyle::Subtle)
                                     .trigger_tooltip(Tooltip::text("View Other Projects"))
                                     .trigger_icon(IconName::ChevronDown)
-                                    .attach(gpui::Corner::BottomLeft)
+                                    .attach(gpui::Anchor::BottomLeft)
                                     .offset(gpui::Point {
                                         x: px(0.0),
                                         y: px(2.0),
@@ -2736,13 +2978,11 @@ impl SettingsWindow {
                                             item.expanded(entry.expanded || this.has_query)
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
-                                                        this.toggle_navbar_entry(entry_index);
-                                                        window.focus(
-                                                            &this.navbar_entries[entry_index]
-                                                                .focus_handle,
+                                                        this.toggle_and_focus_navbar_entry(
+                                                            entry_index,
+                                                            window,
                                                             cx,
                                                         );
-                                                        cx.notify();
                                                     },
                                                 ))
                                         })
@@ -2751,7 +2991,17 @@ impl SettingsWindow {
                                             let subcategory =
                                                 (!entry.is_root).then_some(entry.title);
 
-                                            cx.listener(move |this, _, window, cx| {
+                                            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                                                if this.toggle_navbar_entry_on_double_click(
+                                                        entry_index,
+                                                        event,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                {
+                                                    return;
+                                                }
+
                                                 telemetry::event!(
                                                     "Settings Navigation Clicked",
                                                     category = category,
@@ -2954,24 +3204,104 @@ impl SettingsWindow {
             .filter(move |&(item_index, _)| self.filter_table[page_idx][item_index])
     }
 
-    fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
-        h_flex().min_w_0().gap_1().overflow_x_hidden().children(
-            itertools::intersperse(
-                std::iter::once(self.current_page().title.into()).chain(
-                    self.sub_page_stack
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, page)| {
-                            (index == 0)
-                                .then(|| page.section_header.clone())
-                                .into_iter()
-                                .chain(std::iter::once(page.link.title.clone()))
-                        }),
-                ),
-                "/".into(),
+    fn render_sub_page_breadcrumbs(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let scope_name: SharedString = self
+            .display_name(&self.current_file)
+            .unwrap_or_else(|| self.current_file.setting_type().to_string())
+            .into();
+
+        // Only offer scopes in which every sub-page in the stack is available.
+        let allowed_mask = self
+            .sub_page_stack
+            .iter()
+            .fold(USER | PROJECT | SERVER, |mask, sub_page| {
+                mask & sub_page.link.files
+            });
+        let allowed_file_indices: Vec<usize> = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, (file, _))| allowed_mask.contains(file.mask()))
+            .map(|(ix, _)| ix)
+            .collect();
+
+        let scope_element = if allowed_file_indices.len() > 1 {
+            let this = cx.entity();
+            DropdownMenu::new(
+                "sub-page-scope-picker",
+                scope_name,
+                ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    menu = menu.header("Scope");
+
+                    for ix in allowed_file_indices {
+                        let (file, focus_handle) = &self.files[ix];
+                        let display_name = self
+                            .display_name(file)
+                            .expect("Files should always have a name");
+
+                        menu = menu.toggleable_entry(
+                            display_name,
+                            file == &self.current_file,
+                            IconPosition::End,
+                            None,
+                            {
+                                let this = this.clone();
+                                let focus_handle = focus_handle.clone();
+                                move |window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.change_file_in_sub_page(ix, window, cx);
+                                    });
+                                    focus_handle.focus(window, cx);
+                                }
+                            },
+                        );
+                    }
+
+                    menu
+                }),
             )
-            .map(|item| Label::new(item).color(Color::Muted)),
-        )
+            .style(DropdownStyle::Subtle)
+            .trigger_tooltip(Tooltip::text("Change Scope"))
+            .attach(gpui::Anchor::BottomLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            })
+            .tab_index(0)
+            .into_any_element()
+        } else {
+            Label::new(scope_name)
+                .color(Color::Muted)
+                .into_any_element()
+        };
+
+        h_flex()
+            .min_w_0()
+            .gap_1()
+            .overflow_x_hidden()
+            .child(scope_element)
+            .child(Label::new("/").color(Color::Muted))
+            .children(
+                itertools::intersperse(
+                    std::iter::once(self.current_page().title.into()).chain(
+                        self.sub_page_stack
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(index, page)| {
+                                (index == 0)
+                                    .then(|| page.section_header.clone())
+                                    .into_iter()
+                                    .chain(std::iter::once(page.link.title.clone()))
+                            }),
+                    ),
+                    "/".into(),
+                )
+                .map(|item| Label::new(item).color(Color::Muted)),
+            )
     }
 
     fn render_no_results(&self, cx: &App) -> impl IntoElement {
@@ -3200,7 +3530,7 @@ impl SettingsWindow {
                                     this.pop_sub_page(window, cx);
                                 })),
                         )
-                        .child(self.render_sub_page_breadcrumbs()),
+                        .child(self.render_sub_page_breadcrumbs(window, cx)),
                 )
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
@@ -3303,6 +3633,65 @@ impl SettingsWindow {
                 .into_any_element()
         }
 
+        let mut restricted_banner = gpui::Empty.into_any_element();
+        if let SettingsUiFile::Project((worktree_id, _)) = &self.current_file {
+            let worktree_id = *worktree_id;
+            let is_restricted = all_projects(self.original_window.as_ref(), cx)
+                .find(|project| project.read(cx).worktree_for_id(worktree_id, cx).is_some())
+                .map(|project| {
+                    let worktree_store = project.read(cx).worktree_store();
+                    project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+                        &worktree_store,
+                        cx,
+                    )
+                })
+                .unwrap_or(false);
+
+            if is_restricted {
+                let original_window = self.original_window;
+                restricted_banner = Banner::new()
+                    .severity(Severity::Warning)
+                    .child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new("Restricted Mode"))
+                            .child(
+                                Label::new(
+                                    "This project is in restricted mode. Some project settings may not apply.",
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .action_slot(
+                        div().pr_2().pb_1().child(
+                            Button::new("manage-trust", "Manage Trust")
+                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                .on_click(cx.listener(move |_this, _, window, cx| {
+                                    if let Some(original_window) = original_window {
+                                        original_window
+                                            .update(cx, |multi_workspace, window, cx| {
+                                                multi_workspace
+                                                    .workspace()
+                                                    .update(cx, |workspace, cx| {
+                                                        workspace
+                                                            .show_worktree_trust_security_modal(
+                                                                true, window, cx,
+                                                            );
+                                                    });
+                                            })
+                                            .log_err();
+                                    }
+                                    // Close the settings window
+                                    window.remove_window();
+                                })),
+                        ),
+                    )
+                    .into_any_element();
+            }
+        }
+
         v_flex()
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
@@ -3393,7 +3782,8 @@ impl SettingsWindow {
                     .px_8()
                     .gap_2()
                     .child(page_header)
-                    .child(warning_banner),
+                    .child(warning_banner)
+                    .child(restricted_banner),
             )
             .child(
                 div()
@@ -4060,6 +4450,33 @@ fn update_project_setting_file(
     Ok(())
 }
 
+struct CurrentSettingsValue<'a, T> {
+    value: &'a T,
+    disabled: bool,
+}
+
+fn get_current_value<'a, T>(
+    settings_store: &'a SettingsStore,
+    file: &SettingsUiFile,
+    field: &'a SettingField<T>,
+    cx: &'a App,
+) -> Option<CurrentSettingsValue<'a, T>> {
+    let user_store = AppState::global(cx).user_store.read(cx);
+    let org_config = user_store.current_organization_configuration();
+
+    let (_file, value) = settings_store.get_value_from_file(file.to_settings(), field.pick);
+    let value = value?;
+
+    let org_value = org_config
+        .zip(field.organization_override)
+        .and_then(|(org_config, org_override)| (org_override)(org_config));
+
+    Some(CurrentSettingsValue {
+        disabled: org_value.is_some(),
+        value: org_value.unwrap_or(&value),
+    })
+}
+
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     field: SettingField<T>,
     file: SettingsUiFile,
@@ -4087,8 +4504,8 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, new_text.map(Into::into));
+                    move |settings, app| {
+                        (field.write)(settings, new_text.map(Into::into), app);
                     },
                 )
                 .log_err(); // todo(settings_ui) don't log err
@@ -4104,9 +4521,12 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let value = get_current_value(&SettingsStore::global(cx), &file, &field, cx);
+    let (value, disabled) = value
+        .map(|current_value| (*current_value.value, current_value.disabled))
+        .unwrap_or((false.into(), false));
 
-    let toggle_state = if value.copied().map_or(false, Into::into) {
+    let toggle_state = if value.into() {
         ToggleState::Selected
     } else {
         ToggleState::Unselected
@@ -4114,13 +4534,14 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
+        .disabled(disabled)
         .on_click({
             move |state, window, cx| {
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, _cx| {
-                    (field.write)(settings, Some(state.into()));
+                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, app| {
+                    (field.write)(settings, Some(state.into()), app);
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -4154,8 +4575,8 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
+                    move |settings, app| {
+                        (field.write)(settings, Some(value), app);
                     },
                 )
                 .log_err(); // todo(settings_ui) don't log err
@@ -4180,9 +4601,10 @@ where
         .and_then(|metadata| metadata.should_do_titlecase)
         .unwrap_or(true);
 
-    let (_, current_value) =
-        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let current_value = current_value.copied().unwrap_or(variants()[0]);
+    let current_value = get_current_value(&SettingsStore::global(cx), &file, &field, cx);
+    let (current_value, disabled) = current_value
+        .map(|current_value| (*current_value.value, current_value.disabled))
+        .unwrap_or((variants()[0], false));
 
     EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
         move |value, window, cx| {
@@ -4194,13 +4616,14 @@ where
                 field.json_path,
                 window,
                 cx,
-                move |settings, _cx| {
-                    (field.write)(settings, Some(value));
+                move |settings, app| {
+                    (field.write)(settings, Some(value), app);
                 },
             )
             .log_err(); // todo(settings_ui) don't log err
         }
     })
+    .disabled(disabled)
     .tab_index(0)
     .title_case(should_do_titlecase)
     .into_any_element()
@@ -4249,8 +4672,8 @@ fn render_font_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
-                                (field.write)(settings, Some(font_name.to_string().into()));
+                            move |settings, app| {
+                                (field.write)(settings, Some(font_name.to_string().into()), app);
                             },
                         )
                         .log_err(); // todo(settings_ui) don't log err
@@ -4260,7 +4683,7 @@ fn render_font_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4299,10 +4722,11 @@ fn render_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::ThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         )
@@ -4313,7 +4737,7 @@ fn render_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4352,10 +4776,11 @@ fn render_icon_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::IconThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         )
@@ -4366,7 +4791,7 @@ fn render_icon_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4428,7 +4853,10 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
+                hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
+                last_copied_link_path: None,
+                last_copied_skill_directory_path: None,
             }
         }
     }
@@ -4553,7 +4981,10 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
+            hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
+            last_copied_link_path: None,
+            last_copied_skill_directory_path: None,
         };
 
         settings_window.build_filter_table();
@@ -4743,6 +5174,91 @@ pub mod test {
         > Appearance & Behavior
         "
     );
+
+    #[gpui::test]
+    fn navbar_double_click_toggle(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let mut settings_window = parse(
+                r"
+                > General*
+                - General
+                - Privacy
+                v Project
+                - Project Settings
+                ",
+                window,
+                cx,
+            );
+            settings_window.build_content_handles(window, cx);
+            settings_window
+        });
+
+        settings_window.update_in(cx, |settings_window, window, cx| {
+            let general_idx = settings_window
+                .navbar_entries
+                .iter()
+                .position(|entry| entry.title == "General" && entry.is_root)
+                .expect("General root entry should exist");
+            let privacy_idx = settings_window
+                .navbar_entries
+                .iter()
+                .position(|entry| entry.title == "Privacy" && !entry.is_root)
+                .expect("Privacy nested entry should exist");
+
+            let click_event = |click_count| {
+                gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
+                    down: gpui::MouseDownEvent {
+                        button: gpui::MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    },
+                    up: gpui::MouseUpEvent {
+                        button: gpui::MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    },
+                })
+            };
+
+            assert!(
+                !settings_window.toggle_navbar_entry_on_double_click(
+                    general_idx,
+                    &click_event(1),
+                    window,
+                    cx,
+                ),
+                "single-clicks should use the normal navigation path"
+            );
+            assert!(!settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(settings_window.toggle_navbar_entry_on_double_click(
+                general_idx,
+                &click_event(2),
+                window,
+                cx,
+            ));
+            assert!(settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(
+                !settings_window.toggle_navbar_entry_on_double_click(
+                    general_idx,
+                    &click_event(3),
+                    window,
+                    cx,
+                ),
+                "triple-clicks should not toggle the entry again"
+            );
+            assert!(settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(!settings_window.toggle_navbar_entry_on_double_click(
+                privacy_idx,
+                &click_event(2),
+                window,
+                cx,
+            ));
+        });
+    }
 
     #[gpui::test]
     async fn test_settings_window_shows_worktrees_from_multiple_workspaces(
@@ -5085,6 +5601,181 @@ pub mod test {
                 "Should have no duplicate project files, but found duplicates. All files: {:?}",
                 project_files
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_skills_page_scope_switch_updates_displayed_skills(cx: &mut gpui::TestAppContext) {
+        use agent_skills::{
+            ProjectSkillGroup, Skill, SkillScopeId, SkillSource, load_skills_from_directory,
+        };
+        use project::Project;
+        use serde_json::json;
+        use std::path::Path;
+
+        cx.update(|cx| {
+            register_settings(cx);
+        });
+
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            AppState::set_global(app_state.clone(), cx);
+            app_state
+        });
+
+        let fake_fs = app_state.fs.as_fake();
+
+        fake_fs
+            .insert_tree(
+                "/global-skills",
+                json!({
+                    "global-skill": {
+                        "SKILL.md": "---\nname: global-skill\ndescription: A user level skill\n---\n\nGlobal instructions."
+                    }
+                }),
+            )
+            .await;
+
+        fake_fs
+            .insert_tree(
+                "/project",
+                json!({
+                    ".agents": {
+                        "skills": {
+                            "project-skill": {
+                                "SKILL.md": "---\nname: project-skill\ndescription: A project level skill\n---\n\nProject instructions."
+                            }
+                        }
+                    },
+                    "main.rs": "fn main() {}"
+                }),
+            )
+            .await;
+
+        let project = cx.update(|cx| {
+            Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                project::LocalProjectFlags::default(),
+                cx,
+            )
+        });
+
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree("/project", true, cx)
+            })
+            .await
+            .expect("Failed to create worktree");
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+        // Load both skills from the fake filesystem the same way the agent
+        // does, then publish them as the global skill index.
+        let fs = app_state.fs.clone();
+        let global_skills: Vec<Skill> =
+            load_skills_from_directory(&fs, Path::new("/global-skills"), SkillSource::Global)
+                .await
+                .into_iter()
+                .map(|result| result.expect("global skill should load"))
+                .collect();
+        let project_skills: Vec<Skill> = load_skills_from_directory(
+            &fs,
+            Path::new("/project/.agents/skills"),
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(worktree_id.to_usize()),
+                worktree_root_name: "project".into(),
+            },
+        )
+        .await
+        .into_iter()
+        .map(|result| result.expect("project skill should load"))
+        .collect();
+        assert_eq!(global_skills.len(), 1);
+        assert_eq!(project_skills.len(), 1);
+
+        cx.update(|cx| {
+            cx.set_global(SkillIndex {
+                global_skills,
+                project_skills: vec![ProjectSkillGroup {
+                    worktree_id: SkillScopeId(worktree_id.to_usize()),
+                    worktree_root_name: "project".into(),
+                    skills: project_skills,
+                }],
+            });
+        });
+
+        let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let workspace_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
+
+        cx.run_until_parked();
+
+        let (settings_window, cx) = cx
+            .add_window_view(|window, cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+
+        cx.run_until_parked();
+
+        settings_window.update_in(cx, |settings_window, window, cx| {
+            fn displayed_skill_names(settings_window: &SettingsWindow, cx: &App) -> Vec<String> {
+                crate::pages::displayed_skills(settings_window, cx)
+                    .iter()
+                    .map(|skill| skill.name.to_string())
+                    .collect()
+            }
+
+            assert_eq!(settings_window.current_file, SettingsUiFile::User);
+            assert!(
+                settings_window.navigate_to_sub_page("agent.skills", window, cx),
+                "Skills sub-page should exist"
+            );
+            assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);
+
+            let project_file_index = settings_window
+                .files
+                .iter()
+                .position(|(file, _)| file.worktree_id() == Some(worktree_id))
+                .expect("project settings file should be listed");
+            settings_window.change_file_in_sub_page(project_file_index, window, cx);
+
+            assert_eq!(
+                settings_window.current_file.worktree_id(),
+                Some(worktree_id)
+            );
+            assert_eq!(
+                settings_window.sub_page_stack.len(),
+                1,
+                "Skills sub-page should stay open when switching scope"
+            );
+            assert_eq!(settings_window.sub_page_stack[0].link.title, "Skills");
+            assert_eq!(
+                displayed_skill_names(settings_window, cx),
+                ["project-skill"]
+            );
+
+            let user_file_index = settings_window
+                .files
+                .iter()
+                .position(|(file, _)| file == &SettingsUiFile::User)
+                .expect("user settings file should be listed");
+            settings_window.change_file_in_sub_page(user_file_index, window, cx);
+
+            assert_eq!(settings_window.current_file, SettingsUiFile::User);
+            assert_eq!(settings_window.sub_page_stack.len(), 1);
+            assert_eq!(displayed_skill_names(settings_window, cx), ["global-skill"]);
         });
     }
 }

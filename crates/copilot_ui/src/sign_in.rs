@@ -6,7 +6,7 @@ use copilot::{
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, Window, WindowBounds, WindowOptions, div, point,
+    Subscription, TaskExt, Window, WindowBounds, WindowOptions, div, point,
 };
 use project::project_settings::ProjectSettings;
 use settings::Settings as _;
@@ -37,7 +37,7 @@ pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut
             Err(err) => cx.update(|window, cx| {
                 if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
+                        workspace.show_error(format!("Error: {err}"), cx);
                     })
                 } else {
                     log::error!("{:?}", err);
@@ -535,23 +535,12 @@ impl ConfigurationView {
         label: impl Into<SharedString>,
         edit_prediction: bool,
     ) -> impl IntoElement {
-        ButtonLike::new("loading_button")
+        Button::new("loading_button", label)
+            .full_width()
             .disabled(true)
+            .loading(true)
             .style(ButtonStyle::Outlined)
             .when(edit_prediction, |this| this.size(ButtonSize::Medium))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .justify_center()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_rotate_animation(4),
-                    )
-                    .child(Label::new(label)),
-            )
     }
 
     fn render_sign_in_button(&self, edit_prediction: bool) -> impl IntoElement {

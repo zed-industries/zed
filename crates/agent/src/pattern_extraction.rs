@@ -3,6 +3,15 @@ use shell_command_parser::{extract_commands, extract_terminal_command_prefix};
 use std::path::{Path, PathBuf};
 use url::Url;
 
+/// Escapes a string for use in a regex pattern, but leaves dashes unescaped.
+///
+/// `regex::escape()` escapes dashes, but they are only special inside `[]`
+/// character classes. Leaving them unescaped produces cleaner patterns
+/// (e.g. `^git-lfs\s+pull` instead of `^git\-lfs\s+pull`).
+fn escape_for_pattern(text: &str) -> String {
+    regex::escape(text).replace("\\-", "-")
+}
+
 /// Normalize path separators to forward slashes for consistent cross-platform patterns.
 fn normalize_separators(path_str: &str) -> String {
     path_str.replace('\\', "/")
@@ -64,14 +73,14 @@ pub fn extract_terminal_pattern(command: &str) -> Option<String> {
 
     match tokens.as_slice() {
         [] => None,
-        [single] => Some(format!("^{}\\b", regex::escape(single))),
+        [single] => Some(format!("^{}\\b", escape_for_pattern(single))),
         [rest @ .., last] => Some(format!(
             "^{}\\s+{}(\\s|$)",
             rest.iter()
-                .map(|token| regex::escape(token))
+                .map(|token| escape_for_pattern(token))
                 .collect::<Vec<_>>()
                 .join("\\s+"),
-            regex::escape(last)
+            escape_for_pattern(last)
         )),
     }
 }
@@ -116,7 +125,7 @@ pub fn extract_path_pattern(path: &str) -> Option<String> {
     if parent_str.is_empty() || parent_str == "/" {
         return None;
     }
-    Some(format!("^{}/", regex::escape(&parent_str)))
+    Some(format!("^{}/", escape_for_pattern(&parent_str)))
 }
 
 pub fn extract_path_pattern_display(path: &str) -> Option<String> {
@@ -156,7 +165,7 @@ pub fn extract_copy_move_pattern(input: &str) -> Option<String> {
     if common_str.is_empty() || common_str == "/" {
         return None;
     }
-    Some(format!("^{}/", regex::escape(&common_str)))
+    Some(format!("^{}/", escape_for_pattern(&common_str)))
 }
 
 pub fn extract_copy_move_pattern_display(input: &str) -> Option<String> {
@@ -172,7 +181,7 @@ pub fn extract_copy_move_pattern_display(input: &str) -> Option<String> {
 pub fn extract_url_pattern(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
     let domain = parsed.host_str()?;
-    Some(format!("^https?://{}", regex::escape(domain)))
+    Some(format!("^https?://{}", escape_for_pattern(domain)))
 }
 
 pub fn extract_url_pattern_display(url: &str) -> Option<String> {
@@ -201,7 +210,7 @@ mod tests {
         );
         assert_eq!(
             extract_terminal_pattern("git-lfs pull"),
-            Some("^git\\-lfs\\s+pull(\\s|$)".to_string())
+            Some("^git-lfs\\s+pull(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("my_script arg"),
@@ -244,7 +253,7 @@ mod tests {
         );
         assert_eq!(
             extract_terminal_pattern("PAGER='less -R' git log"),
-            Some("^PAGER='less \\-R'\\s+git\\s+log(\\s|$)".to_string())
+            Some("^PAGER='less -R'\\s+git\\s+log(\\s|$)".to_string())
         );
 
         // Path-like commands are rejected
@@ -393,6 +402,22 @@ mod tests {
         assert_eq!(
             extract_url_pattern_display("http://api.example.com/v1/users"),
             Some("api.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_dashes_are_not_escaped() {
+        assert_eq!(
+            extract_terminal_pattern("git-lfs pull"),
+            Some("^git-lfs\\s+pull(\\s|$)".to_string())
+        );
+        assert_eq!(
+            extract_url_pattern("https://typescript-eslint.io/rules/no-unused-vars"),
+            Some("^https?://typescript-eslint\\.io".to_string())
+        );
+        assert_eq!(
+            extract_path_pattern("/my-project/sub-dir/file.rs"),
+            Some("^/my-project/sub-dir/".to_string())
         );
     }
 

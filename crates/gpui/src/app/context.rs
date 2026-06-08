@@ -307,9 +307,13 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &Window,
         f: impl FnOnce(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) {
-        let view = self.entity();
-        window.defer(self, move |window, cx| {
-            view.update(cx, |view, cx| f(view, window, cx))
+        let view = self.weak_entity();
+        let entity_id = self.entity_id();
+        self.ensure_window(entity_id, window.handle.id);
+        self.app.defer(move |cx| {
+            cx.with_window(entity_id, |window, cx| {
+                view.update(cx, |view, cx| f(view, window, cx)).ok();
+            });
         });
     }
 
@@ -326,25 +330,21 @@ impl<'a, T: 'static> Context<'a, T> {
     {
         let observed_id = observed.entity_id();
         let observed = observed.downgrade();
-        let window_handle = window.handle;
         let observer = self.weak_entity();
+        let observer_id = self.entity_id();
+        self.ensure_window(observer_id, window.handle.id);
         self.new_observer(
             observed_id,
             Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, window, cx| {
-                        if let Some((observer, observed)) =
-                            observer.upgrade().zip(observed.upgrade())
-                        {
-                            observer.update(cx, |observer, cx| {
-                                on_notify(observer, observed, window, cx);
-                            });
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
+                let Some((observer, observed)) = observer.upgrade().zip(observed.upgrade()) else {
+                    return false;
+                };
+                cx.with_window(observer_id, |window, cx| {
+                    observer.update(cx, |observer, cx| {
+                        on_notify(observer, observed, window, cx);
+                    });
+                });
+                true
             }),
         )
     }
@@ -363,28 +363,25 @@ impl<'a, T: 'static> Context<'a, T> {
         Evt: 'static,
     {
         let emitter = emitter.downgrade();
-        let window_handle = window.handle;
         let subscriber = self.weak_entity();
+        let subscriber_id = self.entity_id();
+        self.ensure_window(subscriber_id, window.handle.id);
         self.new_subscription(
             emitter.entity_id(),
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
-                    window_handle
-                        .update(cx, |_, window, cx| {
-                            if let Some((subscriber, emitter)) =
-                                subscriber.upgrade().zip(emitter.upgrade())
-                            {
-                                let event = event.downcast_ref().expect("invalid event type");
-                                subscriber.update(cx, |subscriber, cx| {
-                                    on_event(subscriber, &emitter, event, window, cx);
-                                });
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false)
+                    let Some((subscriber, emitter)) = subscriber.upgrade().zip(emitter.upgrade())
+                    else {
+                        return false;
+                    };
+                    let event = event.downcast_ref().expect("invalid event type");
+                    cx.with_window(subscriber_id, |window, cx| {
+                        subscriber.update(cx, |subscriber, cx| {
+                            on_event(subscriber, &emitter, event, window, cx);
+                        });
+                    });
+                    true
                 }),
             ),
         )
@@ -833,6 +830,15 @@ impl<T> AppContext for Context<'_, T> {
         F: FnOnce(AnyView, &mut Window, &mut App) -> R,
     {
         self.app.update_window(window, update)
+    }
+
+    #[inline]
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        self.app.with_window(entity_id, f)
     }
 
     #[inline]

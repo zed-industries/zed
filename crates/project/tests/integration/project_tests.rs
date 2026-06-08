@@ -1,11 +1,10 @@
 #![allow(clippy::format_collect)]
 
+mod agent_registry_store;
 mod bookmark_store;
 mod color_extractor;
 mod context_server_store;
 mod debugger;
-mod ext_agent_tests;
-mod extension_agent_tests;
 mod git_store;
 mod image_store;
 mod lsp_command;
@@ -34,7 +33,6 @@ use git::{
     repository::{RepoPath, repo_path},
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
-use git2::RepositoryInitOptions;
 use gpui::{
     App, AppContext, BackgroundExecutor, BorrowAppContext, Entity, FutureExt, SharedString, Task,
     TestAppContext, UpdateGlobal,
@@ -46,7 +44,9 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
     ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata,
-    language_settings::{Formatter, FormatterList, LanguageSettings, LanguageSettingsContent},
+    language_settings::{
+        Formatter, FormatterList, LanguageSettings, LanguageSettingsContent, LineEndingSetting,
+    },
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -76,6 +76,7 @@ use std::{
     num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
+    process::Command,
     rc::Rc,
     str::FromStr,
     sync::{Arc, OnceLock, atomic},
@@ -318,6 +319,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
     assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+    assert_eq!(settings_a.line_ending, LineEndingSetting::EnforceLf);
     assert_eq!(settings_a.preferred_line_length, 120);
 
     // .editorconfig in b/ overrides .editorconfig in root
@@ -1862,6 +1864,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
             HashSet::default(),
+            true,
             cx,
         );
     });
@@ -2979,7 +2982,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
     });
     let mut events = cx.events(&project);
 
@@ -3097,7 +3100,12 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
 
     // The diagnostics are cleared.
@@ -3152,7 +3160,12 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -3351,6 +3364,68 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     fake_js_server
         .receive_notification::<lsp::notification::Exit>()
         .await;
+}
+
+#[gpui::test]
+async fn test_updating_lsp_settings_sends_one_did_change_configuration(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-lsp",
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+
+    let _rs_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_rust_server = fake_rust_servers.next().await.unwrap();
+
+    let did_change_count = Arc::new(atomic::AtomicUsize::new(0));
+    fake_rust_server.handle_notification::<lsp::notification::DidChangeConfiguration, _>({
+        let did_change_count = did_change_count.clone();
+        move |_, _| {
+            did_change_count.fetch_add(1, atomic::Ordering::SeqCst);
+        }
+    });
+    cx.executor().run_until_parked();
+    did_change_count.store(0, atomic::Ordering::SeqCst);
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.lsp.0.insert(
+                    "rust-lsp".into(),
+                    settings::LspSettings {
+                        settings: Some(json!({ "foo": true })),
+                        ..Default::default()
+                    },
+                );
+            });
+        })
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        did_change_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected exactly one workspace/didChangeConfiguration after a settings change"
+    );
 }
 
 #[gpui::test(iterations = 3)]
@@ -3908,7 +3983,12 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
     let mut events = cx.events(&project);
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
 
@@ -4569,8 +4649,8 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             list_worktrees(&project, cx),
             [
+                (path!("/dir/b.rs").as_ref(), true),
                 (path!("/dir/a.rs").as_ref(), false),
-                (path!("/dir/b.rs").as_ref(), true)
             ],
         );
 
@@ -6071,7 +6151,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
                 language::BufferEvent::DirtyChanged
             ]
         );
@@ -6100,9 +6182,13 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
                 language::BufferEvent::DirtyChanged,
-                language::BufferEvent::Edited { is_local: true },
+                language::BufferEvent::Edited {
+                    source: language::BufferEditSource::User
+                },
             ],
         );
         events.lock().clear();
@@ -6117,7 +6203,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6157,7 +6245,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.lock()),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6172,7 +6262,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited { is_local: true },
+            language::BufferEvent::Edited {
+                source: language::BufferEditSource::User
+            },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -6272,6 +6364,39 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
             "buffer should reload from disk after undo makes it clean"
         );
         assert!(!buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
+async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    fs.write(
+        path!("/dir/file.txt").as_ref(),
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01",
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    // Test that existing buffer is left untouched
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "");
     });
 }
 
@@ -6418,6 +6543,289 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
         fs.load(path!("/dir/file2").as_ref()).await.unwrap(),
         "one\r\ntwo\r\nthree\r\nfour\r\n",
     );
+}
+
+#[gpui::test]
+async fn test_line_ending_user_settings_on_format(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (
+            "default",
+            None,
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::default()),
+            ],
+        ),
+        (
+            "detect",
+            Some(LineEndingSetting::Detect),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::default()),
+            ],
+        ),
+        (
+            "prefer_lf",
+            Some(LineEndingSetting::PreferLf),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
+            ],
+        ),
+        (
+            "prefer_crlf",
+            Some(LineEndingSetting::PreferCrlf),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Windows),
+            ],
+        ),
+        (
+            "enforce_lf",
+            Some(LineEndingSetting::EnforceLf),
+            [
+                ("crlf_file.rs", LineEnding::Unix),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
+            ],
+        ),
+        (
+            "enforce_crlf",
+            Some(LineEndingSetting::EnforceCrlf),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Windows),
+                ("no_newline.rs", LineEnding::Windows),
+            ],
+        ),
+    ];
+
+    for (case_name, line_ending_setting, expected_line_endings) in cases {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
+                "lf_file.rs": "one\ntwo\nthree\n",
+                "no_newline.rs": "single line",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.line_ending = line_ending_setting;
+                });
+            });
+        });
+        cx.executor().run_until_parked();
+
+        assert_line_endings_after_format(
+            cx,
+            &project,
+            worktree_id,
+            case_name,
+            &expected_line_endings,
+        )
+        .await;
+    }
+}
+
+#[gpui::test]
+async fn test_line_ending_editorconfig_on_format_and_save(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (
+            "editorconfig lf",
+            "lf",
+            "crlf_file.rs",
+            LineEnding::Windows,
+            [
+                ("crlf_file.rs", LineEnding::Unix),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
+            ],
+            "one\ntwo\nthree\n",
+        ),
+        (
+            "editorconfig crlf",
+            "crlf",
+            "lf_file.rs",
+            LineEnding::Unix,
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Windows),
+                ("no_newline.rs", LineEnding::Windows),
+            ],
+            "one\r\ntwo\r\nthree\r\n",
+        ),
+    ];
+
+    for (
+        case_name,
+        editorconfig_end_of_line,
+        buffer_path,
+        initial_line_ending,
+        expected_line_endings,
+        expected_saved_contents,
+    ) in cases
+    {
+        let file_system = FakeFs::new(cx.executor());
+        file_system
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    ".editorconfig": format!("root = true\n[*.rs]\nend_of_line = {editorconfig_end_of_line}\n"),
+                    "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
+                    "lf_file.rs": "one\ntwo\nthree\n",
+                    "no_newline.rs": "single line",
+                }),
+            )
+            .await;
+
+        let project = Project::test(file_system.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        cx.executor().run_until_parked();
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(buffer_path)), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), initial_line_ending);
+        });
+
+        assert_line_endings_after_format(
+            cx,
+            &project,
+            worktree_id,
+            case_name,
+            &expected_line_endings,
+        )
+        .await;
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+            .await
+            .unwrap();
+        let saved_path = PathBuf::from(path!("/dir")).join(buffer_path);
+        assert_eq!(
+            file_system.load(&saved_path).await.unwrap(),
+            expected_saved_contents,
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_line_ending_initialization_for_new_buffers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (Some(LineEndingSetting::Detect), LineEnding::default()),
+        (Some(LineEndingSetting::PreferLf), LineEnding::Unix),
+        (Some(LineEndingSetting::PreferCrlf), LineEnding::Windows),
+        (Some(LineEndingSetting::EnforceLf), LineEnding::Unix),
+        (Some(LineEndingSetting::EnforceCrlf), LineEnding::Windows),
+    ];
+
+    for (line_ending_setting, expected_line_ending) in cases {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({})).await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.line_ending = line_ending_setting;
+                });
+            });
+        });
+        cx.executor().run_until_parked();
+
+        let created_buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, false, cx))
+            .unwrap()
+            .await;
+        created_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+
+        let local_buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("single line", None, false, cx)
+        });
+        local_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+
+        let opened_missing_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/new_file.rs"), cx)
+            })
+            .await
+            .unwrap();
+        opened_missing_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+    }
+}
+
+async fn assert_line_endings_after_format(
+    cx: &mut gpui::TestAppContext,
+    project: &Entity<Project>,
+    worktree_id: WorktreeId,
+    case_name: &str,
+    expected_line_endings: &[(&str, LineEnding)],
+) {
+    for (path, expected_line_ending) in expected_line_endings {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(path)), cx)
+            })
+            .await
+            .unwrap();
+        let mut buffers = HashSet::default();
+        buffers.insert(buffer.clone());
+        project
+            .update(cx, |project, cx| {
+                project.format(
+                    buffers,
+                    project::lsp_store::LspFormatTarget::Buffers,
+                    false,
+                    project::lsp_store::FormatTrigger::Save,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(
+                buffer.line_ending(),
+                *expected_line_ending,
+                "unexpected line ending for {path} in {case_name}"
+            );
+        });
+    }
 }
 
 #[gpui::test]
@@ -7031,6 +7439,74 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
             (path!("dir/two.rs").to_string(), vec![6..9]),
             (path!("dir/three.rs").to_string(), vec![37..40]),
             (path!("dir/four.rs").to_string(), vec![25..28, 36..39])
+        ])
+    );
+}
+
+#[gpui::test]
+async fn test_search_multiline_crlf(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "crlf.rs": "alpha\r\nbeta\r\ngamma",
+            "lf.rs": "alpha\nbeta\ngamma",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    // A query with CRLF line endings should match buffers regardless of their
+    // on-disk line endings (buffers always store normalized `\n`).
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "alpha\r\nbeta",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/crlf.rs").to_string(), vec![0..10]),
+            (path!("dir/lf.rs").to_string(), vec![0..10]),
+        ])
+    );
+
+    // The reverse: a query with LF line endings should match a file that is
+    // stored with CRLF line endings on disk.
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "alpha\nbeta",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/crlf.rs").to_string(), vec![0..10]),
+            (path!("dir/lf.rs").to_string(), vec![0..10]),
         ])
     );
 }
@@ -10201,7 +10677,7 @@ fn merge_pending_ops_snapshots(
                     t_ops.ops.push(s_op);
                 }
             }
-            t_ops.ops.sort_by(|l, r| l.id.cmp(&r.id));
+            t_ops.ops.sort_by_key(|op| op.id);
         } else {
             target.push(s_ops);
         }
@@ -10709,7 +11185,8 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     }));
     let root_path = root.path();
 
-    let repo = git_init(&root_path.join("project"));
+    let work_dir = &root_path.join("project");
+    let repo = git_init(work_dir);
     git_add("a.txt", &repo);
     git_commit("init", &repo);
 
@@ -10727,25 +11204,21 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     });
 
     git_branch("other-branch", &repo);
-    git_checkout("refs/heads/other-branch", &repo);
+    git_checkout("other-branch", &repo);
     std::fs::write(root_path.join("project/a.txt"), "A").unwrap();
     git_add("a.txt", &repo);
     git_commit("capitalize", &repo);
-    let commit = repo
-        .head()
-        .expect("Failed to get HEAD")
-        .peel_to_commit()
-        .expect("HEAD is not a commit");
-    git_checkout("refs/heads/main", &repo);
+    let commit = git_rev_parse("HEAD", &repo);
+    git_checkout("main", &repo);
     std::fs::write(root_path.join("project/a.txt"), "b").unwrap();
     git_add("a.txt", &repo);
     git_commit("improve letter", &repo);
-    git_cherry_pick(&commit, &repo);
+    git_cherry_pick_expect_conflict(&commit, &repo);
     std::fs::read_to_string(root_path.join("project/.git/CHERRY_PICK_HEAD"))
         .expect("No CHERRY_PICK_HEAD");
     pretty_assertions::assert_eq!(
         git_status(&repo),
-        collections::HashMap::from_iter([("a.txt".to_owned(), git2::Status::CONFLICTED)])
+        collections::HashMap::from_iter([("a.txt".to_owned(), GIT_STATUS_CONFLICTED.to_owned())])
     );
     tree.flush_fs_events(cx).await;
     project
@@ -10911,6 +11384,10 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
     )
     .unwrap();
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _| {
         assert_eq!(
@@ -10968,8 +11445,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 
     // Set up git repository before creating the worktree.
     let work_dir = root.path().join("project");
-    let mut repo = git_init(work_dir.as_path());
-    repo.add_ignore_rule(IGNORE_RULE).unwrap();
+    let repo = git_init(work_dir.as_path());
     git_add(A_TXT, &repo);
     git_add(E_TXT, &repo);
     git_add(DOTGITIGNORE, &repo);
@@ -11056,7 +11532,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // Modify files in the working copy and perform git operations on other files.
     git_reset(0, &repo);
     git_remove_index(Path::new(B_TXT), &repo);
-    git_stash(&mut repo);
+    git_stash(&repo);
     std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
     std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
     tree.flush_fs_events(cx).await;
@@ -11180,7 +11656,6 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     // Set up git repository before creating the worktree.
     let work_dir = root.path().join("project");
     let repo = git_init(work_dir.as_path());
-    repo.add_ignore_rule(IGNORE_RULE).unwrap();
     git_add("src/main.rs", &repo);
     git_add(".gitignore", &repo);
     git_commit("Initial commit", &repo);
@@ -11749,8 +12224,8 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             Path::new(path!("/project/some-worktree")).into(),
         );
         pretty_assertions::assert_eq!(
-            repo.read(cx).original_repo_abs_path,
-            Path::new(path!("/project")).into(),
+            repo.read(cx).main_worktree_abs_path(),
+            Some(Path::new(path!("/project"))),
         );
         assert!(
             repo.read(cx).linked_worktree_path().is_some(),
@@ -11802,8 +12277,8 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             Path::new(path!("/project/subdir/some-submodule")).into(),
         );
         pretty_assertions::assert_eq!(
-            repo.read(cx).original_repo_abs_path,
-            Path::new(path!("/project/subdir/some-submodule")).into(),
+            repo.read(cx).main_worktree_abs_path(),
+            Some(Path::new(path!("/project/subdir/some-submodule"))),
         );
         assert!(
             repo.read(cx).linked_worktree_path().is_none(),
@@ -11994,7 +12469,8 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached => {}
+            SearchResult::LimitReached | SearchResult::WaitingForScan | SearchResult::Searching => {
+            }
         }
     }
     Ok(results
@@ -12343,111 +12819,192 @@ fn assert_entry_git_state(
     );
 }
 
-#[track_caller]
-fn git_init(path: &Path) -> git2::Repository {
-    let mut init_opts = RepositoryInitOptions::new();
-    init_opts.initial_head("main");
-    git2::Repository::init_opts(path, &init_opts).expect("Failed to initialize git repository")
+#[cfg(any())]
+const GIT_STATUS_CONFLICTED: &str = "UU";
+
+#[allow(clippy::disallowed_methods)]
+fn git_cmd(work_dir: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(work_dir)
+        .env("GIT_CONFIG_GLOBAL", "")
+        .env("GIT_CONFIG_SYSTEM", "")
+        .env("GIT_AUTHOR_NAME", "test")
+        .env("GIT_AUTHOR_EMAIL", "test@zed.dev")
+        .env("GIT_COMMITTER_NAME", "test")
+        .env("GIT_COMMITTER_EMAIL", "test@zed.dev");
+    cmd
 }
 
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
-    let path = path.as_ref();
-    let mut index = repo.index().expect("Failed to get index");
-    index.add_path(path).expect("Failed to add file");
-    index.write().expect("Failed to write index");
+fn git_init(path: &Path) -> PathBuf {
+    let output = git_cmd(path)
+        .args(["init", "-b", "main"])
+        .output()
+        .expect("Failed to run git init");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    path.to_path_buf()
 }
 
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_remove_index(path: &Path, repo: &git2::Repository) {
-    let mut index = repo.index().expect("Failed to get index");
-    index.remove_path(path).expect("Failed to add file");
-    index.write().expect("Failed to write index");
+fn git_add<P: AsRef<Path>>(path: P, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["add"])
+        .arg(path.as_ref())
+        .output()
+        .expect("Failed to run git add");
+    assert!(
+        output.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_commit(msg: &'static str, repo: &git2::Repository) {
-    use git2::Signature;
+fn git_remove_index(path: &Path, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["rm", "--cached"])
+        .arg(path)
+        .output()
+        .expect("Failed to run git rm");
+    assert!(
+        output.status.success(),
+        "git rm --cached failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
-    let oid = repo.index().unwrap().write_tree().unwrap();
-    let tree = repo.find_tree(oid).unwrap();
-    if let Ok(head) = repo.head() {
-        let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_commit(msg: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["commit", "-m", msg])
+        .output()
+        .expect("Failed to run git commit");
+    assert!(
+        output.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-        let parent_commit = parent_obj.as_commit().unwrap();
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_stash(work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["stash"])
+        .output()
+        .expect("Failed to run git stash");
+    assert!(
+        output.status.success(),
+        "git stash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            msg,
-            &tree,
-            &[parent_commit],
-        )
-        .expect("Failed to commit with parent");
-    } else {
-        repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
-            .expect("Failed to commit");
-    }
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_reset(offset: usize, work_dir: &Path) {
+    let target = format!("HEAD~{}", offset + 1);
+    let output = git_cmd(work_dir)
+        .args(["reset", "--soft", &target])
+        .output()
+        .expect("Failed to run git reset");
+    assert!(
+        output.status.success(),
+        "git reset failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[cfg(any())]
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
-    repo.cherrypick(commit, None).expect("Failed to cherrypick");
+fn git_branch(name: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["branch", name])
+        .output()
+        .expect("Failed to run git branch");
+    assert!(
+        output.status.success(),
+        "git branch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
+#[cfg(any())]
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_stash(repo: &mut git2::Repository) {
-    use git2::Signature;
-
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
-    repo.stash_save(&signature, "N/A", None)
-        .expect("Failed to stash");
+fn git_checkout(name: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["checkout", name])
+        .output()
+        .expect("Failed to run git checkout");
+    assert!(
+        output.status.success(),
+        "git checkout failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
+#[cfg(any())]
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_reset(offset: usize, repo: &git2::Repository) {
-    let head = repo.head().expect("Couldn't get repo head");
-    let object = head.peel(git2::ObjectType::Commit).unwrap();
-    let commit = object.as_commit().unwrap();
-    let new_head = commit
-        .parents()
-        .inspect(|parnet| {
-            parnet.message();
+fn git_rev_parse(rev: &str, work_dir: &Path) -> String {
+    let output = git_cmd(work_dir)
+        .args(["rev-parse", rev])
+        .output()
+        .expect("Failed to run git rev-parse");
+    assert!(
+        output.status.success(),
+        "git rev-parse failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+#[cfg(any())]
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_cherry_pick_expect_conflict(commit: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["cherry-pick", "--no-commit", commit])
+        .output()
+        .expect("Failed to run git cherry-pick");
+    assert!(
+        !output.status.success(),
+        "git cherry-pick unexpectedly succeeded"
+    );
+}
+
+#[cfg(any())]
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_status(work_dir: &Path) -> collections::HashMap<String, String> {
+    let output = git_cmd(work_dir)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("Failed to run git status");
+    assert!(
+        output.status.success(),
+        "git status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let status = line[..2].to_string();
+            let path = line[3..].to_string();
+            (path, status)
         })
-        .nth(offset)
-        .expect("Not enough history");
-    repo.reset(new_head.as_object(), git2::ResetType::Soft, None)
-        .expect("Could not reset");
-}
-
-#[cfg(any())]
-#[track_caller]
-fn git_branch(name: &str, repo: &git2::Repository) {
-    let head = repo
-        .head()
-        .expect("Couldn't get repo head")
-        .peel_to_commit()
-        .expect("HEAD is not a commit");
-    repo.branch(name, &head, false).expect("Failed to commit");
-}
-
-#[cfg(any())]
-#[track_caller]
-fn git_checkout(name: &str, repo: &git2::Repository) {
-    repo.set_head(name).expect("Failed to set head");
-    repo.checkout_head(None).expect("Failed to check out head");
-}
-
-#[cfg(any())]
-#[track_caller]
-fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
-    repo.statuses(None)
-        .unwrap()
-        .iter()
-        .map(|status| (status.path().unwrap().to_string(), status.status()))
         .collect()
 }
 

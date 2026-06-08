@@ -2,7 +2,7 @@ use std::{ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
-use language::{Buffer, BufferSnapshot};
+use language::{Buffer, BufferEditSource, BufferSnapshot};
 use rope::Point;
 use sum_tree::{Dimensions, SumTree};
 use text::{Bias, BufferId, Edit, OffsetRangeExt, Patch};
@@ -58,12 +58,6 @@ impl PathKey {
 }
 
 impl MultiBuffer {
-    pub fn buffer_for_path(&self, path: &PathKey, cx: &App) -> Option<Entity<Buffer>> {
-        let snapshot = self.snapshot(cx);
-        let excerpt = snapshot.excerpts_for_path(path).next()?;
-        self.buffer(excerpt.context.start.buffer_id)
-    }
-
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
         let snapshot = self.snapshot(cx);
         let excerpt = snapshot.excerpts_for_path(path).next()?;
@@ -317,7 +311,7 @@ impl MultiBuffer {
                 cursor.next();
             }
 
-            ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
+            ranges.sort_by_key(|r| r.context.start);
 
             self.set_excerpt_ranges_for_path(path.clone(), buffer, buffer_snapshot, ranges, cx);
         }
@@ -605,18 +599,17 @@ impl MultiBuffer {
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
+            cx.emit(Event::Edited {
+                edited_buffer: None,
+                source: BufferEditSource::User,
+            });
+            cx.emit(Event::BufferRangesUpdated {
+                buffer,
+                path_key: path_key.clone(),
+                ranges: new_ranges,
+            });
+            cx.notify();
         }
-
-        cx.emit(Event::Edited {
-            edited_buffer: None,
-            is_local: true,
-        });
-        cx.emit(Event::BufferRangesUpdated {
-            buffer,
-            path_key: path_key.clone(),
-            ranges: new_ranges,
-        });
-        cx.notify();
 
         added_new_excerpt
     }
@@ -693,7 +686,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
         cx.notify();
     }

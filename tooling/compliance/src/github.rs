@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, fmt, ops::Not, rc::Rc};
+use std::{borrow::Cow, collections::HashMap, fmt};
 
 use anyhow::Result;
 use derive_more::Deref;
@@ -27,11 +27,37 @@ pub enum ReviewState {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorAssociation {
+    Owner,
+    Member,
+    Collaborator,
+    Contributor,
+    FirstTimeContributor,
+    FirstTimer,
+    Mannequin,
+    None,
+}
+
+impl AuthorAssociation {
+    pub fn has_write_access(&self) -> bool {
+        matches!(self, Self::Owner | Self::Member | Self::Collaborator)
+    }
+}
+
+pub trait Approvable {
+    fn author_login(&self) -> Option<&str>;
+    fn review_state(&self) -> Option<ReviewState>;
+    fn body(&self) -> Option<&str>;
+    fn author_association(&self) -> Option<AuthorAssociation>;
+}
+
 #[derive(Debug, Clone)]
 pub struct PullRequestReview {
     pub user: Option<GithubUser>,
     pub state: Option<ReviewState>,
     pub body: Option<String>,
+    pub author_association: Option<AuthorAssociation>,
 }
 
 impl PullRequestReview {
@@ -43,10 +69,47 @@ impl PullRequestReview {
     }
 }
 
+impl Approvable for PullRequestReview {
+    fn author_login(&self) -> Option<&str> {
+        self.user.as_ref().map(|user| user.login.as_str())
+    }
+
+    fn review_state(&self) -> Option<ReviewState> {
+        self.state
+    }
+
+    fn body(&self) -> Option<&str> {
+        self.body.as_deref()
+    }
+
+    fn author_association(&self) -> Option<AuthorAssociation> {
+        self.author_association
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PullRequestComment {
     pub user: GithubUser,
     pub body: Option<String>,
+    pub author_association: Option<AuthorAssociation>,
+}
+
+impl Approvable for PullRequestComment {
+    fn author_login(&self) -> Option<&str> {
+        Some(&self.user.login)
+    }
+
+    fn review_state(&self) -> Option<ReviewState> {
+        None
+    }
+
+    fn body(&self) -> Option<&str> {
+        self.body.as_deref()
+    }
+
+    fn author_association(&self) -> Option<AuthorAssociation> {
+        self.author_association
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Deref, PartialEq, Eq)]
@@ -97,42 +160,88 @@ impl fmt::Display for CommitAuthor {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct CommitSignature {
+    #[serde(rename = "isValid")]
+    is_valid: bool,
+    signer: Option<GithubLogin>,
+}
+
+impl CommitSignature {
+    pub fn is_valid(&self) -> bool {
+        self.is_valid
+    }
+
+    pub fn signer(&self) -> Option<&GithubLogin> {
+        self.signer.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommitFileChange {
+    pub filename: String,
+}
+
 #[derive(Debug, Deserialize)]
-pub struct CommitAuthors {
+pub struct CommitMetadata {
     #[serde(rename = "author")]
     primary_author: CommitAuthor,
     #[serde(rename = "authors", deserialize_with = "graph_ql::deserialize_nodes")]
     co_authors: Vec<CommitAuthor>,
+    #[serde(default)]
+    signature: Option<CommitSignature>,
+    #[serde(default)]
+    additions: u64,
+    #[serde(default)]
+    deletions: u64,
 }
 
-impl CommitAuthors {
+impl CommitMetadata {
     pub fn co_authors(&self) -> Option<impl Iterator<Item = &CommitAuthor>> {
-        self.co_authors.is_empty().not().then(|| {
-            self.co_authors
-                .iter()
-                .filter(|co_author| *co_author != &self.primary_author)
-        })
+        let mut co_authors = self
+            .co_authors
+            .iter()
+            .filter(|co_author| *co_author != &self.primary_author)
+            .peekable();
+
+        co_authors.peek().is_some().then_some(co_authors)
+    }
+
+    pub fn primary_author(&self) -> &CommitAuthor {
+        &self.primary_author
+    }
+
+    pub fn signature(&self) -> Option<&CommitSignature> {
+        self.signature.as_ref()
+    }
+
+    pub fn additions(&self) -> u64 {
+        self.additions
+    }
+
+    pub fn deletions(&self) -> u64 {
+        self.deletions
     }
 }
 
 #[derive(Debug, Deref)]
-pub struct AuthorsForCommits(HashMap<CommitSha, CommitAuthors>);
+pub struct CommitMetadataBySha(HashMap<CommitSha, CommitMetadata>);
 
-impl AuthorsForCommits {
+impl CommitMetadataBySha {
     const SHA_PREFIX: &'static str = "commit";
 }
 
-impl<'de> serde::Deserialize<'de> for AuthorsForCommits {
+impl<'de> serde::Deserialize<'de> for CommitMetadataBySha {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let raw = HashMap::<String, CommitAuthors>::deserialize(deserializer)?;
+        let raw = HashMap::<String, CommitMetadata>::deserialize(deserializer)?;
         let map = raw
             .into_iter()
             .map(|(key, value)| {
                 let sha = key
-                    .strip_prefix(AuthorsForCommits::SHA_PREFIX)
+                    .strip_prefix(CommitMetadataBySha::SHA_PREFIX)
                     .unwrap_or(&key);
                 (CommitSha::new(sha.to_owned()), value)
             })
@@ -192,11 +301,16 @@ pub trait GithubApiClient {
         repo: &Repository<'_>,
         pr_number: u64,
     ) -> Result<Vec<PullRequestComment>>;
-    async fn get_commit_authors(
+    async fn get_commit_metadata(
         &self,
         repo: &Repository<'_>,
         commit_shas: &[&CommitSha],
-    ) -> Result<AuthorsForCommits>;
+    ) -> Result<CommitMetadataBySha>;
+    async fn get_commit_files(
+        &self,
+        repo: &Repository<'_>,
+        sha: &CommitSha,
+    ) -> Result<Vec<CommitFileChange>>;
     async fn check_repo_write_permission(
         &self,
         repo: &Repository<'_>,
@@ -210,23 +324,6 @@ pub trait GithubApiClient {
     ) -> Result<()>;
 }
 
-#[derive(Deref)]
-pub struct GithubClient {
-    api: Rc<dyn GithubApiClient>,
-}
-
-impl GithubClient {
-    pub fn new(api: Rc<dyn GithubApiClient>) -> Self {
-        Self { api }
-    }
-
-    #[cfg(feature = "octo-client")]
-    pub async fn for_app_in_repo(app_id: u64, app_private_key: &str, org: &str) -> Result<Self> {
-        let client = OctocrabClient::new(app_id, app_private_key, org).await?;
-        Ok(Self::new(Rc::new(client)))
-    }
-}
-
 pub mod graph_ql {
     use anyhow::{Context as _, Result};
     use itertools::Itertools as _;
@@ -234,7 +331,7 @@ pub mod graph_ql {
 
     use crate::git::CommitSha;
 
-    use super::AuthorsForCommits;
+    use super::CommitMetadataBySha;
 
     #[derive(Debug, Deserialize)]
     pub struct GraphQLResponse<T> {
@@ -261,8 +358,8 @@ pub mod graph_ql {
     }
 
     #[derive(Debug, Deserialize)]
-    pub struct CommitAuthorsResponse {
-        pub repository: AuthorsForCommits,
+    pub struct CommitMetadataResponse {
+        pub repository: CommitMetadataBySha,
     }
 
     pub fn deserialize_nodes<'de, T, D>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
@@ -277,7 +374,7 @@ pub mod graph_ql {
         Nodes::<T>::deserialize(deserializer).map(|wrapper| wrapper.nodes)
     }
 
-    pub fn build_co_authors_query<'a>(
+    pub fn build_commit_metadata_query<'a>(
         org: &str,
         repo: &str,
         shas: impl IntoIterator<Item = &'a CommitSha>,
@@ -296,6 +393,12 @@ pub mod graph_ql {
                         user { login }
                     }
                 }
+                signature {
+                    isValid
+                    signer { login }
+                }
+                additions
+                deletions
             }
         "#;
 
@@ -304,7 +407,7 @@ pub mod graph_ql {
             .map(|commit_sha| {
                 format!(
                     "{sha_prefix}{sha}: object(oid: \"{sha}\") {{ {FRAGMENT} }}",
-                    sha_prefix = AuthorsForCommits::SHA_PREFIX,
+                    sha_prefix = CommitMetadataBySha::SHA_PREFIX,
                     sha = **commit_sha,
                 )
             })
@@ -321,7 +424,11 @@ mod octo_client {
     use futures::TryStreamExt as _;
     use jsonwebtoken::EncodingKey;
     use octocrab::{
-        Octocrab, Page, models::pulls::ReviewState as OctocrabReviewState,
+        Octocrab, Page,
+        models::{
+            AuthorAssociation as OctocrabAuthorAssociation,
+            pulls::ReviewState as OctocrabReviewState,
+        },
         service::middleware::cache::mem::InMemoryCache,
     };
     use serde::de::DeserializeOwned;
@@ -333,9 +440,25 @@ mod octo_client {
     };
 
     use super::{
-        AuthorsForCommits, GithubApiClient, GithubLogin, GithubUser, PullRequestComment,
-        PullRequestData, PullRequestReview, ReviewState,
+        AuthorAssociation, CommitFileChange, CommitMetadataBySha, GithubApiClient, GithubLogin,
+        GithubUser, PullRequestComment, PullRequestData, PullRequestReview, ReviewState,
     };
+
+    fn convert_author_association(association: OctocrabAuthorAssociation) -> AuthorAssociation {
+        match association {
+            OctocrabAuthorAssociation::Owner => AuthorAssociation::Owner,
+            OctocrabAuthorAssociation::Member => AuthorAssociation::Member,
+            OctocrabAuthorAssociation::Collaborator => AuthorAssociation::Collaborator,
+            OctocrabAuthorAssociation::Contributor => AuthorAssociation::Contributor,
+            OctocrabAuthorAssociation::FirstTimeContributor => {
+                AuthorAssociation::FirstTimeContributor
+            }
+            OctocrabAuthorAssociation::FirstTimer => AuthorAssociation::FirstTimer,
+            OctocrabAuthorAssociation::Mannequin => AuthorAssociation::Mannequin,
+            OctocrabAuthorAssociation::None => AuthorAssociation::None,
+            _ => AuthorAssociation::None,
+        }
+    }
 
     const PAGE_SIZE: u8 = 100;
 
@@ -451,6 +574,7 @@ mod octo_client {
                         _ => ReviewState::Other,
                     }),
                     body: review.body,
+                    author_association: review.author_association.map(convert_author_association),
                 })
                 .collect())
         }
@@ -477,24 +601,46 @@ mod octo_client {
                         login: comment.user.login,
                     },
                     body: comment.body,
+                    author_association: comment.author_association.map(convert_author_association),
                 })
                 .collect())
         }
 
-        async fn get_commit_authors(
+        async fn get_commit_metadata(
             &self,
             repo: &Repository<'_>,
             commit_shas: &[&CommitSha],
-        ) -> Result<AuthorsForCommits> {
-            let query = graph_ql::build_co_authors_query(
+        ) -> Result<CommitMetadataBySha> {
+            let query = graph_ql::build_commit_metadata_query(
                 repo.owner.as_ref(),
                 repo.name.as_ref(),
                 commit_shas.iter().copied(),
             );
             let query = serde_json::json!({ "query": query });
-            self.graphql::<graph_ql::CommitAuthorsResponse>(&query)
+            self.graphql::<graph_ql::CommitMetadataResponse>(&query)
                 .await
                 .map(|response| response.repository)
+        }
+
+        async fn get_commit_files(
+            &self,
+            repo: &Repository<'_>,
+            sha: &CommitSha,
+        ) -> Result<Vec<CommitFileChange>> {
+            let response = self
+                .client
+                .commits(repo.owner.as_ref(), repo.name.as_ref())
+                .get(sha.as_str())
+                .await?;
+
+            Ok(response
+                .files
+                .into_iter()
+                .flatten()
+                .map(|file| CommitFileChange {
+                    filename: file.filename,
+                })
+                .collect())
         }
 
         async fn check_repo_write_permission(

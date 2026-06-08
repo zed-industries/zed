@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::item::test::TestItem;
+use agent_settings::AgentSettings;
 use client::proto;
 use fs::{FakeFs, Fs};
-use gpui::TestAppContext;
+use gpui::{TestAppContext, VisualTestContext};
 use project::DisableAiSettings;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use util::path;
 
 fn init_test(cx: &mut TestAppContext) {
@@ -86,6 +88,43 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
             mw.sidebar_open(),
             "Sidebar should open when toggled after re-enabling AI"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(project_b, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(multi_workspace.multi_workspace_enabled(cx));
+        assert_eq!(multi_workspace.workspaces().count(), 2);
+    });
+
+    cx.update(|_window, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.enabled = false;
+        AgentSettings::override_global(settings, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(!multi_workspace.multi_workspace_enabled(cx));
+        assert!(!multi_workspace.sidebar_open());
+        assert_eq!(multi_workspace.workspaces().count(), 1);
+        assert!(multi_workspace.project_group_keys().is_empty());
     });
 }
 
@@ -617,7 +656,7 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
 }
 
 #[gpui::test]
-async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspace(
+async fn test_switching_projects_with_sidebar_closed_retains_old_active_workspace(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
@@ -647,7 +686,7 @@ async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspa
     });
     cx.run_until_parked();
 
-    multi_workspace.read_with(cx, |mw, _cx| {
+    multi_workspace.read_with(cx, |mw, cx| {
         assert_eq!(
             mw.workspace().entity_id(),
             workspace_b.entity_id(),
@@ -655,14 +694,15 @@ async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspa
         );
         assert_eq!(
             mw.workspaces().count(),
-                        1,
-                        "only the new active workspace should remain open after switching with the sidebar closed"
+            2,
+            "the previous active workspace should remain open after switching with the sidebar closed"
         );
+        assert_eq!(mw.project_groups(cx).len(), 2);
     });
 
     assert!(
-        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_none()),
-        "the previous active workspace should be detached when switching away with the sidebar closed"
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),
+        "the previous active workspace should remain attached when switching away with the sidebar closed"
     );
 }
 
@@ -766,4 +806,139 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
             "project groups should no longer contain the stale initial key; got {keys:?}"
         );
     });
+}
+
+#[gpui::test]
+async fn test_open_project_closes_empty_workspace_but_not_non_empty_ones(cx: &mut TestAppContext) {
+    init_test(cx);
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file_a.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/project_b"), json!({ "file_b.txt": "" }))
+        .await;
+
+    // Start with an empty (no-worktrees) workspace.
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    cx.run_until_parked();
+
+    window
+        .update(cx, |mw, _window, cx| mw.open_sidebar(cx))
+        .unwrap();
+    cx.run_until_parked();
+
+    let empty_workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    // Add a dirty untitled item to the empty workspace.
+    let dirty_item = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+    empty_workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(dirty_item.clone()), None, true, window, cx);
+    });
+
+    // Opening a project while the lone empty workspace has unsaved
+    // changes prompts the user.
+    let open_task = window
+        .update(cx, |mw, window, cx| {
+            mw.open_project(
+                vec![PathBuf::from(path!("/project_a"))],
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Cancelling keeps the empty workspace.
+    assert!(cx.has_pending_prompt(),);
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(open_task.await.unwrap(), empty_workspace);
+    window
+        .read_with(cx, |mw, _cx| {
+            assert_eq!(mw.workspaces().count(), 1);
+            assert_eq!(mw.workspace(), &empty_workspace);
+            assert_eq!(mw.project_group_keys(), vec![]);
+        })
+        .unwrap();
+
+    // Discarding the unsaved changes closes the empty workspace
+    // and opens the new project in its place.
+    let open_task = window
+        .update(cx, |mw, window, cx| {
+            mw.open_project(
+                vec![PathBuf::from(path!("/project_a"))],
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    assert!(cx.has_pending_prompt(),);
+    cx.simulate_prompt_answer("Don't Save");
+    cx.run_until_parked();
+
+    let workspace_a = open_task.await.unwrap();
+    assert_ne!(workspace_a, empty_workspace);
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert_eq!(mw.workspaces().count(), 1);
+            assert_eq!(mw.workspace(), &workspace_a);
+            assert_eq!(
+                mw.project_group_keys(),
+                vec![ProjectGroupKey::new(
+                    None,
+                    PathList::new(&[path!("/project_a")])
+                )]
+            );
+        })
+        .unwrap();
+    assert!(
+        empty_workspace.read_with(cx, |workspace, _cx| workspace.session_id().is_none()),
+        "the detached empty workspace should no longer be attached to the session",
+    );
+
+    let dirty_item = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+    workspace_a.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(dirty_item.clone()), None, true, window, cx);
+    });
+
+    // Opening another project does not close the existing project or prompt.
+    let workspace_b = window
+        .update(cx, |mw, window, cx| {
+            mw.open_project(
+                vec![PathBuf::from(path!("/project_b"))],
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert!(!cx.has_pending_prompt());
+    assert_ne!(workspace_b, workspace_a);
+    window
+        .read_with(cx, |mw, _cx| {
+            assert_eq!(mw.workspaces().count(), 2);
+            assert_eq!(mw.workspace(), &workspace_b);
+            assert_eq!(
+                mw.project_group_keys(),
+                vec![
+                    ProjectGroupKey::new(None, PathList::new(&[path!("/project_b")])),
+                    ProjectGroupKey::new(None, PathList::new(&[path!("/project_a")]))
+                ]
+            );
+        })
+        .unwrap();
+    assert!(workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),);
 }

@@ -62,7 +62,7 @@ jobs:
             tooling/xtask/src/tasks/workflows/extension_tests.rs
     - name: publish_extension_cli::update_sha_in_zed::regenerate_workflows
       run: cargo xtask workflows
-    - name: publish_extension_cli::create_pull_request_zed
+    - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
@@ -75,6 +75,7 @@ jobs:
         commit-message: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         branch: update-extension-cli-sha
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
@@ -107,7 +108,7 @@ jobs:
       run: |
         sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
             .github/workflows/ci.yml
-    - name: publish_extension_cli::create_pull_request_extensions
+    - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
@@ -116,12 +117,13 @@ jobs:
         commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-extension-cli-sha
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
-        labels: allow-no-extension
         assignees: ${{ github.actor }}
+        labels: allow-no-extension
 defaults:
   run:
     shell: bash -euxo pipefail {0}

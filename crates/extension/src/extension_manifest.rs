@@ -11,6 +11,7 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use util::rel_path::{PathExt, RelPathBuf};
 
 use crate::ExtensionCapability;
 
@@ -28,11 +29,11 @@ pub struct OldExtensionManifest {
     pub authors: Vec<String>,
 
     #[serde(default)]
-    pub themes: BTreeMap<Arc<str>, PathBuf>,
+    pub themes: BTreeMap<Arc<str>, RelPathBuf>,
     #[serde(default)]
-    pub languages: BTreeMap<Arc<str>, PathBuf>,
+    pub languages: BTreeMap<Arc<str>, RelPathBuf>,
     #[serde(default)]
-    pub grammars: BTreeMap<Arc<str>, PathBuf>,
+    pub grammars: BTreeMap<Arc<str>, RelPathBuf>,
 }
 
 /// The schema version of the [`ExtensionManifest`].
@@ -94,19 +95,17 @@ pub struct ExtensionManifest {
     pub lib: LibManifestEntry,
 
     #[serde(default)]
-    pub themes: Vec<PathBuf>,
+    pub themes: Vec<RelPathBuf>,
     #[serde(default)]
-    pub icon_themes: Vec<PathBuf>,
+    pub icon_themes: Vec<RelPathBuf>,
     #[serde(default)]
-    pub languages: Vec<PathBuf>,
+    pub languages: Vec<RelPathBuf>,
     #[serde(default)]
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
     #[serde(default)]
     pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
-    #[serde(default)]
-    pub agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
@@ -147,10 +146,6 @@ impl ExtensionManifest {
 
         if !self.context_servers.is_empty() {
             provides.insert(ExtensionProvides::ContextServers);
-        }
-
-        if !self.agent_servers.is_empty() {
-            provides.insert(ExtensionProvides::AgentServers);
         }
 
         if self.snippets.is_some() {
@@ -195,11 +190,13 @@ impl ExtensionManifest {
 pub fn build_debug_adapter_schema_path(
     adapter_name: &Arc<str>,
     meta: &DebugAdapterManifestEntry,
-) -> PathBuf {
-    meta.schema_path.clone().unwrap_or_else(|| {
-        Path::new("debug_adapter_schemas")
+) -> anyhow::Result<RelPathBuf> {
+    match &meta.schema_path {
+        Some(path) => Ok(path.clone()),
+        None => Path::new("debug_adapter_schemas")
             .join(Path::new(adapter_name.as_ref()).with_extension("json"))
-    })
+            .to_rel_path_buf(),
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -350,7 +347,7 @@ pub struct SlashCommandManifestEntry {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
-    pub schema_path: Option<PathBuf>,
+    pub schema_path: Option<RelPathBuf>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -430,7 +427,6 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         context_servers: BTreeMap::default(),
-        agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
@@ -443,6 +439,7 @@ fn manifest_from_old_manifest(
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+    use util::rel_path::rel_path_buf;
 
     use crate::ProcessExecCapability;
 
@@ -464,7 +461,6 @@ mod tests {
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
-            agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
@@ -478,11 +474,11 @@ mod tests {
     fn test_build_adapter_schema_path_with_schema_path() {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry {
-            schema_path: Some(PathBuf::from("foo/bar")),
+            schema_path: Some(rel_path_buf("foo/bar")),
         };
 
-        let path = build_debug_adapter_schema_path(&adapter_name, &entry);
-        assert_eq!(path, PathBuf::from("foo/bar"));
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
+        assert_eq!(path, rel_path_buf("foo/bar"));
     }
 
     #[test]
@@ -490,11 +486,8 @@ mod tests {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry { schema_path: None };
 
-        let path = build_debug_adapter_schema_path(&adapter_name, &entry);
-        assert_eq!(
-            path,
-            PathBuf::from("debug_adapter_schemas").join("my_adapter.json")
-        );
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
+        assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));
     }
 
     #[test]
@@ -572,31 +565,20 @@ mod tests {
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
     }
+
     #[test]
-    fn parse_manifest_with_agent_server_archive_launcher() {
-        let toml_src = r#"
-id = "example.agent-server-ext"
-name = "Agent Server Example"
-version = "1.0.0"
-schema_version = 0
+    #[cfg(target_os = "windows")]
+    fn test_deserialize_manifest_with_windows_separators() {
+        use indoc::indoc;
 
-[agent_servers.foo]
-name = "Foo Agent"
-
-[agent_servers.foo.targets.linux-x86_64]
-archive = "https://example.com/agent-linux-x64.tar.gz"
-cmd = "./agent"
-args = ["--serve"]
-"#;
-
-        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
-        assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
-        assert!(manifest.agent_servers.contains_key("foo"));
-        let entry = manifest.agent_servers.get("foo").unwrap();
-        assert!(entry.targets.contains_key("linux-x86_64"));
-        let target = entry.targets.get("linux-x86_64").unwrap();
-        assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");
-        assert_eq!(target.cmd, "./agent");
-        assert_eq!(target.args, vec!["--serve"]);
+        let content = indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 0
+            languages = ["foo\\bar"]
+        "#};
+        let manifest: ExtensionManifest = toml::from_str(&content).expect("manifest should parse");
+        assert_eq!(manifest.languages, vec![rel_path_buf("foo/bar")]);
     }
 }

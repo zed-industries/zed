@@ -17,9 +17,9 @@ use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
-    Action, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent, Entity,
+    Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
-    Subscription, Task, WeakEntity, anchored, deferred,
+    Subscription, Task, TaskExt, WeakEntity, anchored, deferred,
 };
 
 use itertools::Itertools as _;
@@ -1434,7 +1434,7 @@ impl DebugPanel {
                     ))
                 }
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 }
 
@@ -1604,6 +1604,12 @@ impl Panel for DebugPanel {
 
     fn activation_priority(&self) -> u32 {
         7
+    }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.debugger.get_or_insert_default().button = Some(false);
+        }))
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
@@ -1792,7 +1798,7 @@ impl Render for DebugPanel {
                     deferred(
                         anchored()
                             .position(*position)
-                            .anchor(gpui::Corner::TopLeft)
+                            .anchor(gpui::Anchor::TopLeft)
                             .child(menu.clone()),
                     )
                     .with_priority(1)

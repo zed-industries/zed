@@ -38,7 +38,7 @@ use std::{
 };
 pub use subscription::*;
 pub use sum_tree::Bias;
-use sum_tree::{Dimensions, FilterCursor, SumTree, TreeMap, TreeSet};
+use sum_tree::{Dimensions, FilterCursor, SumTree, Summary, TreeMap, TreeSet};
 use undo_map::UndoMap;
 use util::debug_panic;
 
@@ -912,7 +912,8 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>(&None);
-        let mut new_fragments = old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right);
+        let mut new_fragments =
+            FragmentBuilder::new(old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right));
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
@@ -1044,7 +1045,7 @@ impl Buffer {
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
-        self.snapshot.fragments = new_fragments;
+        self.snapshot.fragments = new_fragments.to_sum_tree(&None);
         self.snapshot.insertions.edit(new_insertions, ());
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
@@ -1127,8 +1128,9 @@ impl Buffer {
         let mut old_fragments = self
             .fragments
             .cursor::<Dimensions<VersionedFullOffset, usize>>(&cx);
-        let mut new_fragments =
-            old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left);
+        let mut new_fragments = FragmentBuilder::new(
+            old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left),
+        );
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().0.full_offset();
@@ -1174,7 +1176,7 @@ impl Buffer {
                 fragment_start = old_fragments.start().0.full_offset();
             }
 
-            // Skip over insertions that are concurrent to this edit, but have a lower lamport
+            // Skip over insertions that are concurrent to this edit, but have a higher lamport
             // timestamp.
             while let Some(fragment) = old_fragments.item() {
                 if fragment_start == range.start && fragment.timestamp > timestamp {
@@ -1291,7 +1293,7 @@ impl Buffer {
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
-        self.snapshot.fragments = new_fragments;
+        self.snapshot.fragments = new_fragments.to_sum_tree(&None);
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, ());
@@ -1303,7 +1305,7 @@ impl Buffer {
         new_text: &str,
         timestamp: clock::Lamport,
         insertion_offset: &mut u32,
-        new_fragments: &mut SumTree<Fragment>,
+        new_fragments: &mut FragmentBuilder,
         new_insertions: &mut Vec<sum_tree::Edit<InsertionFragment>>,
         insertion_slices: &mut Vec<InsertionSlice>,
         new_ropes: &mut RopeBuilder,
@@ -2833,6 +2835,68 @@ impl BufferSnapshot {
         debug::GlobalDebugRanges::with_locked(|debug_ranges| {
             debug_ranges.insert(key, ranges, format!("{value:?}").into());
         });
+    }
+}
+
+/// A chunk of fragments accumulated by [`FragmentBuilder`]. `Tree` chunks are
+/// subtrees sliced off the previous fragment tree and are kept intact so they
+/// continue to share nodes with it; `Loose` chunks batch individually pushed
+/// fragments so they can be turned into a subtree in one shot.
+enum FragmentChunk {
+    Tree(SumTree<Fragment>),
+    Loose(Vec<Fragment>),
+}
+
+struct FragmentBuilder {
+    chunks: Vec<FragmentChunk>,
+    summary: FragmentSummary,
+}
+
+impl FragmentBuilder {
+    fn new(init: SumTree<Fragment>) -> Self {
+        let summary = init.summary().clone();
+        let mut chunks = Vec::new();
+        if !init.is_empty() {
+            chunks.push(FragmentChunk::Tree(init));
+        }
+        Self { chunks, summary }
+    }
+    fn append(&mut self, items: SumTree<Fragment>, cx: &Option<clock::Global>) {
+        if !items.is_empty() {
+            self.summary.add_summary(items.summary(), cx);
+            self.chunks.push(FragmentChunk::Tree(items));
+        }
+    }
+    fn push(&mut self, fragment: Fragment, cx: &Option<clock::Global>) {
+        self.summary
+            .add_summary(&sum_tree::Item::summary(&fragment, cx), cx);
+        match self.chunks.last_mut() {
+            Some(FragmentChunk::Loose(fragments)) => fragments.push(fragment),
+            _ => self.chunks.push(FragmentChunk::Loose(vec![fragment])),
+        }
+    }
+    fn to_sum_tree(self, cx: &Option<clock::Global>) -> SumTree<Fragment> {
+        // Appending a `Tree` chunk only touches the right spine and grafts the
+        // subtree by cloning `Arc`s, so the untouched regions stay shared with
+        // the previous fragment tree. `Loose` runs (newly inserted or rewritten
+        // fragments) are built in one pass, parallelizing the large ones.
+        let mut tree = SumTree::new(cx);
+        for chunk in self.chunks {
+            match chunk {
+                FragmentChunk::Tree(subtree) => tree.append(subtree, cx),
+                FragmentChunk::Loose(fragments) => {
+                    if fragments.len() > 1024 {
+                        tree.append(SumTree::from_par_iter(fragments, cx), cx);
+                    } else {
+                        tree.append(SumTree::from_iter(fragments, cx), cx);
+                    }
+                }
+            }
+        }
+        tree
+    }
+    fn summary(&self) -> &FragmentSummary {
+        &self.summary
     }
 }
 

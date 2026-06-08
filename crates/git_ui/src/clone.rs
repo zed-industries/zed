@@ -39,7 +39,7 @@ pub fn clone_and_open(
                     let destination_dir = destination_dir.clone();
                     let repo_url = repo_url.clone();
                     cx.spawn(async move |_workspace, _cx| {
-                        fs.git_clone(&repo_url, destination_dir.as_path()).await
+                        fs.git_clone(destination_dir.as_path(), &repo_url).await
                     })
                 })
                 .ok()?;
