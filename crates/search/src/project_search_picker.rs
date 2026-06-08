@@ -33,6 +33,9 @@ actions!(
     ]
 );
 
+// TODO! pick a name?
+//   like FileFinder so TextFinder?
+//   like ProjectSearchPicker?
 pub struct TextPicker {
     picker: Entity<Picker<TextPickerDelegate>>,
     picker_focus_handle: FocusHandle,
@@ -123,10 +126,6 @@ impl ModalView for TextPicker {
     ) -> DismissDecision {
         // self.save_layout(cx); // TODO! move to Picker
         DismissDecision::Dismiss(true)
-    }
-
-    fn render_bare(&self) -> bool {
-        true
     }
 }
 

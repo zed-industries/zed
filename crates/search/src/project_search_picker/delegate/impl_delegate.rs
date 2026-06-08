@@ -34,8 +34,6 @@ impl PickerDelegate for TextPickerDelegate {
         "Search all files...".into()
     }
 
-    
-
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -227,6 +225,17 @@ impl PickerDelegate for TextPickerDelegate {
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         cx.emit(DismissEvent);
+    }
+
+    fn try_get_match(&self, _cx: &App) -> Option<picker::PreviewUpdate> {
+        let m = self.matches.get(self.selected_index)?;
+        Some(picker::PreviewUpdate::from_buffer(
+            m.buffer.clone(),
+            picker::PreviewHighlight {
+                anchor_range: m.anchor_range.clone(),
+                range: m.range.clone(),
+            },
+        ))
     }
 
     fn render_match(
@@ -446,41 +455,40 @@ impl TextPickerDelegate {
 
         buffer.read_with(cx, |buf, cx| {
             let file = buf.file();
-                let path = file.map(|f| ProjectPath {
-                    worktree_id: f.worktree_id(cx),
-                    path: f.path().clone(),
-                });
-                let text = buf.text();
+            let path = file.map(|f| ProjectPath {
+                worktree_id: f.worktree_id(cx),
+                path: f.path().clone(),
+            });
+            let text = buf.text();
 
-                let mut matches = Vec::new();
-                for anchor_range in ranges {
-                    let start_offset: usize = buf.summary_for_anchor(&anchor_range.start);
-                    let end_offset: usize = buf.summary_for_anchor(&anchor_range.end);
-                    let match_row = buf.offset_to_point(start_offset).row;
-                    let line_number = match_row + 1;
-                    let line_start =
-                        text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-                    let line_end = text[start_offset..]
-                        .find('\n')
-                        .map(|i| start_offset + i)
-                        .unwrap_or(text.len());
-                    let line_text = text[line_start..line_end].to_string();
+            let mut matches = Vec::new();
+            for anchor_range in ranges {
+                let start_offset: usize = buf.summary_for_anchor(&anchor_range.start);
+                let end_offset: usize = buf.summary_for_anchor(&anchor_range.end);
+                let match_row = buf.offset_to_point(start_offset).row;
+                let line_number = match_row + 1;
+                let line_start = text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let line_end = text[start_offset..]
+                    .find('\n')
+                    .map(|i| start_offset + i)
+                    .unwrap_or(text.len());
+                let line_text = text[line_start..line_end].to_string();
 
-                    let relative_start = start_offset - line_start;
-                    let relative_end = end_offset - line_start;
+                let relative_start = start_offset - line_start;
+                let relative_end = end_offset - line_start;
 
-                    if let Some(path) = &path {
-                        matches.push(SearchMatch {
-                            path: path.clone(),
-                            buffer: buffer.clone(),
-                            anchor_range: anchor_range.clone(),
-                            range: start_offset..end_offset,
-                            relative_range: relative_start..relative_end,
-                            line_text,
-                            line_number,
-                        });
-                    }
+                if let Some(path) = &path {
+                    matches.push(SearchMatch {
+                        path: path.clone(),
+                        buffer: buffer.clone(),
+                        anchor_range: anchor_range.clone(),
+                        range: start_offset..end_offset,
+                        relative_range: relative_start..relative_end,
+                        line_text,
+                        line_number,
+                    });
                 }
+            }
             matches
         })
     }

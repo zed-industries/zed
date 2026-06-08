@@ -1,6 +1,8 @@
 mod head;
 mod preview;
 pub use preview::Preview;
+pub use preview::PreviewHighlight;
+pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
 
 pub mod highlighted_match_with_paths;
@@ -300,7 +302,7 @@ pub trait PickerDelegate: Sized + 'static {
             )
     }
 
-    fn try_get_match(&self, _cx: &App) -> Option<Box<dyn std::any::Any>> {
+    fn try_get_match(&self, _cx: &App) -> Option<PreviewUpdate> {
         None
     }
 

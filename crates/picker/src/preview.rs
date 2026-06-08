@@ -29,8 +29,6 @@ pub struct Preview {
     pub layout: LayoutMode,
 }
 
-type Match = Box<dyn std::any::Any>;
-
 impl Preview {
     pub fn new_editor(project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         Preview {
@@ -53,7 +51,7 @@ impl Preview {
         }
     }
 
-    pub fn update(&mut self, update: Match, window: &mut Window, cx: &mut impl AppContext) {
+    pub fn update(&mut self, update: Update, window: &mut Window, cx: &mut impl AppContext) {
         // self.content since this will become a match to support non editor previews
         self.content.update(cx, |content, cx| {
             content.update(update, window, cx);
@@ -69,14 +67,55 @@ impl Preview {
     }
 }
 
-// pub struct Update {
-//     buffer: Entity<Buffer>,
-//     range: Range<usize>,
-//     anchor_range: Range<language::Anchor>,
-// }
+/// Identifies the buffer a preview should show.
+pub enum PreviewSource {
+    /// The buffer is identified by its absolute path; the preview opens it.
+    ///
+    /// Used by pickers (like the file finder) that only know the path of the
+    /// match.
+    Path(PathBuf),
+    /// The buffer is provided directly.
+    ///
+    /// Used by pickers (like the text picker) that already hold the matched
+    /// buffer.
+    Buffer(Entity<Buffer>),
+}
 
+/// Describes a location within the previewed buffer that should be highlighted
+/// and scrolled into view.
+pub struct PreviewHighlight {
+    /// The location of the match, used to highlight the match and place the
+    /// cursor.
+    pub anchor_range: Range<language::Anchor>,
+    /// The location of the match as an offset, used to select the matched text
+    /// so the editor scrolls to it.
+    pub range: Range<usize>,
+}
+
+/// An update for the [`Preview`] window of a [`Picker`](crate::Picker).
 pub struct Update {
-    pub abs_path: PathBuf,
+    /// Where to source the buffer to preview.
+    pub source: PreviewSource,
+    /// The location to highlight and scroll to, if any.
+    pub highlight: Option<PreviewHighlight>,
+}
+
+impl Update {
+    /// Preview the buffer at `abs_path` without highlighting anything.
+    pub fn from_path(abs_path: PathBuf) -> Self {
+        Self {
+            source: PreviewSource::Path(abs_path),
+            highlight: None,
+        }
+    }
+
+    /// Preview `buffer`, highlighting and scrolling to `highlight`.
+    pub fn from_buffer(buffer: Entity<Buffer>, highlight: PreviewHighlight) -> Self {
+        Self {
+            source: PreviewSource::Buffer(buffer),
+            highlight: Some(highlight),
+        }
+    }
 }
 
 /// TODO! rename relative position
@@ -114,20 +153,31 @@ impl EditorPreview {
         }
     }
 
-    fn update(
+    fn update(&mut self, update: Update, window: &mut Window, cx: &mut Context<Self>) {
+        let Update { source, highlight } = update;
+
+        match source {
+            PreviewSource::Path(abs_path) => {
+                self.update_from_path(abs_path, highlight, window, cx);
+            }
+            PreviewSource::Buffer(buffer) => {
+                self.finish_update(buffer, highlight, window, cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn update_from_path(
         &mut self,
-        update: Box<dyn std::any::Any>,
+        abs_path: PathBuf,
+        highlight: Option<PreviewHighlight>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Ok(update) = update.downcast::<Update>() else {
-            return;
-        };
-
         // TODO!(yara) debounce this/cache the last one for fast switching
         // between top two results.
         let open_task = self.project.update(cx, |project, cx| {
-            match project.project_path_for_absolute_path(&update.abs_path, cx) {
+            match project.project_path_for_absolute_path(&abs_path, cx) {
                 Some(project_path) => {
                     if let Some(buffer) = project.get_open_buffer(&project_path, cx) {
                         Task::ready(Ok(buffer))
@@ -135,14 +185,14 @@ impl EditorPreview {
                         project.open_buffer(project_path, cx)
                     }
                 }
-                None => project.open_local_buffer(&update.abs_path, cx),
+                None => project.open_local_buffer(&abs_path, cx),
             }
         });
 
         cx.spawn_in(window, async move |this, cx| {
             let buffer = open_task.await?;
-            this.update(cx, |this, cx| {
-                this.finish_update(buffer, cx);
+            this.update_in(cx, |this, window, cx| {
+                this.finish_update(buffer, highlight, window, cx);
                 cx.notify();
             })?;
             anyhow::Ok(())
@@ -150,15 +200,60 @@ impl EditorPreview {
         .detach_and_log_err(cx);
     }
 
-    fn finish_update(&mut self, buffer: Entity<Buffer>, cx: &mut App) {
+    fn finish_update(
+        &mut self,
+        buffer: Entity<Buffer>,
+        highlight: Option<PreviewHighlight>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.current_path = buffer.read(cx).file().map(|file| file.path().clone());
 
         let full_range = [rope::Point::zero()..buffer.read(cx).max_point()];
         self.preview_editor.update(cx, |editor, cx| {
-            editor.buffer().update(cx, |multi_buffer, cx| {
+            let multi_buffer = editor.buffer().clone();
+            multi_buffer.update(cx, |multi_buffer, cx| {
                 multi_buffer.clear(cx);
                 multi_buffer.set_excerpts_for_buffer(buffer, full_range, 0, cx);
             });
+
+            editor.clear_row_highlights::<SearchMatchLineHighlight>();
+            editor.clear_background_highlights(HighlightKey::QuickSearchView, cx);
+
+            let Some(highlight) = highlight else {
+                return;
+            };
+
+            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            if let (Some(start_anchor), Some(end_anchor)) = (
+                multi_buffer_snapshot.anchor_in_excerpt(highlight.anchor_range.start),
+                multi_buffer_snapshot.anchor_in_excerpt(highlight.anchor_range.end),
+            ) {
+                editor.highlight_rows::<SearchMatchLineHighlight>(
+                    start_anchor..start_anchor,
+                    cx.theme().colors().editor_active_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+
+                editor.highlight_background(
+                    HighlightKey::QuickSearchView,
+                    &[start_anchor..end_anchor],
+                    |_, theme| theme.colors().search_match_background,
+                    cx,
+                );
+            }
+
+            let start = multi_buffer::MultiBufferOffset(highlight.range.start);
+            let end = multi_buffer::MultiBufferOffset(highlight.range.end);
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::center()),
+                window,
+                cx,
+                |s| {
+                    s.select_ranges([start..end]);
+                },
+            );
         });
     }
 

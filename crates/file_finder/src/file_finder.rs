@@ -1699,11 +1699,11 @@ impl PickerDelegate for FileFinderDelegate {
             .log_err();
     }
 
-    fn try_get_match(&self, cx: &App) -> Option<Box<dyn std::any::Any>> {
+    fn try_get_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {
         let m = self.matches.get(self.selected_index)?;
-        Some(Box::new(picker::PreviewUpdate {
-            abs_path: m.abs_path(&self.project, cx)?,
-        }) as Box<dyn std::any::Any>)
+        Some(picker::PreviewUpdate::from_path(
+            m.abs_path(&self.project, cx)?,
+        ))
     }
 
     fn render_match(
