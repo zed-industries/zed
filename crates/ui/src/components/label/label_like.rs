@@ -134,6 +134,15 @@ impl LabelLike {
         self.truncate_start = true;
         self
     }
+
+    /// Wraps the text and truncates it with an ellipsis (`…`) at the end of
+    /// the last visible line if it exceeds the given number of lines.
+    pub fn line_clamp(mut self, lines: usize) -> Self {
+        // `line_clamp` alone hard-cuts the text; the ellipsis on the last
+        // visible line is only rendered when a text overflow style is set.
+        self.base = self.base.line_clamp(lines).text_ellipsis();
+        self
+    }
 }
 
 impl LabelCommon for LabelLike {
