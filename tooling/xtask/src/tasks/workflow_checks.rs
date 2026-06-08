@@ -11,7 +11,7 @@ use strum::IntoEnumIterator;
 
 use crate::tasks::{
     workflow_checks::check_run_patterns::{
-        RunValidationError, WorkflowFile, WorkflowValidationError,
+        ValidationError, WorkflowFile, WorkflowValidationError, validate_uses_command,
     },
     workflows::WorkflowType,
 };
@@ -38,7 +38,7 @@ pub fn validate(_: WorkflowValidationArgs) -> Result<()> {
     } else if !file_errors.is_empty() {
         let errors: Vec<_> = file_errors
             .iter()
-            .map(|error| error.annotation_group())
+            .flat_map(|error| error.annotation_groups())
             .collect();
 
         let renderer =
@@ -73,15 +73,13 @@ fn get_all_workflow_files() -> impl Iterator<Item = PathBuf> {
 }
 
 fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
-    fn collect_errors(
-        iter: impl Iterator<Item = Result<(), Vec<RunValidationError>>>,
-    ) -> Result<(), Vec<RunValidationError>> {
+    fn collect_errors<T>(iter: impl Iterator<Item = Result<(), Vec<T>>>) -> Result<(), Vec<T>> {
         Some(iter.flat_map(Result::err).flatten().collect::<Vec<_>>())
             .filter(|errors| !errors.is_empty())
             .map_or(Ok(()), Err)
     }
 
-    fn check_recursive(key: &Value, value: &Value) -> Result<(), Vec<RunValidationError>> {
+    fn check_recursive(key: &Value, value: &Value) -> Result<(), Vec<ValidationError>> {
         match value {
             Value::Mapping(mapping) => collect_errors(
                 mapping
@@ -110,9 +108,14 @@ fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
     })
 }
 
-fn check_string(key: &Value, value: &str) -> Result<(), RunValidationError> {
+fn check_string(key: &Value, value: &str) -> Result<(), ValidationError> {
     match key {
-        Value::String(key) if key == "run" => validate_run_command(value),
+        Value::String(key) if key == "run" => {
+            validate_run_command(value).map_err(ValidationError::Run)
+        }
+        Value::String(key) if key == "uses" => {
+            validate_uses_command(value).map_err(ValidationError::Uses)
+        }
         _ => Ok(()),
     }
 }
