@@ -13,7 +13,7 @@ pub(crate) use audio_input_output_setup::{
 };
 pub(crate) use audio_test_window::open_audio_test_window;
 pub(crate) use edit_prediction_provider_setup::render_edit_prediction_setup_page;
-pub(crate) use external_agents_page::render_external_agents_page;
+pub(crate) use external_agents_page::{CustomAgentForm, render_external_agents_page};
 pub(crate) use feature_flags::render_feature_flags_page;
 pub(crate) use llm_providers_page::render_llm_providers_page;
 pub(crate) use mcp_servers_page::{McpServerForm, render_mcp_servers_page};

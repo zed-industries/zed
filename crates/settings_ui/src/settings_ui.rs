@@ -55,7 +55,8 @@ use crate::components::{
     theme_picker,
 };
 use crate::pages::{
-    McpServerForm, render_input_audio_device_dropdown, render_output_audio_device_dropdown,
+    CustomAgentForm, McpServerForm, render_input_audio_device_dropdown,
+    render_output_audio_device_dropdown,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
@@ -125,6 +126,11 @@ struct SettingField<T: 'static> {
     /// targeting these settings should take the form `languages/Rust/...`, for
     /// example, but are not currently supported.
     json_path: Option<&'static str>,
+}
+
+enum SettingsPath {
+    Json(&'static str),  // a.b.c
+    Subpage(&'static str),  // a/b/c
 }
 
 impl<T: 'static> Clone for SettingField<T> {
@@ -788,6 +794,8 @@ pub struct SettingsWindow {
     /// focus ring when the page auto-focuses it on open (which happens via mouse,
     /// where `focus_visible` styling would otherwise be suppressed).
     pub(crate) mcp_add_server_focus_handle: FocusHandle,
+    /// State for the active "add/edit custom external agent" form sub-page, if open.
+    pub(crate) custom_agent_form: Option<CustomAgentForm>,
 }
 
 struct SearchDocument {
@@ -1822,6 +1830,7 @@ impl SettingsWindow {
             last_copied_skill_directory_path: None,
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
+            custom_agent_form: None,
         };
 
         this.fetch_files(window, cx);
@@ -4728,6 +4737,7 @@ pub mod test {
                 last_copied_skill_directory_path: None,
                 mcp_server_form: None,
                 mcp_add_server_focus_handle: cx.focus_handle(),
+                custom_agent_form: None,
             }
         }
     }
@@ -4860,6 +4870,7 @@ pub mod test {
             last_copied_skill_directory_path: None,
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
+            custom_agent_form: None,
         };
 
         settings_window.build_filter_table();
