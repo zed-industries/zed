@@ -31,7 +31,7 @@ use settings::SettingsStore;
 use ui::prelude::*;
 use util::debug_panic;
 
-use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
+use crate::provider::anthropic::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
@@ -354,6 +354,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     } else {
                         AnthropicModelMode::Default
                     },
+                    AnthropicPromptCacheMode::Legacy,
                 );
 
                 anthropic_request.temperature = None;
@@ -658,12 +659,14 @@ pub fn map_to_language_model_completion_events(
 
 pub struct CopilotResponsesEventMapper {
     pending_stop_reason: Option<StopReason>,
+    reasoning_items: Vec<copilot_responses::ResponseReasoningInputItem>,
 }
 
 impl CopilotResponsesEventMapper {
     pub fn new() -> Self {
         Self {
             pending_stop_reason: None,
+            reasoning_items: Vec::new(),
         }
     }
 
@@ -739,13 +742,13 @@ impl CopilotResponsesEventMapper {
                     events
                 }
                 copilot_responses::ResponseOutputItem::Reasoning {
+                    id,
                     summary,
                     encrypted_content,
-                    ..
                 } => {
                     let mut events = Vec::new();
 
-                    if let Some(blocks) = summary {
+                    if let Some(blocks) = summary.as_ref() {
                         let mut text = String::new();
                         for block in blocks {
                             text.push_str(&block.text);
@@ -758,8 +761,10 @@ impl CopilotResponsesEventMapper {
                         }
                     }
 
-                    if let Some(data) = encrypted_content {
-                        events.push(Ok(LanguageModelCompletionEvent::RedactedThinking { data }));
+                    if let Some(reasoning_item) =
+                        reasoning_input_item_from_output(&id, encrypted_content)
+                    {
+                        events.extend(self.capture_reasoning_item(reasoning_item));
                     }
 
                     events
@@ -839,6 +844,94 @@ impl CopilotResponsesEventMapper {
             | copilot_responses::StreamEvent::Unknown => Vec::new(),
         }
     }
+
+    fn capture_reasoning_item(
+        &mut self,
+        reasoning_item: copilot_responses::ResponseReasoningInputItem,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        if self.reasoning_items.contains(&reasoning_item) {
+            return Vec::new();
+        }
+
+        if let Some(id) = reasoning_item.id.as_ref()
+            && let Some(existing_reasoning_item) = self
+                .reasoning_items
+                .iter_mut()
+                .find(|existing_reasoning_item| existing_reasoning_item.id.as_ref() == Some(id))
+        {
+            *existing_reasoning_item = reasoning_item;
+        } else {
+            self.reasoning_items.push(reasoning_item);
+        }
+
+        self.emit_response_message_metadata()
+    }
+
+    fn emit_response_message_metadata(
+        &self,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let details = serde_json::to_value(CopilotResponseMessageMetadata {
+            reasoning_items: self.reasoning_items.clone(),
+        });
+
+        match details {
+            Ok(details) => vec![Ok(LanguageModelCompletionEvent::ReasoningDetails(details))],
+            Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CopilotResponseMessageMetadata {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reasoning_items: Vec<copilot_responses::ResponseReasoningInputItem>,
+}
+
+fn append_reasoning_details_to_response_items(
+    reasoning_details: Option<&serde_json::Value>,
+    replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
+    input_items: &mut Vec<copilot_responses::ResponseInputItem>,
+) {
+    let Some(reasoning_details) = reasoning_details else {
+        return;
+    };
+
+    let Some(metadata) =
+        serde_json::from_value::<CopilotResponseMessageMetadata>(reasoning_details.clone()).ok()
+    else {
+        return;
+    };
+
+    for mut reasoning_item in metadata.reasoning_items {
+        reasoning_item.summary.clear();
+        if let Some(id) = reasoning_item.id.as_ref() {
+            if let Some(index) = replayed_reasoning_item_indexes.get(id) {
+                input_items[*index] =
+                    copilot_responses::ResponseInputItem::Reasoning(reasoning_item);
+                return;
+            }
+
+            replayed_reasoning_item_indexes.insert(id.clone(), input_items.len());
+        }
+
+        input_items.push(copilot_responses::ResponseInputItem::Reasoning(
+            reasoning_item,
+        ));
+    }
+}
+
+fn reasoning_input_item_from_output(
+    id: &str,
+    encrypted_content: Option<String>,
+) -> Option<copilot_responses::ResponseReasoningInputItem> {
+    if encrypted_content.is_none() {
+        return None;
+    }
+    Some(copilot_responses::ResponseReasoningInputItem {
+        id: Some(id.to_string()),
+        summary: Vec::new(),
+        encrypted_content,
+    })
 }
 
 fn into_copilot_chat(
@@ -1099,6 +1192,7 @@ fn into_copilot_responses(
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();
+    let mut replayed_reasoning_item_indexes = HashMap::default();
 
     for message in messages {
         match message.role {
@@ -1180,6 +1274,12 @@ fn into_copilot_responses(
             }
 
             Role::Assistant => {
+                append_reasoning_details_to_response_items(
+                    message.reasoning_details.as_deref(),
+                    &mut replayed_reasoning_item_indexes,
+                    &mut input_items,
+                );
+
                 for content in &message.content {
                     if let MessageContent::ToolUse(tool_use) = content {
                         input_items.push(responses::ResponseInputItem::FunctionCall {
@@ -1188,16 +1288,6 @@ fn into_copilot_responses(
                             arguments: tool_use.raw_input.clone(),
                             status: None,
                             thought_signature: tool_use.thought_signature.clone(),
-                        });
-                    }
-                }
-
-                for content in &message.content {
-                    if let MessageContent::RedactedThinking(data) = content {
-                        input_items.push(responses::ResponseInputItem::Reasoning {
-                            id: None,
-                            summary: Vec::new(),
-                            encrypted_content: data.clone(),
                         });
                     }
                 }
@@ -1296,6 +1386,7 @@ mod tests {
     use super::*;
     use copilot_chat::responses;
     use futures::StreamExt;
+    use serde_json::json;
 
     fn map_events(events: Vec<responses::StreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         futures::executor::block_on(async {
@@ -1307,6 +1398,37 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
+    }
+
+    fn test_responses_model() -> CopilotChatModel {
+        serde_json::from_value(json!({
+            "billing": {
+                "is_premium": false,
+                "multiplier": 1.0
+            },
+            "capabilities": {
+                "family": "test",
+                "limits": {
+                    "max_context_window_tokens": 128000,
+                    "max_output_tokens": 4096
+                },
+                "supports": {
+                    "streaming": true,
+                    "tool_calls": true,
+                    "parallel_tool_calls": false,
+                    "vision": false
+                },
+                "type": "chat"
+            },
+            "id": "test-model",
+            "is_chat_default": false,
+            "is_chat_fallback": false,
+            "model_picker_enabled": true,
+            "name": "Test Model",
+            "vendor": "OpenAI",
+            "supported_endpoints": ["/responses"]
+        }))
+        .expect("valid test model")
     }
 
     #[test]
@@ -1434,10 +1556,134 @@ mod tests {
             mapped[0],
             LanguageModelCompletionEvent::Thinking { ref text, signature: None } if text == "Chain"
         ));
-        assert!(matches!(
-            mapped[1],
-            LanguageModelCompletionEvent::RedactedThinking { ref data } if data == "ENC"
-        ));
+        match &mapped[1] {
+            LanguageModelCompletionEvent::ReasoningDetails(details) => assert_eq!(
+                details,
+                &json!({
+                    "reasoning_items": [
+                        {
+                            "id": "r1",
+                            "summary": [],
+                            "encrypted_content": "ENC"
+                        }
+                    ]
+                })
+            ),
+            other => panic!("expected reasoning details, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn responses_stream_ignores_reasoning_items_repeated_in_completed_output() {
+        let events = vec![
+            responses::StreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: responses::ResponseOutputItem::Reasoning {
+                    id: "r1".into(),
+                    summary: Some(Vec::new()),
+                    encrypted_content: Some("ENC1".into()),
+                },
+            },
+            responses::StreamEvent::Completed {
+                response: responses::Response {
+                    output: vec![
+                        responses::ResponseOutputItem::Reasoning {
+                            id: "r1".into(),
+                            summary: Some(Vec::new()),
+                            encrypted_content: Some("ENC1".into()),
+                        },
+                        responses::ResponseOutputItem::Reasoning {
+                            id: "r2".into(),
+                            summary: Some(Vec::new()),
+                            encrypted_content: Some("ENC2".into()),
+                        },
+                    ],
+                    ..Default::default()
+                },
+            },
+        ];
+
+        let mapped = map_events(events);
+        let reasoning_details = mapped
+            .iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(details) => Some(details),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            reasoning_details,
+            vec![&json!({
+                "reasoning_items": [
+                    {
+                        "id": "r1",
+                        "summary": [],
+                        "encrypted_content": "ENC1"
+                    }
+                ]
+            })]
+        );
+    }
+
+    #[test]
+    fn into_copilot_responses_replays_reasoning_details() {
+        let model = test_responses_model();
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::RedactedThinking("legacy-redacted".into()),
+                    MessageContent::Text("Done".into()),
+                ],
+                cache: false,
+                reasoning_details: Some(Arc::new(json!({
+                    "reasoning_items": [
+                        {
+                            "id": "r1",
+                            "summary": [
+                                {
+                                    "type": "summary_text",
+                                    "text": "Chain"
+                                }
+                            ],
+                            "encrypted_content": "ENC"
+                        }
+                    ]
+                }))),
+            }],
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+            .expect("serialized request");
+        let input = serialized["input"].as_array().expect("input items");
+
+        assert_eq!(
+            input.first(),
+            Some(&json!({
+                "type": "reasoning",
+                "id": "r1",
+                "summary": [],
+                "encrypted_content": "ENC"
+            }))
+        );
+        assert_eq!(
+            input.get(1),
+            Some(&json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "Done"
+                    }
+                ],
+                "status": "completed"
+            }))
+        );
+        assert!(!serialized.to_string().contains("legacy-redacted"));
     }
 
     #[test]

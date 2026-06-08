@@ -60,13 +60,15 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
-    IconDecorationKind, IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label,
-    LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
-    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
+    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
+    IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label, LabelSize, ListItem,
+    ListItemSpacing, ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate,
+    Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
-    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    ResultExt, TakeUntilExt, TryFutureExt,
+    markdown::MarkdownInlineCode,
+    maybe,
     paths::{PathStyle, compare_paths},
     rel_path::{RelPath, RelPathBuf},
 };
@@ -524,6 +526,50 @@ pub fn init(cx: &mut App) {
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| panel.delete(action, window, cx));
             }
+        });
+
+        // Forwards `git::FileHistory` to `git_ui::git_graph` when the project
+        // panel is the focused source of selection. Lives here (and not in
+        // `git_ui`) so that `git_ui` does not need to depend on
+        // `project_panel`, which would create a dependency cycle.
+        workspace.register_action_renderer(|div, workspace, window, cx| {
+            let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                return div;
+            };
+            if !panel.read(cx).focus_handle(cx).contains_focused(window, cx) {
+                return div;
+            }
+            if panel.read(cx).selected_entry_project_path(cx).is_none() {
+                return div;
+            }
+            let workspace = workspace.weak_handle();
+            div.capture_action(move |_: &git::FileHistory, window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                            return;
+                        };
+                        let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
+                        else {
+                            return;
+                        };
+                        let Some((repo_id, log_source)) =
+                            git_ui::git_graph::resolve_file_history_target_from_project_path(
+                                workspace,
+                                &project_path,
+                                cx,
+                            )
+                        else {
+                            return;
+                        };
+                        let git_store = workspace.project().read(cx).git_store().clone();
+                        git_ui::git_graph::open_or_reuse_graph(
+                            workspace, repo_id, git_store, log_source, None, window, cx,
+                        );
+                    })
+                    .log_err();
+                cx.stop_propagation();
+            })
         });
     })
     .detach();
@@ -2357,7 +2403,10 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{message_start} {path}?{unsaved_warning}")
+                        format!(
+                            "{message_start} {}?{unsaved_warning}",
+                            MarkdownInlineCode(path)
+                        )
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2365,7 +2414,7 @@ impl ProjectPanel {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
                             let mut paths = file_paths
                                 .iter()
-                                .map(|(_, _, path)| path.clone())
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
                                 .take(CUTOFF_POINT)
                                 .collect::<Vec<_>>();
                             paths.truncate(CUTOFF_POINT);
@@ -2376,7 +2425,10 @@ impl ProjectPanel {
                             }
                             paths
                         } else {
-                            file_paths.iter().map(|(_, _, path)| path.clone()).collect()
+                            file_paths
+                                .iter()
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
+                                .collect()
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
@@ -5627,7 +5679,7 @@ impl ProjectPanel {
             )
             .on_click(
                 cx.listener(move |project_panel, event: &gpui::ClickEvent, window, cx| {
-                    if event.is_right_click() || event.first_focus() || show_editor {
+                    if event.is_right_click() || show_editor {
                         return;
                     }
                     if event.standard_click() {
@@ -6924,7 +6976,7 @@ impl Render for ProjectPanel {
                             div()
                                 .id("project-panel-blank-area")
                                 .block_mouse_except_scroll()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .on_scroll_wheel({
                                     let scroll_handle = self.scroll_handle.clone();
                                     let entity_id = cx.entity().entity_id();
@@ -7104,52 +7156,35 @@ impl Render for ProjectPanel {
                 }))
         } else {
             let focus_handle = self.focus_handle(cx);
+            let workspace = self.workspace.clone();
+            let workspace_clone = self.workspace.clone();
 
             v_flex()
-                .id("empty-project_panel")
-                .p_4()
+                .id("empty-project_panel-wrapper")
                 .size_full()
-                .items_center()
-                .justify_center()
-                .gap_1()
-                .track_focus(&self.focus_handle(cx))
                 .child(
-                    Button::new("open_project", "Open Project")
-                        .full_width()
-                        .key_binding(KeyBinding::for_action_in(
-                            &workspace::Open::default(),
-                            &focus_handle,
-                            cx,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.workspace
-                                .update(cx, |_, cx| {
-                                    window.dispatch_action(
-                                        workspace::Open::default().boxed_clone(),
-                                        cx,
-                                    );
-                                })
-                                .log_err();
-                        })),
-                )
-                .child(
-                    h_flex()
-                        .w_1_2()
-                        .gap_2()
-                        .child(Divider::horizontal())
-                        .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
-                        .child(Divider::horizontal()),
-                )
-                .child(
-                    Button::new("clone_repo", "Clone Repository")
-                        .full_width()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.workspace
-                                .update(cx, |_, cx| {
-                                    window.dispatch_action(git::Clone.boxed_clone(), cx);
-                                })
-                                .log_err();
-                        })),
+                    ProjectEmptyState::new(
+                        "Project Panel",
+                        focus_handle.clone(),
+                        KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
+                    )
+                    .on_open_project(move |_, window, cx| {
+                        telemetry::event!("Project Panel Add Project Clicked");
+                        workspace
+                            .update(cx, |_, cx| {
+                                window
+                                    .dispatch_action(workspace::Open::default().boxed_clone(), cx);
+                            })
+                            .log_err();
+                    })
+                    .on_clone_repo(move |_, window, cx| {
+                        telemetry::event!("Project Panel Clone Repo Clicked");
+                        workspace_clone
+                            .update(cx, |_, cx| {
+                                window.dispatch_action(git::Clone.boxed_clone(), cx);
+                            })
+                            .log_err();
+                    }),
                 )
                 .when(is_local, |div| {
                     div.when(panel_settings.drag_and_drop, |div| {
@@ -7283,6 +7318,12 @@ impl Panel for ProjectPanel {
     fn activation_priority(&self) -> u32 {
         1
     }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.project_panel.get_or_insert_default().button = Some(false);
+        }))
+    }
 }
 
 impl ProjectPanel {
@@ -7368,7 +7409,7 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
         return Some(("D", Color::Deleted));
     }
     if git_status.worktree.modified > 0 {
-        return Some(("M", Color::Warning));
+        return Some(("M", Color::Modified));
     }
     if git_status.index.deleted > 0 {
         return Some(("D", Color::Deleted));

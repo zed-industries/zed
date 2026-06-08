@@ -314,7 +314,7 @@ async fn test_core_channels(
 #[track_caller]
 fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u64]) {
     assert_eq!(
-        participants.iter().map(|p| p.id).collect::<Vec<_>>(),
+        participants.iter().map(|p| p.legacy_id).collect::<Vec<_>>(),
         expected_partitipants
     );
 }
@@ -327,7 +327,7 @@ fn assert_members_eq(
     assert_eq!(
         members
             .iter()
-            .map(|member| (member.user.id, member.role, member.kind))
+            .map(|member| (member.user.legacy_id, member.role, member.kind))
             .collect::<Vec<_>>(),
         expected_members
     );
@@ -1259,7 +1259,7 @@ async fn test_guest_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_a);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     });
 }
 
@@ -1320,7 +1320,7 @@ async fn test_invite_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_b_id);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     })
 }
 

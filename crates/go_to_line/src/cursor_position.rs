@@ -8,7 +8,7 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -289,6 +289,15 @@ impl StatusItemView for CursorPosition {
         }
 
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .status_bar
+                .get_or_insert_default()
+                .cursor_position_button = Some(false);
+        }))
     }
 }
 

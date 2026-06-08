@@ -50,7 +50,7 @@ Zed has multiple layers of trust, based on the requests, from the least to most 
 - "single file worktree"
 
 After opening an empty Zed window, you can open a single file. You can also open a file outside the current directory after opening a directory.
-A common example is `zed: open settings file`, which may start a language server for that file and create a new single-file worktree.
+A common example is {#action zed::OpenSettingsFile}, which may start a language server for that file and create a new single-file worktree.
 
 Spawning a language server presents a risk should the language server experience a supply-chain attack; therefore, Zed restricts that by default. Each single file worktree requires a separate trust grant, unless the directory containing it is trusted or all worktrees are trusted.
 

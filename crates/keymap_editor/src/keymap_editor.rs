@@ -2019,7 +2019,8 @@ impl Render for KeymapEditor {
                                         context.add("BufferSearchBar");
                                         context
                                     })
-                                    .size_full()
+                                    .flex_1()
+                                    .min_w_0()
                                     .h_8()
                                     .pl_2()
                                     .pr_1()
@@ -2032,7 +2033,7 @@ impl Render for KeymapEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .min_w_96()
+                                    .flex_none()
                                     .items_center()
                                     .child(
                                         IconButton::new(
@@ -3468,7 +3469,7 @@ impl Render for ActionArgumentsEditor {
             .min_h_8()
             .min_w_48()
             .px_2()
-            .flex_grow()
+            .flex_grow_1()
             .rounded_md()
             .bg(cx.theme().colors().editor_background)
             .border_1()
@@ -3518,6 +3519,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
+                    group: None,
                 })
                 .collect(),
             display_options: CompletionDisplayOptions::default(),

@@ -241,6 +241,18 @@ pub struct ThemeColors {
     ///
     /// Matching brackets in the cursor scope are highlighted with this background color.
     pub editor_document_highlight_bracket_background: Hsla,
+    /// Filled background color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_background: Hsla,
+    /// Hollow background color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_hollow_background: Hsla,
+    /// Hollow border color for added diff hunk row highlights in the editor.
+    pub editor_diff_hunk_added_hollow_border: Hsla,
+    /// Filled background color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_background: Hsla,
+    /// Hollow background color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_hollow_background: Hsla,
+    /// Hollow border color for deleted diff hunk row highlights in the editor.
+    pub editor_diff_hunk_deleted_hollow_border: Hsla,
 
     // ===
     // Terminal

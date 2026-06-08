@@ -1,12 +1,12 @@
 use ui::{
     ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle,
-    Clickable as _, Context, ElementId, FluentBuilder as _, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, StyledTypography as _, Tooltip, div,
+    Clickable as _, Context, ElementId, IntoElement as _, ParentElement as _, SharedString,
+    Styled as _, StyledTypography as _, Tooltip, div,
 };
 
 use crate::{
     CsvPreviewView,
-    settings::{FontType, RowIdentifiers},
+    settings::RowIdentifiers,
     types::{DataRow, DisplayRow, LineNumber},
 };
 
@@ -119,10 +119,7 @@ impl CsvPreviewView {
 
         let view = cx.entity();
         let value = div()
-            .map(|div| match self.settings.font_type {
-                FontType::Ui => div.font_ui(cx),
-                FontType::Monospace => div.font_buffer(cx),
-            })
+            .font_buffer(cx)
             .child(
                 Button::new(
                     ElementId::Name("row-identifier-toggle".into()),
@@ -179,10 +176,7 @@ impl CsvPreviewView {
             // Row identifiers are always centered
             .items_center()
             .justify_end()
-            .map(|div| match self.settings.font_type {
-                FontType::Ui => div.font_ui(cx),
-                FontType::Monospace => div.font_buffer(cx),
-            })
+            .font_buffer(cx)
             .child(row_identifier)
             .into_any_element();
         Some(value)

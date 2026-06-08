@@ -5,7 +5,7 @@ use crate::{
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
-    Subscription, anchored, canvas, prelude::*, px,
+    Subscription, TaskExt, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{

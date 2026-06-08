@@ -9,30 +9,6 @@ use crate::ExtendingVec;
 
 use crate::DockPosition;
 
-/// Where new threads should start by default.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum NewThreadLocation {
-    /// Start threads in the current project.
-    #[default]
-    LocalProject,
-    /// Start threads in a new worktree.
-    NewWorktree,
-}
-
 /// Where to position the threads sidebar.
 #[derive(
     Clone,
@@ -108,7 +84,7 @@ pub struct AgentSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the agent panel.
     ///
-    /// Default: right
+    /// Default: left (Agentic layout), right (Classic layout)
     pub dock: Option<DockPosition>,
     /// Whether the agent panel should use flexible (proportional) sizing.
     ///
@@ -142,6 +118,8 @@ pub struct AgentSettingsContent {
     pub max_content_width: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
+    pub subagent_model: Option<LanguageModelSelection>,
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -153,6 +131,9 @@ pub struct AgentSettingsContent {
     pub inline_assistant_use_streaming_tools: Option<bool>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// Custom instructions to include in the prompt when generating git commit messages.
+    /// Applied in addition to any project rules files (such as `.rules` or `AGENTS.md`).
+    pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
@@ -161,10 +142,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: write
     pub default_profile: Option<Arc<str>>,
-    /// Where new threads should start by default.
-    ///
-    /// Default: "local_project"
-    pub new_thread_location: Option<NewThreadLocation>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -177,7 +154,7 @@ pub struct AgentSettingsContent {
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
-    /// Default: true
+    /// Default: false
     pub single_file_review: Option<bool>,
     /// Additional parameters for language model requests. When making a request
     /// to a model, parameters will be taken from the last entry in this list
@@ -237,6 +214,11 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+
+    /// Persistent sandbox permission grants for agent-run terminal commands.
+    /// These are populated when choosing "Allow always" from a sandbox
+    /// escalation prompt.
+    pub sandbox_permissions: Option<SandboxPermissionsContent>,
 }
 
 impl AgentSettingsContent {
@@ -268,10 +250,6 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
-    }
-
-    pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
-        self.new_thread_location = Some(value);
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
@@ -342,6 +320,35 @@ impl AgentSettingsContent {
                 case_sensitive: None,
             });
         }
+    }
+
+    pub fn allow_sandbox_network(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_network = Some(true);
+    }
+
+    pub fn allow_sandbox_fs_write_all(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_fs_write_all = Some(true);
+    }
+
+    pub fn allow_sandbox_unsandboxed(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_unsandboxed = Some(true);
+    }
+
+    pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
+        let write_paths = &mut self
+            .sandbox_permissions
+            .get_or_insert_default()
+            .write_paths
+            .get_or_insert_default()
+            .0;
+
+        util::paths::insert_subtree(write_paths, path);
     }
 }
 
@@ -461,6 +468,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "opencode",
                         "openrouter",
                         "vercel_ai_gateway",
                         "x_ai",
@@ -524,19 +532,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -552,46 +547,8 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
-    Extension {
-        /// Additional environment variables to pass to the agent.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        env: HashMap<String, String>,
-        /// The default mode to use for this agent.
-        ///
-        /// Note: Not only all agents support modes.
-        ///
-        /// Default: None
-        default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
-        /// Default values for session config options.
-        ///
-        /// This is a map from config option ID to value ID.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
-        /// Favorited values for session config options.
-        ///
-        /// This is a map from config option ID to a list of favorited value IDs.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        favorite_config_option_values: HashMap<String, Vec<String>>,
-    },
+    // Used for the ACP extension migration
+    #[serde(alias = "extension")]
     Registry {
         /// Additional environment variables to pass to the agent.
         ///
@@ -604,19 +561,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -632,6 +576,30 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SandboxPermissionsContent {
+    /// Whether sandboxed terminal commands may always use outbound network
+    /// access without prompting.
+    /// Default: false
+    pub allow_network: Option<bool>,
+
+    /// Whether sandboxed terminal commands may always write anywhere on the
+    /// filesystem without prompting.
+    /// Default: false
+    pub allow_fs_write_all: Option<bool>,
+
+    /// Whether terminal commands may always run outside the sandbox without
+    /// prompting when they request `unsandboxed: true`.
+    /// Default: false
+    pub allow_unsandboxed: Option<bool>,
+
+    /// Directory subtrees that sandboxed terminal commands may always write
+    /// to without prompting. Paths written by Zed are absolute.
+    /// Default: []
+    pub write_paths: Option<ExtendingVec<PathBuf>>,
 }
 
 #[with_fallible_options]
@@ -898,5 +866,50 @@ mod tests {
         let always_deny = terminal_rules.always_deny.as_ref().unwrap();
         assert_eq!(always_deny.0.len(), 1);
         assert_eq!(always_deny.0[0].pattern, "^rm\\s");
+    }
+
+    #[test]
+    fn test_allow_sandbox_permissions_create_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.sandbox_permissions.is_none());
+
+        settings.allow_sandbox_network();
+        settings.allow_sandbox_fs_write_all();
+        settings.allow_sandbox_unsandboxed();
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+
+        let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
+        assert_eq!(sandbox_permissions.allow_network, Some(true));
+        assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
+        assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
+        assert_eq!(
+            sandbox_permissions
+                .write_paths
+                .as_ref()
+                .unwrap()
+                .0
+                .as_slice(),
+            &[PathBuf::from("/tmp/build")]
+        );
+    }
+
+    #[test]
+    fn test_add_sandbox_write_path_prunes_redundant_paths() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/cache"));
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/output"));
+
+        let write_paths = settings
+            .sandbox_permissions
+            .as_ref()
+            .unwrap()
+            .write_paths
+            .as_ref()
+            .unwrap()
+            .0
+            .as_slice();
+        assert_eq!(write_paths, &[PathBuf::from("/tmp/build")]);
     }
 }

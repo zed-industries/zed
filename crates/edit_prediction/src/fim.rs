@@ -6,10 +6,9 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Entity, Task};
 use language::{
-    Anchor, Buffer, BufferSnapshot, ToOffset, ToPoint as _,
+    Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
     language_settings::all_language_settings,
 };
-use settings::EditPredictionPromptFormat;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{ZetaPromptInput, compute_editable_and_context_ranges};
 
@@ -18,6 +17,7 @@ const FIM_CONTEXT_TOKENS: usize = 512;
 struct FimRequestOutput {
     request_id: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
+    editable_range: std::ops::Range<Anchor>,
     snapshot: BufferSnapshot,
     inputs: ZetaPromptInput,
     buffer: Entity<Buffer>,
@@ -128,9 +128,15 @@ pub fn request_prediction(
             vec![(anchor..anchor, completion)]
         };
 
+        let editable_range = snapshot.anchor_range_inside(
+            (excerpt_offset_range.start + editable_range.start)
+                ..(excerpt_offset_range.start + editable_range.end),
+        );
+
         anyhow::Ok(FimRequestOutput {
             request_id,
             edits,
+            editable_range,
             snapshot,
             inputs,
             buffer,
@@ -146,6 +152,7 @@ pub fn request_prediction(
                 &output.snapshot,
                 output.edits.into(),
                 None,
+                Some(output.editable_range),
                 output.inputs,
                 None,
                 cx.background_executor().now() - request_start,
