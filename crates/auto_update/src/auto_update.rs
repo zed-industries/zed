@@ -720,8 +720,10 @@ impl AutoUpdater {
         });
 
         let install_result = if cfg!(test) {
-            match cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
-            .map(|test_install| test_install(target_path, cx)) {
+            match cx
+                .try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
+                .map(|test_install| test_install(target_path, cx))
+            {
                 Some(result) => result,
                 None => return Ok(()),
             }
@@ -836,7 +838,6 @@ impl AutoUpdater {
 
         Ok(installer_dir.path().join(filename))
     }
-
 
     async fn install_release(
         installer_dir: InstallerDir,
