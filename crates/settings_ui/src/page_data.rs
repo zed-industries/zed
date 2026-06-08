@@ -3724,8 +3724,8 @@ fn window_and_layout_page() -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Panel Button Icon Size",
-                description: "Size of panel button icons in the status bar.",
+                title: "Status Bar Icon Size",
+                description: "Size of icons in the status bar, including panel buttons, search, diagnostics, and language servers.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("status_bar.panel_button_icon_size"),

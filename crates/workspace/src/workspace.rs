@@ -21,7 +21,7 @@ pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
 pub mod activity_bar;
-mod status_bar;
+pub mod status_bar;
 pub mod tasks;
 mod theme_preview;
 mod toast_layer;

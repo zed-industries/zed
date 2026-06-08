@@ -10,7 +10,10 @@ use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use util::ResultExt;
-use workspace::{HideStatusItem, StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
+use workspace::{
+    HideStatusItem, StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle,
+    status_bar::status_bar_icon_size,
+};
 
 use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
@@ -33,10 +36,11 @@ impl Render for DiagnosticIndicator {
             return indicator.hidden();
         }
 
+        let icon_size = status_bar_icon_size(cx);
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_flex().child(
                 Icon::new(IconName::Check)
-                    .size(IconSize::Small)
+                    .size(icon_size)
                     .color(Color::Default),
             ),
             (error_count, warning_count) => h_flex()
@@ -44,7 +48,7 @@ impl Render for DiagnosticIndicator {
                 .when(error_count > 0, |this| {
                     this.child(
                         Icon::new(IconName::XCircle)
-                            .size(IconSize::Small)
+                            .size(icon_size)
                             .color(Color::Error),
                     )
                     .child(Label::new(error_count.to_string()).size(LabelSize::Small))
@@ -52,7 +56,7 @@ impl Render for DiagnosticIndicator {
                 .when(warning_count > 0, |this| {
                     this.child(
                         Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
+                            .size(icon_size)
                             .color(Color::Warning),
                     )
                     .child(Label::new(warning_count.to_string()).size(LabelSize::Small))

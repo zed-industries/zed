@@ -3,7 +3,7 @@ use crate::persistence::model::DockData;
 use crate::status_bar::HideStatusItem;
 use crate::{
     DraggedDock, Event, FocusFollowsMouse, ModalLayer, Pane, WorkspaceSettings,
-    workspace_settings::{ActivityBarSettings, StatusBarSettings},
+    workspace_settings::ActivityBarSettings,
 };
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
@@ -370,24 +370,21 @@ pub(crate) enum PanelButtonLayout {
 pub(crate) fn panel_button_icon_size(
     icon_size: settings::ActivityBarIconSize,
 ) -> IconSize {
-    match icon_size {
-        settings::ActivityBarIconSize::Small => IconSize::Small,
-        settings::ActivityBarIconSize::Medium => IconSize::Custom(rems_from_px(18.)),
-        settings::ActivityBarIconSize::Large => IconSize::Custom(rems_from_px(22.)),
-    }
+    crate::status_bar::icon_size_from_setting(icon_size)
 }
 
 pub(crate) fn vertical_panel_button_container(
     is_active: bool,
     active_border_color: Hsla,
     button: impl IntoElement,
+    vertical_padding: Pixels,
 ) -> Div {
     div()
         .relative()
         .w_full()
         .flex()
         .justify_center()
-        .py_0p5()
+        .py(vertical_padding)
         .when(is_active, |this| this.border_l_2().border_color(active_border_color))
         .child(button)
 }
@@ -416,6 +413,7 @@ pub(crate) fn render_panel_button(
     panel: Arc<dyn PanelHandle>,
     layout: PanelButtonLayout,
     icon_size: IconSize,
+    vertical_button_padding: Pixels,
     window: &mut Window,
     cx: &App,
 ) -> Option<impl IntoElement> {
@@ -568,9 +566,12 @@ pub(crate) fn render_panel_button(
 
                 let button_container = match layout {
                     PanelButtonLayout::Horizontal => div().relative().child(button),
-                    PanelButtonLayout::Vertical => {
-                        vertical_panel_button_container(is_active_button, active_border_color, button)
-                    }
+                    PanelButtonLayout::Vertical => vertical_panel_button_container(
+                        is_active_button,
+                        active_border_color,
+                        button,
+                        vertical_button_padding,
+                    ),
                 };
 
                 button_container.when_some(
@@ -610,6 +611,7 @@ pub(crate) fn render_panel_buttons(
                 entry.panel,
                 layout,
                 icon_size,
+                px(0.),
                 window,
                 cx,
             )
@@ -1484,7 +1486,7 @@ impl Render for PanelButtons {
         };
 
         let dock_position = self.dock.read(cx).position;
-        let icon_size = panel_button_icon_size(StatusBarSettings::get_global(cx).panel_button_icon_size);
+        let icon_size = crate::status_bar::status_bar_icon_size(cx);
         let buttons = render_panel_buttons(
             self.dock.clone(),
             PanelButtonLayout::Horizontal,

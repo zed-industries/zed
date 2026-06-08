@@ -1396,7 +1396,7 @@ impl Render for LspButton {
                 .trigger_with_tooltip(
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
                         .when_some(indicator, IconButton::indicator)
-                        .icon_size(IconSize::Small)
+                        .icon_size(workspace::status_bar::status_bar_icon_size(cx))
                         .when(is_restricted, |s| s.icon_color(Color::Warning))
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                     move |_window, cx| {

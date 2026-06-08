@@ -91,8 +91,7 @@ impl IconSize {
             IconSize::Small => DynamicSpacing::Base02.px(cx),
             IconSize::Medium => DynamicSpacing::Base02.px(cx),
             IconSize::XLarge => DynamicSpacing::Base02.px(cx),
-            // TODO: Wire into dynamic spacing
-            IconSize::Custom(size) => size.to_pixels(window.rem_size()),
+            IconSize::Custom(_) => DynamicSpacing::Base02.px(cx),
         };
 
         (icon_size, padding)

@@ -1772,7 +1772,7 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ```
 
 - `panel_button_icon_size`:
-  - Description: Size of panel button icons in the status bar.
+  - Description: Size of icons in the status bar, including panel buttons, search, diagnostics, and language servers.
   - Default: `small`
   - Values: `small`, `medium`, `large`
 

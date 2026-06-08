@@ -11,11 +11,9 @@ use gpui::{
     Anchor, AnyElement, App, Context, Decorations, Entity, Hsla, IntoElement, ParentElement,
     Pixels, Render, Styled, Subscription, Window, px,
 };
-use settings::{Settings, SettingsStore};
+use settings::{ActivityBarIconSize, Settings, SettingsStore};
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{ContextMenu, IconButton, IconName, IconSize, Tooltip, prelude::*, right_click_menu};
-
-const ACTIVITY_BAR_WIDTH: Pixels = px(48.);
 
 pub const SEARCH_BUTTON_KEY: &str = "search";
 
@@ -50,6 +48,7 @@ impl Render for ActivityBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ActivityBarSettings::get_global(cx);
         let icon_size = panel_button_icon_size(settings.icon_size);
+        let button_padding = activity_bar_button_padding(settings.icon_size);
 
         let mut items: Vec<(String, u32, AnyElement)> = Vec::new();
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
@@ -66,6 +65,7 @@ impl Render for ActivityBar {
                     entry.panel,
                     PanelButtonLayout::Vertical,
                     icon_size,
+                    button_padding,
                     window,
                     cx,
                 ) {
@@ -81,7 +81,8 @@ impl Render for ActivityBar {
             items.push((
                 SEARCH_BUTTON_KEY.to_string(),
                 2,
-                render_project_search_button(icon_size, active_border_color).into_any_element(),
+                render_project_search_button(icon_size, active_border_color, button_padding)
+                    .into_any_element(),
             ));
         }
 
@@ -89,15 +90,21 @@ impl Render for ActivityBar {
 
         let colors = cx.theme().colors();
 
-        v_flex()
+        let mut bar = v_flex()
             .id("activity-bar")
             .when(!settings.enabled, |this| this.hidden())
             .flex_none()
-            .w(ACTIVITY_BAR_WIDTH)
+            .w(activity_bar_width(settings.icon_size))
             .h_full()
-            .py_1()
-            .gap_0p5()
-            .bg(colors.status_bar_background)
+            .bg(colors.status_bar_background);
+
+        bar = match settings.icon_size {
+            ActivityBarIconSize::Small => bar.py_0p5().gap(px(0.)),
+            ActivityBarIconSize::Medium => bar.py_1().gap_0p5(),
+            ActivityBarIconSize::Large => bar.py_1().gap_0p5(),
+        };
+
+        bar
             .border_r_1()
             .border_color(colors.border)
             .map(|el| match window.window_decorations() {
@@ -108,6 +115,22 @@ impl Render for ActivityBar {
                 }),
             })
             .children(items.into_iter().map(|(_, _, element)| element))
+    }
+}
+
+fn activity_bar_width(icon_size: ActivityBarIconSize) -> Pixels {
+    match icon_size {
+        ActivityBarIconSize::Small => px(40.),
+        ActivityBarIconSize::Medium => px(44.),
+        ActivityBarIconSize::Large => px(48.),
+    }
+}
+
+fn activity_bar_button_padding(icon_size: ActivityBarIconSize) -> Pixels {
+    match icon_size {
+        ActivityBarIconSize::Small => px(1.),
+        ActivityBarIconSize::Medium => px(2.),
+        ActivityBarIconSize::Large => px(2.),
     }
 }
 
@@ -171,7 +194,11 @@ pub(crate) fn panel_button_shown_in_activity_bar(panel_key: &str, settings: &Act
     settings.enabled && !status_bar_buttons_contains(settings, panel_key)
 }
 
-fn render_project_search_button(icon_size: IconSize, active_border_color: Hsla) -> impl IntoElement {
+fn render_project_search_button(
+    icon_size: IconSize,
+    active_border_color: Hsla,
+    vertical_padding: Pixels,
+) -> impl IntoElement {
     let hide = HideStatusItem::new(|settings| {
         settings.editor.search.get_or_insert_default().button = Some(false);
     });
@@ -195,6 +222,6 @@ fn render_project_search_button(icon_size: IconSize, active_border_color: Hsla) 
                     window.dispatch_action(Box::new(DeploySearch::default()), cx);
                 });
 
-            vertical_panel_button_container(false, active_border_color, button)
+            vertical_panel_button_container(false, active_border_color, button, vertical_padding)
         })
 }

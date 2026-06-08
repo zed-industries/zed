@@ -1,12 +1,12 @@
 use crate::{
     ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
-    sidebar_side_context_menu,
+    sidebar_side_context_menu, workspace_settings::StatusBarSettings,
 };
 use gpui::{
     Anchor, AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, WeakEntity, Window,
+    SharedString, Styled, Subscription, WeakEntity, Window, px,
 };
-use settings::{SettingsContent, update_settings_file};
+use settings::{ActivityBarIconSize, Settings, SettingsContent, SettingsStore, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{ContextMenu, Divider, IconPosition, Indicator, Tooltip, prelude::*, right_click_menu};
@@ -97,12 +97,25 @@ impl SidebarStatus {
     }
 }
 
+pub fn icon_size_from_setting(icon_size: ActivityBarIconSize) -> IconSize {
+    match icon_size {
+        ActivityBarIconSize::Small => IconSize::Small,
+        ActivityBarIconSize::Medium => IconSize::Medium,
+        ActivityBarIconSize::Large => IconSize::Custom(rems_from_px(20.)),
+    }
+}
+
+pub fn status_bar_icon_size(cx: &App) -> IconSize {
+    icon_size_from_setting(StatusBarSettings::get_global(cx).panel_button_icon_size)
+}
+
 pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: Entity<Pane>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     _observe_active_pane: Subscription,
+    _settings_subscription: Subscription,
 }
 
 impl Render for StatusBar {
@@ -112,8 +125,10 @@ impl Render for StatusBar {
         h_flex()
             .w_full()
             .justify_between()
+            .items_center()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .p(DynamicSpacing::Base04.rems(cx))
+            .px(DynamicSpacing::Base04.rems(cx))
+            .py(DynamicSpacing::Base02.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| match window.window_decorations() {
                 Decorations::Server => el,
@@ -200,6 +215,7 @@ impl StatusBar {
         let on_right = sidebar.side == SidebarSide::Right;
         let has_notifications = sidebar.has_notifications;
         let indicator_border = cx.theme().colors().status_bar_background;
+        let icon_size = status_bar_icon_size(cx);
 
         let toggle = sidebar_side_context_menu("sidebar-status-toggle-menu", cx)
             .anchor(if on_right {
@@ -221,7 +237,7 @@ impl StatusBar {
                         IconName::ThreadsSidebarLeftClosed
                     },
                 )
-                .icon_size(IconSize::Small)
+                .icon_size(icon_size)
                 .when(has_notifications, |this| {
                     this.indicator(Indicator::dot().color(Color::Accent))
                         .indicator_border_color(Some(indicator_border))
@@ -299,6 +315,7 @@ impl StatusBar {
             _observe_active_pane: cx.observe_in(active_pane, window, |this, _, window, cx| {
                 this.update_active_pane_item(window, cx)
             }),
+            _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| cx.notify()),
         };
         this.update_active_pane_item(window, cx);
         this
