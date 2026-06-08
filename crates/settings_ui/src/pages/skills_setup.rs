@@ -1,10 +1,11 @@
 use agent_skills::{Skill, SkillIndex, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{Action as _, App, ClipboardItem, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, ClipboardItem, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
 
+use crate::pages::SkillCreatorOpenMode;
 use crate::{SettingsUiFile, SettingsWindow};
 
 /// Skills shown on the Skills page for the currently selected settings file:
@@ -61,36 +62,26 @@ pub(crate) fn render_skills_setup_page(
                     _ => "No skills available for this context.",
                 };
 
-                let original_window = settings_window.original_window;
-
                 this.px_8().items_center().justify_center().child(
                     v_flex()
                         .items_center()
                         .gap_2()
                         .child(Label::new(message).color(Color::Muted))
                         .child(
-                            Button::new("open-skill-creator", "Create a Skill")
+                            Button::new("open-skill-creator-empty", "Create a Skill")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Outlined)
-                                .end_icon(
-                                    Icon::new(IconName::ArrowUpRight)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .on_click(cx.listener(move |_this, _event, window, cx| {
-                                    let Some(original_window) = original_window else {
-                                        return;
-                                    };
-                                    original_window
-                                        .update(cx, |_workspace, original_window, cx| {
-                                            original_window.dispatch_action(
-                                                zed_actions::assistant::OpenSkillCreator
-                                                    .boxed_clone(),
-                                                cx,
-                                            );
-                                        })
-                                        .log_err();
-                                    window.remove_window();
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.open_skill_creator_sub_page(
+                                        SkillCreatorOpenMode::Form,
+                                        window,
+                                        cx,
+                                    );
                                 })),
                         ),
                 )

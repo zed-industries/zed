@@ -306,7 +306,7 @@
     "bindings": {
       "cmd-n": "agent::NewThread",
       "ctrl--": "pane::GoBack",
-      "cmd-alt-l": "agent::OpenRulesLibrary",
+      "cmd-alt-l": "agent::ManageSkills",
       "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",

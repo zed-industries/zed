@@ -9776,14 +9776,60 @@ impl ThreadView {
                                             .detach_and_log_err(cx);
                                     })
                                     .ok();
-                            })),
-                    )
-                    .dismiss_action(
-                        IconButton::new(("dismiss-skill-issue", index), IconName::Close)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Dismiss"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.skill_loading_issues.retain(|issue| *issue != target);
+                            }))
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>();
+                callout = callout.description_slot(v_flex().gap_1().children(rows));
+            } else {
+                let settings_targets =
+                    skill_warning_settings_targets(&description_warnings, &self.project, cx);
+                if settings_targets.is_empty() {
+                    callout = callout.description(
+                        "Some skill descriptions exceed the recommended limit and may consume more model-context tokens.",
+                    );
+                } else {
+                    let manage_buttons =
+                        h_flex()
+                            .gap_0p5()
+                            .children(settings_targets.into_iter().enumerate().map(
+                                |(index, settings_target)| {
+                                    let target = settings_target.target.clone();
+                                    Button::new(
+                                        ("open-skills-settings", index),
+                                        settings_target.label,
+                                    )
+                                    .label_size(LabelSize::Small)
+                                    .on_click(move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(zed_actions::OpenSettingsAt {
+                                                path: zed_actions::AGENT_SKILLS_SETTINGS_PATH
+                                                    .to_string(),
+                                                target: target.clone(),
+                                            }),
+                                            cx,
+                                        );
+                                    })
+                                    .into_any_element()
+                                },
+                            ));
+                    callout = callout
+                        .description("Open Skills settings to review these warnings and manage skill descriptions in one place.")
+                        .actions_slot(manage_buttons);
+                }
+            }
+
+            let targets = description_warnings;
+            callouts.push(
+                callout.dismiss_action(
+                    IconButton::new("dismiss-skill-description-warnings", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.skill_loading_issues
+                                .retain(|issue| !targets.contains(issue));
+                            for target in &targets {
                                 this.dismissed_skill_loading_issues.insert(target.clone());
                                 cx.notify();
                             })),
