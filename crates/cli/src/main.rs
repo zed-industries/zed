@@ -268,7 +268,17 @@ fn expand_directory_pair(
 fn collect_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
     let mut files = BTreeMap::new();
 
-    for entry in WalkDir::new(root) {
+    // Skip `.git` entirely. In a linked git worktree `.git` is a regular file
+    // (a gitfile), while in a normal checkout it is a directory; including it
+    // pollutes the diff with VCS metadata and, when the same relative path is a
+    // file on one side and a directory on the other, breaks the stub layout in
+    // `create_empty_stub`. Pruning it here also avoids walking the entire git
+    // object store.
+    let walker = WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".git");
+
+    for entry in walker {
         let entry = entry?;
         if entry.file_type().is_file() {
             let rel = entry
