@@ -761,16 +761,21 @@ impl RequestHandler<'_> {
             oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
         ),
     ) {
-        let subrange = (line_hint > 0).then(|| {
-            let offset = snapshot.point_to_offset(Point::new(line_hint, 0));
-            offset..snapshot.len()
-        });
+        let range_offset = if line_hint > 0 {
+            snapshot.point_to_offset(Point::new(line_hint, 0))
+        } else {
+            0
+        };
+        let subrange = (range_offset > 0).then(|| range_offset..snapshot.len());
         let ranges = self
             .query
             .search(&snapshot, subrange)
             .await
             .iter()
-            .map(|range| snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
+            .map(|range| {
+                snapshot.anchor_before(range.start + range_offset)
+                    ..snapshot.anchor_after(range.end + range_offset)
+            })
             .collect::<Vec<_>>();
 
         _ = report_matches.send((buffer, ranges)).await;
