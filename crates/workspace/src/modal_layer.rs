@@ -1,6 +1,6 @@
 use gpui::{
-    AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable as _, ManagedView,
-    MouseButton, Subscription,
+    AlignItems, AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable as _,
+    ManagedView, MouseButton, Subscription,
 };
 use ui::prelude::*;
 
@@ -26,6 +26,10 @@ pub trait ModalView: ManagedView {
     fn render_bare(&self) -> bool {
         false
     }
+
+    fn align_items(&self) -> AlignItems {
+        AlignItems::Center
+    }
 }
 
 trait ModalViewHandle {
@@ -33,6 +37,7 @@ trait ModalViewHandle {
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
     fn render_bare(&self, cx: &mut App) -> bool;
+    fn align_items(&self, cx: &mut App) -> AlignItems;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -50,6 +55,10 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn render_bare(&self, cx: &mut App) -> bool {
         self.read(cx).render_bare()
+    }
+
+    fn align_items(&self, cx: &mut App) -> AlignItems {
+        self.read(cx).align_items()
     }
 }
 
@@ -221,8 +230,11 @@ impl Render for ModalLayer {
                 v_flex()
                     .h(px(0.0))
                     .top_20()
-                    .items_center()
                     .track_focus(&active_modal.focus_handle)
+                    .map(|mut this| {
+                        this.style().align_items = Some(active_modal.modal.align_items(cx));
+                        this
+                    })
                     .child(
                         h_flex()
                             .occlude()

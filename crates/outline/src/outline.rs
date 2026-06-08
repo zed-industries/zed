@@ -6,9 +6,9 @@ use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    AlignItems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity,
+    Window, div, rems,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
@@ -136,6 +136,10 @@ impl ModalView for OutlineView {
             picker.delegate.restore_active_editor(window, cx)
         });
         DismissDecision::Dismiss(true)
+    }
+
+    fn align_items(&self) -> AlignItems {
+        AlignItems::FlexEnd
     }
 }
 
