@@ -1483,6 +1483,9 @@
     "diagnostics": true,
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true,
+    // Allow sending requests to Anthropic models that cannot be offered with
+    // Zero Data Retention
+    "anthropic_retention": false,
   },
   // Whether to disable all AI features in Zed.
   //
