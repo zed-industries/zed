@@ -3602,8 +3602,7 @@ impl ThreadView {
         let is_compacting = entry_ix + 1 == total_entries
             && self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
         let summary = compaction.summary.clone();
-        let summary_available = summary.is_some();
-        let is_expanded = summary_available && self.expanded_compactions.contains(&entry_ix);
+        let is_expanded = self.expanded_compactions.contains(&entry_ix);
 
         let header = h_flex()
             .id(("context-compaction", entry_ix))
@@ -3644,7 +3643,9 @@ impl ThreadView {
                 this.toggle_compaction_expansion(entry_ix, cx);
             }));
 
-        if let Some(summary) = summary.filter(|_| is_expanded) {
+        if let Some(summary) = summary
+            && is_expanded
+        {
             v_flex()
                 .w_full()
                 .child(header)
