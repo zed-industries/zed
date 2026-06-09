@@ -200,11 +200,20 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
 {{/each}}
   Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
 {{else}}
+{{#if is_windows}}
+- Execution: commands run inside WSL under Bubblewrap. Sandboxing is only enabled for projects opened from WSL paths.
+- Writes: `/tmp` inside WSL is writable but is cleared between `terminal` calls{{#if worktrees}}. These WSL project directories are also writable and persist across calls:
+{{#each worktrees}}
+  - `{{abs_path}}`
+{{/each}}
+  Writes anywhere else on the WSL filesystem and mounted Windows drives are blocked.{{else}}. No project directories are currently writable.{{/if}}
+{{else}}
 - Writes: a per-thread temporary directory exposed via `$TMPDIR`, `$TMP`, and `$TEMP` is writable and persists across `terminal` calls in this thread{{#if worktrees}}, along with these project directories:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}
   Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
+{{/if}}
 {{/if}}
 - Network: outbound network access is blocked.
 

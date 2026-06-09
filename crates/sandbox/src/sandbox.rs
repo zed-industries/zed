@@ -15,6 +15,9 @@ pub mod linux_bubblewrap;
 #[cfg(target_os = "macos")]
 pub mod macos_seatbelt;
 
+#[cfg(target_os = "windows")]
+pub mod windows_wsl;
+
 /// Per-command relaxations of the default sandbox.
 ///
 /// All-false is the default, fully-sandboxed run. Setting any field

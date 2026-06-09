@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use crate::sandboxing::sandboxing_enabled;
+use crate::sandboxing::sandboxing_enabled_for_project;
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
@@ -334,7 +334,8 @@ async fn run_terminal_tool(
             crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
         let authorize =
             event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-        let sandboxing = input.sandbox.is_some() && sandboxing_enabled(cx);
+        let sandboxing =
+            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
         Result::<_, String>::Ok((working_dir, authorize, sandboxing))
     })?;
 

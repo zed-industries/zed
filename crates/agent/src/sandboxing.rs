@@ -18,12 +18,56 @@
 use agent_settings::SandboxPermissions;
 use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
-use std::path::PathBuf;
+use project::Project;
+use std::path::{Path, PathBuf};
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
     cx.has_flag::<SandboxingFeatureFlag>()
+}
+
+/// Whether the sandboxed terminal can be exposed for this project.
+///
+/// Windows support is intentionally WSL-only: every worktree must be opened via
+/// a WSL UNC path so the terminal can run inside the matching WSL distro under
+/// Bubblewrap. Native Windows paths are not sandboxed.
+pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> bool {
+    if !sandboxing_enabled(cx) || !project.is_local() {
+        return false;
+    }
+
+    if cfg!(target_os = "windows") {
+        let mut distro = None;
+        let mut saw_worktree = false;
+        let all_worktrees_are_wsl = project.worktrees(cx).all(|worktree| {
+            saw_worktree = true;
+            let Some(worktree_distro) = wsl_unc_distro(&worktree.read(cx).abs_path()) else {
+                return false;
+            };
+            match distro.as_ref() {
+                Some(distro) => distro == &worktree_distro,
+                None => {
+                    distro = Some(worktree_distro);
+                    true
+                }
+            }
+        });
+        saw_worktree && all_worktrees_are_wsl
+    } else {
+        cfg!(any(target_os = "macos", target_os = "linux"))
+    }
+}
+
+fn wsl_unc_distro(path: &Path) -> Option<String> {
+    let path = path.to_string_lossy().replace('/', "\\");
+    let remainder = path
+        .strip_prefix("\\\\wsl.localhost\\")
+        .or_else(|| path.strip_prefix("\\\\wsl$\\"))
+        .or_else(|| path.strip_prefix("\\\\?\\UNC\\wsl.localhost\\"))
+        .or_else(|| path.strip_prefix("\\\\?\\UNC\\wsl$\\"))?;
+    let distro = remainder.split('\\').next()?;
+    (!distro.is_empty()).then(|| distro.to_string())
 }
 
 /// A request for elevated sandbox permissions for a single terminal command.

@@ -111,7 +111,8 @@ pub(crate) fn apply_sandbox_wrap(
         // When it can't (no usable bwrap, or unprivileged user namespaces are
         // unavailable), run the command unsandboxed rather than failing.
         // TODO: surface this to the user via the UI instead of only logging.
-        let Some(bwrap) = linux_bubblewrap::locate_bwrap().filter(|_| linux_bubblewrap::is_available())
+        let Some(bwrap) =
+            linux_bubblewrap::locate_bwrap().filter(|_| linux_bubblewrap::is_available())
         else {
             log::warn!(
                 "no usable bwrap sandbox on this system; running terminal command \
@@ -119,9 +120,9 @@ pub(crate) fn apply_sandbox_wrap(
             );
             return Ok((program, args, None));
         };
-        let bwrap = bwrap.to_str().with_context(|| {
-            format!("bwrap path contains invalid UTF-8: {}", bwrap.display())
-        })?;
+        let bwrap = bwrap
+            .to_str()
+            .with_context(|| format!("bwrap path contains invalid UTF-8: {}", bwrap.display()))?;
 
         let writable: Vec<_> = sandbox_wrap
             .writable_paths
@@ -162,7 +163,9 @@ pub(crate) fn apply_sandbox_wrap(
     }
     #[cfg(target_os = "windows")]
     {
-        // No sandbox integration on Windows; run with ambient permissions.
+        // Windows sandboxing is handled before shell expansion in
+        // `create_terminal`; by this point `program` may be PowerShell or cmd,
+        // which cannot be executed inside WSL's Linux sandbox.
         let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
@@ -172,6 +175,31 @@ pub(crate) fn apply_sandbox_wrap(
         let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn apply_windows_wsl_sandbox_wrap(
+    command: String,
+    args: &[String],
+    cwd: Option<&std::path::Path>,
+    sandbox_wrap: SandboxWrap,
+) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
+    let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
+        .redirect_stdin_to_dev_null()
+        .build(Some(command), args);
+    let writable: Vec<_> = sandbox_wrap
+        .writable_paths
+        .iter()
+        .chain(sandbox_wrap.extra_write_paths.iter())
+        .map(|path| path.as_path())
+        .collect();
+    let permissions = sandbox::SandboxPermissions {
+        allow_network: sandbox_wrap.allow_network,
+        allow_fs_write: sandbox_wrap.allow_fs_write,
+    };
+    let (program, args) =
+        sandbox::windows_wsl::wrap_invocation(&program, &args, &writable, permissions, cwd)?;
+    Ok((program, args, None))
 }
 
 pub struct Terminal {
