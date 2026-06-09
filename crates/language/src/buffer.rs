@@ -4669,12 +4669,6 @@ impl BufferSnapshot {
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
             );
-            let configs = matches
-                .grammars()
-                .iter()
-                .map(|grammar| grammar.brackets_config.as_ref().unwrap())
-                .collect::<Vec<_>>();
-
             // Group matches by open range so we can either trust grammar output
             // or repair it by picking a single closest close per open.
             let mut open_to_close_ranges = BTreeMap::new();
@@ -4683,7 +4677,10 @@ impl BufferSnapshot {
                 let mut close = None;
                 let syntax_layer_depth = mat.depth;
                 let pattern_index = mat.pattern_index;
-                let config = configs[mat.grammar_index];
+                let config = matches.grammars()[mat.grammar_index]
+                    .brackets_config
+                    .as_ref()
+                    .unwrap();
                 let pattern = &config.patterns[pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
