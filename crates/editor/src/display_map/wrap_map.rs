@@ -389,8 +389,22 @@ impl WrapSnapshot {
     #[ztracing::instrument(skip_all)]
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> WrapPatch {
         let mut new_transforms;
+        let isomorphic_fast_path = {
+            // `interpolate` only ever emits isomorphic transforms for edited ranges (real soft
+            // wraps are computed asynchronously by `update`/`rewrap`), and it preserves existing
+            // transforms outside the edits. So when there are no existing soft-wraps, the result
+            // is a single isomorphic transform spanning the whole tab snapshot. Detecting that is
+            // O(1) (an isomorphic tree has input lines == output lines at the root) and lets us
+            // skip the per-edit `text_summary_for_range` loop, which otherwise costs O(edits) and
+            // dominates multi-cursor keystrokes.
+            let summary = self.transforms.summary();
+            summary.input.lines == summary.output.lines
+        };
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
+        } else if isomorphic_fast_path && !new_tab_snapshot.text_summary().lines.is_zero() {
+            new_transforms = SumTree::default();
+            new_transforms.push(Transform::isomorphic(new_tab_snapshot.text_summary()), ());
         } else {
             let mut old_cursor = self.transforms.cursor::<TabPoint>(());
 

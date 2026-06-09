@@ -3,20 +3,22 @@ use editor::{
     Editor, EditorMode, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
-use gpui::{AppContext as _, BenchAppContext, Focusable as _, TestAppContext, TestDispatcher};
+use gpui::{AppContext as _, Focusable as _, TestAppContext, TestDispatcher};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
 use ui::IntoElement;
 use util::RandomCharIter;
 
-#[gpui::bench]
-fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &mut BenchAppContext) {
-    init_context(cx);
+// Reproduces issue #32051: place a cursor on every line of an N-line buffer, then type and delete.
+// Parameterized over the cursor count so the per-keystroke cost can be tracked as N grows.
+fn editor_multi_cursor_input(bencher: &mut Bencher<'_>, args: &(usize, TestAppContext)) {
+    let (line_count, cx) = args;
+    let mut cx = cx.clone();
 
-    let text = String::from_iter(["line:\n"; 1000]);
+    let text = "line:\n".repeat(*line_count);
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
-    let mut cx = cx.add_empty_window();
+    let cx = cx.add_empty_window();
     let editor = cx.update(|window, cx| {
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
@@ -116,16 +118,6 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     })
 }
 
-fn init_context(cx: &mut BenchAppContext) {
-    cx.update(|cx| {
-        let store = SettingsStore::test(cx);
-        cx.set_global(store);
-        assets::Assets.load_test_fonts(cx);
-        theme_settings::init(theme::LoadThemes::JustBase, cx);
-        editor::init(cx);
-    });
-}
-
 fn init_test_context(cx: &TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -158,7 +150,24 @@ fn criterion_benches(criterion: &mut criterion::Criterion) {
         open_editor_with_one_long_line,
     );
     group.finish();
+
+    // The 100k case is slow (and is the "hang" regime from the issue), so it is opt-in via
+    // ZED_BENCH_HUGE=1 to avoid burdening regular runs.
+    let mut line_counts = vec![1000usize, 10000];
+    if std::env::var("ZED_BENCH_HUGE").is_ok() {
+        line_counts.push(100000);
+    }
+    let mut group = criterion.benchmark_group("Multi-cursor input");
+    group.sample_size(10);
+    for line_count in line_counts {
+        group.bench_with_input(
+            BenchmarkId::new("cursors", line_count),
+            &(line_count, cx.clone()),
+            editor_multi_cursor_input,
+        );
+    }
+    group.finish();
 }
 
-gpui::bench_group!(benches, editor_input_with_1000_cursors, criterion_benches);
+gpui::bench_group!(benches, criterion_benches);
 gpui::bench_main!(benches);

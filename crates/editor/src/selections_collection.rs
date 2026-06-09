@@ -5,7 +5,7 @@ use std::{
 };
 
 use gpui::Pixels;
-use itertools::Itertools as _;
+use itertools::{Either, Itertools as _};
 use language::{Bias, Point, PointUtf16, Selection, SelectionGoal};
 use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
 use util::post_inc;
@@ -317,6 +317,19 @@ impl SelectionsCollection {
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
+        // When there is no pending selection, `all()` is the disjoint selections resolved in order,
+        // so the first one is `disjoint.first()`. Resolve only that anchor instead of every
+        // selection - this keeps the hot path O(log n) rather than O(selections), which matters
+        // with thousands of cursors. (`all()` additionally coalesces selections that land on the
+        // same display position, e.g. inside a fold, but that only ever extends a selection's end
+        // and so never changes which selection is first.)
+        if self.pending.is_none()
+            && let Some(first) = self.disjoint.first()
+        {
+            return resolve_selections_wrapping_blocks([first], snapshot)
+                .next()
+                .unwrap();
+        }
         self.all(snapshot).first().unwrap().clone()
     }
 
@@ -324,6 +337,13 @@ impl SelectionsCollection {
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
+        if self.pending.is_none()
+            && let Some(last) = self.disjoint.last()
+        {
+            return resolve_selections_wrapping_blocks([last], snapshot)
+                .next()
+                .unwrap();
+        }
         self.all(snapshot).last().unwrap().clone()
     }
 
@@ -1176,8 +1196,32 @@ where
     D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
+    // When the display collapses no buffer content (no folds and no replacement blocks), the
+    // `Point -> DisplayPoint -> Point` round-trip is the identity, and coalescing on display points
+    // equals coalescing on buffer points. So resolve `Anchor -> Point` (batched via
+    // `summaries_for_anchors`) and `Point -> D` (batched via `dimensions_from_points`) directly,
+    // skipping the per-selection display-coordinate conversions. This is the hot path for
+    // multi-cursor editing, where the round-trip otherwise costs ~10 SumTree seeks per selection.
+    if !map.has_collapsed_content() {
+        let (to_convert, selections) =
+            coalesce_selections(resolve_selections_point(selections, map)).tee();
+        let mut converted_endpoints = map
+            .buffer_snapshot()
+            .dimensions_from_points::<D>(to_convert.flat_map(|s| [s.start, s.end]));
+        return Either::Left(selections.map(move |s| {
+            let start = converted_endpoints.next().unwrap();
+            let end = converted_endpoints.next().unwrap();
+            Selection {
+                id: s.id,
+                start,
+                end,
+                reversed: s.reversed,
+                goal: s.goal,
+            }
+        }));
+    }
+
     // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`
-    // todo(lw): We should be able to short circuit the `Anchor -> DisplayPoint -> Point` to `Anchor -> Point`
     let (to_convert, selections) = resolve_selections_display(selections, map).tee();
     let mut converted_endpoints =
         map.buffer_snapshot()
@@ -1187,7 +1231,7 @@ where
                 assert!(start <= end, "start: {:?}, end: {:?}", start, end);
                 [start, end]
             }));
-    selections.map(move |s| {
+    Either::Right(selections.map(move |s| {
         let start = converted_endpoints.next().unwrap();
         let end = converted_endpoints.next().unwrap();
         assert!(start <= end, "start: {:?}, end: {:?}", start, end);
@@ -1198,7 +1242,7 @@ where
             reversed: s.reversed,
             goal: s.goal,
         }
-    })
+    }))
 }
 
 fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
