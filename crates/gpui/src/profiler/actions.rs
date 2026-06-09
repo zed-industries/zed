@@ -90,7 +90,7 @@ impl ActionStatistics {
             // When ran sequentially self.running will always be Some. When ran
             // concurrently that is no longer true. But that is fine, we do not
             // need to track action timings in tests.
-            cold_path();
+            std::hint::cold_path();
             return;
         };
 
