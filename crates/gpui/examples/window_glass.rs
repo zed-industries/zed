@@ -146,6 +146,7 @@ fn run_example() {
                 // Hide the system titlebar so the glass sidebar reaches the top
                 // of the window; the traffic-light buttons stay on top of it.
                 titlebar: Some(TitlebarOptions {
+                    #[cfg(target_os = "macos")]
                     appears_transparent: true,
                     ..Default::default()
                 }),
