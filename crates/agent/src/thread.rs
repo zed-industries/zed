@@ -5926,7 +5926,7 @@ mod tests {
                     .push(user_text_message(user_message_id.clone(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
                 // Auto-compaction would be a no-op here.
-                assert_eq!(thread.compaction_message_target_ix(), None);
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
             });
         });
 
