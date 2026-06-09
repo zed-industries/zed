@@ -178,7 +178,7 @@ impl Message {
     pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
         match self {
             Message::User(message) => {
-                if message.content.is_empty() {
+                if message.hidden_from_model || message.content.is_empty() {
                     vec![]
                 } else {
                     vec![message.to_request()]
@@ -216,6 +216,13 @@ impl Message {
 pub struct UserMessage {
     pub id: UserMessageId,
     pub content: Arc<[UserMessageContent]>,
+    /// When true, this message is part of the persisted thread (and is replayed
+    /// into the UI on reload) but is never included in requests sent to the
+    /// model. This is used for the `/compact` slash-command marker: we want to
+    /// remember the command the user typed and show it back to them, without
+    /// feeding the literal `/compact` text into the model's context.
+    #[serde(default)]
+    pub hidden_from_model: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2185,8 +2192,11 @@ impl Thread {
         let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
-        self.messages
-            .push(Arc::new(Message::User(UserMessage { id, content })));
+        self.messages.push(Arc::new(Message::User(UserMessage {
+            id,
+            content,
+            hidden_from_model: false,
+        })));
         cx.notify();
 
         self.send_existing(cx)
@@ -2209,9 +2219,15 @@ impl Thread {
 
     /// Force a manual context compaction using the summary strategy,
     /// regardless of the current token usage or context window size.
+    ///
+    /// `marker_content` is the content the user typed to trigger the command
+    /// (e.g. the `/compact` text). It is persisted on a hidden marker message so
+    /// it can be replayed into the UI on reload, but it is never sent to the
+    /// model.
     pub fn compact(
         &mut self,
         id: UserMessageId,
+        marker_content: Arc<[UserMessageContent]>,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         let model = self
@@ -2252,7 +2268,10 @@ impl Thread {
                         cancellation_rx.clone(),
                         model,
                         request,
-                        CompactionInsertion::Manual { marker_id: id },
+                        CompactionInsertion::Manual {
+                            marker_id: id,
+                            marker_content,
+                        },
                         cx,
                     )
                     .await
@@ -2312,8 +2331,11 @@ impl Thread {
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
             .collect::<Arc<_>>();
-        self.messages
-            .push(Arc::new(Message::User(UserMessage { id, content })));
+        self.messages.push(Arc::new(Message::User(UserMessage {
+            id,
+            content,
+            hidden_from_model: false,
+        })));
         cx.notify();
     }
 
@@ -2848,10 +2870,14 @@ impl Thread {
                         this.messages.push(compaction);
                     }
                 }
-                CompactionInsertion::Manual { marker_id } => {
+                CompactionInsertion::Manual {
+                    marker_id,
+                    marker_content,
+                } => {
                     this.messages.push(Arc::new(Message::User(UserMessage {
                         id: marker_id,
-                        content: Arc::from([]),
+                        content: marker_content,
+                        hidden_from_model: true,
                     })));
                     this.messages.push(compaction);
                 }
@@ -4000,7 +4026,7 @@ impl Thread {
             let Message::User(user_message) = &**message else {
                 continue;
             };
-            if user_message.content.is_empty() {
+            if user_message.hidden_from_model || user_message.content.is_empty() {
                 continue;
             }
 
@@ -4313,8 +4339,13 @@ enum CompactionInsertion {
     /// Automatic compaction inserts the summary at an index computed up front
     /// (which may be before a trailing not-yet-answered user message).
     Auto { insertion_ix: usize },
-    /// Manual `/compact` appends a zero-content user message followed by the summary.
-    Manual { marker_id: UserMessageId },
+    /// Manual `/compact` appends a hidden user message (carrying the text the
+    /// user typed, for display on reload, but excluded from model requests)
+    /// followed by the summary.
+    Manual {
+        marker_id: UserMessageId,
+        marker_content: Arc<[UserMessageContent]>,
+    },
 }
 
 struct RunningTurn {
@@ -5862,6 +5893,7 @@ mod tests {
         Arc::new(Message::User(UserMessage {
             id,
             content: vec![UserMessageContent::Text(text.to_string())].into(),
+            hidden_from_model: false,
         }))
     }
 
@@ -6157,7 +6189,11 @@ mod tests {
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
-                    thread.compact(compact_message_id.clone(), cx)
+                    thread.compact(
+                        compact_message_id.clone(),
+                        vec![UserMessageContent::Text("/compact".into())].into(),
+                        cx,
+                    )
                 })
             })
             .unwrap();
@@ -6178,18 +6214,34 @@ mod tests {
         model.end_completion_stream(&compaction_request);
         cx.run_until_parked();
 
-        // The compaction summary is appended after a zero-content user message
-        // marker, and no follow-up model turn is requested — `/compact` only
-        // compacts.
+        // The compaction summary is appended after a hidden user message marker
+        // (which carries the `/compact` text for display on reload but is
+        // excluded from model requests), and no follow-up model turn is
+        // requested — `/compact` only compacts.
         assert!(model.pending_completions().is_empty());
         cx.update(|cx| {
             thread.read_with(cx, |thread, _cx| {
                 assert!(matches!(&*thread.messages[0], Message::User(_)));
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
-                assert!(matches!(
-                    &*thread.messages[2],
-                    Message::User(UserMessage { id, content }) if id == &compact_message_id && content.is_empty()
-                ));
+                match &*thread.messages[2] {
+                    Message::User(UserMessage {
+                        id,
+                        content,
+                        hidden_from_model,
+                    }) => {
+                        assert_eq!(id, &compact_message_id);
+                        assert!(
+                            *hidden_from_model,
+                            "marker should be hidden from the model"
+                        );
+                        assert_eq!(
+                            content.as_ref(),
+                            [UserMessageContent::Text("/compact".into())],
+                            "marker should preserve the user's typed command for display"
+                        );
+                    }
+                    other => panic!("expected marker user message, got {other:?}"),
+                }
                 assert!(matches!(
                     &*thread.messages[3],
                     Message::Compaction(CompactionInfo::Summary(summary)) if summary.as_ref() == "summary of old context"
@@ -6229,7 +6281,15 @@ mod tests {
         });
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(
+                        UserMessageId::new(),
+                        vec![UserMessageContent::Text("/compact".into())].into(),
+                        cx,
+                    )
+                })
+            })
             .unwrap();
         cx.run_until_parked();
         // The compaction request is in flight but hasn't streamed a summary.
@@ -6264,7 +6324,15 @@ mod tests {
         });
 
         let mut events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(
+                        UserMessageId::new(),
+                        vec![UserMessageContent::Text("/compact".into())].into(),
+                        cx,
+                    )
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -6299,7 +6367,15 @@ mod tests {
         cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(
+                        UserMessageId::new(),
+                        vec![UserMessageContent::Text("/compact".into())].into(),
+                        cx,
+                    )
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -6309,11 +6385,12 @@ mod tests {
         });
     }
 
-    /// The zero-content marker replays as an empty user message, which the UI
-    /// drops (it renders content blocks, of which there are none), so reloading
-    /// a compacted thread doesn't surface an empty `/compact` bubble.
+    /// The marker replays as a user message carrying the `/compact` text the
+    /// user typed, so reloading a compacted thread shows the original command
+    /// back to the user. The marker is flagged `hidden_from_model`, so it never
+    /// reaches the model (see `to_request` / `retained_user_request_messages_before`).
     #[gpui::test]
-    async fn test_manual_compact_marker_replays_as_empty_user_message(cx: &mut TestAppContext) {
+    async fn test_manual_compact_marker_replays_with_command_text(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let marker_id = UserMessageId::new();
 
@@ -6325,7 +6402,8 @@ mod tests {
                 thread.messages.push(agent_text_message("answer"));
                 thread.messages.push(Arc::new(Message::User(UserMessage {
                     id: marker_id.clone(),
-                    content: Arc::from([]),
+                    content: vec![UserMessageContent::Text("/compact".into())].into(),
+                    hidden_from_model: true,
                 })));
                 thread.messages.push(summary_compaction("summary"));
                 thread.replay(cx)
@@ -6340,9 +6418,10 @@ mod tests {
         match event {
             Some(Ok(ThreadEvent::UserMessage(message))) => {
                 assert_eq!(message.id, marker_id);
-                assert!(
-                    message.content.is_empty(),
-                    "marker should replay with no content so the UI renders nothing"
+                assert_eq!(
+                    message.content.as_ref(),
+                    [UserMessageContent::Text("/compact".into())],
+                    "marker should replay with the user's typed command so the UI shows it"
                 );
             }
             _ => panic!("expected the marker to replay as a user message, got {event:?}"),
@@ -6352,6 +6431,54 @@ mod tests {
         assert!(
             matches!(&event, Some(Ok(ThreadEvent::ContextCompaction(_)))),
             "expected the compaction to replay after the marker, got {event:?}"
+        );
+    }
+
+    /// The hidden marker carrying the `/compact` text must never be sent to the
+    /// model: neither through the normal request path nor the post-compaction
+    /// "retained recent user messages" path.
+    #[gpui::test]
+    async fn test_manual_compact_marker_is_hidden_from_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let new_user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                thread.messages.push(Arc::new(Message::User(UserMessage {
+                    id: UserMessageId::new(),
+                    content: vec![UserMessageContent::Text("/compact".into())].into(),
+                    hidden_from_model: true,
+                })));
+                thread
+                    .messages
+                    .push(summary_compaction("summary of old context"));
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(
+                        new_user_message_id.clone(),
+                        [UserMessageContent::Text("new question".into())],
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let request = model.pending_completions().pop().unwrap();
+        let texts = request_texts_after_system(&request.messages);
+        assert!(
+            !texts.iter().any(|text| text.contains("/compact")),
+            "the `/compact` marker text must never be sent to the model, got {texts:?}"
         );
     }
 

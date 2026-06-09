@@ -1864,14 +1864,27 @@ impl NativeAgent {
     }
 
     /// Run a summary-based context compaction in response to the built-in
-    /// `/compact` slash command.
+    /// `/compact` slash command. `original_content` is the text the user typed
+    /// to trigger the command; it is persisted on a hidden marker message so it
+    /// can be shown again on reload, but it is never sent to the model.
     fn send_compact_command(
         &self,
         message_id: UserMessageId,
         session_id: acp::SessionId,
+        original_content: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> Task<Result<acp::PromptResponse>> {
+        let path_style = self
+            .session_project_state(&session_id)
+            .map(|state| state.project.read(cx).path_style(cx));
+
         cx.spawn(async move |this, cx| {
+            let path_style = path_style.context("Project state not found for session")?;
+            let marker_content = original_content
+                .into_iter()
+                .map(|block| UserMessageContent::from_content_block(block, path_style))
+                .collect::<Arc<[_]>>();
+
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
                 let session = this
                     .sessions
@@ -1880,7 +1893,9 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
-            let response_stream = thread.update(cx, |thread, cx| thread.compact(message_id, cx))?;
+            let response_stream = thread.update(cx, |thread, cx| {
+                thread.compact(message_id, marker_content, cx)
+            })?;
 
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
@@ -2552,7 +2567,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         if let Some(parsed_command) = Command::parse(&params.prompt) {
             if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
                 return self.0.update(cx, |agent, cx| {
-                    agent.send_compact_command(id, session_id, cx)
+                    agent.send_compact_command(id, session_id, params.prompt, cx)
                 });
             }
 
