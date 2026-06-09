@@ -3602,94 +3602,95 @@ impl ThreadView {
         let summary = compaction.summary.clone();
         let is_expanded = self.expanded_compactions.contains(&entry_ix);
 
+        let id = format!("context-compaction-{entry_ix}");
+        let header_label = match compaction.status {
+            acp_thread::ContextCompactionStatus::InProgress => "Compacting Context…",
+            acp_thread::ContextCompactionStatus::Completed => "Context Compacted",
+            acp_thread::ContextCompactionStatus::Canceled => "Compaction Canceled",
+        };
+        let chevron_end = if is_expanded {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
         let header = h_flex()
-            .id(("context-compaction", entry_ix))
-            .px_5()
-            .py_1()
-            .gap_2()
+            .gap_1()
             .w_full()
+            .child(Divider::horizontal())
             .child(
-                h_flex()
-                    .flex_none()
-                    .gap_1p5()
-                    .child(
+                Button::new(id, header_label)
+                    .label_size(LabelSize::Small)
+                    .loading(is_compacting)
+                    .disabled(is_compacting)
+                    .start_icon(
                         Icon::new(IconName::Scissors)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .child(
-                        Label::new(match compaction.status {
-                            acp_thread::ContextCompactionStatus::InProgress => {
-                                "Compacting context…"
-                            }
-                            acp_thread::ContextCompactionStatus::Completed => "Context compacted",
-                            acp_thread::ContextCompactionStatus::Canceled => "Compaction cancelled",
-                        })
-                        .size(LabelSize::Custom(self.tool_name_font_size()))
-                        .color(Color::Muted),
-                    ),
+                    .when(!is_compacting, |this| {
+                        this.end_icon(
+                            Icon::new(chevron_end)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener(
+                            move |this, _event: &ClickEvent, _window, cx| {
+                                this.toggle_compaction_expansion(entry_ix, cx);
+                            },
+                        ))
+                    }),
             )
-            .child(if is_compacting {
-                div().flex_1().into_any_element()
-            } else {
-                Divider::horizontal().into_any_element()
-            })
-            .child(
-                Disclosure::new(("compaction-disclosure", entry_ix), is_expanded)
-                    .opened_icon(IconName::ChevronUp)
-                    .closed_icon(IconName::ChevronDown),
-            )
-            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                this.toggle_compaction_expansion(entry_ix, cx);
-            }));
+            .child(Divider::horizontal());
 
-        if let Some(summary) = summary
-            && is_expanded
-        {
-            v_flex()
-                .w_full()
-                .child(header)
-                .child(
-                    div()
-                        .id(("compaction-summary", entry_ix))
-                        .mx_5()
-                        .pl_3p5()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .child(self.render_markdown(
-                            summary,
-                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                            cx,
-                        )),
-                )
-                .child(
-                    div()
-                        .mx_5()
-                        .mb_1()
-                        .pl_3p5()
-                        .pt_2()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .child(
-                            IconButton::new(
-                                ("compaction-summary-collapse", entry_ix),
-                                IconName::ChevronUp,
+        div()
+            .px_5()
+            .w_full()
+            .child(
+                v_flex()
+                    .pt_1p5()
+                    .mb_1p5()
+                    .gap_1p5()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .rounded_sm()
+                    .child(header)
+                    .when_some(summary.filter(|_| is_expanded), |this, summary| {
+                        this.border_color(self.tool_card_border_color(cx))
+                            .bg(cx.theme().colors().editor_background.opacity(0.2))
+                            .child(
+                                div()
+                                    .id(("compaction-summary", entry_ix))
+                                    .p_2()
+                                    .text_ui(cx)
+                                    .child(self.render_markdown(
+                                        summary,
+                                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                        cx,
+                                    )),
                             )
-                            .full_width()
-                            .style(ButtonStyle::Outlined)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(
-                                move |this, _event: &ClickEvent, _window, cx| {
-                                    this.expanded_compactions.remove(&entry_ix);
-                                    cx.notify();
-                                },
-                            )),
-                        ),
-                )
-                .into_any()
-        } else {
-            header.into_any()
-        }
+                            .child(
+                                h_flex()
+                                    .border_t_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(
+                                        IconButton::new(
+                                            ("compaction-summary-collapse", entry_ix),
+                                            IconName::ChevronUp,
+                                        )
+                                        .full_width()
+                                        .on_click(
+                                            cx.listener(
+                                                move |this, _event: &ClickEvent, _window, cx| {
+                                                    this.expanded_compactions.remove(&entry_ix);
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        ),
+                                    ),
+                            )
+                    }),
+            )
+            .into_any()
     }
 
     fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
