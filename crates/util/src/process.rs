@@ -93,13 +93,14 @@ impl Child {
         Ok(Self { process, job })
     }
 
-    /// Returns the inner child process.
-    ///
-    /// On Windows, this drops the job object associated with the process
-    /// tree, terminating any descendant processes that are still running
-    /// (but not the direct child itself).
-    pub fn into_inner(self) -> smol::process::Child {
-        self.process
+    /// Consumes the child, draining its stdout/stderr and waiting for it to
+    /// exit, then returns the collected output.
+    pub async fn output(self) -> Result<std::process::Output> {
+        // NOTE: Keep `self` alive across this await, do not destructure it to
+        // pull `process` out first. On Windows that drops the job object early,
+        // which triggers `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and kills the
+        // child before `output()` finishes collecting its stdout/stderr.
+        Ok(self.process.output().await?)
     }
 
     #[cfg(not(windows))]
