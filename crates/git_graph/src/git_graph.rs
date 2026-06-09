@@ -605,7 +605,8 @@ type ActiveLaneIdx = usize;
 
 enum AllCommitCount {
     NotLoaded,
-    Loaded(usize),
+    Loading(usize),
+    FullyLoaded(usize),
 }
 
 #[derive(Debug)]
@@ -848,7 +849,7 @@ impl GraphData {
             }));
         }
 
-        self.max_commit_count = AllCommitCount::Loaded(self.commits.len());
+        self.max_commit_count = AllCommitCount::Loading(self.commits.len());
     }
 }
 
@@ -1369,9 +1370,17 @@ impl GitGraph {
                         {
                             self.select_entry(pending_sha_index, ScrollStrategy::Nearest, cx);
                         }
+                        let count = match self.graph_data.max_commit_count {
+                            AllCommitCount::FullyLoaded(count) | AllCommitCount::Loading(count) => {
+                                count
+                            }
+                            AllCommitCount::NotLoaded => 0,
+                        };
+                        self.graph_data.max_commit_count = AllCommitCount::FullyLoaded(count);
+                        cx.notify();
                     }
                     GitGraphEvent::LoadingError => {
-                        // todo(git_graph): Wire this up with the UI
+                        cx.notify();
                     }
                     GitGraphEvent::CountUpdated(commit_count) => {
                         let old_count = self.graph_data.commits.len();
@@ -3198,7 +3207,8 @@ impl GitGraph {
         let viewport_height = table_state.scroll_handle.viewport().size.height;
 
         let commit_count = match self.graph_data.max_commit_count {
-            AllCommitCount::Loaded(count) => count,
+            AllCommitCount::Loading(count) => count,
+            AllCommitCount::FullyLoaded(count) => count,
             AllCommitCount::NotLoaded => self.graph_data.commits.len(),
         };
         let content_height = Self::row_height(window, cx) * commit_count;
@@ -3210,6 +3220,49 @@ impl GitGraph {
         if new_offset != current_offset {
             table_state.set_scroll_offset(new_offset);
             cx.notify();
+        }
+    }
+
+    fn commit_count_and_loading_state(&mut self, cx: &mut Context<Self>) -> (usize, bool) {
+        match self.graph_data.max_commit_count {
+            AllCommitCount::FullyLoaded(count) => (count, false),
+            AllCommitCount::Loading(count) => {
+                let is_loading = self
+                    .get_repository(cx)
+                    .map(|repository| {
+                        repository.update(cx, |repository, cx| {
+                            repository
+                                .graph_data(self.log_source.clone(), self.log_order, 0..0, cx)
+                                .is_loading
+                        })
+                    })
+                    .unwrap_or(false);
+
+                (count, is_loading)
+            }
+            AllCommitCount::NotLoaded => {
+                let (commit_count, is_loading) = if let Some(repository) = self.get_repository(cx) {
+                    repository.update(cx, |repository, cx| {
+                        // Start loading the graph data if we haven't started already
+                        let GraphDataResponse {
+                            commits,
+                            is_loading,
+                            error: _,
+                        } = repository.graph_data(
+                            self.log_source.clone(),
+                            self.log_order,
+                            0..usize::MAX,
+                            cx,
+                        );
+                        self.graph_data.add_commits(commits);
+                        (commits.len(), is_loading)
+                    })
+                } else {
+                    (0, false)
+                };
+
+                (commit_count, is_loading)
+            }
         }
     }
 
@@ -3256,32 +3309,7 @@ impl Render for GitGraph {
             self.search_state.state = QueryState::Empty;
             self.search(query, cx);
         }
-        let (commit_count, is_loading) = match self.graph_data.max_commit_count {
-            AllCommitCount::Loaded(count) => (count, true),
-            AllCommitCount::NotLoaded => {
-                let (commit_count, is_loading) = if let Some(repository) = self.get_repository(cx) {
-                    repository.update(cx, |repository, cx| {
-                        // Start loading the graph data if we haven't started already
-                        let GraphDataResponse {
-                            commits,
-                            is_loading,
-                            error: _,
-                        } = repository.graph_data(
-                            self.log_source.clone(),
-                            self.log_order,
-                            0..usize::MAX,
-                            cx,
-                        );
-                        self.graph_data.add_commits(&commits);
-                        (commits.len(), is_loading)
-                    })
-                } else {
-                    (0, false)
-                };
-
-                (commit_count, is_loading)
-            }
-        };
+        let (commit_count, is_loading) = self.commit_count_and_loading_state(cx);
 
         let error = self.get_repository(cx).and_then(|repo| {
             repo.read(cx)
@@ -4043,6 +4071,13 @@ impl GitGraph {
             .map(|commit| commit.data.clone())
             .collect()
     }
+
+    pub fn commit_count_and_loading_state_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> (usize, bool) {
+        self.commit_count_and_loading_state(cx)
+    }
 }
 
 /// Generates a random commit DAG suitable for testing git graph rendering.
@@ -4782,6 +4817,63 @@ mod tests {
                 adversarial, num_commits, error
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_empty_nested_repository_graph_stops_loading(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                "repo_a": {
+                    ".git": {},
+                    "file_a.txt": "content",
+                },
+                "repo_b": {
+                    ".git": {},
+                    "file_b.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            assert_eq!(project.repositories(cx).len(), 2);
+            project
+                .active_repository(cx)
+                .expect("should have an active repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let (commit_count, is_loading) = git_graph.update(cx, |graph, cx| {
+            graph.commit_count_and_loading_state_for_test(cx)
+        });
+
+        assert_eq!(commit_count, 0);
+        assert!(!is_loading, "empty graph data should stop loading");
     }
 
     #[gpui::test]
