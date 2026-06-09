@@ -3563,7 +3563,7 @@ mod internal_tests {
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
@@ -3635,9 +3635,27 @@ mod internal_tests {
             .collect()
     }
 
+    fn set_handoff_flag_override(value: &str, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, _| {
+                store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            });
+            cx.update_flags(false, vec![]);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .feature_flags
+                        .get_or_insert_default()
+                        .insert("handoff".to_string(), value.to_string());
+                });
+            });
+        });
+    }
+
     #[gpui::test]
     async fn test_compact_command_requires_handoff_feature_flag(cx: &mut TestAppContext) {
         init_test(cx);
+        set_handoff_flag_override("off", cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
@@ -3662,7 +3680,7 @@ mod internal_tests {
             assert!(commands.is_empty());
         });
 
-        cx.update(|cx| cx.update_flags(true, vec!["handoff".to_string()]));
+        set_handoff_flag_override("on", cx);
 
         let acp_thread = cx
             .update(|cx| {
@@ -3691,6 +3709,8 @@ mod internal_tests {
     #[gpui::test]
     async fn test_compact_prompt_is_regular_prompt_without_handoff(cx: &mut TestAppContext) {
         init_test(cx);
+        set_handoff_flag_override("off", cx);
+
         let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
