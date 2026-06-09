@@ -3377,10 +3377,12 @@ impl Buffer {
             self.reparse = None;
             self.did_finish_parsing(edited.snapshot.syntax, None, cx);
             if did_edit {
-                cx.emit(BufferEvent::Edited { is_local: true });
+                cx.emit(BufferEvent::Edited {
+                    source: BufferEditSource::User,
+                });
             }
         } else {
-            self.did_edit(&base_version, false, true, cx);
+            self.did_edit(&base_version, false, BufferEditSource::User, cx);
         }
     }
 }

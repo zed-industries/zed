@@ -263,7 +263,7 @@ impl BufferDiffSnapshot {
     }
 
     pub fn base_text_exists(&self) -> bool {
-        self.inner.base_text_exists
+        self.base_text_exists
     }
 
     pub fn secondary_diff(&self) -> Option<&BufferDiffSnapshot> {
