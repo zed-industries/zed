@@ -20,6 +20,9 @@ pub mod completion;
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
+pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
+pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum AnthropicModelMode {
