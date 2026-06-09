@@ -34,12 +34,11 @@ impl RowChunks {
     pub fn new(snapshot: &text::BufferSnapshot, max_rows_per_chunk: u32) -> Self {
         let buffer_point_range = (0..snapshot.len()).to_point(&snapshot);
         let last_row = buffer_point_range.end.row;
+        let chunk_count =
+            ((last_row - buffer_point_range.start.row) / max_rows_per_chunk + 1) as usize;
+        let last_chunk_id = chunk_count - 1;
         let chunks = (buffer_point_range.start.row..=last_row)
             .step_by(max_rows_per_chunk as usize)
-            .collect::<Vec<_>>();
-        let last_chunk_id = chunks.len() - 1;
-        let chunks = chunks
-            .into_iter()
             .enumerate()
             .map(|(id, chunk_start)| {
                 let start = Point::new(chunk_start, 0);
@@ -73,19 +72,17 @@ impl RowChunks {
     }
 
     pub fn applicable_chunks(&self, ranges: &[Range<Point>]) -> impl Iterator<Item = RowChunk> {
-        let row_ranges = ranges
-            .iter()
-            // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
-            // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
-            .map(|point_range| point_range.start.row..point_range.end.row + 1)
-            .collect::<Vec<_>>();
         self.chunks
             .iter()
             .filter(move |chunk| -> bool {
                 let chunk_range = chunk.row_range().to_inclusive();
-                row_ranges
+                ranges
                     .iter()
-                    .any(|row_range| chunk_range.overlaps(&row_range))
+                    // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
+                    // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
+                    .any(|point_range| {
+                        chunk_range.overlaps(&(point_range.start.row..point_range.end.row + 1))
+                    })
             })
             .copied()
     }
