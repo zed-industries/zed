@@ -354,7 +354,7 @@ mod tests {
     use sqlez::domain::Domain;
     use sqlez_macros::sql;
 
-    use crate::{open_db, run_database_migrations};
+    use crate::{db_path, open_db, run_database_migrations};
 
     // Test bad migration panics
     #[gpui::test]
@@ -432,6 +432,27 @@ mod tests {
         };
 
         assert!(format!("{error:#}").contains("strict_failure_test"));
+
+        // Step 1 of the migration succeeded before step 2 failed, so verify that
+        // the whole migration was rolled back and the database is untouched.
+        let db_path = db_path(tempdir.path(), release_channel::ReleaseChannel::Dev);
+        let connection =
+            sqlez::connection::Connection::open_file(db_path.to_string_lossy().as_ref());
+        anyhow::ensure!(
+            connection.persistent(),
+            "could not open database {}",
+            db_path.display()
+        );
+        // The migration created `strict_failure_test`, and the migration runner
+        // created the `migrations` bookkeeping table; both must be gone.
+        let tables = connection.select::<String>(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )?()?;
+        assert_eq!(
+            tables,
+            Vec::<String>::new(),
+            "failed migration should have been rolled back"
+        );
 
         Ok(())
     }
