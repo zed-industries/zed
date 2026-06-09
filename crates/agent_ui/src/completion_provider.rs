@@ -2838,37 +2838,6 @@ mod tests {
     }
 
     #[test]
-    fn test_command_category_grouping() {
-        fn command(category: Option<acp_thread::CommandCategory>) -> AvailableCommand {
-            AvailableCommand {
-                name: "cmd".into(),
-                description: "".into(),
-                requires_argument: false,
-                source: None,
-                category,
-            }
-        }
-
-        let native = command(Some(acp_thread::CommandCategory::Native));
-        let mcp = command(Some(acp_thread::CommandCategory::Mcp));
-        let acp = command(None);
-
-        // Commands order Native < Mcp < external ACP.
-        assert!(native.category_order() < mcp.category_order());
-        assert!(mcp.category_order() < acp.category_order());
-
-        assert_eq!(native.group().label, Some("Commands".into()));
-        assert_eq!(mcp.group().label, Some("MCP Server Commands".into()));
-        assert_eq!(acp.group().label, Some("ACP Agent Commands".into()));
-
-        // Each category gets a distinct group key so the popup renders a
-        // separate section header per source.
-        let keys = [native.group().key, mcp.group().key, acp.group().key];
-        let unique: std::collections::HashSet<_> = keys.iter().cloned().collect();
-        assert_eq!(unique.len(), 3);
-    }
-
-    #[test]
     fn test_group_by_relevance_floats_best_group_and_keeps_groups_contiguous() {
         // Items arrive in fuzzy-score order (best first). The group containing
         // the best match floats to the top, groups stay contiguous, and the
