@@ -9,10 +9,6 @@
   (else_clause)
 ] @indent
 
-(expression_statement
-  (_) @indent
-  ";" @end)
-
 (_
   "{"
   "}" @end) @indent
@@ -20,9 +16,6 @@
 (_
   "("
   ")" @end) @indent
-
-((comment) @indent
-  (#match? @indent "^/\\*"))
 
 (if_statement) @start.if
 

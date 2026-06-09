@@ -116,6 +116,7 @@ impl SessionCapabilities {
                 description: command.description.clone().into(),
                 requires_argument: command.input.is_some(),
                 source: None,
+                category: acp_thread::command_category_from_meta(&command.meta),
             })
             .collect()
     }
@@ -2282,6 +2283,7 @@ mod tests {
             description: "Deploy the app".into(),
             source: "".into(),
             skill_file_path: skill_file_path.clone(),
+            warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
             acp::PromptCapabilities::default(),
@@ -2297,6 +2299,40 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_commands_derive_category_from_meta() {
+        let session_capabilities = SessionCapabilities::new(
+            acp::PromptCapabilities::default(),
+            vec![
+                acp::AvailableCommand::new("compact", "Built-in").meta(
+                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
+                ),
+                acp::AvailableCommand::new("deploy", "MCP").meta(
+                    acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
+                ),
+                // No category meta: this is how external ACP agents' commands
+                // arrive, and they should group on their own.
+                acp::AvailableCommand::new("help", "External"),
+            ],
+            Vec::new(),
+        );
+
+        let commands = session_capabilities.completion_commands();
+        let category = |name: &str| {
+            commands
+                .iter()
+                .find(|command| command.name.as_ref() == name)
+                .unwrap()
+                .category
+        };
+        assert_eq!(
+            category("compact"),
+            Some(acp_thread::CommandCategory::Native)
+        );
+        assert_eq!(category("deploy"), Some(acp_thread::CommandCategory::Mcp));
+        assert_eq!(category("help"), None);
+    }
+
+    #[test]
     fn test_validate_slash_commands_accepts_scope_qualified_skill() {
         let agent_id = AgentId::from("Zed");
         let make_skill = |name: &str, source: &str| AvailableSkill {
@@ -2304,6 +2340,7 @@ mod tests {
             description: "desc".into(),
             source: source.into(),
             skill_file_path: PathBuf::from(format!("/tmp/{source}-{name}/SKILL.md")),
+            warning: None,
         };
 
         // Global skills carry an empty scope (so the popup inserts

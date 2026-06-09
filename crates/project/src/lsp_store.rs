@@ -10994,6 +10994,7 @@ impl LspStore {
                     snippet_deduplication_key: None,
                     insert_text_mode: None,
                     icon_path: None,
+                    icon_color: None,
                     confirm: None,
                     group: None,
                 }]))),
@@ -12270,7 +12271,7 @@ impl LspStore {
             .iter()
             .filter_map(|(seed, v)| seed.worktree_id.eq(&worktree_id).then(|| v.id))
             .collect::<Vec<_>>();
-        language_server_ids.sort();
+        language_server_ids.sort_unstable();
         language_server_ids.dedup();
 
         // let abs_path = worktree_handle.read(cx).abs_path();
@@ -14142,6 +14143,7 @@ async fn populate_labels_for_completions(
                     insert_text_mode: lsp_completion.insert_text_mode,
                     source: completion.source,
                     icon_path: None,
+                    icon_color: None,
                     confirm: None,
                     match_start: None,
                     snippet_deduplication_key: None,
@@ -14159,6 +14161,7 @@ async fn populate_labels_for_completions(
                     source: completion.source,
                     insert_text_mode: None,
                     icon_path: None,
+                    icon_color: None,
                     confirm: None,
                     match_start: None,
                     snippet_deduplication_key: None,

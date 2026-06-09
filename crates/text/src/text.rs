@@ -2838,33 +2838,62 @@ impl BufferSnapshot {
     }
 }
 
+/// A chunk of fragments accumulated by [`FragmentBuilder`]. `Tree` chunks are
+/// subtrees sliced off the previous fragment tree and are kept intact so they
+/// continue to share nodes with it; `Loose` chunks batch individually pushed
+/// fragments so they can be turned into a subtree in one shot.
+enum FragmentChunk {
+    Tree(SumTree<Fragment>),
+    Loose(Vec<Fragment>),
+}
+
 struct FragmentBuilder {
-    fragments: Vec<Fragment>,
+    chunks: Vec<FragmentChunk>,
     summary: FragmentSummary,
 }
 
 impl FragmentBuilder {
     fn new(init: SumTree<Fragment>) -> Self {
-        Self {
-            summary: init.summary().clone(),
-            fragments: init.iter().cloned().collect(),
+        let summary = init.summary().clone();
+        let mut chunks = Vec::new();
+        if !init.is_empty() {
+            chunks.push(FragmentChunk::Tree(init));
         }
+        Self { chunks, summary }
     }
     fn append(&mut self, items: SumTree<Fragment>, cx: &Option<clock::Global>) {
         if !items.is_empty() {
             self.summary.add_summary(items.summary(), cx);
-            self.fragments.extend(items.iter().cloned());
+            self.chunks.push(FragmentChunk::Tree(items));
         }
     }
     fn push(&mut self, fragment: Fragment, cx: &Option<clock::Global>) {
-        self.append(SumTree::from_item(fragment, cx), cx);
+        self.summary
+            .add_summary(&sum_tree::Item::summary(&fragment, cx), cx);
+        match self.chunks.last_mut() {
+            Some(FragmentChunk::Loose(fragments)) => fragments.push(fragment),
+            _ => self.chunks.push(FragmentChunk::Loose(vec![fragment])),
+        }
     }
     fn to_sum_tree(self, cx: &Option<clock::Global>) -> SumTree<Fragment> {
-        if self.fragments.len() > 1024 {
-            SumTree::from_par_iter(self.fragments, cx)
-        } else {
-            SumTree::from_iter(self.fragments, cx)
+        // Appending a `Tree` chunk only touches the right spine and grafts the
+        // subtree by cloning `Arc`s, so the untouched regions stay shared with
+        // the previous fragment tree. `Loose` runs (newly inserted or rewritten
+        // fragments) are built in one pass, parallelizing the large ones.
+        let mut tree = SumTree::new(cx);
+        for chunk in self.chunks {
+            match chunk {
+                FragmentChunk::Tree(subtree) => tree.append(subtree, cx),
+                FragmentChunk::Loose(fragments) => {
+                    if fragments.len() > 1024 {
+                        tree.append(SumTree::from_par_iter(fragments, cx), cx);
+                    } else {
+                        tree.append(SumTree::from_iter(fragments, cx), cx);
+                    }
+                }
+            }
         }
+        tree
     }
     fn summary(&self) -> &FragmentSummary {
         &self.summary
