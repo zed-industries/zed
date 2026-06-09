@@ -3607,7 +3607,10 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
-            thinking_allowed: self.thinking_enabled,
+            // Models that can't run with thinking disabled ignore the
+            // toggle state, which may be stale from a previously selected
+            // model that could.
+            thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
         };
