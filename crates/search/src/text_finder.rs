@@ -14,7 +14,7 @@ use workspace::{DismissDecision, ModalView, Workspace};
 
 mod delegate;
 mod render;
-use delegate::TextPickerDelegate;
+use delegate::Delegate;
 
 actions!(
     // TODO! reuse most of the ones from project search
@@ -32,16 +32,16 @@ actions!(
 // TODO! pick a name?
 //   like FileFinder so TextFinder?
 //   like ProjectSearchPicker?
-pub struct TextPicker {
-    picker: Entity<Picker<TextPickerDelegate>>,
+pub struct TextFinder {
+    picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(TextPicker::register).detach();
+    cx.observe_new(TextFinder::register).detach();
 }
 
-impl TextPicker {
+impl TextFinder {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
@@ -70,7 +70,7 @@ impl TextPicker {
                     let project = workspace.project().clone();
                     let weak_workspace = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        let delegate = TextPickerDelegate::new(weak_workspace, project, cx);
+                        let delegate = Delegate::new(weak_workspace, project, cx);
 
                         Self::new(delegate, window, cx)
                     });
@@ -79,7 +79,7 @@ impl TextPicker {
         })
     }
 
-    fn new(delegate: TextPickerDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(delegate: Delegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let project = delegate.project.clone();
         let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
@@ -94,7 +94,7 @@ impl TextPicker {
     }
 }
 
-impl ModalView for TextPicker {
+impl ModalView for TextFinder {
     fn on_before_dismiss(
         &mut self,
         _window: &mut Window,
@@ -105,9 +105,9 @@ impl ModalView for TextPicker {
     }
 }
 
-impl EventEmitter<DismissEvent> for TextPicker {}
+impl EventEmitter<DismissEvent> for TextFinder {}
 
-impl Focusable for TextPicker {
+impl Focusable for TextFinder {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.read(cx).focus_handle(cx)
     }

@@ -1,9 +1,9 @@
 use gpui::KeyContext;
 use ui::{Context, InteractiveElement, IntoElement, ParentElement, Render, Window, v_flex};
 
-use crate::project_search_picker::TextPicker;
+use super::TextFinder;
 
-impl Render for TextPicker {
+impl Render for TextFinder {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         // let key_context = self.picker.read(cx).delegate.key_context(window, cx);
         let mut key_context = KeyContext::new_with_defaults();

@@ -1,5 +1,6 @@
-use crate::project_search_picker::delegate::TextPickerDelegate;
-use crate::{SearchOptions, project_search_picker::SearchMatch};
+use super::super::SearchMatch;
+use super::Delegate;
+use crate::SearchOptions;
 use std::{ops::Range, sync::Arc, time::Duration};
 
 use file_icons::FileIcons;
@@ -25,7 +26,7 @@ const CLICK_THRESHOLD_MS: u128 = 50;
 const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 
-impl PickerDelegate for TextPickerDelegate {
+impl PickerDelegate for Delegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -109,7 +110,7 @@ impl PickerDelegate for TextPickerDelegate {
                     match result {
                         SearchResult::Buffer { buffer, ranges } => {
                             let matches =
-                                TextPickerDelegate::process_search_result(&buffer, &ranges, cx);
+                                Delegate::process_search_result(&buffer, &ranges, cx);
                             batch_matches.extend(matches);
                         }
                         SearchResult::LimitReached => {
@@ -403,7 +404,7 @@ fn render_matched_line(search_match: &SearchMatch, cx: &App) -> StyledText {
     StyledText::new(line_text.to_string()).with_default_highlights(&text_style, highlights)
 }
 
-impl TextPickerDelegate {
+impl Delegate {
     pub(crate) fn build_search_query(
         &mut self,
         query: &str,

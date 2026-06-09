@@ -10,11 +10,11 @@ use workspace::Workspace;
 
 use super::SearchMatch;
 use crate::SearchOptions;
-use crate::project_search_picker::TextPicker;
+use super::TextFinder;
 
 mod impl_delegate;
 
-pub struct TextPickerDelegate {
+pub struct Delegate {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) workspace: WeakEntity<Workspace>,
     pub(crate) project: Entity<Project>,
@@ -33,11 +33,11 @@ pub struct TextPickerDelegate {
     pub(crate) preview_layout_is_horizontal: bool,
 }
 
-impl TextPickerDelegate {
+impl Delegate {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        cx: &mut ui::Context<TextPicker>,
+        cx: &mut ui::Context<TextFinder>,
     ) -> Self {
         Self {
             workspace,
