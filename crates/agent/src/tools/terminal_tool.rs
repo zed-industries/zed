@@ -577,8 +577,13 @@ fn join_write_paths(
     raw_paths
         .iter()
         .filter_map(|raw| {
-            if windows_paths && let Some(path) = wsl_drive_mount_path_to_windows_path(raw) {
-                return Some(path);
+            if windows_paths {
+                if let Some(path) = wsl_drive_mount_path_to_windows_path(raw) {
+                    return Some(path);
+                }
+                if let Some(path) = wsl_absolute_path(raw) {
+                    return Some(path);
+                }
             }
 
             let path = Path::new(raw);
@@ -608,6 +613,15 @@ fn wsl_drive_mount_path_to_windows_path(raw: &str) -> Option<PathBuf> {
         windows_path.push_str(&rest.replace('/', "\\"));
     }
     Some(PathBuf::from(windows_path))
+}
+
+fn wsl_absolute_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    if raw.starts_with('/') && !raw.starts_with("//") {
+        Some(PathBuf::from(raw))
+    } else {
+        None
+    }
 }
 
 fn is_windows_wsl_sandbox_error(error: &str) -> bool {
@@ -2447,21 +2461,31 @@ mod tests {
     #[test]
     fn test_join_write_paths_converts_wsl_drive_mounts_on_windows() {
         let joined = join_write_paths(
-            &["/mnt/c/Users/marti".to_string()],
+            &["/mnt/c/example/write-root".to_string()],
             Some(Path::new("C:\\project")),
             true,
         );
-        assert_eq!(joined, vec![PathBuf::from("C:\\Users\\marti")]);
+        assert_eq!(joined, vec![PathBuf::from("C:\\example\\write-root")]);
     }
 
     #[test]
     fn test_join_write_paths_only_converts_wsl_drive_mounts_for_windows_paths() {
         let joined = join_write_paths(
-            &["/mnt/c/Users/marti".to_string()],
+            &["/mnt/c/example/write-root".to_string()],
             Some(Path::new("/project")),
             false,
         );
-        assert_eq!(joined, vec![PathBuf::from("/mnt/c/Users/marti")]);
+        assert_eq!(joined, vec![PathBuf::from("/mnt/c/example/write-root")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_preserves_wsl_absolute_paths_on_windows() {
+        let joined = join_write_paths(
+            &["/home/example".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/home/example")]);
     }
 
     #[test]

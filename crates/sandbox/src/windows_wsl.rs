@@ -93,6 +93,12 @@ pub fn wrap_invocation(
             wsl_distro_label(distro.as_deref())
         )
     })?;
+    if let Some(cwd) = &cwd {
+        check_wsl_path_exists(&wsl_exe, distro.as_deref(), cwd, "terminal cwd")?;
+    }
+    for path in &writable_paths {
+        check_wsl_path_exists(&wsl_exe, distro.as_deref(), path, "writable path")?;
+    }
 
     let mut wsl_args = Vec::new();
     if let Some(distro) = distro.as_deref() {
@@ -154,6 +160,38 @@ fn check_wsl_command(
     ensure!(
         output.status.success(),
         "{WSL_SANDBOX_ERROR_PREFIX}: failed to {description} in {}{}",
+        wsl_distro_label(distro),
+        command_failure_details(output.status.code(), &output.stderr)
+    );
+    Ok(())
+}
+
+fn check_wsl_path_exists(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    path: &WslPath,
+    description: &str,
+) -> Result<()> {
+    let mut command = Command::new(wsl_exe);
+    if let Some(distro) = distro {
+        command.args(["-d", distro]);
+    }
+    command
+        .args(["--exec", "test", "-e", &path.path])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null());
+
+    let output = command.output().with_context(|| {
+        format!(
+            "{WSL_SANDBOX_ERROR_PREFIX}: failed to check {description} `{}` in {}",
+            path.path,
+            wsl_distro_label(distro)
+        )
+    })?;
+    ensure!(
+        output.status.success(),
+        "{WSL_SANDBOX_ERROR_PREFIX}: mapped {description} `{}` does not exist in {}{}",
+        path.path,
         wsl_distro_label(distro),
         command_failure_details(output.status.code(), &output.stderr)
     );
@@ -251,6 +289,11 @@ fn directory_to_wsl(path: &Path) -> Result<WslPath> {
 }
 
 fn path_to_wsl(path: &Path) -> Result<WslPath> {
+    let path_string = path.to_string_lossy();
+    if let Ok(path) = parse_wsl_absolute_path(&path_string) {
+        return Ok(path);
+    }
+
     ensure!(
         path.is_dir() || path.is_file(),
         "Windows sandboxing via WSL can only grant existing files or directories: {}",
@@ -262,6 +305,15 @@ fn path_to_wsl(path: &Path) -> Result<WslPath> {
 fn map_path_to_wsl(path: &Path) -> Result<WslPath> {
     let path = path.to_string_lossy();
     parse_wsl_unc_path(&path).or_else(|_| parse_native_drive_path(&path))
+}
+
+fn parse_wsl_absolute_path(path: &str) -> Result<WslPath> {
+    let path = path.replace('\\', "/");
+    ensure!(
+        path.starts_with('/') && !path.starts_with("//"),
+        "path is not a WSL absolute path: {path}"
+    );
+    Ok(WslPath { distro: None, path })
 }
 
 fn parse_wsl_unc_path(path: &str) -> Result<WslPath> {
@@ -339,6 +391,18 @@ mod tests {
         let path = parse_native_drive_path(r"C:\Users\me\project").unwrap();
         assert_eq!(path.distro, None);
         assert_eq!(path.path, "/mnt/c/Users/me/project");
+    }
+
+    #[test]
+    fn parse_wsl_absolute_path_keeps_linux_path() {
+        let path = parse_wsl_absolute_path("/home/me").unwrap();
+        assert_eq!(path.distro, None);
+        assert_eq!(path.path, "/home/me");
+    }
+
+    #[test]
+    fn parse_wsl_absolute_path_rejects_unc_paths() {
+        assert!(parse_wsl_absolute_path(r"\\server\share").is_err());
     }
 
     #[test]
