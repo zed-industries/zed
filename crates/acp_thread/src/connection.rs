@@ -2,23 +2,66 @@ use crate::AcpThread;
 use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use collections::{HashMap, IndexMap};
+use collections::{HashMap, HashSet, IndexMap};
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
-use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
+use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc};
 use task::{HideStrategy, SpawnInTerminal, TaskId};
 use ui::{App, IconName};
 use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct UserMessageId(Arc<str>);
+pub struct UserMessageId(SharedString);
 
 impl UserMessageId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct AgentModelId(SharedString);
+
+impl AgentModelId {
+    pub fn new(id: impl Into<Self>) -> Self {
+        id.into()
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<str> for AgentModelId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for AgentModelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<SharedString> for AgentModelId {
+    fn from(id: SharedString) -> Self {
+        Self(id)
+    }
+}
+
+impl From<String> for AgentModelId {
+    fn from(id: String) -> Self {
+        Self(SharedString::from(id))
+    }
+}
+
+impl From<&str> for AgentModelId {
+    fn from(id: &str) -> Self {
+        Self(SharedString::from(id.to_owned()))
     }
 }
 
@@ -115,6 +158,11 @@ pub trait AgentConnection {
         self.supports_load_session() || self.supports_resume_session()
     }
 
+    /// Whether this agent supports additional session directories.
+    fn supports_session_additional_directories(&self) -> bool {
+        false
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn terminal_auth_task(
@@ -126,6 +174,14 @@ pub trait AgentConnection {
     }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
+
+    fn supports_logout(&self) -> bool {
+        false
+    }
+
+    fn logout(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Logout is not supported")))
+    }
 
     fn prompt(
         &self,
@@ -310,7 +366,7 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
-    fn supports_delete(&self) -> bool {
+    fn supports_delete(&self, _cx: &App) -> bool {
         false
     }
 
@@ -384,16 +440,13 @@ pub trait AgentModelSelector: 'static {
 
     /// Selects a model for a specific session (thread).
     ///
-    /// This sets the default model for future interactions in the session.
-    /// If the session doesn't exist or the model is invalid, it returns an error.
-    ///
     /// # Parameters
-    /// - `model`: The model to select (should be one from [list_models]).
+    /// - `model_id`: The model to select (should be one from [list_models]).
     /// - `cx`: The GPUI app context.
     ///
     /// # Returns
     /// A task resolving to `Ok(())` on success or an error.
-    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>>;
+    fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>>;
 
     /// Retrieves the currently selected model for a specific session (thread).
     ///
@@ -403,6 +456,13 @@ pub trait AgentModelSelector: 'static {
     /// # Returns
     /// A task resolving to the selected model (always set) or an error (e.g., session not found).
     fn selected_model(&self, cx: &mut App) -> Task<Result<AgentModelInfo>>;
+
+    fn favorite_model_ids(&self, _cx: &mut App) -> HashSet<AgentModelId> {
+        HashSet::default()
+    }
+
+    fn toggle_favorite_model(&self, _model_id: AgentModelId, _should_be_favorite: bool, _cx: &App) {
+    }
 
     /// Whenever the model list is updated the receiver will be notified.
     /// Optional for agents that don't update their model list.
@@ -427,25 +487,12 @@ pub enum AgentModelIcon {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModelInfo {
-    pub id: acp::ModelId,
+    pub id: AgentModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
     pub icon: Option<AgentModelIcon>,
     pub is_latest: bool,
     pub cost: Option<SharedString>,
-}
-
-impl From<acp::ModelInfo> for AgentModelInfo {
-    fn from(info: acp::ModelInfo) -> Self {
-        Self {
-            id: info.model_id,
-            name: info.name.into(),
-            description: info.description.map(|desc| desc.into()),
-            icon: None,
-            is_latest: false,
-            cost: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -694,6 +741,7 @@ mod test_support {
         permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
         supports_load_session: bool,
+        supports_session_additional_directories: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
     }
@@ -716,6 +764,7 @@ mod test_support {
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_load_session: false,
+                supports_session_additional_directories: false,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
             }
@@ -735,6 +784,14 @@ mod test_support {
 
         pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
             self.supports_load_session = supports_load_session;
+            self
+        }
+
+        pub fn with_supports_session_additional_directories(
+            mut self,
+            supports_session_additional_directories: bool,
+        ) -> Self {
+            self.supports_session_additional_directories = supports_session_additional_directories;
             self
         }
 
@@ -853,6 +910,10 @@ mod test_support {
 
         fn supports_load_session(&self) -> bool {
             self.supports_load_session
+        }
+
+        fn supports_session_additional_directories(&self) -> bool {
+            self.supports_session_additional_directories
         }
 
         fn load_session(
@@ -997,7 +1058,7 @@ mod test_support {
         fn new() -> Self {
             Self {
                 selected_model: Arc::new(Mutex::new(AgentModelInfo {
-                    id: acp::ModelId::new("visual-test-model"),
+                    id: AgentModelId::new("visual-test-model"),
                     name: "Visual Test Model".into(),
                     description: Some("A stub model for visual testing".into()),
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
@@ -1014,7 +1075,7 @@ mod test_support {
             Task::ready(Ok(AgentModelList::Flat(vec![model])))
         }
 
-        fn select_model(&self, model_id: acp::ModelId, _cx: &mut App) -> Task<Result<()>> {
+        fn select_model(&self, model_id: AgentModelId, _cx: &mut App) -> Task<Result<()>> {
             self.selected_model.lock().id = model_id;
             Task::ready(Ok(()))
         }

@@ -342,6 +342,10 @@ impl ActionRegistry {
         Ok(self.build_action(name, None)?)
     }
 
+    pub(crate) fn try_resolve_action(&self, type_id: &TypeId) -> Option<&'static str> {
+        self.names_by_type_id.get(type_id).copied()
+    }
+
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
     pub fn build_action(
         &self,

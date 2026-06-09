@@ -3145,7 +3145,7 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
-        node.npm_install_packages(temp_dir.path(), &[(PACKAGE_NAME, "latest")])
+        node.npm_install_latest_packages(temp_dir.path(), &[PACKAGE_NAME])
             .await
             .context("installing latest companion package")?;
         let version = node

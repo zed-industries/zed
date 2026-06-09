@@ -52,12 +52,14 @@ impl ElevationIndex {
                     offset: point(px(0.), px(2.)),
                     blur_radius: px(3.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., if is_light { 0.03 } else { 0.06 }),
                     offset: point(px(0.), px(1.)),
                     blur_radius: px(0.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
             ],
 
@@ -67,24 +69,28 @@ impl ElevationIndex {
                     offset: point(px(0.), px(2.)),
                     blur_radius: px(3.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., if is_light { 0.06 } else { 0.08 }),
                     offset: point(px(0.), px(3.)),
                     blur_radius: px(6.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., 0.04),
                     offset: point(px(0.), px(6.)),
                     blur_radius: px(12.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., if is_light { 0.04 } else { 0.12 }),
                     offset: point(px(0.), px(1.)),
                     blur_radius: px(0.),
                     spread_radius: px(0.),
+                    inset: false,
                 },
             ],
 

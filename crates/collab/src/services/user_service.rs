@@ -211,8 +211,8 @@ impl From<internal_api::User> for User {
     fn from(user: internal_api::User) -> Self {
         Self {
             id: UserId(user.legacy_user_id),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
-            github_user_id: user.github_user_id,
             name: user.name,
             admin: user.admin,
             connected_once: user.connected_once,
@@ -281,8 +281,8 @@ mod fake_user_service {
                 user_id,
                 User {
                     id: user_id,
+                    avatar_url: format!("https://github.com/{}.png?size=128", params.github_login),
                     github_login: params.github_login,
-                    github_user_id: params.github_user_id,
                     name: name.map(|name| name.to_string()),
                     admin,
                     connected_once: false,

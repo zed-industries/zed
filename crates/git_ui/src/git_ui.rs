@@ -36,14 +36,17 @@ pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
+pub mod git_graph;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
+mod git_runtime_diagnostics;
 pub mod multi_diff_view;
 pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod solo_diff_view;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_names;
@@ -52,9 +55,23 @@ pub mod worktree_service;
 
 pub use conflict_view::MergeConflictIndicator;
 
+pub fn get_provider_icon(name: &str) -> IconName {
+    match name {
+        "Bitbucket" => IconName::Bitbucket,
+        "Chromium" => IconName::Gerrit,
+        "Codeberg" => IconName::Codeberg,
+        "Forgejo Self-Hosted" => IconName::Forgejo,
+        "GitHub" => IconName::Github,
+        "GitLab" => IconName::Gitlab,
+        "Gitea" => IconName::Gitea,
+        _ => IconName::Link,
+    }
+}
+
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
+    git_graph::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -1025,7 +1042,12 @@ impl Component for GitStatusIcon {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "An icon that visually represents the git status of a file, \
+        using a distinct glyph and color for modified, added, deleted, and conflicted states."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         fn tracked_file_status(code: StatusCode) -> FileStatus {
             FileStatus::Tracked(git::status::TrackedStatus {
                 index_status: code,
@@ -1042,20 +1064,18 @@ impl Component for GitStatusIcon {
         }
         .into();
 
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group(vec![
-                    single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
-                    single_example("Added", GitStatusIcon::new(added).into_any_element()),
-                    single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
-                    single_example(
-                        "Conflicted",
-                        GitStatusIcon::new(conflict).into_any_element(),
-                    ),
-                ])])
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .children(vec![example_group(vec![
+                single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
+                single_example("Added", GitStatusIcon::new(added).into_any_element()),
+                single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
+                single_example(
+                    "Conflicted",
+                    GitStatusIcon::new(conflict).into_any_element(),
+                ),
+            ])])
+            .into_any_element()
     }
 }
 

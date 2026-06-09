@@ -1,3 +1,6 @@
+-- WARNING: If you are modifying this file you MUST open a PR to the Cloud repository prior to merging any changes.
+-- If you are not Zed staff you MUST coordinate with a staff member to apply the schema migrations before this PR is merged.
+
 CREATE TABLE "users" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "github_login" VARCHAR,
@@ -7,7 +10,7 @@ CREATE TABLE "users" (
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
-    "github_user_id" INTEGER NOT NULL,
+    "github_user_id" INTEGER,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
     "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE,
     "custom_llm_monthly_allowance_in_cents" INTEGER
@@ -172,6 +175,7 @@ CREATE TABLE "language_servers" (
     "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "name" VARCHAR NOT NULL,
+    "language_name" VARCHAR,
     "capabilities" TEXT NOT NULL,
     "worktree_id" BIGINT,
     PRIMARY KEY (project_id, id)
