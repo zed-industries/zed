@@ -556,22 +556,31 @@ fn resolve_write_paths(
     if raw_paths.is_empty() {
         return Vec::new();
     }
+    let project = project.read(cx);
+    let windows_paths = project.path_style(cx).is_windows();
     let base = working_dir.map(Path::to_path_buf).or_else(|| {
         project
-            .read(cx)
             .worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
     });
-    join_write_paths(raw_paths, base.as_deref())
+    join_write_paths(raw_paths, base.as_deref(), windows_paths)
 }
 
 /// Pure path-joining step of [`resolve_write_paths`], split out so it can be
 /// unit-tested without a `Project`/`App`.
-fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
+fn join_write_paths(
+    raw_paths: &[String],
+    base: Option<&Path>,
+    windows_paths: bool,
+) -> Vec<PathBuf> {
     raw_paths
         .iter()
         .filter_map(|raw| {
+            if windows_paths && let Some(path) = wsl_drive_mount_path_to_windows_path(raw) {
+                return Some(path);
+            }
+
             let path = Path::new(raw);
             if path.is_absolute() {
                 Some(path.to_path_buf())
@@ -580,6 +589,25 @@ fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
             }
         })
         .collect()
+}
+
+fn wsl_drive_mount_path_to_windows_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    let remainder = raw.strip_prefix("/mnt/")?;
+    let (drive, rest) = remainder
+        .split_once('/')
+        .map_or((remainder, ""), |(drive, rest)| (drive, rest));
+    let mut drive_chars = drive.chars();
+    let drive = drive_chars.next()?.to_ascii_uppercase();
+    if !drive.is_ascii_alphabetic() || drive_chars.next().is_some() {
+        return None;
+    }
+
+    let mut windows_path = format!("{drive}:\\");
+    if !rest.is_empty() {
+        windows_path.push_str(&rest.replace('/', "\\"));
+    }
+    Some(PathBuf::from(windows_path))
 }
 
 fn is_windows_wsl_sandbox_error(error: &str) -> bool {
@@ -2387,6 +2415,7 @@ mod tests {
                 "file.txt".to_string(),
             ],
             Some(base.as_path()),
+            cfg!(windows),
         );
         assert_eq!(
             joined,
@@ -2407,8 +2436,32 @@ mod tests {
         } else {
             "/abs/keep"
         };
-        let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
+        let joined = join_write_paths(
+            &[abs.to_string(), "relative/drop".to_string()],
+            None,
+            cfg!(windows),
+        );
         assert_eq!(joined, vec![PathBuf::from(abs)]);
+    }
+
+    #[test]
+    fn test_join_write_paths_converts_wsl_drive_mounts_on_windows() {
+        let joined = join_write_paths(
+            &["/mnt/c/Users/marti".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("C:\\Users\\marti")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_only_converts_wsl_drive_mounts_for_windows_paths() {
+        let joined = join_write_paths(
+            &["/mnt/c/Users/marti".to_string()],
+            Some(Path::new("/project")),
+            false,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/mnt/c/Users/marti")]);
     }
 
     #[test]
