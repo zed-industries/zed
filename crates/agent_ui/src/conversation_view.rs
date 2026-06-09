@@ -6092,8 +6092,8 @@ pub(crate) mod tests {
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
-        let thread = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.thread.clone());
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
 
         thread
             .update(cx, |thread, cx| {
@@ -6139,12 +6139,14 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        let (match_count, active_text) = bar.read_with(cx, |bar, cx| {
-            (bar.match_count(), bar.active_match_text(cx))
-        });
+        let (match_count, active_text) =
+            bar.read_with(cx, |bar, cx| (bar.match_count(), bar.active_match_text(cx)));
         // 1 in user-1 ("Can I use banana") + 1 in assistant-1 + 2 in
         // assistant-2 ("Banana" + "banana") = 4 matches total.
-        assert_eq!(match_count, 4, "expected 4 matches for case-insensitive 'banana'");
+        assert_eq!(
+            match_count, 4,
+            "expected 4 matches for case-insensitive 'banana'"
+        );
         assert_eq!(active_text.as_deref(), Some("1/4"));
 
         // The first match lives in entry 0 (user message 1); the bar
@@ -6155,11 +6157,7 @@ pub(crate) mod tests {
 
         // Step forward and verify navigation lands on later entries.
         bar.update_in(cx, |bar, window, cx| {
-            bar.select_next_match(
-                &super::thread_search_bar::SelectNextThreadMatch,
-                window,
-                cx,
-            );
+            bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
         });
         cx.run_until_parked();
         let active_text_2 = bar.read_with(cx, |bar, cx| bar.active_match_text(cx));
@@ -6184,11 +6182,92 @@ pub(crate) mod tests {
             bar.update_matches(window, cx);
         });
         cx.run_until_parked();
-        let (match_count_apple, active_text_apple) = bar.read_with(cx, |bar, cx| {
-            (bar.match_count(), bar.active_match_text(cx))
-        });
+        let (match_count_apple, active_text_apple) =
+            bar.read_with(cx, |bar, cx| (bar.match_count(), bar.active_match_text(cx)));
         assert_eq!(match_count_apple, 0);
         assert_eq!(active_text_apple.as_deref(), Some("0/0"));
+    }
+
+    /// Regression test for #4 in review: navigating to a match that lives in
+    /// a *later* user message must move the list scroll target to that entry,
+    /// so the highlighted hit is brought into view (previously the editor's
+    /// own autoscroll was relied upon and didn't survive list virtualization,
+    /// so user-message hits highlighted but never scrolled on screen).
+    #[gpui::test]
+    async fn test_thread_search_scrolls_to_later_user_message_match(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("First reply, no fruit here.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        // The unique token `papaya` appears only in the SECOND user message,
+        // so its single match lives in a later entry than the first.
+        thread
+            .update(cx, |thread, cx| thread.send_raw("First question", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Second reply, still no fruit.".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Where is the papaya?", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        // Layout: [User0, Assistant1, User2, Assistant3]; the `papaya` match
+        // is in User2 (entry 2).
+        let papaya_entry_ix = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                .expect("a user message entry should exist")
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        bar.read_with(cx, |bar, _| {
+            assert_eq!(
+                bar.match_count(),
+                1,
+                "only the second user message matches 'papaya'"
+            );
+        });
+
+        // The deferred list scroll runs through `cx.defer`; `run_until_parked`
+        // flushes it. The list should now target the user-message entry that
+        // owns the match.
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.list_state.logical_scroll_top().item_ix,
+                papaya_entry_ix,
+                "list should scroll to the user-message entry that owns the match",
+            );
+        });
     }
 
     /// Verifies that dismissing the search bar clears highlights from
@@ -6206,8 +6285,8 @@ pub(crate) mod tests {
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
-        let thread = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.thread.clone());
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
 
         thread
             .update(cx, |thread, cx| thread.send_raw("Tell me about mango", cx))
@@ -6249,6 +6328,76 @@ pub(crate) mod tests {
         });
     }
 
+    /// The bar subscribes to thread updates: with search open and a live
+    /// query, content that streams in *after* the initial scan should be
+    /// picked up (debounced) without the user re-touching the query.
+    #[gpui::test]
+    async fn test_thread_search_refreshes_on_new_thread_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("First reply mentions banana once.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Tell me about banana", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let count_before = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            count_before >= 1,
+            "expected at least one initial match, got {count_before}",
+        );
+
+        // Stream a second exchange containing more occurrences while the bar
+        // stays open. The thread subscription schedules a *debounced* rescan
+        // (`SEARCH_UPDATE_DEBOUNCE`); advance the test clock past the debounce
+        // so the deferred `update_matches` actually runs before we assert.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Banana banana: two more banana hits here.".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("More banana please", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+
+        let count_after = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            count_after > count_before,
+            "thread subscription should refresh matches after new content \
+             streamed in: before={count_before}, after={count_after}",
+        );
+    }
+
     /// Reproduces the double-borrow panic that originally hit on Enter / Ctrl+F
     /// while the bar was visible: `ThreadView`'s action handler forwards to
     /// `bar.select_next_match` from inside `ThreadView::update`. The bar then
@@ -6274,8 +6423,8 @@ pub(crate) mod tests {
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
 
-        let thread = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.thread.clone());
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
         thread
             .update(cx, |thread, cx| thread.send_raw("Need banana help", cx))
             .await
@@ -6316,11 +6465,7 @@ pub(crate) mod tests {
                 .clone()
                 .expect("bar should still be set");
             bar.update(cx, |bar, cx| {
-                bar.select_next_match(
-                    &super::thread_search_bar::SelectNextThreadMatch,
-                    window,
-                    cx,
-                );
+                bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
             });
         });
         cx.run_until_parked();
@@ -6355,8 +6500,8 @@ pub(crate) mod tests {
         // The substring `kumquat` only appears in the user message we send;
         // the assistant reply above contains no occurrences. Any hit must
         // therefore land on the user-message editor.
-        let thread = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.thread.clone());
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
         thread
             .update(cx, |thread, cx| {
                 thread.send_raw("Where do I find a kumquat?", cx)
@@ -6441,7 +6586,10 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let visible_before = thread_view.read_with(cx, |view, _| view.thread_search_visible);
-        assert!(visible_before, "search bar should be visible after toggle_search");
+        assert!(
+            visible_before,
+            "search bar should be visible after toggle_search"
+        );
 
         // Focus the bar's query editor so dispatched actions propagate from
         // there up the agent panel's focus chain (mirroring the runtime path).
@@ -6514,23 +6662,21 @@ pub(crate) mod tests {
             // load-time partial failure is noisy in test output).
             search::init(cx);
 
-            let mut default_bindings =
-                settings::KeymapFile::load_asset_allow_partial_failure(
-                    "keymaps/default-linux.json",
-                    cx,
-                )
-                .unwrap();
+            let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
             for binding in &mut default_bindings {
                 binding.set_meta(settings::KeybindSource::Default.meta());
             }
             cx.bind_keys(default_bindings);
 
-            let mut jetbrains_bindings =
-                settings::KeymapFile::load_asset_allow_partial_failure(
-                    "keymaps/linux/jetbrains.json",
-                    cx,
-                )
-                .unwrap();
+            let mut jetbrains_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/linux/jetbrains.json",
+                cx,
+            )
+            .unwrap();
             for binding in &mut jetbrains_bindings {
                 binding.set_meta(settings::KeybindSource::Base.meta());
             }
@@ -6548,8 +6694,8 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
-        let thread = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.thread.clone());
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
         thread
             .update(cx, |thread, cx| thread.send_raw("Need banana help", cx))
             .await
@@ -6608,8 +6754,7 @@ pub(crate) mod tests {
         // `Editor` shift-enter → `editor::NewlineBelow` binding fires and
         // inserts a newline (single-line editors render embedded newlines as
         // the visible escape sequence `\n`).
-        let query_text_after =
-            bar.read_with(cx, |bar, cx| bar.query_editor.read(cx).text(cx));
+        let query_text_after = bar.read_with(cx, |bar, cx| bar.query_editor.read(cx).text(cx));
         assert!(
             !query_text_after.contains('\n'),
             "shift-enter must not insert a newline into the query buffer; \
