@@ -1441,8 +1441,18 @@ impl PlatformWindow for MacWindow {
                 } else if this.blurred_view.is_none() {
                     let content_view = this.native_window.contentView();
                     let frame = NSView::bounds(content_view);
-                    let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
-                    blur_view = NSView::initWithFrame_(blur_view, frame);
+                    // On macOS 26+ use the native Liquid Glass material
+                    // (`NSGlassEffectView`), which refracts the window's
+                    // backdrop with edge lensing and highlights instead of the
+                    // plain frosted blur of `NSVisualEffectView`. Fall back to
+                    // the blurred view when the class isn't available.
+                    let blur_view: id = if let Some(glass_class) = Class::get("NSGlassEffectView") {
+                        let view: id = msg_send![glass_class, alloc];
+                        NSView::initWithFrame_(view, frame)
+                    } else {
+                        let view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
+                        NSView::initWithFrame_(view, frame)
+                    };
                     blur_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
 
                     let _: () = msg_send![

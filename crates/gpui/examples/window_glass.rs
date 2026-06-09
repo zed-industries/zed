@@ -56,7 +56,7 @@ impl Render for ChatApp {
             .flex_row()
             .size_full()
             .text_color(fg)
-            .bg(rgba(0xFBFBFBcc))
+            .bg(rgba(0xFBFBFBaa))
             // The root is the glass surface: its translucent fill lets the
             // wallpaper through, and glass mode is inherited by the sidebar so
             // its rounded rows don't punch through the glass.
