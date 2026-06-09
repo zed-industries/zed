@@ -396,7 +396,14 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx).show_hidden();
+        let relative_to = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, relative_to, cx)
+            .show_hidden();
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
