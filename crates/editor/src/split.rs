@@ -471,6 +471,12 @@ impl SplittableEditor {
         });
     }
 
+    pub fn set_render_diff_hunks_as_unstaged(&self, cx: &mut Context<Self>) {
+        self.update_editors(cx, |editor, cx| {
+            editor.set_render_diff_hunks_as_unstaged(true, cx);
+        });
+    }
+
     fn focused_side(&self) -> SplitSide {
         if let Some(lhs) = &self.lhs
             && lhs.was_last_focused
@@ -596,9 +602,11 @@ impl SplittableEditor {
         });
 
         let render_diff_hunk_controls = self.rhs_editor.read(cx).render_diff_hunk_controls.clone();
+        let render_diff_hunks_as_unstaged = self.rhs_editor.read(cx).render_diff_hunks_as_unstaged;
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
+            editor.set_render_diff_hunks_as_unstaged(render_diff_hunks_as_unstaged, cx);
             editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
             editor.set_delegate_stage_and_restore(true);

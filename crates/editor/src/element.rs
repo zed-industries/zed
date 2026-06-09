@@ -6290,6 +6290,7 @@ impl EditorElement {
     }
 
     fn paint_gutter_diff_hunks(
+        &self,
         layout: &mut EditorLayout,
         split_side: Option<SplitSide>,
         window: &mut Window,
@@ -6365,7 +6366,7 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if !Self::diff_hunk_hollow(status, cx) {
+                    if !self.diff_hunk_hollow(status, cx) {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -6543,7 +6544,7 @@ impl EditorElement {
                 )
             });
         if show_git_gutter {
-            Self::paint_gutter_diff_hunks(layout, self.split_side, window, cx)
+            self.paint_gutter_diff_hunks(layout, self.split_side, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -7989,8 +7990,9 @@ impl EditorElement {
         )
     }
 
-    fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
-        let unstaged = status.has_secondary_hunk();
+    fn diff_hunk_hollow(&self, status: DiffHunkStatus, cx: &mut App) -> bool {
+        let unstaged =
+            self.editor.read(cx).render_diff_hunks_as_unstaged || status.has_secondary_hunk();
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow
@@ -10171,7 +10173,7 @@ impl Element for EditorElement {
                             type_id: None,
                         };
 
-                        let background = if Self::diff_hunk_hollow(diff_status, cx) {
+                        let background = if self.diff_hunk_hollow(diff_status, cx) {
                             hollow_highlight
                         } else {
                             filled_highlight
