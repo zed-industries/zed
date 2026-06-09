@@ -3008,14 +3008,14 @@ impl EditorElement {
             let placeholder_color = cx.theme().colors().text_placeholder;
             let placeholder_text = snapshot.placeholder_text();
 
-            let placeholder_lines = placeholder_text
+            let placeholder_line_count = placeholder_text
                 .as_ref()
-                .map_or(Vec::new(), |text| text.split('\n').collect::<Vec<_>>());
+                .map_or(0, |text| text.split('\n').count());
 
-            let placeholder_line_count = placeholder_lines.len();
-
-            placeholder_lines
+            placeholder_text
+                .as_deref()
                 .into_iter()
+                .flat_map(|text| text.split('\n'))
                 .skip(rows.start.0 as usize)
                 .chain(iter::repeat(""))
                 .take(cmp::max(rows.len(), placeholder_line_count))
