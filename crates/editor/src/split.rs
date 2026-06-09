@@ -2620,7 +2620,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(path, buffer.clone(), ranges, 0, diff.clone(), cx);
         });
         cx.run_until_parked();
@@ -2677,7 +2677,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -2806,7 +2806,7 @@ mod tests {
         let (buffer2, diff2) = buffer_with_diff(&base_text2, &base_text2, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path1 = PathKey::for_buffer(&buffer1, cx);
+            let path1 = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path1,
                 buffer1.clone(),
@@ -2815,7 +2815,7 @@ mod tests {
                 diff1.clone(),
                 cx,
             );
-            let path2 = PathKey::for_buffer(&buffer2, cx);
+            let path2 = PathKey::sorted(1);
             editor.update_excerpts_for_path(
                 path2,
                 buffer2.clone(),
@@ -2964,7 +2964,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3091,7 +3091,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3210,7 +3210,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3340,7 +3340,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3437,7 +3437,7 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             let end = Point::new(0, text.len() as u32);
-            let path1 = PathKey::for_buffer(&buffer1, cx);
+            let path1 = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path1,
                 buffer1.clone(),
@@ -3446,7 +3446,7 @@ mod tests {
                 diff1.clone(),
                 cx,
             );
-            let path2 = PathKey::for_buffer(&buffer2, cx);
+            let path2 = PathKey::sorted(1);
             editor.update_excerpts_for_path(
                 path2,
                 buffer2.clone(),
@@ -3514,7 +3514,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3577,7 +3577,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3638,7 +3638,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&text, &text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3754,7 +3754,7 @@ mod tests {
         let diff2 = cx.new(|cx| BufferDiff::new(&buffer2.read(cx).text_snapshot(), None, None, cx));
 
         editor.update(cx, |editor, cx| {
-            let path1 = PathKey::for_buffer(&buffer1, cx);
+            let path1 = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path1,
                 buffer1.clone(),
@@ -3764,7 +3764,7 @@ mod tests {
                 cx,
             );
 
-            let path2 = PathKey::for_buffer(&buffer2, cx);
+            let path2 = PathKey::sorted(1);
             editor.update_excerpts_for_path(
                 path2,
                 buffer2.clone(),
@@ -3862,7 +3862,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -3938,7 +3938,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4025,7 +4025,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4139,7 +4139,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4223,7 +4223,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4307,7 +4307,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&content, &content, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4399,7 +4399,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4527,7 +4527,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4674,7 +4674,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -4896,7 +4896,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5235,18 +5235,16 @@ mod tests {
         let buffer2_id = buffer2.read_with(cx, |buffer, _| buffer.remote_id());
 
         editor.update(cx, |editor, cx| {
-            let path1 = PathKey::for_buffer(&buffer1, cx);
             editor.update_excerpts_for_path(
-                path1,
+                PathKey::sorted(0),
                 buffer1.clone(),
                 vec![Point::new(0, 0)..buffer1.read(cx).max_point()],
                 0,
                 diff1.clone(),
                 cx,
             );
-            let path2 = PathKey::for_buffer(&buffer2, cx);
             editor.update_excerpts_for_path(
-                path2,
+                PathKey::sorted(1),
                 buffer2.clone(),
                 vec![Point::new(0, 0)..buffer2.read(cx).max_point()],
                 1,
@@ -5400,7 +5398,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5561,7 +5559,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5720,7 +5718,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5851,7 +5849,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5912,7 +5910,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -5995,7 +5993,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
@@ -6104,8 +6102,8 @@ mod tests {
         let (buffer_a, diff_a) = buffer_with_diff(&base_text_a, &current_text_a, &mut cx);
         let (buffer_b, diff_b) = buffer_with_diff(&base_text_b, &current_text_b, &mut cx);
 
-        let path_a = cx.read(|cx| PathKey::for_buffer(&buffer_a, cx));
-        let path_b = cx.read(|cx| PathKey::for_buffer(&buffer_b, cx));
+        let path_a = PathKey::sorted(0);
+        let path_b = PathKey::sorted(1);
 
         editor.update(cx, |editor, cx| {
             editor.update_excerpts_for_path(
@@ -6246,7 +6244,7 @@ mod tests {
         let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
 
         editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&buffer, cx);
+            let path = PathKey::sorted(0);
             editor.update_excerpts_for_path(
                 path,
                 buffer.clone(),
