@@ -1,6 +1,7 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitTooltip},
     commit_view::CommitView,
+    git_timestamp,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
 use git::{blame::BlameEntry, commit::ParsedCommitMessage, repository::CommitSummary};
@@ -38,7 +39,7 @@ impl BlameRenderer for GitBlameRenderer {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
+        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
         let short_commit_id = blame_entry.sha.display_short();
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
@@ -144,7 +145,7 @@ impl BlameRenderer for GitBlameRenderer {
         blame_entry: BlameEntry,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
+        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
         let author = blame_entry.author.as_deref().unwrap_or_default();
         let summary_enabled = ProjectSettings::get_global(cx)
             .git
@@ -214,12 +215,10 @@ impl BlameRenderer for GitBlameRenderer {
             .get(..git::SHORT_SHA_LENGTH)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
-        let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-        let absolute_timestamp = time_format::format_localized_timestamp(
+        let absolute_timestamp = git_timestamp(
             commit_time,
-            OffsetDateTime::now_utc(),
-            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
+            cx,
         );
         let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
@@ -426,18 +425,9 @@ fn deploy_blame_entry_context_menu(
     });
 }
 
-fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
+fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &App) -> String {
     match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => {
-            let local_offset =
-                time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-            time_format::format_localized_timestamp(
-                timestamp,
-                time::OffsetDateTime::now_utc(),
-                local_offset,
-                time_format::TimestampFormat::Relative,
-            )
-        }
+        Ok(timestamp) => git_timestamp(timestamp, time_format::TimestampFormat::Relative, cx),
         Err(_) => "Error parsing date".to_string(),
     }
 }

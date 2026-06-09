@@ -20,9 +20,10 @@ use gpui::{
     SharedString, Subscription, Task, TaskExt, Window,
 };
 use menu::{Cancel, Confirm};
-use project::git_store::Repository;
+use project::{git_store::Repository, project_settings::ProjectSettings};
 use project_diff::ProjectDiff;
-use time::OffsetDateTime;
+use settings::Settings as _;
+use time::{OffsetDateTime, UtcOffset};
 use ui::prelude::*;
 use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
@@ -67,6 +68,29 @@ pub fn get_provider_icon(name: &str) -> IconName {
         "SourceHut" => IconName::Sourcehut,
         _ => IconName::Link,
     }
+}
+
+pub fn custom_git_timestamp(timestamp: OffsetDateTime, cx: &App) -> Option<String> {
+    let format = ProjectSettings::get_global(cx).git.date_format.as_deref()?;
+    let format = time::format_description::parse(format).ok()?;
+    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+    timestamp.to_offset(local_offset).format(&format).ok()
+}
+
+pub fn git_timestamp(
+    timestamp: OffsetDateTime,
+    fallback_format: time_format::TimestampFormat,
+    cx: &App,
+) -> String {
+    custom_git_timestamp(timestamp, cx).unwrap_or_else(|| {
+        let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+        time_format::format_localized_timestamp(
+            timestamp,
+            OffsetDateTime::now_utc(),
+            local_offset,
+            fallback_format,
+        )
+    })
 }
 
 pub fn init(cx: &mut App) {

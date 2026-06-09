@@ -1,7 +1,7 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
-    git_status_icon,
+    custom_git_timestamp, git_status_icon,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
@@ -43,12 +43,12 @@ use std::{
     cell::Cell,
     ops::Range,
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
-use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
+use time::{OffsetDateTime, UtcOffset, macros::format_description};
 use ui::{
     Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
     Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
@@ -621,25 +621,25 @@ pub struct OpenAtCommit {
     pub sha: String,
 }
 
-fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
-    static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
-    FORMAT.get_or_init(|| {
-        time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
-            .unwrap_or_default()
+fn format_local_timestamp(
+    timestamp: i64,
+    format: &[time::format_description::BorrowedFormatItem<'static>],
+    cx: &App,
+) -> Option<String> {
+    let datetime = OffsetDateTime::from_unix_timestamp(timestamp).ok()?;
+    custom_git_timestamp(datetime, cx).or_else(|| {
+        let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+        datetime.to_offset(local_offset).format(format).ok()
     })
 }
 
-fn format_timestamp(timestamp: i64) -> String {
-    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
-        return "Unknown".to_string();
-    };
-
-    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    let local_datetime = datetime.to_offset(local_offset);
-
-    local_datetime
-        .format(timestamp_format())
-        .unwrap_or_default()
+fn format_timestamp(timestamp: i64, cx: &App) -> String {
+    format_local_timestamp(
+        timestamp,
+        format_description!("[day] [month repr:short] [year] [hour]:[minute]"),
+        cx,
+    )
+    .unwrap_or_else(|| "Unknown".to_string())
 }
 
 fn accent_colors_count(accents: &AccentColors) -> usize {
@@ -1527,8 +1527,8 @@ impl GitGraph {
                     state.scroll_handle.0.borrow_mut().last_item_size = None;
                 });
                 row_height = new_row_height;
-                cx.notify();
             }
+            cx.notify();
         })
         .detach();
 
@@ -1809,7 +1809,7 @@ impl GitGraph {
                 if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
-                    formatted_time = format_timestamp(data.commit_timestamp);
+                    formatted_time = format_timestamp(data.commit_timestamp, cx);
                 } else {
                     subject = "Loading…".into();
                     author_name = "".into();
@@ -2813,15 +2813,12 @@ impl GitGraph {
         };
 
         let date_string = commit_timestamp
-            .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
-            .map(|datetime| {
-                let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-                let local_datetime = datetime.to_offset(local_offset);
-                let format =
-                    time::format_description::parse("[month repr:short] [day], [year]").ok();
-                format
-                    .and_then(|f| local_datetime.format(&f).ok())
-                    .unwrap_or_default()
+            .and_then(|timestamp| {
+                format_local_timestamp(
+                    timestamp,
+                    format_description!("[month repr:short] [day], [year]"),
+                    cx,
+                )
             })
             .unwrap_or_default();
 

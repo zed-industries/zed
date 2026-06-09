@@ -11377,9 +11377,22 @@ impl EditorSnapshot {
                         /// The number of characters to dedicate to gaps and margins.
                         const SPACING_WIDTH: usize = 4;
 
+                        let timestamp_width = ProjectSettings::get_global(cx)
+                            .git
+                            .date_format
+                            .as_deref()
+                            .and_then(|format| {
+                                let format = time::format_description::parse(format).ok()?;
+                                time::macros::datetime!(2020-09-30 23:59:59 UTC)
+                                    .format(&format)
+                                    .ok()
+                            })
+                            .map_or(MAX_RELATIVE_TIMESTAMP.len(), |timestamp| {
+                                timestamp.len().max(MAX_RELATIVE_TIMESTAMP.len())
+                            });
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len()
+                            + timestamp_width
                             + SPACING_WIDTH;
 
                         ch_advance * max_char_count

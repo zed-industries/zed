@@ -471,6 +471,8 @@ pub struct GitSettings {
     pub inline_blame: InlineBlameSettings,
     /// Git blame settings.
     pub blame: BlameSettings,
+    /// Custom date format used by git graph and git blame timestamps.
+    pub date_format: Option<String>,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -675,6 +677,7 @@ impl Settings for ProjectSettings {
                     show_avatar: blame.show_avatar.unwrap(),
                 }
             },
+            date_format: git.date_format.clone(),
             branch_picker: {
                 let branch_picker = git.branch_picker.unwrap();
                 BranchPickerSettings {

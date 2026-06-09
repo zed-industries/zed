@@ -2240,6 +2240,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "branch_picker": {
       "show_author_name": true
     },
+    "date_format": null,
     "hunk_style": "staged_hollow"
   }
 }
@@ -2370,6 +2371,12 @@ Example:
   }
 }
 ```
+
+### Git Date Format
+
+- Description: Custom date format for git graph and blame, using [`time` crate format descriptions](https://time-rs.github.io/book/api/format-description.html).
+- Setting: `date_format`
+- Default: `null`
 
 ### Branch Picker
 

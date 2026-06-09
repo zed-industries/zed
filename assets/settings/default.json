@@ -1602,6 +1602,10 @@
     "blame": {
       "show_avatar": true,
     },
+    // Custom date format, based on time crate format descriptions:
+    // https://time-rs.github.io/book/api/format-description.html
+    // e.g "[year]-[month]-[day] [hour]:[minute]:[second]"
+    "date_format": null,
     // Control which information is shown in the branch picker.
     "branch_picker": {
       "show_author_name": true,
