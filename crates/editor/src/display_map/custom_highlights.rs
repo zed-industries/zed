@@ -2,6 +2,7 @@ use collections::BTreeMap;
 use gpui::HighlightStyle;
 use language::{Chunk, LanguageAwareStyling};
 use multi_buffer::{MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot};
+use smallvec::SmallVec;
 use std::{cmp, ops::Range};
 
 use crate::display_map::{HighlightKey, SemanticTokensHighlights, TextHighlights};
@@ -81,7 +82,7 @@ fn create_highlight_endpoints(
     if let Some(text_highlights) = text_highlights {
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
-        let mut text_highlights_scratch = Vec::new();
+        let mut text_highlights_scratch = SmallVec::<[_; 16]>::new();
 
         for (&tag, text_highlights) in text_highlights.iter() {
             let style = text_highlights.0;
@@ -134,7 +135,7 @@ fn create_highlight_endpoints(
     if let Some(semantic_token_highlights) = semantic_token_highlights {
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
-        let mut semantic_highlights_scratch = Vec::new();
+        let mut semantic_highlights_scratch = SmallVec::<[_; 16]>::new();
         for buffer_id in buffer.buffer_ids_for_range(range.clone()) {
             let Some((semantic_token_highlights, interner)) =
                 semantic_token_highlights.get(&buffer_id)
