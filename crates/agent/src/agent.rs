@@ -1423,6 +1423,9 @@ impl NativeAgent {
         project_state: Option<&ProjectState>,
         cx: &App,
     ) -> Vec<acp::AvailableCommand> {
+        let Some(state) = project_state else {
+            return Vec::new();
+        };
         let compact_command = cx.has_flag::<HandoffFeatureFlag>().then(|| {
             acp::AvailableCommand::new(
                 COMPACT_COMMAND_NAME,
@@ -1433,9 +1436,6 @@ impl NativeAgent {
             ))
         });
 
-        let Some(state) = project_state else {
-            return compact_command.into_iter().collect();
-        };
         let registry = state.context_server_registry.read(cx);
 
         // Reserve the built-in command name (when active) so a same-named MCP
