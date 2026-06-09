@@ -5373,7 +5373,7 @@ impl BufferSnapshot {
         }));
 
         let mut query_ix = 0;
-        let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
+        let query_chars = query_str.map(|query| query.chars().collect::<SmallVec<[_; 32]>>());
         let query_len = query_chars.as_ref().map_or(0, |query| query.len());
 
         let mut words = BTreeMap::default();
