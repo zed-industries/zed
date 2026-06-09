@@ -2096,7 +2096,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
         position: Point,
     ) -> Option<String> {
-        let mut chars = Vec::new();
+        let mut chars = SmallVec::<[char; 32]>::new();
         let mut found_colon = false;
         for char in snapshot.reversed_chars_at(position).take(100) {
             // Found a possible emoji shortcode in the middle of the buffer
@@ -2107,7 +2107,7 @@ impl Editor {
                 }
                 // If the previous character is not a whitespace, we are in the middle of a word
                 // and we only want to complete the shortcode if the word is made up of other emojis
-                let mut containing_word = String::new();
+                let mut containing_word = SmallVec::<[char; 16]>::new();
                 for ch in snapshot
                     .reversed_chars_at(position)
                     .skip(chars.len() + 1)
@@ -2118,7 +2118,8 @@ impl Editor {
                     }
                     containing_word.push(ch);
                 }
-                let containing_word = containing_word.chars().rev().collect::<String>();
+                containing_word.reverse();
+                let containing_word = containing_word.iter().collect::<String>();
                 if util::word_consists_of_emojis(containing_word.as_str()) {
                     chars.reverse();
                     return Some(chars.iter().collect());
