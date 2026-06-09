@@ -1033,12 +1033,11 @@ impl BlockMap {
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
                     .filter_map(|block| {
-                        if block.style == BlockStyle::Spacer {
-                            let buffer_row =
-                                MultiBufferRow(block.placement.start().to_point(buffer).row);
-                            if wrap_snapshot.is_line_folded(buffer_row) {
-                                return None;
-                            }
+                        if block.style == BlockStyle::Spacer
+                            && wrap_snapshot
+                                .intersects_fold(block.placement.start().to_offset(buffer))
+                        {
+                            return None;
                         }
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
                         if let BlockPlacement::Above(row) = placement
