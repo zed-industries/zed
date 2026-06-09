@@ -7543,6 +7543,66 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn status_bar_git_blame_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Status Bar Git Blame"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Show Git blame data for the current line as an item in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.status_bar_blame.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .status_bar_blame
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .status_bar_blame
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Commit Summary",
+                description: "Show commit summary as part of the status bar blame.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.status_bar_blame.show_commit_summary"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .status_bar_blame
+                            .as_ref()?
+                            .show_commit_summary
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .status_bar_blame
+                            .get_or_insert_default()
+                            .show_commit_summary = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn git_blame_view_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Git Blame View"),
@@ -7672,6 +7732,7 @@ fn version_control_page() -> SettingsPage {
             git_integration_section(),
             git_gutter_section(),
             inline_git_blame_section(),
+            status_bar_git_blame_section(),
             git_blame_view_section(),
             branch_picker_section(),
             git_hunks_section(),

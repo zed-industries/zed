@@ -1599,6 +1599,14 @@
       // The minimum column number to show the inline blame information at
       "min_column": 0,
     },
+    // Control whether the git blame information is shown for the current
+    // line in the status bar (GitLens-style).
+    "status_bar_blame": {
+      "enabled": false,
+      // Whether or not to display the git commit summary alongside
+      // the author and relative time.
+      "show_commit_summary": true,
+    },
     "blame": {
       "show_avatar": true,
     },
