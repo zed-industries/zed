@@ -1,6 +1,7 @@
 use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
+use smallvec::SmallVec;
 use std::ops::Range;
 
 /// An outline of all the symbols contained in a buffer.
@@ -276,20 +277,18 @@ fn expand_tree(
     let mut out = Vec::with_capacity(matches.len());
     let mut prev_item_ix = 0;
     for string_match in matches {
-        let insertion_ix = out.len();
         let mut cur_depth = depth_at(string_match.candidate_id);
+        let mut ancestors = SmallVec::<[OutlineSearchEntry; 8]>::new();
         for ix in (prev_item_ix..string_match.candidate_id).rev() {
             if cur_depth == 0 {
                 break;
             }
             if depth_at(ix) == cur_depth - 1 {
-                out.insert(
-                    insertion_ix,
-                    OutlineSearchEntry::Ancestor { candidate_id: ix },
-                );
+                ancestors.push(OutlineSearchEntry::Ancestor { candidate_id: ix });
                 cur_depth -= 1;
             }
         }
+        out.extend(ancestors.into_iter().rev());
         prev_item_ix = string_match.candidate_id + 1;
         out.push(OutlineSearchEntry::Match(string_match));
     }
