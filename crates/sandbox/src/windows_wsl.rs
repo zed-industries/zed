@@ -7,10 +7,9 @@
 //! WSL's `/mnt/<drive>/...` view and use the user's default WSL distro unless a
 //! WSL UNC path in the request pins a specific distro.
 
-use std::{
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
+use std::path::{Path, PathBuf};
+
+use smol::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, bail, ensure};
 
@@ -154,7 +153,7 @@ fn check_wsl_command(
         .stdin(Stdio::null())
         .stdout(Stdio::null());
 
-    let output = command.output().with_context(|| {
+    let output = smol::block_on(command.output()).with_context(|| {
         format!("{WSL_SANDBOX_ERROR_PREFIX}: failed to invoke WSL while trying to {description}")
     })?;
     ensure!(
@@ -181,7 +180,7 @@ fn check_wsl_path_exists(
         .stdin(Stdio::null())
         .stdout(Stdio::null());
 
-    let output = command.output().with_context(|| {
+    let output = smol::block_on(command.output()).with_context(|| {
         format!(
             "{WSL_SANDBOX_ERROR_PREFIX}: failed to check {description} `{}` in {}",
             path.path,

@@ -15844,6 +15844,7 @@ dependencies = [
  "anyhow",
  "libc",
  "seccompiler",
+ "smol",
  "tempfile",
 ]
 
