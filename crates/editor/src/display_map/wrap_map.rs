@@ -9,6 +9,7 @@ use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{LanguageAwareStyling, Point};
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
+use smallvec::SmallVec;
 use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
@@ -510,7 +511,7 @@ impl WrapSnapshot {
                 }
 
                 let mut line = String::new();
-                let mut line_fragments = Vec::new();
+                let mut line_fragments = SmallVec::<[gpui::LineFragment; 1]>::new();
                 let mut remaining = None;
                 let mut chunks = new_tab_snapshot.chunks(
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
