@@ -1094,6 +1094,7 @@ impl X11Client {
                     keystroke,
                     is_held: false,
                     prefer_character_input: false,
+                    allow_keybinding_override: false,
                 }));
             }
             Event::KeyRelease(event) => {
