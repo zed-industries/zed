@@ -167,7 +167,7 @@ impl WorktreePicker {
                     picker.delegate.all_worktrees = all_worktrees;
                     picker.delegate.default_branch =
                         default_branch.and_then(|branch| RemoteBranchName::parse(&branch));
-                    picker.delegate.refresh_project_worktree_paths(window, cx);
+                    picker.delegate.refresh_project_worktree_paths(cx);
                     picker.refresh(window, cx);
                 })?;
 
@@ -468,26 +468,21 @@ impl WorktreePickerDelegate {
         !worktree.is_main && !self.project_worktree_paths.contains(&worktree.path)
     }
 
-    fn refresh_project_worktree_paths(&mut self, window: &mut Window, cx: &mut App) {
+    fn refresh_project_worktree_paths(&mut self, cx: &mut App) {
         let mut paths = self.active_worktree_paths.clone();
 
-        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten()
-            && let Some(workspace) = self.workspace.upgrade()
-        {
-            let group_key = workspace.read(cx).project_group_key(cx);
-            if let Some(group_workspaces) = multi_workspace
-                .read(cx)
-                .workspaces_for_project_group(&group_key, cx)
-            {
-                for group_workspace in group_workspaces {
-                    for worktree in group_workspace
-                        .read(cx)
-                        .project()
-                        .read(cx)
-                        .visible_worktrees(cx)
-                    {
-                        paths.insert(worktree.read(cx).abs_path().to_path_buf());
-                    }
+        // Consider every workspace in every open window so a worktree with a
+        // live workspace anywhere can't be deleted out from under it.
+        for window in cx.windows() {
+            let Some(multi_workspace) = window.downcast::<MultiWorkspace>() else {
+                continue;
+            };
+            let Ok(multi_workspace) = multi_workspace.read(cx) else {
+                continue;
+            };
+            for workspace in multi_workspace.workspaces() {
+                for worktree in workspace.read(cx).project().read(cx).visible_worktrees(cx) {
+                    paths.insert(worktree.read(cx).abs_path().to_path_buf());
                 }
             }
         }
@@ -1736,6 +1731,59 @@ mod tests {
         assert!(
             !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
             "worktree should be removed after successful delete"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_worktree_with_workspace_in_another_window_cannot_be_deleted(
+        cx: &mut TestAppContext,
+    ) {
+        let (fs, worktree_picker, repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        let can_delete_worktree = |worktree_picker: &Entity<WorktreePicker>,
+                                   cx: &mut VisualTestContext| {
+            worktree_picker.update(cx, |worktree_picker, cx| {
+                worktree_picker.picker.update(cx, |picker, cx| {
+                    picker.delegate.refresh_project_worktree_paths(cx);
+                    let worktree = picker
+                        .delegate
+                        .all_worktrees
+                        .iter()
+                        .find(|worktree| worktree.path == worktree_path)
+                        .expect("worktree should be listed")
+                        .clone();
+                    picker.delegate.can_delete_worktree(&worktree)
+                })
+            })
+        };
+
+        // With no workspace open at the worktree, it is deletable.
+        assert!(can_delete_worktree(&worktree_picker, &mut cx));
+
+        // Open a workspace at the worktree in a second window.
+        let worktree_project = Project::test(fs.clone(), [worktree_path.as_path()], &mut cx).await;
+        let _second_window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(worktree_project, window, cx));
+        cx.run_until_parked();
+
+        // The worktree now has a live workspace in another window, so the
+        // picker must refuse to delete it.
+        assert!(!can_delete_worktree(&worktree_picker, &mut cx));
+
+        // Attempting the delete action is a no-op.
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, true, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
+        assert!(
+            repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
+            "worktree with a live workspace in another window must not be deleted"
         );
     }
 
