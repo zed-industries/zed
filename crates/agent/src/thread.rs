@@ -2243,6 +2243,7 @@ impl Thread {
         self.cancel(cx).detach();
 
         let compaction = self.forced_compaction_target_ix().map(|request_end_ix| {
+            self.advance_prompt_id();
             let request = self.build_compaction_request(request_end_ix, &model, cx);
             self.current_request_token_usage = TokenUsage::default();
             (model, request)
