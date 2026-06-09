@@ -444,17 +444,45 @@ async fn run_terminal_tool(
         Some(COMMAND_OUTPUT_LIMIT)
     };
 
-    let terminal = environment
+    let terminal = match environment
         .create_terminal(
             input.command.clone(),
-            extra_env,
-            working_dir,
+            extra_env.clone(),
+            working_dir.clone(),
             output_byte_limit,
-            sandbox_wrap,
+            sandbox_wrap.clone(),
             cx,
         )
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(terminal) => terminal,
+        Err(error)
+            if cfg!(target_os = "windows")
+                && sandbox_wrap.is_some()
+                && is_windows_wsl_sandbox_error(&error.to_string()) =>
+        {
+            if !prompt_to_turn_off_windows_sandboxing(&event_stream, &error.to_string(), cx).await?
+            {
+                return Ok(
+                    "Command cancelled: Windows sandboxing is unavailable, and the user chose to keep sandboxing enabled."
+                        .to_string(),
+                );
+            }
+            event_stream.turn_off_sandboxing_always(cx);
+            environment
+                .create_terminal(
+                    input.command.clone(),
+                    extra_env,
+                    working_dir,
+                    output_byte_limit,
+                    None,
+                    cx,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        Err(error) => return Err(error.to_string()),
+    };
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
     event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
@@ -552,6 +580,38 @@ fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
             }
         })
         .collect()
+}
+
+fn is_windows_wsl_sandbox_error(error: &str) -> bool {
+    error.contains("Windows sandboxing via WSL is unavailable")
+}
+
+async fn prompt_to_turn_off_windows_sandboxing(
+    event_stream: &ToolCallEventStream,
+    error: &str,
+    cx: &mut AsyncApp,
+) -> Result<bool, String> {
+    let title = "Windows sandboxing is unavailable".to_string();
+    let message = format!(
+        "Zed couldn't start this terminal command in the Windows sandbox.\n\n{error}\n\nYou can cancel the command and keep sandboxing enabled, or turn off terminal sandboxing and run this command normally."
+    );
+    let options = vec![
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new("turn_off_sandboxing"),
+            "Turn Off Sandboxing",
+            acp::PermissionOptionKind::AllowAlways,
+        ),
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new("cancel"),
+            "Cancel",
+            acp::PermissionOptionKind::RejectOnce,
+        ),
+    ];
+
+    let selected =
+        cx.update(|cx| event_stream.prompt_for_decision(Some(title), Some(message), options, cx));
+    let selected = selected.await.map_err(|error| error.to_string())?;
+    Ok(selected.0.as_ref() == "turn_off_sandboxing")
 }
 
 /// User-facing title for the sandbox-escalation approval prompt. Only called

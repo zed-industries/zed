@@ -201,8 +201,8 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
   Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
 {{else}}
 {{#if is_windows}}
-- Execution: commands run inside WSL under Bubblewrap. Sandboxing is only enabled for projects opened from WSL paths.
-- Writes: `/tmp` inside WSL is writable but is cleared between `terminal` calls{{#if worktrees}}. These WSL project directories are also writable and persist across calls:
+- Execution: commands run inside WSL under Bubblewrap. Native Windows project paths are routed through WSL's `/mnt/<drive>/...` filesystem view.
+- Writes: `/tmp` inside WSL is writable but is cleared between `terminal` calls{{#if worktrees}}. These project directories are also writable and persist across calls:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}

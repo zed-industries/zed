@@ -4853,6 +4853,15 @@ impl ToolCallEventStream {
             .effective_with_persistent(request, persistent)
     }
 
+    pub(crate) fn turn_off_sandboxing_always(&self, cx: &AsyncApp) {
+        let request = SandboxRequest {
+            unsandboxed: true,
+            ..Default::default()
+        };
+        self.sandbox_grants.borrow_mut().record(&request);
+        Self::persist_sandbox_always_permission(&request, self.fs.clone(), cx);
+    }
+
     /// Prompts the user to choose between an explicit set of actions and
     /// returns the chosen `option_id`.
     ///
