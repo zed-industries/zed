@@ -1894,10 +1894,12 @@ impl NativeAgent {
                 acp_thread.update_token_usage(None, cx);
             });
 
+            let connection = this.upgrade().map(NativeAgentConnection);
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
                     acp_thread.downgrade(),
+                    connection,
                     cx,
                 )
             })
@@ -2093,7 +2095,12 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events(response_stream, acp_thread.downgrade(), Some(self.clone()), cx)
+        Self::handle_thread_events(
+            response_stream,
+            acp_thread.downgrade(),
+            Some(self.clone()),
+            cx,
+        )
     }
 
     fn handle_thread_events(

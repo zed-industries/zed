@@ -901,11 +901,7 @@ impl ContentBlock {
     ///
     /// Recreating the entity on every streamed snapshot causes the rendered
     /// element to tear down and rebuild, which flickers badly.
-    pub fn update_text_in_place(
-        &mut self,
-        block: &acp::ContentBlock,
-        cx: &mut App,
-    ) -> bool {
+    pub fn update_text_in_place(&mut self, block: &acp::ContentBlock, cx: &mut App) -> bool {
         let ContentBlock::Markdown { markdown } = self else {
             return false;
         };
