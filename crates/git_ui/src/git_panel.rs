@@ -5108,30 +5108,29 @@ impl GitPanel {
             let has_commits = self.commit_history_shas.as_ref().map_or(false, |shas| !shas.is_empty());
             let is_loading = self.commit_history_shas.is_none() && has_repo;
             
-            match (is_loading, has_repo, has_commits) {
-                (true, _, _) => {
-                    // Loading state
-                    this.child(
+            if is_loading {
+                this.child(
+                    h_flex()
+                        .flex_1()
+                        .justify_center()
+                        .child(Label::new("Loading Commit History…").color(Color::Muted)),
+                )
+            } else if !has_repo || !has_commits {
+                this.child(
+                    h_flex()
+                        .flex_1()
+                        .justify_center()
+                        .child(Label::new("No commits yet").color(Color::Muted)),
+                )
+            } else {
+                match self.render_commit_history(window, cx) {
+                    Some(history) => this.child(history),
+                    None => this.child(
                         h_flex()
                             .flex_1()
                             .justify_center()
-                            .child(Label::new("Loading Commit History…").color(Color::Muted)),
-                    )
-                }
-                (false, false, _) | (false, _, false) => {
-                    // No repo or no commits
-                    this.child(
-                        h_flex()
-                            .flex_1()
-                            .justify_center()
-                            .child(Label::new("No commits yet").color(Color::Muted)),
-                    )
-                }
-                (false, true, true) => {
-                    // Has commits to render
-                    this.child(self.render_commit_history(window, cx).unwrap_or_else(|| {
-                        Label::new("Failed to render commits").into_any_element()
-                    }))
+                            .child(Label::new("Failed to load commits").color(Color::Muted)),
+                    ),
                 }
             }
         })
