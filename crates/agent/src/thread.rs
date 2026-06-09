@@ -3976,6 +3976,9 @@ impl Thread {
                 // Retrying won't help for Payment Required errors.
                 None
             }
+            // Retrying won't help until the user consents to data retention
+            // or switches models.
+            DataRetentionConsentRequired { .. } => None,
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
