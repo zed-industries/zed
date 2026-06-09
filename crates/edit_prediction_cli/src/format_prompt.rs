@@ -454,6 +454,25 @@ impl TeacherJumpsPrompt {
                 new_span.pop();
             }
 
+            // A replacement that reproduces the start of the span verbatim and
+            // then stops almost always means the model quit writing before
+            // reaching the end marker, not that it intends to delete the
+            // omitted tail. Accepting it would silently drop code, so reject
+            // the whole response. Genuine tail deletions can still be
+            // expressed with an end marker placed beyond the deleted code.
+            if !new_span.is_empty()
+                && old_span.len() > new_span.len()
+                && old_span.starts_with(&new_span)
+                && !old_span[new_span.len()..].trim().is_empty()
+            {
+                let dropped = old_span[new_span.len()..].trim_end();
+                return Err(anyhow!(
+                    "edit span `{start_id}`..`{end_id}` looks truncated: the replacement \
+                     matches the start of the original span and then stops before the end \
+                     marker, which would silently delete:\n{dropped}"
+                ));
+            }
+
             edits.push(ParsedSpanEdit {
                 snippet_ix: start_snippet,
                 range: start_byte..end_byte,
@@ -1074,6 +1093,49 @@ mod tests {
             TeacherJumpsPrompt::parse(&example, "All good.\n\n`````\nNO_EDITS\n`````\n").unwrap();
         assert!(patch.is_empty());
         assert!(cursor.is_none());
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_rejects_truncated_span() {
+        let cursor_excerpt = "\
+            fn alpha() {\n    one();\n}\n\nfn beta() {\n    two();\n}\n\n\
+            fn gamma() {\n    three();\n}\n\nfn delta() {\n    four();\n}\n";
+        let example = make_example(cursor_excerpt, 0, &[]);
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let markers = &marker_table[0].markers;
+        assert!(markers.len() >= 3);
+        let start_tag = hashed_regions::marker_tag(&markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&markers[markers.len() - 1].0);
+
+        // The model reproduces only the head of the span and stops before the
+        // end marker; accepting this would silently delete the rest.
+        let head = &cursor_excerpt[markers[0].1..markers[1].1];
+        let response = format!("Minor cleanup.\n\n`````\n{start_tag}\n{head}{end_tag}\n`````\n");
+        let error = TeacherJumpsPrompt::parse(&example, &response).unwrap_err();
+        assert!(
+            error.to_string().contains("looks truncated"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_allows_empty_span_deletion() {
+        let cursor_excerpt = "\
+            fn alpha() {\n    one();\n}\n\nfn beta() {\n    two();\n}\n\n\
+            fn gamma() {\n    three();\n}\n\nfn delta() {\n    four();\n}\n";
+        let example = make_example(cursor_excerpt, 0, &[]);
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let markers = &marker_table[0].markers;
+        assert!(markers.len() >= 3);
+        let start_tag = hashed_regions::marker_tag(&markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&markers[1].0);
+
+        // Deleting an entire span by replacing it with nothing is fine.
+        let response = format!("Removing alpha.\n\n`````\n{start_tag}\n{end_tag}\n`````\n");
+        let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+        assert!(patch.contains("-fn alpha() {"), "patch: {patch}");
     }
 
     #[test]
