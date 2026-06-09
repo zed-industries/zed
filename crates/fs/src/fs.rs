@@ -495,7 +495,19 @@ impl FileHandle for std::fs::File {
 
         let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
         anyhow::ensure!(!os_str.is_empty(), "Could find a path for the file handle");
-        Ok(PathBuf::from(os_str))
+        let path = PathBuf::from(os_str);
+
+        // When a file or directory is deleted on NTFS while a handle remains open,
+        // the entry is moved to a special `\$Extend\$Deleted\` location until the
+        // last handle is closed. `GetFinalPathNameByHandleW` happily returns that
+        // path, which would otherwise be mistaken for an external rename. Treat it
+        // as deletion instead.
+        let normalized = path.to_string_lossy().replace('/', "\\").to_lowercase();
+        anyhow::ensure!(
+            !normalized.contains("\\$extend\\$deleted\\"),
+            "file handle points to NTFS pending-deletion area: {path:?}"
+        );
+        Ok(path)
     }
 }
 
