@@ -14,7 +14,6 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
-use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
@@ -1490,24 +1489,21 @@ impl NativeAgent {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = cx.has_flag::<HandoffFeatureFlag>().then(|| {
-            acp::AvailableCommand::new(
-                COMPACT_COMMAND_NAME,
-                "Summarize the conversation so far to free up context",
-            )
-            .meta(acp_thread::meta_with_command_category(
-                acp_thread::CommandCategory::Native,
-            ))
-        });
+        let compact_command = acp::AvailableCommand::new(
+            COMPACT_COMMAND_NAME,
+            "Summarize the conversation so far to free up context",
+        )
+        .meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ));
 
         let registry = state.context_server_registry.read(cx);
 
-        // Reserve the built-in command name (when active) so a same-named MCP
-        // prompt is force-prefixed (`/<server>.compact`) and stays reachable:
-        // an unqualified `/compact` always routes to the native command.
-        let reserved = compact_command.as_ref().map(|_| COMPACT_COMMAND_NAME);
+        // Reserve the built-in command name so a same-named MCP prompt is
+        // force-prefixed (`/<server>.compact`) and stays reachable: an
+        // unqualified `/compact` always routes to the native command.
         let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
-            reserved,
+            [COMPACT_COMMAND_NAME],
             registry.prompts().map(|p| p.prompt.name.as_str()),
         );
 
@@ -1546,7 +1542,9 @@ impl NativeAgent {
             Some(command)
         });
 
-        compact_command.into_iter().chain(mcp_commands).collect()
+        std::iter::once(compact_command)
+            .chain(mcp_commands)
+            .collect()
     }
 
     pub fn load_thread(
@@ -2552,9 +2550,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
-            if cx.has_flag::<HandoffFeatureFlag>()
-                && parsed_command.is_unqualified(COMPACT_COMMAND_NAME)
-            {
+            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
                 return self.0.update(cx, |agent, cx| {
                     agent.send_compact_command(id, session_id, cx)
                 });
@@ -3563,7 +3559,7 @@ mod internal_tests {
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
@@ -3635,27 +3631,9 @@ mod internal_tests {
             .collect()
     }
 
-    fn set_handoff_flag_override(value: &str, cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, _| {
-                store.register_setting::<feature_flags::FeatureFlagsSettings>();
-            });
-            cx.update_flags(false, vec![]);
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |content| {
-                    content
-                        .feature_flags
-                        .get_or_insert_default()
-                        .insert("handoff".to_string(), value.to_string());
-                });
-            });
-        });
-    }
-
     #[gpui::test]
-    async fn test_compact_command_requires_handoff_feature_flag(cx: &mut TestAppContext) {
+    async fn test_compact_command_is_available(cx: &mut TestAppContext) {
         init_test(cx);
-        set_handoff_flag_override("off", cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
@@ -3677,28 +3655,9 @@ mod internal_tests {
 
         cx.update(|cx| {
             let commands = acp_thread.read(cx).available_commands();
-            assert!(commands.is_empty());
-        });
-
-        set_handoff_flag_override("on", cx);
-
-        let acp_thread = cx
-            .update(|cx| {
-                Rc::new(connection.clone()).new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new("/")]),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        cx.run_until_parked();
-
-        cx.update(|cx| {
-            let commands = acp_thread.read(cx).available_commands();
 
             let compact = commands.iter().find(|command| command.name == "compact");
-            let compact = compact.expect("compact command should be available behind the flag");
+            let compact = compact.expect("compact command should be available");
             assert_eq!(
                 acp_thread::command_category_from_meta(&compact.meta),
                 Some(acp_thread::CommandCategory::Native),
@@ -3707,43 +3666,8 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn test_compact_prompt_is_regular_prompt_without_handoff(cx: &mut TestAppContext) {
+    async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
         init_test(cx);
-        set_handoff_flag_override("off", cx);
-
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
-        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
-        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
-
-        let message_id = UserMessageId::new();
-        let prompt_task = cx.update(|cx| {
-            connection.prompt(
-                message_id.clone(),
-                acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
-                cx,
-            )
-        });
-        cx.run_until_parked();
-
-        let request = model.pending_completions().pop().unwrap();
-        assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
-        assert_eq!(
-            request_texts_after_system(&request.messages),
-            vec!["/compact".to_string()]
-        );
-
-        model.send_completion_stream_text_chunk(&request, "regular response");
-        model.end_completion_stream(&request);
-        cx.run_until_parked();
-        prompt_task.await.unwrap();
-    }
-
-    #[gpui::test]
-    async fn test_compact_prompt_routes_to_manual_compaction_with_handoff(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| cx.update_flags(true, vec!["handoff".to_string()]));
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
@@ -3802,7 +3726,7 @@ mod internal_tests {
         assert!(ambiguous.contains("compact"));
         assert!(!ambiguous.contains("deploy"));
 
-        // Without the reservation (handoff off), a unique MCP prompt is left bare.
+        // Without the reservation, a unique MCP prompt is left bare.
         let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
         assert!(ambiguous.is_empty());
 
