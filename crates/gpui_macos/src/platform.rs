@@ -666,7 +666,9 @@ impl Platform for MacPlatform {
                 Some(appearance) => {
                     let name: id = match appearance {
                         WindowAppearance::Light => crate::window_appearance::NSAppearanceNameAqua,
-                        WindowAppearance::Dark => crate::window_appearance::NSAppearanceNameDarkAqua,
+                        WindowAppearance::Dark => {
+                            crate::window_appearance::NSAppearanceNameDarkAqua
+                        }
                         WindowAppearance::VibrantLight => NSAppearanceNameVibrantLight,
                         WindowAppearance::VibrantDark => NSAppearanceNameVibrantDark,
                     };

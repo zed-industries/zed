@@ -144,20 +144,18 @@ impl Render for AppearanceExample {
                             .flex()
                             .gap_2()
                             .child(self.button("Auto", None, &palette, cx))
-                            .child(
-                                self.button("Light", Some(WindowAppearance::Light), &palette, cx),
-                            )
+                            .child(self.button(
+                                "Light",
+                                Some(WindowAppearance::Light),
+                                &palette,
+                                cx,
+                            ))
                             .child(self.button("Dark", Some(WindowAppearance::Dark), &palette, cx)),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(palette.muted)
-                            .child(
-                                "Set the system to Light mode, then choose Dark: the native \
+                    .child(div().text_xs().text_color(palette.muted).child(
+                        "Set the system to Light mode, then choose Dark: the native \
                                  window border and titlebar switch to dark to match.",
-                            ),
-                    ),
+                    )),
             )
     }
 }
@@ -178,9 +176,7 @@ fn run_example() {
                         cx.notify();
                     })
                     .detach();
-                    AppearanceExample {
-                        selected: None,
-                    }
+                    AppearanceExample { selected: None }
                 })
             },
         )
