@@ -533,9 +533,14 @@ impl ToolCall {
     }
 
     fn update_status(&mut self, status: ToolCallStatus) {
-        match status.as_acp_status() {
-            Some(status) => self.update_acp_status(status),
-            None => self.status = status,
+        match status {
+            ToolCallStatus::Pending => self.update_acp_status(acp::ToolCallStatus::Pending),
+            ToolCallStatus::InProgress => self.update_acp_status(acp::ToolCallStatus::InProgress),
+            ToolCallStatus::Completed => self.update_acp_status(acp::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => self.update_acp_status(acp::ToolCallStatus::Failed),
+            status @ (ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Rejected
+            | ToolCallStatus::Canceled) => self.status = status,
         }
     }
 
@@ -4613,6 +4618,90 @@ mod tests {
             }
             RequestPermissionOutcome::Cancelled => {
                 panic!("resolved permission request should select an outcome")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_permission_request_sets_waiting_status_on_existing_tool_call(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01existing_permission");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "Running title")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Needs permission");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation {
+                    current_status: acp::ToolCallStatus::InProgress,
+                    ..
+                }
+            ));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id.clone(),
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("permission request should resolve after authorization")
             }
         }
     }
