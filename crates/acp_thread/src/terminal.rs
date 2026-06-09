@@ -69,9 +69,9 @@ pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 ///   [`sandbox::linux_bubblewrap`]); no handle is needed. When no usable
 ///   `bwrap` is available the command runs unsandboxed (with a logged
 ///   warning) rather than failing.
-/// * Windows and all other platforms pass the command through unchanged —
-///   we have no sandbox integration there, so the command runs with the
-///   agent's ambient permissions.
+/// * Other platforms pass the command through unchanged — we have no sandbox
+///   integration there, so the command runs with the agent's ambient permissions.
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
@@ -161,15 +161,7 @@ pub(crate) fn apply_sandbox_wrap(
         // there's no on-disk resource to keep alive.
         Ok((new_program, new_args, None))
     }
-    #[cfg(target_os = "windows")]
-    {
-        // Windows sandboxing is handled before shell expansion in
-        // `create_terminal`; by this point `program` may be PowerShell or cmd,
-        // which cannot be executed inside WSL's Linux sandbox.
-        let _ = (sandbox_wrap, cwd);
-        Ok((program, args, None))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         // No sandbox integration available; run with ambient permissions.
         let _ = (sandbox_wrap, cwd);
