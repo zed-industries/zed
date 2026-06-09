@@ -71,13 +71,16 @@ impl RowChunks {
         self.chunks.len()
     }
 
-    pub fn applicable_chunks(&self, ranges: &[Range<Point>]) -> impl Iterator<Item = RowChunk> {
+    pub fn applicable_chunks<'a>(
+        &'a self,
+        ranges: impl Iterator<Item = Range<Point>> + Clone + 'a,
+    ) -> impl Iterator<Item = RowChunk> + 'a {
         self.chunks
             .iter()
             .filter(move |chunk| -> bool {
                 let chunk_range = chunk.row_range().to_inclusive();
                 ranges
-                    .iter()
+                    .clone()
                     // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
                     // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
                     .any(|point_range| {

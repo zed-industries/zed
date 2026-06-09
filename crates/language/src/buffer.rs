@@ -4641,7 +4641,7 @@ impl BufferSnapshot {
         for chunk in self
             .tree_sitter_data
             .chunks
-            .applicable_chunks(&[range.to_point(self)])
+            .applicable_chunks([range.to_point(self)].into_iter())
         {
             if known_chunks.is_some_and(|chunks| chunks.contains(&chunk.row_range())) {
                 continue;

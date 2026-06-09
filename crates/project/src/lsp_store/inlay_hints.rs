@@ -96,7 +96,10 @@ impl BufferInlayHints {
         }
     }
 
-    pub fn applicable_chunks(&self, ranges: &[Range<Point>]) -> impl Iterator<Item = RowChunk> {
+    pub fn applicable_chunks<'a>(
+        &'a self,
+        ranges: impl Iterator<Item = Range<Point>> + Clone + 'a,
+    ) -> impl Iterator<Item = RowChunk> + 'a {
         self.chunks.applicable_chunks(ranges)
     }
 

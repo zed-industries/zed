@@ -7340,14 +7340,10 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Vec<Range<BufferRow>> {
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let ranges = ranges
-            .iter()
-            .map(|range| range.to_point(&buffer_snapshot))
-            .collect::<Vec<_>>();
 
         self.latest_lsp_data(buffer, cx)
             .inlay_hints
-            .applicable_chunks(ranges.as_slice())
+            .applicable_chunks(ranges.iter().map(|range| range.to_point(&buffer_snapshot)))
             .map(|chunk| chunk.row_range())
             .collect()
     }
@@ -7395,16 +7391,12 @@ impl LspStore {
             .unwrap_or_default();
 
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let ranges = ranges
-            .iter()
-            .map(|range| range.to_point(&buffer_snapshot))
-            .collect::<Vec<_>>();
 
         let mut hint_fetch_tasks = Vec::new();
         let mut cached_inlay_hints = None;
         let mut ranges_to_query = None;
         let applicable_chunks = existing_inlay_hints
-            .applicable_chunks(ranges.as_slice())
+            .applicable_chunks(ranges.iter().map(|range| range.to_point(&buffer_snapshot)))
             .filter(|chunk| !known_chunks.contains(&chunk.row_range()))
             .collect::<Vec<_>>();
         if applicable_chunks.is_empty() {
@@ -13540,7 +13532,7 @@ impl LspStore {
             let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             let chunks_queried_for = lsp_data
                 .inlay_hints
-                .applicable_chunks(&[range.to_point(&buffer_snapshot)])
+                .applicable_chunks([range.to_point(&buffer_snapshot)].into_iter())
                 .collect::<Vec<_>>();
             match chunks_queried_for.as_slice() {
                 &[chunk] => {
