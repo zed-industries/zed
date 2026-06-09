@@ -124,15 +124,15 @@ impl Child {
 
 #[cfg(windows)]
 mod windows_job {
-    use anyhow::{Context as _, Result};
     use crate::ResultExt as _;
+    use anyhow::{Context as _, Result};
     use windows::Win32::{
         Foundation::{CloseHandle, HANDLE},
         System::{
             JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW,
-                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-                JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+                SetInformationJobObject, TerminateJobObject,
             },
             Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE},
         },
@@ -152,9 +152,8 @@ mod windows_job {
     impl JobObject {
         pub(crate) fn new() -> Result<Self> {
             unsafe {
-                let job = Self(
-                    CreateJobObjectW(None, None).context("failed to create job object")?,
-                );
+                let job =
+                    Self(CreateJobObjectW(None, None).context("failed to create job object")?);
                 let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
                 info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 SetInformationJobObject(
