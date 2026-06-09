@@ -474,6 +474,17 @@ pub struct OAuthClientSettings {
     /// the system keychain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
+    /// Explicit OAuth authorization endpoint URL. When provided along with
+    /// `token_url`, skips `.well-known` discovery. Required for servers like
+    /// Google Cloud that don't implement MCP OAuth discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorize_url: Option<String>,
+    /// Explicit OAuth token endpoint URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_url: Option<String>,
+    /// OAuth scope to request. Space-separated if multiple scopes needed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 #[with_fallible_options]
