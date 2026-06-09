@@ -36,6 +36,10 @@ pub struct TextPickerDelegate {
     pub(crate) search_history_cursor: SearchHistoryCursor,
     pub(crate) file_count: usize,
     pub(crate) unique_files: HashSet<ProjectPath>,
+    /// Whether the preview is currently shown to the side. Kept in sync by the
+    /// picker via [`PickerDelegate::set_horizontal_preview`], because the
+    /// delegate cannot read the picker entity while rendering.
+    pub(crate) preview_layout_is_horizontal: bool,
 }
 
 impl TextPickerDelegate {
@@ -62,6 +66,7 @@ impl TextPickerDelegate {
             search_history_cursor: SearchHistoryCursor::default(),
             file_count: 0,
             unique_files: HashSet::default(),
+            preview_layout_is_horizontal: false,
             focus_handle: cx.focus_handle(),
         }
     }

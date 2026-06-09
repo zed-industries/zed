@@ -3,6 +3,7 @@ use crate::{SearchOptions, project_search_picker::SearchMatch};
 use std::{ops::Range, sync::Arc, time::Duration};
 
 use editor::Editor;
+use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{Action, AsyncApp, DismissEvent, Entity, HighlightStyle, StyledText, Task, TextStyle};
 use language::{Buffer, LanguageAwareStyling};
@@ -12,13 +13,15 @@ use settings::Settings;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, App, Color, Context, Div, Divider, FluentBuilder, InteractiveElement, ListItem,
-    ListItemSpacing, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    StyledTypography, Toggleable, Tooltip, Window, div, h_flex, relative, v_flex,
+    ActiveTheme, App, Color, Context, Div, Divider, FluentBuilder, HighlightedLabel, Icon,
+    InteractiveElement, LabelCommon, LabelSize, ListItem, ListItemSpacing, ParentElement,
+    SharedString, StatefulInteractiveElement, Styled, StyledTypography, Toggleable, Tooltip,
+    Window, div, h_flex, relative, v_flex,
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
 use util::paths::PathMatcher;
+use workspace::item::ItemSettings;
 
 use super::InputPanel;
 
@@ -227,6 +230,10 @@ impl PickerDelegate for TextPickerDelegate {
         cx.emit(DismissEvent);
     }
 
+    fn preview_layout_changed(&mut self, layout_is_horizontal: bool) {
+        self.preview_layout_is_horizontal = layout_is_horizontal
+    }
+
     fn try_get_match(&self, _cx: &App) -> Option<picker::PreviewUpdate> {
         let m = self.matches.get(self.selected_index)?;
         Some(picker::PreviewUpdate::from_buffer(
@@ -242,7 +249,7 @@ impl PickerDelegate for TextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let search_match = self.matches.get(ix)?;
@@ -259,68 +266,91 @@ impl PickerDelegate for TextPickerDelegate {
             .unwrap_or_default();
         let full_path = SharedString::new(path.display(path_style));
 
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
+        let file_icon = ItemSettings::get_global(cx)
+            .file_icons
+            .then(|| FileIcons::get_icon(path.as_std_path(), cx))
+            .flatten()
+            .map(|icon| Icon::from_path(icon).color(Color::Muted));
+
+        let file_location = h_flex()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .id(("text-picker-path", ix))
+            .tooltip(Tooltip::text(full_path))
+            .child(div().flex_none().child(format!("{file_name} ")))
+            .when(!directory.is_empty(), |this| {
+                this.child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_start()
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(directory),
+                )
+            });
+
+        let rendered_line = if self.preview_layout_is_horizontal {
+            h_flex().gap_2().py_px().child(file_location)
+        } else {
+            h_flex()
+                .w_full()
+                .gap_4()
+                .justify_between()
+                .font_buffer(cx)
+                .text_buffer(cx)
+                .when(!self.preview_layout_is_horizontal, |d| {
+                    d.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(render_matched_line(search_match, cx)),
+                    )
+                })
                 .child(
                     h_flex()
-                        .w_full()
-                        .gap_4()
-                        .justify_between()
-                        .font_buffer(cx)
-                        .text_buffer(cx)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .child(render_item(search_match, cx)),
-                        )
-                        .child(
-                            h_flex()
-                                .w(relative(0.35))
-                                .flex_none()
-                                .gap_2()
-                                .child(
-                                    h_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .id(("quick-search-path", ix))
-                                        .tooltip(Tooltip::text(full_path))
-                                        .child(div().flex_none().child(format!("{file_name} ")))
-                                        .when(!directory.is_empty(), |this| {
-                                            this.child(
-                                                div()
-                                                    .min_w_0()
-                                                    .overflow_hidden()
-                                                    .whitespace_nowrap()
-                                                    .text_ellipsis_start()
-                                                    .text_color(cx.theme().colors().text_muted)
-                                                    .child(directory),
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .pr_2()
-                                        .text_color(cx.theme().colors().text_muted)
-                                        .child(search_match.line_number.to_string()),
-                                ),
-                        ),
-                ),
+                        .w(relative(0.35))
+                        .flex_none()
+                        .gap_2()
+                        .child(file_location),
+                )
+        };
+
+        let line_number = div()
+            .flex_none()
+            .pr_2()
+            .text_color(cx.theme().colors().text_muted)
+            .child(search_match.line_number.to_string());
+        Some(
+            ListItem::new(ix)
+                .spacing(ListItemSpacing::Sparse)
+                .start_slot::<Icon>(file_icon)
+                .end_slot::<Div>(line_number)
+                .inset(true)
+                .toggle_state(selected)
+                .child(rendered_line),
         )
     }
 }
 
 /// Renders the matched source line with syntax highlighting, overlaying the
 /// search match with a highlighted background and bold weight.
-fn render_item(search_match: &SearchMatch, cx: &App) -> StyledText {
+fn render_matched_line(search_match: &SearchMatch, cx: &App) -> StyledText {
+    let settings = ThemeSettings::get_global(cx);
+    let text_style = TextStyle {
+        color: cx.theme().colors().text,
+        font_family: settings.buffer_font.family.clone(),
+        font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_size: settings.buffer_font_size(cx).into(),
+        font_weight: settings.buffer_font.weight,
+        line_height: relative(1.),
+        ..Default::default()
+    };
     let original_line = &search_match.line_text;
     let line_text = original_line.trim_start();
     let trim_offset = original_line.len() - line_text.len();
@@ -374,18 +404,6 @@ fn render_item(search_match: &SearchMatch, cx: &App) -> StyledText {
     );
 
     let highlights = gpui::combine_highlights(syntax_highlights, [match_highlight]);
-
-    let settings = ThemeSettings::get_global(cx);
-    let text_style = TextStyle {
-        color: cx.theme().colors().text,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: settings.buffer_font_size(cx).into(),
-        font_weight: settings.buffer_font.weight,
-        line_height: relative(1.),
-        ..Default::default()
-    };
 
     StyledText::new(line_text.to_string()).with_default_highlights(&text_style, highlights)
 }

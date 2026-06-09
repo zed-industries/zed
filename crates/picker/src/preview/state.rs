@@ -3,6 +3,7 @@ use ui::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutMode {
+    Hidden,
     Stacked(StackedLayout),
     Telescope(TelescopeLayout),
 }

@@ -1,13 +1,14 @@
 use std::ops::Range;
 
 use gpui::{
-    Action, Context, DragMoveEvent, Entity, FocusHandle, Length, MouseButton, Styled, Window,
+    Action, Context, DragMoveEvent, Entity, FocusHandle, Focusable, Length, MouseButton, Styled,
+    Window,
 };
 use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 use workspace::pane;
 
 use crate::{
-    Picker, PickerDelegate, Preview, ToggleSplitMenu,
+    Picker, PickerDelegate, Preview, ToggleLayout, ToggleSplitMenu,
     preview::{
         render::do_nothing,
         state::{LayoutMode, TelescopeLayout},
@@ -392,94 +393,30 @@ impl<D: PickerDelegate> Picker<D> {
     //         ))
     // }
 
-    // pub(crate) fn render_header_controls(
-    //     &self,
-    //     _window: &mut Window,
-    //     cx: &mut Context<Self>,
-    // ) -> impl IntoElement {
-    //     let delegate = &self.picker.read(cx).delegate;
-    //     let replace_enabled = delegate.replace_enabled;
-    //     let filters_enabled = delegate.filters_enabled;
-    //     let selected_index = delegate.selected_index;
-    //     let match_count = delegate.matches.len();
+    pub(crate) fn render_header_controls(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let preview = self.preview.as_ref()?;
 
-    //     h_flex()
-    //         .gap_1()
-    //         .items_center()
-    //         .child({
-    //             let focus_handle = self.picker.focus_handle(cx);
-    //             IconButton::new("replace-toggle", IconName::Replace)
-    //                 .size(ButtonSize::Compact)
-    //                 .toggle_state(replace_enabled)
-    //                 .tooltip(move |_window, cx| {
-    //                     Tooltip::for_action_in("Toggle Replace", &ToggleReplace, &focus_handle, cx)
-    //                 })
-    //                 .on_click(|_, window, cx| {
-    //                     window.dispatch_action(ToggleReplace.boxed_clone(), cx);
-    //                 })
-    //         })
-    //         .child({
-    //             let focus_handle = self.picker.focus_handle(cx);
-    //             IconButton::new("filters-toggle", IconName::Filter)
-    //                 .size(ButtonSize::Compact)
-    //                 .toggle_state(filters_enabled)
-    //                 .tooltip(move |_window, cx| {
-    //                     Tooltip::for_action_in("Toggle Filters", &ToggleFilters, &focus_handle, cx)
-    //                 })
-    //                 .on_click(|_, window, cx| {
-    //                     window.dispatch_action(ToggleFilters.boxed_clone(), cx);
-    //                 })
-    //         })
-    //         .child({
-    //             let focus_handle = self.picker.focus_handle(cx);
-    //             let (icon, tooltip_text) = match self.layout_mode {
-    //                 LayoutMode::Stacked => (IconName::Split, "Switch to Telescope Layout"),
-    //                 LayoutMode::Telescope => (IconName::ListTree, "Switch to Stacked Layout"),
-    //             };
-    //             IconButton::new("layout-toggle", icon)
-    //                 .size(ButtonSize::Compact)
-    //                 .tooltip(move |_window, cx| {
-    //                     Tooltip::for_action_in(tooltip_text, &ToggleLayout, &focus_handle, cx)
-    //                 })
-    //                 .on_click(|_, window, cx| {
-    //                     window.dispatch_action(ToggleLayout.boxed_clone(), cx);
-    //                 })
-    //         })
-    //         .child({
-    //             let focus_handle = self.picker.focus_handle(cx);
-    //             IconButton::new("select-prev-match", IconName::ChevronLeft)
-    //                 .size(ButtonSize::Compact)
-    //                 .tooltip(move |_window, cx| {
-    //                     Tooltip::for_action_in(
-    //                         "Previous Match",
-    //                         &SelectPreviousMatch,
-    //                         &focus_handle,
-    //                         cx,
-    //                     )
-    //                 })
-    //                 .on_click(|_, window, cx| {
-    //                     window.dispatch_action(SelectPreviousMatch.boxed_clone(), cx);
-    //                 })
-    //         })
-    //         .child({
-    //             let focus_handle = self.picker.focus_handle(cx);
-    //             IconButton::new("select-next-match", IconName::ChevronRight)
-    //                 .size(ButtonSize::Compact)
-    //                 .tooltip(move |_window, cx| {
-    //                     Tooltip::for_action_in("Next Match", &SelectNextMatch, &focus_handle, cx)
-    //                 })
-    //                 .on_click(|_, window, cx| {
-    //                     window.dispatch_action(SelectNextMatch.boxed_clone(), cx);
-    //                 })
-    //         })
-    //         .when(match_count > 0, |this| {
-    //             this.child(
-    //                 Label::new(format!("{}/{}", selected_index + 1, match_count))
-    //                     .size(LabelSize::Small)
-    //                     .color(Color::Muted),
-    //             )
-    //         })
-    // }
+        Some(h_flex().gap_1().items_center().child({
+            let focus_handle = self.focus_handle(cx);
+            let (icon, tooltip_text) = match preview.layout {
+                LayoutMode::Hidden => (IconName::Split, "Show preview to the right"),
+                LayoutMode::Telescope(_) => (IconName::ListTree, "Show preview below"),
+                LayoutMode::Stacked(_) => (IconName::ListCollapse, "Hide Preview"),
+            };
+            IconButton::new("layout-cycle", icon)
+                .size(ButtonSize::Compact)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action_in(tooltip_text, &ToggleLayout, &focus_handle, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleLayout.boxed_clone(), cx);
+                })
+        }))
+    }
 }
 
 pub(crate) fn render_split_menu(

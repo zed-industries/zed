@@ -41,6 +41,7 @@ impl EditorPreview {
             LayoutMode::Telescope(telescope) => self
                 .render_telescope_preview(telescope, window, cx)
                 .into_any_element(),
+            LayoutMode::Hidden => gpui::Empty.into_any_element(),
         }
     }
 }
@@ -49,14 +50,13 @@ impl EditorPreview {
     pub(crate) fn render_telescope_preview(
         &self,
         _layout: TelescopeLayout,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
         v_flex()
             .size_full()
             .border_l_1()
             .border_color(cx.theme().colors().border)
-            .child(self.render_preview_header(window, cx))
             .child(
                 div()
                     .flex_1()
@@ -68,62 +68,15 @@ impl EditorPreview {
     fn render_stacked_preview(
         &self,
         layout: StackedLayout,
-        window: &mut Window,
-        cx: &mut App,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> impl IntoElement {
-        v_flex()
-            .child(self.render_preview_header(window, cx))
-            .child(
-                div()
-                    .h(layout.preview_height)
-                    .overflow_hidden()
-                    .child(self.preview_editor.clone()),
-            )
-    }
-
-    fn render_preview_header(&self, window: &mut Window, cx: &mut App) -> Div {
-        if let Some(path) = &self.current_path {
-            let file_name = path
-                .file_name()
-                .map(|name| name.to_string())
-                .unwrap_or_default();
-            let directory = path
-                .parent()
-                .map(|path| path.as_std_path().to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            let split_menu_handle = self.split_popover_menu_handle.clone();
-            let focus_handle = self.focus_handle.clone();
-
-            h_flex()
-                .px_2()
-                .py_1()
-                .gap_2()
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().editor_background)
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .min_w(px(0.))
-                        .child(Label::new(file_name).size(LabelSize::Small).truncate())
-                        .child(
-                            Label::new(directory)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .truncate(),
-                        ),
-                )
-                .child(window_controls::render_split_menu(
-                    split_menu_handle,
-                    focus_handle,
-                    window,
-                    cx,
-                ))
-        } else {
-            h_flex().h(px(26.0))
-        }
+        v_flex().child(
+            div()
+                .h(layout.preview_height)
+                .overflow_hidden()
+                .child(self.preview_editor.clone()),
+        )
     }
 
     // pub(crate) fn render_telescope_preview_resize(

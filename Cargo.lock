@@ -15734,6 +15734,7 @@ dependencies = [
  "bitflags 2.10.0",
  "collections",
  "editor",
+ "file_icons",
  "fs",
  "futures 0.3.32",
  "gpui",

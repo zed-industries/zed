@@ -39,7 +39,7 @@ impl Preview {
 
     pub fn width(&self) -> ui::Pixels {
         match self.layout {
-            LayoutMode::Stacked(_) => ui::Pixels::ZERO,
+            LayoutMode::Hidden | LayoutMode::Stacked(_) => ui::Pixels::ZERO,
             LayoutMode::Telescope(layout) => layout.preview_width,
         }
     }
@@ -47,7 +47,7 @@ impl Preview {
     pub fn height(&self) -> ui::Pixels {
         match self.layout {
             LayoutMode::Stacked(layout) => layout.preview_height,
-            LayoutMode::Telescope(_) => ui::Pixels::ZERO,
+            LayoutMode::Hidden | LayoutMode::Telescope(_) => ui::Pixels::ZERO,
         }
     }
 

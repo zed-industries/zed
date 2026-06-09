@@ -44,7 +44,11 @@ impl<D: PickerDelegate> Render for Picker<D> {
             ) => self
                 .render_telescope_content(preview, *telescope, window, cx)
                 .into_any_element(),
-            None => self.render_results(window, cx).into_any_element(),
+            Some(Preview {
+                layout: LayoutMode::Hidden,
+                ..
+            })
+            | None => self.render_results(window, cx).into_any_element(),
         }
     }
 }
@@ -100,15 +104,29 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
+            .on_action(cx.listener(Self::toggle_layout))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
-                        Some(self.delegate.render_editor(&editor.clone(), window, cx))
+                        Some(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .child(div().flex_1().child(self.delegate.render_editor(
+                                    &editor.clone(),
+                                    window,
+                                    cx,
+                                )))
+                                .when_some(
+                                    self.render_header_controls(window, cx),
+                                    |this, controls| this.child(div().pr_2().child(controls)),
+                                ),
+                        )
                     } else {
                         None
                     }
                 }
-                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
+                Head::Empty(empty_head) => Some(h_flex().child(empty_head.clone())),
             })
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(

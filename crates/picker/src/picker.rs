@@ -4,6 +4,7 @@ pub use preview::Preview;
 pub use preview::PreviewHighlight;
 pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
+use preview::state::{LayoutMode, StackedLayout, TelescopeLayout};
 
 pub mod highlighted_match_with_paths;
 pub mod popover_menu;
@@ -45,7 +46,7 @@ actions!(
     [
         /// Confirms the selected completion in the picker.
         ConfirmCompletion,
-        /// TODO!(yara)
+        /// Switches between no preview, preview below, and preview right.
         ToggleLayout,
         /// TODO!(yara)
         ToggleSplitMenu,
@@ -305,6 +306,10 @@ pub trait PickerDelegate: Sized + 'static {
     fn try_get_match(&self, _cx: &App) -> Option<PreviewUpdate> {
         None
     }
+
+    /// Called on the delegate when opening a preview to the side. Delegates can
+    /// then change how much space they use for rendering the match
+    fn preview_layout_changed(&mut self, _layout_is_horizontal: bool) {}
 
     fn render_match(
         &self,
@@ -769,6 +774,20 @@ impl<D: PickerDelegate> Picker<D> {
         } else {
             cx.propagate()
         }
+    }
+
+    fn toggle_layout(&mut self, _: &ToggleLayout, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preview) = &mut self.preview else {
+            return;
+        };
+        preview.layout = match preview.layout {
+            LayoutMode::Hidden => LayoutMode::Telescope(TelescopeLayout::default()),
+            LayoutMode::Telescope(_) => LayoutMode::Stacked(StackedLayout::default()),
+            LayoutMode::Stacked(_) => LayoutMode::Hidden,
+        };
+        self.delegate
+            .preview_layout_changed(matches!(preview.layout, LayoutMode::Telescope(_)));
+        cx.notify();
     }
 
     fn handle_click(
