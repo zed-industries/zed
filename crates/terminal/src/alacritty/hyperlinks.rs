@@ -518,6 +518,11 @@ mod tests {
                 "mailto:bob@example.com",
             ],
         );
+        re_test(
+            URL_REGEX,
+            "open zed://channel/the-channel and zed://settings/theme now",
+            vec!["zed://channel/the-channel", "zed://settings/theme"],
+        );
     }
 
     #[test]
