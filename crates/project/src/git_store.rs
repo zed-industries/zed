@@ -1276,6 +1276,17 @@ impl GitStore {
         diff_state.read(cx).oid_diff(oid)
     }
 
+    /// Whether this buffer's index text is known to match its committed text
+    /// without comparing contents, i.e. whether the texts share one allocation.
+    /// In a downstream project, this can only be true if the upstream sent
+    /// `Mode::IndexMatchesHead`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn index_matches_head_for_buffer(&self, buffer_id: BufferId, cx: &App) -> bool {
+        self.diffs
+            .get(&buffer_id)
+            .is_some_and(|diff_state| diff_state.read(cx).index_matches_head())
+    }
+
     pub fn open_conflict_set(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3585,45 +3596,30 @@ impl GitStore {
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().uncommitted = Some(diff.clone());
         });
-        Ok(diff.read_with(&cx, |diff, cx| {
+        Ok(this.read_with(&cx, |this, cx| {
             use proto::open_uncommitted_diff_response::Mode;
 
-            let unstaged_diff = diff.secondary_diff();
-            let index_snapshot = unstaged_diff.and_then(|diff| {
-                let diff = diff.read(cx);
-                diff.base_text_exists().then(|| diff.base_text(cx))
-            });
+            let diff_state = this.diffs.get(&buffer_id).context("missing diff state")?;
+            let diff_state = diff_state.read(cx);
+            let index_matches_head = diff_state.index_matches_head();
+            let index_text = diff_state.index_text.clone();
+            let head_text = diff_state.head_text.clone();
 
-            let mode;
-            let staged_text;
-            let committed_text;
-            if diff.base_text_exists() {
-                let committed_snapshot = diff.base_text(cx);
-                committed_text = Some(committed_snapshot.text());
-                if let Some(index_text) = index_snapshot {
-                    if index_text.remote_id() == committed_snapshot.remote_id() {
-                        mode = Mode::IndexMatchesHead;
-                        staged_text = None;
-                    } else {
-                        mode = Mode::IndexAndHead;
-                        staged_text = Some(index_text.text());
-                    }
-                } else {
-                    mode = Mode::IndexAndHead;
-                    staged_text = None;
+            let response = if index_matches_head {
+                proto::OpenUncommittedDiffResponse {
+                    committed_text: head_text.map(|head| head.to_string()),
+                    staged_text: None,
+                    mode: Mode::IndexMatchesHead.into(),
                 }
             } else {
-                mode = Mode::IndexAndHead;
-                committed_text = None;
-                staged_text = index_snapshot.as_ref().map(|buffer| buffer.text());
-            }
-
-            proto::OpenUncommittedDiffResponse {
-                committed_text,
-                staged_text,
-                mode: mode.into(),
-            }
-        }))
+                proto::OpenUncommittedDiffResponse {
+                    committed_text: head_text.map(|head| head.to_string()),
+                    staged_text: index_text.map(|index| index.to_string()),
+                    mode: Mode::IndexAndHead.into(),
+                }
+            };
+            anyhow::Ok(response)
+        })?)
     }
 
     async fn handle_update_diff_bases(
@@ -3910,6 +3906,19 @@ impl BufferGitState {
         self.oid_diffs.get(&oid).and_then(|weak| weak.upgrade())
     }
 
+    /// Whether the index text is known to match the committed text, without
+    /// comparing their contents. Always true when both texts were set by a
+    /// single `DiffBasesChange::SetBoth`, which shares one allocation between
+    /// them. May be false even when the contents are equal, if the texts were
+    /// loaded separately.
+    fn index_matches_head(&self) -> bool {
+        match (self.index_text.as_ref(), self.head_text.as_ref()) {
+            (Some(index), Some(head)) => Arc::ptr_eq(index, head),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
     fn handle_base_texts_updated(
         &mut self,
         buffer: text::BufferSnapshot,
@@ -4018,11 +4027,7 @@ impl BufferGitState {
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
         let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_write;
-        let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
-            (Some(index), Some(head)) => Arc::ptr_eq(index, head),
-            (None, None) => true,
-            _ => false,
-        };
+        let index_matches_head = self.index_matches_head();
 
         let oid_diffs: Vec<(
             Option<git::Oid>,

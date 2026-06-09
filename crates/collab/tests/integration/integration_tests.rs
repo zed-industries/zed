@@ -2887,6 +2887,107 @@ async fn test_git_diff_base_change(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_git_diff_index_matches_head(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let committed_text = "
+        one
+        two
+        three
+    "
+    .unindent();
+    let file_contents = "
+        one
+        TWO
+        three
+    "
+    .unindent();
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/dir",
+            json!({
+                ".git": {},
+                "a.txt": file_contents,
+            }),
+        )
+        .await;
+    client_a
+        .fs()
+        .set_head_and_index_for_repo(Path::new("/dir/.git"), &[("a.txt", committed_text.clone())]);
+
+    let (project_local, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let project_remote = client_b.join_remote_project(project_id, cx_b).await;
+
+    // Open the uncommitted diff on the guest, without opening it on the host
+    // first, so that the host loads the diff bases in response to the guest's
+    // request.
+    let remote_buffer = project_remote
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let remote_uncommitted_diff = project_remote
+        .update(cx_b, |p, cx| {
+            p.open_uncommitted_diff(remote_buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    // The guest's index and head texts share one allocation, which is only
+    // possible if the host detected that the index matches the head and sent
+    // `Mode::IndexMatchesHead`.
+    let buffer_id = remote_buffer.read_with(cx_b, |buffer, _| buffer.remote_id());
+    project_remote.read_with(cx_b, |project, cx| {
+        assert!(
+            project
+                .git_store()
+                .read(cx)
+                .index_matches_head_for_buffer(buffer_id, cx),
+            "the host should send IndexMatchesHead when the index is clean"
+        );
+    });
+
+    remote_uncommitted_diff.read_with(cx_b, |diff, cx| {
+        let buffer = remote_buffer.read(cx);
+        assert_eq!(
+            diff.base_text_string(cx).as_deref(),
+            Some(committed_text.as_str())
+        );
+        assert_hunks(
+            diff.snapshot(cx).hunks_in_row_range(0..3, buffer),
+            buffer,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            )],
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_git_branch_name(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
