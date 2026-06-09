@@ -3702,7 +3702,7 @@ impl GitStore {
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().uncommitted = Some(diff.clone());
         });
-        Ok(this.read_with(&cx, |this, cx| {
+        this.read_with(&cx, |this, cx| {
             use proto::open_uncommitted_diff_response::Mode;
 
             let diff_state = this.diffs.get(&buffer_id).context("missing diff state")?;
@@ -3725,7 +3725,7 @@ impl GitStore {
                 }
             };
             anyhow::Ok(response)
-        })?)
+        })
     }
 
     async fn handle_update_diff_bases(
