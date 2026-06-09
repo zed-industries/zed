@@ -28,6 +28,7 @@ use settings::{
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
+use time::{OffsetDateTime, UtcOffset, format_description::OwnedFormatItem};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -451,6 +452,26 @@ impl GoToDiagnosticSeverityFilter {
 }
 
 #[derive(Clone, Debug)]
+pub struct GitDateFormat {
+    description: OwnedFormatItem,
+}
+
+impl GitDateFormat {
+    fn parse(format: &str) -> Option<Self> {
+        time::format_description::parse_owned::<1>(format)
+            .ok()
+            .map(|description| Self { description })
+    }
+
+    pub fn format(&self, timestamp: OffsetDateTime, local_offset: UtcOffset) -> Option<String> {
+        timestamp
+            .to_offset(local_offset)
+            .format(&self.description)
+            .ok()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct GitSettings {
     /// Whether or not git integration is enabled.
     ///
@@ -472,7 +493,7 @@ pub struct GitSettings {
     /// Git blame settings.
     pub blame: BlameSettings,
     /// Custom date format used by git graph and git blame timestamps.
-    pub date_format: Option<String>,
+    pub date_format: Option<GitDateFormat>,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -677,7 +698,7 @@ impl Settings for ProjectSettings {
                     show_avatar: blame.show_avatar.unwrap(),
                 }
             },
-            date_format: git.date_format.clone(),
+            date_format: git.date_format.as_deref().and_then(GitDateFormat::parse),
             branch_picker: {
                 let branch_picker = git.branch_picker.unwrap();
                 BranchPickerSettings {
