@@ -2612,13 +2612,15 @@ impl Interactivity {
                                             }
                                         }
 
+                                        // Paint children. In glass mode mark them as glass
+                                        // content so their fills preserve the backdrop alpha
+                                        // (rounded edges don't punch through the glass).
+                                        let prev_glass_content = window.glass_content;
                                         if style.glass_content {
-                                            window.with_glass_content(|window| {
-                                                f(&style, window, cx)
-                                            });
-                                        } else {
-                                            f(&style, window, cx);
+                                            window.glass_content = true;
                                         }
+                                        f(&style, window, cx);
+                                        window.glass_content = prev_glass_content;
 
                                         if let Some(_hitbox) = hitbox {
                                             #[cfg(any(feature = "inspector", debug_assertions))]
