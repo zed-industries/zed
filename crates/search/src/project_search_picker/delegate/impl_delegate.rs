@@ -4,7 +4,7 @@ use std::{ops::Range, sync::Arc, time::Duration};
 
 use editor::Editor;
 use futures::StreamExt;
-use gpui::{Action, AsyncApp, DismissEvent, Entity, HighlightStyle, StyledText, Task};
+use gpui::{Action, AsyncApp, DismissEvent, Entity, HighlightStyle, StyledText, Task, TextStyle};
 use language::{Buffer, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{ProjectPath, SearchResults, search::SearchQuery, search::SearchResult};
@@ -13,8 +13,8 @@ use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, App, Color, Context, Div, Divider, FluentBuilder, InteractiveElement, ListItem,
-    ListItemSpacing, ParentElement, StatefulInteractiveElement, Styled, StyledTypography,
-    Toggleable, Tooltip, Window, div, h_flex, relative, v_flex,
+    ListItemSpacing, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    StyledTypography, Toggleable, Tooltip, Window, div, h_flex, relative, v_flex,
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
@@ -242,96 +242,22 @@ impl PickerDelegate for TextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let search_match = self.matches.get(ix)?;
         let path = &search_match.path.path;
+        let path_style = self.project.read(cx).path_style(cx);
         let file_name = path
             .file_name()
             .map(|name| name.to_string())
             .unwrap_or_default();
         let directory = path
             .parent()
-            .map(|parent| parent.as_std_path().to_string_lossy().to_string())
+            .map(|parent| parent.display(path_style))
+            .map(|parent| SharedString::new(parent))
             .unwrap_or_default();
-        let full_path = path.as_std_path().to_string_lossy().to_string();
-
-        let original_line = &search_match.line_text;
-        let line_text = original_line.trim_start();
-        let trim_offset = original_line.len() - line_text.len();
-        let line_text_string = line_text.to_string();
-
-        // Build search match range (merged with syntax highlighting, adding background + bold)
-        let search_match_style = HighlightStyle {
-            background_color: Some(cx.theme().colors().search_match_background),
-            font_weight: Some(gpui::FontWeight::BOLD),
-            ..Default::default()
-        };
-
-        let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
-
-        {
-            let line_start_abs = search_match.range.start - search_match.relative_range.start;
-            let visible_start_abs = line_start_abs + trim_offset;
-            let visible_end_abs = line_start_abs + original_line.len();
-            let match_start_abs = search_match.range.start;
-            let match_end_abs = search_match.range.end;
-
-            // Determine the "effective" match range within the visible area
-            let effective_match_start = match_start_abs.max(visible_start_abs);
-            let effective_match_end = match_end_abs.min(visible_end_abs);
-
-            let ranges = [
-                (visible_start_abs..effective_match_start, false),
-                (effective_match_start..effective_match_end, true),
-                (effective_match_end..visible_end_abs, false),
-            ];
-
-            let snapshot = search_match.buffer.read(cx).snapshot();
-            let syntax_theme = cx.theme().syntax();
-            let mut current_offset = 0;
-
-            for (range, is_match) in ranges {
-                if range.start >= range.end {
-                    continue;
-                }
-
-                for chunk in snapshot.chunks(
-                    range,
-                    LanguageAwareStyling {
-                        tree_sitter: true,
-                        diagnostics: false,
-                    },
-                ) {
-                    let chunk_len = chunk.text.len();
-                    let syntax_style = chunk
-                        .syntax_highlight_id
-                        .and_then(|id| syntax_theme.get(id).copied());
-
-                    let style = if is_match {
-                        let mut style = syntax_style.unwrap_or_default();
-                        if let Some(bg) = search_match_style.background_color {
-                            style.background_color = Some(bg);
-                        }
-                        if let Some(weight) = search_match_style.font_weight {
-                            style.font_weight = Some(weight);
-                        }
-                        style
-                    } else {
-                        syntax_style.unwrap_or_default()
-                    };
-
-                    highlights.push((current_offset..current_offset + chunk_len, style));
-                    current_offset += chunk_len;
-                }
-            }
-        }
-
-        let mut text_style = window.text_style();
-        let settings = ThemeSettings::get_global(cx);
-        text_style.font_family = settings.buffer_font.family.clone();
-        text_style.font_size = settings.buffer_font_size(cx).into();
+        let full_path = SharedString::new(path.display(path_style));
 
         Some(
             ListItem::new(ix)
@@ -352,10 +278,7 @@ impl PickerDelegate for TextPickerDelegate {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
-                                .child(
-                                    StyledText::new(line_text_string)
-                                        .with_default_highlights(&text_style, highlights),
-                                ),
+                                .child(render_item(search_match, cx)),
                         )
                         .child(
                             h_flex()
@@ -393,6 +316,78 @@ impl PickerDelegate for TextPickerDelegate {
                 ),
         )
     }
+}
+
+/// Renders the matched source line with syntax highlighting, overlaying the
+/// search match with a highlighted background and bold weight.
+fn render_item(search_match: &SearchMatch, cx: &App) -> StyledText {
+    let original_line = &search_match.line_text;
+    let line_text = original_line.trim_start();
+    let trim_offset = original_line.len() - line_text.len();
+
+    let search_match_style = HighlightStyle {
+        background_color: Some(cx.theme().colors().search_match_background),
+        font_weight: Some(gpui::FontWeight::BOLD),
+        ..Default::default()
+    };
+
+    let line_start_abs = search_match.range.start - search_match.relative_range.start;
+    let visible_start_abs = line_start_abs + trim_offset;
+    let visible_end_abs = line_start_abs + original_line.len();
+
+    // Syntax highlights for the visible (trimmed) portion of the line, with
+    // ranges relative to the start of the rendered text.
+    let snapshot = search_match.buffer.read(cx).snapshot();
+    let syntax_theme = cx.theme().syntax();
+    let mut syntax_highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+    let mut current_offset = 0;
+    for chunk in snapshot.chunks(
+        visible_start_abs..visible_end_abs,
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    ) {
+        let chunk_len = chunk.text.len();
+        if let Some(style) = chunk
+            .syntax_highlight_id
+            .and_then(|id| syntax_theme.get(id).copied())
+        {
+            syntax_highlights.push((current_offset..current_offset + chunk_len, style));
+        }
+        current_offset += chunk_len;
+    }
+
+    // The search match range, clamped to the visible area and made relative to
+    // the start of the rendered text.
+    let match_start = search_match
+        .range
+        .start
+        .clamp(visible_start_abs, visible_end_abs);
+    let match_end = search_match
+        .range
+        .end
+        .clamp(visible_start_abs, visible_end_abs);
+    let match_highlight = (
+        match_start - visible_start_abs..match_end - visible_start_abs,
+        search_match_style,
+    );
+
+    let highlights = gpui::combine_highlights(syntax_highlights, [match_highlight]);
+
+    let settings = ThemeSettings::get_global(cx);
+    let text_style = TextStyle {
+        color: cx.theme().colors().text,
+        font_family: settings.buffer_font.family.clone(),
+        font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_size: settings.buffer_font_size(cx).into(),
+        font_weight: settings.buffer_font.weight,
+        line_height: relative(1.),
+        ..Default::default()
+    };
+
+    StyledText::new(line_text.to_string()).with_default_highlights(&text_style, highlights)
 }
 
 impl TextPickerDelegate {
