@@ -1314,6 +1314,9 @@ impl Thread {
         &self.id
     }
 
+    // Only used by Seatbelt-style sandboxes; Linux relies on bwrap's tmpfs
+    // `/tmp` and never needs a per-thread temp directory.
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn sandboxed_terminal_temp_dir(
         &mut self,
         cx: &mut Context<Self>,
@@ -3546,6 +3549,7 @@ impl Thread {
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
             sandboxing: crate::sandboxing::sandboxing_enabled(cx),
+            is_linux: cfg!(target_os = "linux"),
         }
         .render(&self.templates)
         .context("failed to build system prompt")

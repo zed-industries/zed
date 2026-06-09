@@ -3054,7 +3054,7 @@ impl AcpThread {
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
                 let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
+                    apply_sandbox_wrap(task_command, task_args, cwd.as_deref(), sandbox_wrap)?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(

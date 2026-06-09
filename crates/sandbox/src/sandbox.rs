@@ -6,11 +6,11 @@
 //! non-host targets don't carry dead code.
 //!
 //! macOS has an integration ([`macos_seatbelt`]) wrapping Apple's Seatbelt
-//! / `sandbox-exec` framework, and Linux has a basic integration
-//! ([`linux_landlock`]) built on the Landlock LSM.
+//! / `sandbox-exec` framework, and Linux has one ([`linux_bubblewrap`]) built
+//! on Bubblewrap (`bwrap`) for the filesystem and seccomp for the network.
 
 #[cfg(target_os = "linux")]
-pub mod linux_landlock;
+pub mod linux_bubblewrap;
 
 #[cfg(target_os = "macos")]
 pub mod macos_seatbelt;
@@ -22,8 +22,9 @@ pub mod macos_seatbelt;
 ///
 /// This is the platform-independent request. Each OS integration maps it
 /// onto its own mechanism and may enforce it with different granularity
-/// (for example, network restriction is coarser under Linux's Landlock than
-/// under macOS's Seatbelt). Some baseline operations remain denied
+/// (for example, on Linux network restriction is enforced by seccomp and
+/// filesystem restriction by Bubblewrap, whereas macOS uses Seatbelt for
+/// both). Some baseline operations remain denied
 /// regardless of these flags; the only way to lift those is to skip the
 /// sandbox entirely, which these integrations deliberately don't expose.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -37,14 +38,14 @@ pub struct SandboxPermissions {
 /// Handle a possible re-exec of this binary as a sandbox launcher.
 ///
 /// On Linux, the terminal integration sandboxes commands by re-executing
-/// this binary as a Landlock launcher (see
-/// [`linux_landlock::run_launcher_if_invoked`]); when that marker is present
-/// this applies the ruleset and `exec`s the wrapped command, never
+/// this binary as a launcher (see
+/// [`linux_bubblewrap::run_launcher_if_invoked`]); when that marker is present
+/// this installs the seccomp policy and `exec`s the wrapped command, never
 /// returning. On every other platform, and for normal launches, it returns
 /// immediately.
 ///
 /// Call this at the very top of `main`, before any argument parsing.
 pub fn run_sandbox_launcher_if_invoked() {
     #[cfg(target_os = "linux")]
-    linux_landlock::run_launcher_if_invoked();
+    linux_bubblewrap::run_launcher_if_invoked();
 }

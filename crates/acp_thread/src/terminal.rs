@@ -22,10 +22,10 @@ use util::get_default_system_shell_preferring_bash;
 /// Request to run a terminal command inside an OS-level sandbox.
 ///
 /// Passed to [`super::AcpThread::create_terminal`]. The actual sandboxing
-/// mechanism is platform-specific (today: macOS Seatbelt; nothing on other
-/// platforms — the wrap is silently a no-op there), so callers describe the
-/// *intent* with plain data here rather than constructing platform-specific
-/// types directly.
+/// mechanism is platform-specific (macOS Seatbelt; Linux Bubblewrap +
+/// seccomp; a no-op on other platforms), so callers describe the *intent*
+/// with plain data here rather than constructing platform-specific types
+/// directly.
 ///
 /// All-zero defaults are the fully-sandboxed run. Setting `allow_network` /
 /// `allow_fs_write` requests a relaxation; the caller is responsible for
@@ -64,14 +64,18 @@ pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 /// There is a dedicated code path per platform:
 /// * macOS wraps the command with `sandbox-exec` and a Seatbelt config file
 ///   (returned as the handle).
-/// * Linux re-execs this binary as a Landlock launcher (see
-///   [`sandbox::linux_landlock`]); no handle is needed.
+/// * Linux re-execs this binary as a launcher that installs a seccomp network
+///   policy and `exec`s `bwrap` for filesystem isolation (see
+///   [`sandbox::linux_bubblewrap`]); no handle is needed. When no usable
+///   `bwrap` is available the command runs unsandboxed (with a logged
+///   warning) rather than failing.
 /// * Windows and all other platforms pass the command through unchanged —
 ///   we have no sandbox integration there, so the command runs with the
 ///   agent's ambient permissions.
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
+    cwd: Option<&std::path::Path>,
     sandbox_wrap: Option<SandboxWrap>,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let Some(sandbox_wrap) = sandbox_wrap else {
@@ -80,6 +84,7 @@ pub(crate) fn apply_sandbox_wrap(
 
     #[cfg(target_os = "macos")]
     {
+        let _ = cwd;
         let writable: Vec<&std::path::Path> = sandbox_wrap
             .writable_paths
             .iter()
@@ -100,16 +105,23 @@ pub(crate) fn apply_sandbox_wrap(
     }
     #[cfg(target_os = "linux")]
     {
-        // Probe for Landlock right before sandboxing. If the kernel doesn't
-        // provide/enable it, run the command unsandboxed rather than failing.
+        use sandbox::linux_bubblewrap;
+
+        // Decide once whether this environment can actually enforce a sandbox.
+        // When it can't (no usable bwrap, or unprivileged user namespaces are
+        // unavailable), run the command unsandboxed rather than failing.
         // TODO: surface this to the user via the UI instead of only logging.
-        if !sandbox::linux_landlock::is_supported() {
+        let Some(bwrap) = linux_bubblewrap::locate_bwrap().filter(|_| linux_bubblewrap::is_available())
+        else {
             log::warn!(
-                "Landlock is not available on this kernel; running terminal command \
+                "no usable bwrap sandbox on this system; running terminal command \
                  without an OS sandbox"
             );
             return Ok((program, args, None));
-        }
+        };
+        let bwrap = bwrap.to_str().with_context(|| {
+            format!("bwrap path contains invalid UTF-8: {}", bwrap.display())
+        })?;
 
         let writable: Vec<_> = sandbox_wrap
             .writable_paths
@@ -121,35 +133,43 @@ pub(crate) fn apply_sandbox_wrap(
             allow_network: sandbox_wrap.allow_network,
             allow_fs_write: sandbox_wrap.allow_fs_write,
         };
+
+        // Assemble the full command to run inside the sandbox:
+        // `bwrap <bwrap-args> -- <program> <args>`. The launcher (re-exec'd
+        // Zed) installs the seccomp policy and then `exec`s this verbatim.
+        let bwrap_args = linux_bubblewrap::build_bwrap_args(&writable, permissions, cwd);
+        let mut command = Vec::with_capacity(bwrap_args.len() + args.len() + 3);
+        command.push(bwrap.to_string());
+        command.extend(bwrap_args);
+        command.push("--".to_string());
+        command.push(program);
+        command.extend(args);
+
         let launcher = std::env::current_exe()
-            .context("failed to resolve current executable for Landlock sandbox launcher")?;
+            .context("failed to resolve current executable for sandbox launcher")?;
         let launcher = launcher.to_str().with_context(|| {
             format!(
                 "current executable path contains invalid UTF-8: {}",
                 launcher.display()
             )
         })?;
-        let (new_program, new_args) = sandbox::linux_landlock::wrap_invocation(
-            launcher,
-            &program,
-            &args,
-            &writable,
-            permissions,
-        );
-        // Landlock applies in-process via the re-exec'd launcher, so there's
-        // no on-disk resource to keep alive.
+        let network_policy = linux_bubblewrap::network_policy_for(permissions);
+        let (new_program, new_args) =
+            linux_bubblewrap::wrap_invocation(launcher, network_policy, &command);
+        // The sandbox applies in-process via the re-exec'd launcher, so
+        // there's no on-disk resource to keep alive.
         Ok((new_program, new_args, None))
     }
     #[cfg(target_os = "windows")]
     {
         // No sandbox integration on Windows; run with ambient permissions.
-        let _ = sandbox_wrap;
+        let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         // No sandbox integration available; run with ambient permissions.
-        let _ = sandbox_wrap;
+        let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
 }

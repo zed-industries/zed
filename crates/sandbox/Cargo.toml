@@ -13,7 +13,8 @@ path = "src/sandbox.rs"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 anyhow.workspace = true
-landlock.workspace = true
+libc.workspace = true
+seccompiler.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile.workspace = true

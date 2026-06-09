@@ -357,9 +357,9 @@ async fn run_terminal_tool(
         Vec::new()
     };
 
-    // On Linux the sandbox (Landlock) can only grant write access to a path it
-    // can open, and granting a not-yet-existing path would silently widen the
-    // grant to its nearest existing ancestor directory. Reject anything that
+    // On Linux the sandbox (bwrap) can only bind a path that already exists,
+    // and granting a not-yet-existing path would silently widen the grant to
+    // its nearest existing ancestor directory. Reject anything that
     // isn't an already-existing directory so the user is only ever asked to
     // approve — and only ever grants — exactly the paths shown to them.
     #[cfg(target_os = "linux")]
