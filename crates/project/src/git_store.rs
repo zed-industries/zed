@@ -1141,60 +1141,76 @@ impl GitStore {
                 .entry(buffer_id)
                 .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
 
-            let diff = match kind {
-                DiffKind::Unstaged => {
-                    let diff_state = diff_state.read(cx);
-                    let base_text_buffer = diff_state.index_text_buffer.clone();
-                    cx.new(|cx| {
-                        BufferDiff::new_with_base_text_buffer(&text_snapshot, base_text_buffer, cx)
-                    })
-                }
-                DiffKind::Staged => {
-                    let diff_state = diff_state.read(cx);
-                    let index_text_buffer = diff_state.index_text_buffer.clone();
-                    let base_text_buffer = diff_state.head_text_buffer.clone();
-                    index_text_buffer.update(cx, |index_text_buffer, cx| {
-                        if let Some(language_registry) = language_registry.clone() {
-                            index_text_buffer.set_language_registry(language_registry);
-                        }
-                        index_text_buffer.set_language_async(language.clone(), cx);
-                    });
-                    let index_text_snapshot = index_text_buffer.read(cx).text_snapshot();
-                    cx.new(|cx| {
-                        BufferDiff::new_with_base_text_buffer(
-                            &index_text_snapshot,
-                            base_text_buffer,
-                            cx,
-                        )
-                    })
-                }
-                DiffKind::Uncommitted => {
-                    let diff_state = diff_state.read(cx);
-                    let base_text_buffer = diff_state.head_text_buffer.clone();
-                    cx.new(|cx| {
-                        BufferDiff::new_with_base_text_buffer(&text_snapshot, base_text_buffer, cx)
-                    })
-                }
-                DiffKind::SinceOid(_) => {
-                    unreachable!("open_diff_internal is not used for OID diffs")
-                }
-            };
+            let existing_unstaged_diff = diff_state.read(cx).unstaged_diff();
 
-            cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
+            let diff = if kind == DiffKind::Unstaged
+                && let Some(existing_unstaged_diff) = existing_unstaged_diff.clone()
+            {
+                existing_unstaged_diff
+            } else {
+                let diff = match kind {
+                    DiffKind::Unstaged => {
+                        let diff_state = diff_state.read(cx);
+                        let base_text_buffer = diff_state.index_text_buffer.clone();
+                        cx.new(|cx| {
+                            BufferDiff::new_with_base_text_buffer(
+                                &text_snapshot,
+                                base_text_buffer,
+                                cx,
+                            )
+                        })
+                    }
+                    DiffKind::Staged => {
+                        let diff_state = diff_state.read(cx);
+                        let index_text_buffer = diff_state.index_text_buffer.clone();
+                        let base_text_buffer = diff_state.head_text_buffer.clone();
+                        index_text_buffer.update(cx, |index_text_buffer, cx| {
+                            if let Some(language_registry) = language_registry.clone() {
+                                index_text_buffer.set_language_registry(language_registry);
+                            }
+                            index_text_buffer.set_language_async(language.clone(), cx);
+                        });
+                        let index_text_snapshot = index_text_buffer.read(cx).text_snapshot();
+                        cx.new(|cx| {
+                            BufferDiff::new_with_base_text_buffer(
+                                &index_text_snapshot,
+                                base_text_buffer,
+                                cx,
+                            )
+                        })
+                    }
+                    DiffKind::Uncommitted => {
+                        let diff_state = diff_state.read(cx);
+                        let base_text_buffer = diff_state.head_text_buffer.clone();
+                        cx.new(|cx| {
+                            BufferDiff::new_with_base_text_buffer(
+                                &text_snapshot,
+                                base_text_buffer,
+                                cx,
+                            )
+                        })
+                    }
+                    DiffKind::SinceOid(_) => {
+                        unreachable!("open_diff_internal is not used for OID diffs")
+                    }
+                };
+                cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
+                diff
+            };
             diff_state.update(cx, |diff_state, cx| {
                 diff_state.language = language;
                 diff_state.language_registry = language_registry;
 
                 match kind {
                     DiffKind::Unstaged => {
-                        diff_state.unstaged_diff.get_or_insert(diff.downgrade());
+                        diff_state.unstaged_diff = Some(diff.downgrade());
                     }
                     DiffKind::Staged => {
                         diff_state.index_text_buffer_language_enabled = true;
                         diff_state.staged_diff = Some(diff.downgrade());
                     }
                     DiffKind::Uncommitted => {
-                        let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
+                        let unstaged_diff = if let Some(diff) = existing_unstaged_diff {
                             diff
                         } else {
                             let base_text_buffer = diff_state.index_text_buffer.clone();
@@ -4266,11 +4282,6 @@ impl BufferGitState {
             yield_now().await;
 
             for (oid, oid_diff, base_text_buffer, base_text) in oid_diffs {
-                if language_changed {
-                    base_text_buffer
-                        .read_with(cx, |buffer, _| buffer.parsing_idle())
-                        .await;
-                }
                 let base_text_snapshot =
                     base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
                 let new_oid_diff = cx
