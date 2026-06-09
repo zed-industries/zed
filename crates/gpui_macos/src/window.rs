@@ -289,15 +289,9 @@ unsafe fn build_classes() {
                 character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
             );
 
-            // Undocumented SPI, also implemented by Chromium's content view: tells
-            // AppKit/the window server which parts of the view should be treated as
-            // opaque app content rather than title bar, scoping the system's
-            // title-bar machinery (window-move, and on macOS 27 the title bar
-            // gesture recognizers whose multi-click disambiguation delays single
-            // clicks by the double-click interval) away from our custom-drawn
-            // title bar. Our layer-backed Metal view is "locally transparent" from
-            // AppKit's perspective, so without this AppKit assumes the title-bar
-            // region under `NSFullSizeContentViewWindowMask` is its own.
+            // Undocumented SPI, also implemented by Chromium's content view. This
+            // lets full size content windows mark our Metal view as app owned title
+            // bar content, avoiding AppKit's title bar click-delay behavior.
             decl.add_method(
                 sel!(_opaqueRectForWindowMoveWhenInTitlebar),
                 opaque_rect_for_window_move_when_in_titlebar
@@ -2769,10 +2763,22 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 }
 
 extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel) -> NSRect {
-    // Declare the entire view as opaque content for window-move purposes; window
-    // dragging from the custom title bar is initiated by the app itself via
-    // `performWindowDragWithEvent:`.
-    unsafe { msg_send![this, bounds] }
+    unsafe {
+        let window: id = msg_send![this, window];
+        if window == nil {
+            return NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
+        }
+
+        let style_mask: NSWindowStyleMask = msg_send![window, styleMask];
+        if style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+            // Declare the entire view as opaque content for window move purposes
+            // when using a custom titlebar, so AppKit doesn't wait for double click
+            // disambiguation before delivering clicks to titlebar controls.
+            msg_send![this, bounds]
+        } else {
+            NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
+        }
+    }
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {
