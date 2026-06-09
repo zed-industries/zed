@@ -383,8 +383,7 @@ fn set_no_new_privs() -> Result<()> {
     // flag; the trailing arguments are ignored for this option.
     let result = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
     if result != 0 {
-        return Err(std::io::Error::last_os_error())
-            .context("failed to set PR_SET_NO_NEW_PRIVS");
+        return Err(std::io::Error::last_os_error()).context("failed to set PR_SET_NO_NEW_PRIVS");
     }
     Ok(())
 }
@@ -407,10 +406,12 @@ fn network_seccomp_program() -> Result<BpfProgram> {
         Ok((syscall, rules))
     };
 
-    let mut rules: std::collections::BTreeMap<i64, Vec<SeccompRule>> =
-        [deny_inet(libc::SYS_socket)?, deny_inet(libc::SYS_socketpair)?]
-            .into_iter()
-            .collect();
+    let mut rules: std::collections::BTreeMap<i64, Vec<SeccompRule>> = [
+        deny_inet(libc::SYS_socket)?,
+        deny_inet(libc::SYS_socketpair)?,
+    ]
+    .into_iter()
+    .collect();
 
     // An empty rule vector matches the syscall unconditionally.
     for syscall in [
@@ -443,13 +444,8 @@ fn network_seccomp_program() -> Result<BpfProgram> {
 /// 0) equals `family`.
 fn inet_family_rule(family: libc::c_int) -> Result<SeccompRule> {
     SeccompRule::new(vec![
-        SeccompCondition::new(
-            0,
-            SeccompCmpArgLen::Dword,
-            SeccompCmpOp::Eq,
-            family as u64,
-        )
-        .context("failed to build seccomp condition")?,
+        SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, family as u64)
+            .context("failed to build seccomp condition")?,
     ])
     .context("failed to build seccomp rule")
 }
@@ -472,8 +468,7 @@ fn parse_launcher_args(
 }
 
 fn decode_launcher_args(mut args: impl Iterator<Item = OsString>) -> Result<LauncherInvocation> {
-    let network_policy =
-        decode_network_policy(&args.next().context("missing network policy")?)?;
+    let network_policy = decode_network_policy(&args.next().context("missing network policy")?)?;
     let separator = args.next().context("missing argument separator")?;
     ensure!(
         separator.to_str() == Some(ARG_SEPARATOR),
@@ -599,8 +594,7 @@ mod tests {
             "-c".to_string(),
             "echo hi there".to_string(),
         ];
-        let (launcher, args) =
-            wrap_invocation("/path/to/zed", NetworkPolicy::Denied, &command);
+        let (launcher, args) = wrap_invocation("/path/to/zed", NetworkPolicy::Denied, &command);
         assert_eq!(launcher, "/path/to/zed");
 
         let raw = launcher_argv(launcher, args);
@@ -618,8 +612,7 @@ mod tests {
     #[test]
     fn test_launcher_args_round_trip_allow_network() {
         let command = vec!["/bin/true".to_string()];
-        let (launcher, args) =
-            wrap_invocation("/path/to/zed", NetworkPolicy::Allowed, &command);
+        let (launcher, args) = wrap_invocation("/path/to/zed", NetworkPolicy::Allowed, &command);
 
         let raw = launcher_argv(launcher, args);
         let decoded = parse_launcher_args(raw).unwrap().unwrap();
