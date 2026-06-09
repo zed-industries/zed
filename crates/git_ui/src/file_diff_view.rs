@@ -158,8 +158,7 @@ impl FileDiffView {
                             cx,
                         )
                     })
-                    .await
-                    .ok();
+                    .await;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -194,7 +193,7 @@ pub(crate) async fn build_buffer_diff(
             cx,
         )
     })
-    .await?;
+    .await;
 
     Ok(diff)
 }

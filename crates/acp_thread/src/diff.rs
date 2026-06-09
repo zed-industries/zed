@@ -393,7 +393,7 @@ async fn build_buffer_diff(
     diff.update(cx, |diff, cx| {
         diff.set_base_text(base_text, buffer.text, cx)
     })
-    .await?;
+    .await;
     Ok(diff)
 }
 

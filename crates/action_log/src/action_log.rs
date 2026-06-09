@@ -472,7 +472,7 @@ impl ActionLog {
         diff.update(cx, |diff, cx| {
             diff.set_base_text(Some(new_base_text), buffer_snapshot.clone(), cx)
         })
-        .await?;
+        .await;
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
 
         let unreviewed_edits = cx

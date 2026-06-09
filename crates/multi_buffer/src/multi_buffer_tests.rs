@@ -4859,8 +4859,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
             cx,
         )
     })
-    .await
-    .unwrap();
+    .await;
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4914,8 +4913,7 @@ async fn test_inverted_diff_base_text_change(cx: &mut TestAppContext) {
     diff.update(cx, |diff, cx| {
         diff.set_base_text(Some("ddd\n".into()), buffer.read(cx).text_snapshot(), cx)
     })
-    .await
-    .unwrap();
+    .await;
 
     let _hunks: Vec<_> = multibuffer
         .read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx))

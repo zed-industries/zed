@@ -1041,7 +1041,7 @@ impl GitStore {
                         .update(cx, |buffer_diff, cx| {
                             buffer_diff.set_base_text(content.clone(), buffer_snapshot.text, cx)
                         })
-                        .await?;
+                        .await;
                     let unstaged_diff = this
                         .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
                         .await?;

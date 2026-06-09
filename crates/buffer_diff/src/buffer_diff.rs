@@ -1,4 +1,3 @@
-use futures::channel::oneshot;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
 use language::{
@@ -1937,16 +1936,17 @@ impl BufferDiff {
     }
 
     /// Used in cases where the change set isn't derived from git.
+    ///
+    /// Dropping the returned task cancels the update, leaving the diff
+    /// unchanged. Calls must not overlap; to re-run this when the buffer or
+    /// base text changes, store the task somewhere that the next call will
+    /// overwrite, so that the previous call is cancelled.
     pub fn set_base_text(
         &mut self,
         base_text: Option<Arc<str>>,
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
-        let (tx, rx) = oneshot::channel();
-        let complete_on_drop = util::defer(|| {
-            tx.send(()).ok();
-        });
+    ) -> Task<()> {
         cx.spawn(async move |this, cx| {
             let base_text_exists = base_text.is_some();
             let base_text = base_text.unwrap_or_default();
@@ -2010,10 +2010,7 @@ impl BufferDiff {
                 this.set_snapshot(state, cx);
             })
             .log_err();
-            drop(complete_on_drop)
         })
-        .detach();
-        rx
     }
 
     pub fn base_text_string(&self, _cx: &App) -> Option<String> {
@@ -4032,8 +4029,7 @@ mod tests {
         diff.update(cx, |diff, cx| {
             diff.set_base_text(Some(Arc::from(base_text_crlf)), buffer_snapshot.clone(), cx)
         })
-        .await
-        .ok();
+        .await;
         cx.run_until_parked();
 
         let snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));

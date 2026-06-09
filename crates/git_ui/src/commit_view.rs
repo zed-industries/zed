@@ -1013,7 +1013,7 @@ async fn build_buffer_diff(
             cx,
         )
     })
-    .await?;
+    .await;
 
     Ok(diff)
 }
