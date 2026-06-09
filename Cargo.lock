@@ -2440,7 +2440,6 @@ version = "0.1.0"
 dependencies = [
  "clock",
  "ctor",
- "futures 0.3.32",
  "gpui",
  "imara-diff",
  "language",
