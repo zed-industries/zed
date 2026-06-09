@@ -2437,6 +2437,12 @@ impl Thread {
                         let error_message = error.to_string();
                         match error.downcast::<LanguageModelCompletionError>() {
                             Ok(error) => {
+                                // Count this attempt before retrying, mirroring
+                                // the normal completion path below. The retry
+                                // logic relies on `attempt` starting at 1 to
+                                // bound the number of retries (and to avoid
+                                // underflow when computing the backoff delay).
+                                attempt += 1;
                                 match Self::retry_completion_error(
                                     this,
                                     event_stream,
