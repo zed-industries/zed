@@ -545,12 +545,7 @@ impl ToolCall {
     }
 
     fn update_acp_status(&mut self, status: acp::ToolCallStatus) {
-        if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status
-            && matches!(
-                status,
-                acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
-            )
-        {
+        if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status {
             *current_status = status;
         } else {
             self.status = status.into();
@@ -2172,7 +2167,6 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-
                 call.update_fields(
                     update.fields,
                     update.meta,
