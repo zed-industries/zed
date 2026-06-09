@@ -2458,9 +2458,7 @@ fn build_slash_item_label(
     };
     let mut builder = CodeLabelBuilder::default();
     builder.push_str(name, None);
-    // Two spaces gives a touch of breathing room between the name and
-    // the muted source label.
-    builder.push_str("  ", None);
+    builder.push_str(" ", None);
     builder.push_str(source, source_highlight_id);
     // The filter range defaults to the entire label after `build()`,
     // which would let the source text participate in fuzzy filtering.
