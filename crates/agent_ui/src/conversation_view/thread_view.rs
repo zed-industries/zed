@@ -1452,8 +1452,9 @@ impl ThreadView {
             }
         }
 
-        // A built-in command (e.g. `/compact`) with trailing text: send the bare
-        // command and queue the rest, so the extra text isn't silently dropped.
+        // A built-in command (e.g. `/compact`): run the bare command without
+        // echoing it as a user message, and queue any trailing text the user
+        // typed so it isn't silently dropped.
         let native_command =
             leading_native_command(text, self.session_capabilities.read().available_commands());
         if let Some(command_name) = native_command {
@@ -1517,6 +1518,7 @@ impl ThreadView {
                 }
                 this.send_content(
                     Task::ready(Ok(Some((vec![command_block], Vec::new())))),
+                    true,
                     window,
                     cx,
                 );
@@ -1562,12 +1564,13 @@ impl ThreadView {
             Ok(Some((contents, tracked_buffers)))
         });
 
-        self.send_content(contents_task, window, cx);
+        self.send_content(contents_task, false, window, cx);
     }
 
     pub fn send_content(
         &mut self,
         contents_task: Task<anyhow::Result<Option<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>>,
+        is_native_command: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1662,7 +1665,11 @@ impl ThreadView {
                     side = side
                 );
 
-                thread.send(contents, cx)
+                if is_native_command {
+                    thread.send_command(contents, cx)
+                } else {
+                    thread.send(contents, cx)
+                }
             })?;
 
             let _ = this.update(cx, |this, cx| {
@@ -2046,6 +2053,21 @@ impl ThreadView {
         let content = queued.content;
         let tracked_buffers = queued.tracked_buffers;
 
+        // A queued message can itself be a built-in command (e.g. the user typed
+        // `/compact` while a turn was generating). Detect that so we run it as a
+        // command turn without echoing it as a user message, matching the
+        // non-queued path.
+        let is_native_command = content
+            .first()
+            .and_then(|block| match block {
+                acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .and_then(|text| {
+                leading_native_command(text, self.session_capabilities.read().available_commands())
+            })
+            .is_some();
+
         // Only increment skip count for "Send Now" operations (out-of-order sends)
         // Normal auto-processing from the Stopped handler doesn't need to skip.
         // We only skip the Stopped event from the cancelled generation, NOT the
@@ -2074,7 +2096,7 @@ impl ThreadView {
             Ok(Some((content, tracked_buffers)))
         });
 
-        self.send_content(contents_task, window, cx);
+        self.send_content(contents_task, is_native_command, window, cx);
     }
 
     pub fn move_queued_message_to_main_editor(
@@ -10626,22 +10648,23 @@ pub(crate) fn open_link(
     }
 }
 
-/// If `text` is a built-in (native-category) slash command followed by extra
-/// text — e.g. `/compact summarize the API work` — returns the command name.
-/// Built-in commands ignore trailing arguments, so the caller sends the bare
-/// command and queues the remainder rather than discarding it. Commands from
-/// MCP servers and ACP agents are excluded: their trailing text is a real
-/// argument the agent consumes.
+/// Returns the name of the leading built-in (native-category) slash command —
+/// e.g. `compact` for `/compact` or `/compact summarize the API work` — whether
+/// or not the user typed any trailing text after it. Built-in commands ignore
+/// trailing arguments, so the caller sends the bare command and queues any
+/// remainder rather than discarding it. Commands from MCP servers and ACP
+/// agents are excluded: their trailing text is a real argument the agent
+/// consumes.
+///
+/// Native commands run a turn that produces its own thread entry, so the typed
+/// command is never echoed as a user message (see `send_command_queueing_remainder`).
 fn leading_native_command(
     text: &str,
     available_commands: &[acp::AvailableCommand],
 ) -> Option<String> {
     let rest = text.trim_start().strip_prefix('/')?;
-    let name_end = rest.find(char::is_whitespace)?;
+    let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
     let name = &rest[..name_end];
-    if rest[name_end..].trim().is_empty() {
-        return None;
-    }
     let is_native = available_commands.iter().any(|command| {
         command.name == name
             && acp_thread::command_category_from_meta(&command.meta)
@@ -10682,10 +10705,10 @@ mod tests {
     }
 
     #[test]
-    fn test_leading_native_command_only_splits_native_with_remainder() {
+    fn test_leading_native_command_matches_bare_and_with_remainder() {
         let commands = [native_command("compact"), mcp_command("deploy")];
 
-        // Native command with trailing text -> split.
+        // Native command with trailing text.
         assert_eq!(
             leading_native_command("/compact summarize the API work", &commands),
             Some("compact".to_string())
@@ -10696,12 +10719,22 @@ mod tests {
             Some("compact".to_string())
         );
 
-        // Bare native command (no remainder) -> no split; it sends normally.
-        assert_eq!(leading_native_command("/compact", &commands), None);
-        assert_eq!(leading_native_command("/compact   ", &commands), None);
+        // Bare native command (no remainder) is still recognized, so it runs as
+        // a command turn (without echoing a user message) rather than being sent
+        // to the model as a normal prompt.
+        assert_eq!(
+            leading_native_command("/compact", &commands),
+            Some("compact".to_string())
+        );
+        assert_eq!(
+            leading_native_command("/compact   ", &commands),
+            Some("compact".to_string())
+        );
 
-        // MCP/ACP commands consume their trailing text as an argument.
+        // MCP/ACP commands are not native: their trailing text is a real
+        // argument the agent consumes, and they echo as normal user messages.
         assert_eq!(leading_native_command("/deploy prod", &commands), None);
+        assert_eq!(leading_native_command("/deploy", &commands), None);
 
         // Unknown command, or not a slash command at all.
         assert_eq!(leading_native_command("/unknown foo", &commands), None);
