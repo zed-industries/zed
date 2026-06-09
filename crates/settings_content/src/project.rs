@@ -535,6 +535,8 @@ pub struct GitSettings {
     pub inline_blame: Option<InlineBlameSettings>,
     /// Git blame settings.
     pub blame: Option<BlameSettings>,
+    /// Custom date format for git graph and blame, using `time` format descriptions.
+    pub date_format: Option<String>,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
