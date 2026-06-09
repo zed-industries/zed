@@ -15,7 +15,7 @@ use serde_json::json;
 use settings::settings_content::SaturatingBool;
 use settings::{ContextServerCommand, Settings, SettingsStore};
 use std::sync::Arc;
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 use util::path;
 
 #[gpui::test]
@@ -1071,6 +1071,193 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
         result.is_ok(),
         "Stdio server should be created successfully with timeout"
     );
+}
+
+#[gpui::test]
+async fn test_explicit_oauth_triggers_auth_required_when_no_cached_session(
+    cx: &mut TestAppContext,
+) {
+    const SERVER_ID: &str = "gke-mcp";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    // The FakeHttpClient won't be hit for the preemptive auth path since
+    // explicit URLs bypass discovery. Provide a 200 response for the case
+    // where the server would actually try to start (it shouldn't).
+    let client = FakeHttpClient::create(|_| async move {
+        use http_client::AsyncBody;
+        Ok(Response::builder()
+            .status(200)
+            .body(AsyncBody::from("{}"))
+            .unwrap())
+    });
+    cx.update(|cx| cx.set_http_client(client));
+
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://container.googleapis.com/mcp".to_string(),
+                headers: Default::default(),
+                timeout: None,
+                oauth: Some(settings::OAuthClientSettings {
+                    client_id: "test-client-id.apps.googleusercontent.com".to_string(),
+                    client_secret: None,
+                    authorize_url: Some("https://accounts.google.com/o/oauth2/v2/auth".to_string()),
+                    token_url: Some("https://oauth2.googleapis.com/token".to_string()),
+                    scope: Some("https://www.googleapis.com/auth/cloud-platform".to_string()),
+                }),
+            },
+        )],
+        cx,
+    );
+
+    let _server_events = assert_server_events(
+        &store,
+        vec![
+            (server_id.clone(), ContextServerStatus::Starting),
+            (server_id.clone(), ContextServerStatus::AuthRequired),
+        ],
+        cx,
+    );
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_http_server_without_explicit_oauth_starts_normally(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "normal-http";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    let client = FakeHttpClient::create(|_| async move {
+        use http_client::AsyncBody;
+        Ok(Response::builder()
+            .status(200)
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(
+                serde_json::to_string(&json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "serverInfo": {
+                            "name": "test-server",
+                            "version": "1.0.0"
+                        }
+                    }
+                }))
+                .unwrap(),
+            ))
+            .unwrap())
+    });
+    cx.update(|cx| cx.set_http_client(client));
+
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://mcp.example.com/api".to_string(),
+                headers: Default::default(),
+                timeout: None,
+                oauth: Some(settings::OAuthClientSettings {
+                    client_id: "test-client-id".to_string(),
+                    client_secret: None,
+                    authorize_url: None,
+                    token_url: None,
+                    scope: None,
+                }),
+            },
+        )],
+        cx,
+    );
+
+    let _server_events = assert_server_events(
+        &store,
+        vec![
+            (server_id.clone(), ContextServerStatus::Starting),
+            (server_id.clone(), ContextServerStatus::Running),
+        ],
+        cx,
+    );
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_explicit_oauth_with_static_auth_header_starts_normally(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "static-auth-http";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    let client = FakeHttpClient::create(|_| async move {
+        use http_client::AsyncBody;
+        Ok(Response::builder()
+            .status(200)
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(
+                serde_json::to_string(&json!({
+                    "jsonrpc": "2.0",
+                    "id": 0,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "serverInfo": {
+                            "name": "test-server",
+                            "version": "1.0.0"
+                        }
+                    }
+                }))
+                .unwrap(),
+            ))
+            .unwrap())
+    });
+    cx.update(|cx| cx.set_http_client(client));
+
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    // Even with explicit OAuth URLs, if a static Authorization header is
+    // present, the preemptive auth should be skipped.
+    let mut headers = HashMap::default();
+    headers.insert(
+        "Authorization".to_string(),
+        "Bearer static-token".to_string(),
+    );
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://mcp.example.com/api".to_string(),
+                headers,
+                timeout: None,
+                oauth: Some(settings::OAuthClientSettings {
+                    client_id: "test-client-id".to_string(),
+                    client_secret: None,
+                    authorize_url: Some("https://auth.example.com/authorize".to_string()),
+                    token_url: Some("https://auth.example.com/token".to_string()),
+                    scope: None,
+                }),
+            },
+        )],
+        cx,
+    );
+
+    let _server_events = assert_server_events(
+        &store,
+        vec![
+            (server_id.clone(), ContextServerStatus::Starting),
+            (server_id.clone(), ContextServerStatus::Running),
+        ],
+        cx,
+    );
+    cx.run_until_parked();
 }
 
 fn assert_server_events(

@@ -662,6 +662,12 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) {
         let id = server.id();
+
+        let was_authenticating = matches!(
+            self.servers.get(&id),
+            Some(ContextServerState::Authenticating { .. })
+        );
+
         if matches!(
             self.servers.get(&id),
             Some(
@@ -672,21 +678,85 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
+
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
             let configuration = configuration.clone();
 
             async move |this, cx| {
-                let new_state = match server.clone().start(cx).await {
-                    Ok(_) => {
-                        debug_assert!(server.client().is_some());
-                        ContextServerState::Running {
-                            server,
-                            configuration,
+                // For servers with explicit OAuth endpoints (e.g. Google Cloud MCP)
+                // that accept `initialize` unauthenticated but reject tool calls,
+                // go directly to AuthRequired if no cached session exists.
+                let preemptive_discovery = if !was_authenticating {
+                    if let ContextServerConfiguration::Http {
+                        url,
+                        oauth: Some(oauth_settings),
+                        ..
+                    } = configuration.as_ref()
+                    {
+                        if oauth_settings.authorize_url.is_some()
+                            && oauth_settings.token_url.is_some()
+                            && !configuration.has_static_auth_header()
+                        {
+                            let credentials_provider =
+                                cx.update(|cx| zed_credentials_provider::global(cx));
+                            let has_cached_session =
+                                ContextServerStore::load_session(&credentials_provider, url, cx)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .is_some();
+                            if !has_cached_session {
+                                Some(build_explicit_discovery(oauth_settings, url))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let new_state = if let Some(discovery_result) = preemptive_discovery {
+                    match discovery_result {
+                        Ok(discovery) => {
+                            log::info!(
+                                "{id} requires OAuth authorization (auth server: {})",
+                                discovery.auth_server_metadata.issuer,
+                            );
+                            ContextServerState::AuthRequired {
+                                server,
+                                configuration,
+                                discovery: Arc::new(discovery),
+                            }
+                        }
+                        Err(error) => {
+                            log::error!("{id} {error}");
+                            ContextServerState::Error {
+                                configuration,
+                                server,
+                                error: error.into(),
+                            }
                         }
                     }
-                    Err(err) => resolve_start_failure(&id, err, server, configuration, cx).await,
+                } else {
+                    match server.clone().start(cx).await {
+                        Ok(_) => {
+                            debug_assert!(server.client().is_some());
+                            ContextServerState::Running {
+                                server,
+                                configuration,
+                            }
+                        }
+                        Err(err) => {
+                            resolve_start_failure(&id, err, server, configuration, cx).await
+                        }
+                    }
                 };
                 this.update(cx, |this, cx| {
                     this.update_server_state(id.clone(), new_state, cx)
@@ -1648,6 +1718,64 @@ impl ContextServerStore {
     }
 }
 
+/// Constructs an `OAuthDiscovery` from explicitly-configured OAuth endpoints,
+/// for servers that don't support `.well-known` metadata discovery.
+fn build_explicit_discovery(
+    oauth_settings: &OAuthClientSettings,
+    server_url: &url::Url,
+) -> Result<OAuthDiscovery, String> {
+    let authorize_url_str = oauth_settings
+        .authorize_url
+        .as_deref()
+        .ok_or("authorize_url is required for explicit OAuth discovery")?;
+    let token_url_str = oauth_settings
+        .token_url
+        .as_deref()
+        .ok_or("token_url is required for explicit OAuth discovery")?;
+
+    let authorize_url =
+        url::Url::parse(authorize_url_str).map_err(|e| format!("Invalid authorize_url: {e}"))?;
+    let token_url =
+        url::Url::parse(token_url_str).map_err(|e| format!("Invalid token_url: {e}"))?;
+
+    let scopes = oauth_settings
+        .scope
+        .as_deref()
+        .map(|s| s.split_whitespace().map(String::from).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    // Derive the issuer from the authorization endpoint's origin.
+    let issuer_str = authorize_url.origin().ascii_serialization();
+    let issuer =
+        url::Url::parse(&issuer_str).map_err(|e| format!("Failed to derive issuer URL: {e}"))?;
+
+    Ok(OAuthDiscovery {
+        resource_metadata: oauth::ProtectedResourceMetadata {
+            resource: server_url.clone(),
+            authorization_servers: vec![server_url.clone()],
+            scopes_supported: if scopes.is_empty() {
+                None
+            } else {
+                Some(scopes.clone())
+            },
+        },
+        auth_server_metadata: oauth::AuthServerMetadata {
+            issuer,
+            authorization_endpoint: authorize_url,
+            token_endpoint: token_url,
+            registration_endpoint: None,
+            scopes_supported: None,
+            grant_types_supported: Some(vec![
+                "authorization_code".to_string(),
+                "refresh_token".to_string(),
+            ]),
+            code_challenge_methods_supported: Some(vec!["S256".to_string()]),
+            client_id_metadata_document_supported: false,
+        },
+        scopes,
+    })
+}
+
 /// Determines the appropriate server state after a start attempt fails.
 ///
 /// When the error is an HTTP 401 with no static auth header configured,
@@ -1726,7 +1854,39 @@ async fn resolve_start_failure(
         .unwrap_or(&default_www_authenticate);
     let http_client = cx.update(|cx| cx.http_client());
 
-    match context_server::oauth::discover(&http_client, &server_url, www_authenticate).await {
+    // Check if explicit OAuth endpoints are configured (for servers that don't
+    // support .well-known discovery, e.g. Google Cloud).
+    let explicit_discovery = if let ContextServerConfiguration::Http {
+        oauth: Some(oauth_settings),
+        ..
+    } = configuration.as_ref()
+    {
+        if oauth_settings.authorize_url.is_some() && oauth_settings.token_url.is_some() {
+            match build_explicit_discovery(oauth_settings, &server_url) {
+                Ok(discovery) => Some(discovery),
+                Err(error) => {
+                    log::error!("{id} {error}");
+                    return ContextServerState::Error {
+                        configuration,
+                        server,
+                        error: error.into(),
+                    };
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let discovery_result = if let Some(discovery) = explicit_discovery {
+        Ok(discovery)
+    } else {
+        context_server::oauth::discover(&http_client, &server_url, www_authenticate).await
+    };
+
+    match discovery_result {
         Ok(discovery) => {
             use context_server::oauth::{
                 ClientRegistrationStrategy, determine_registration_strategy,
@@ -1774,5 +1934,211 @@ async fn resolve_start_failure(
                 error: format!("OAuth discovery failed: {discovery_err}").into(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project_settings::OAuthClientSettings;
+
+    #[test]
+    fn test_build_explicit_discovery_success() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "my-client-id".to_string(),
+            client_secret: None,
+            authorize_url: Some("https://accounts.google.com/o/oauth2/v2/auth".to_string()),
+            token_url: Some("https://oauth2.googleapis.com/token".to_string()),
+            scope: Some("https://www.googleapis.com/auth/cloud-platform".to_string()),
+        };
+        let server_url = url::Url::parse("https://container.googleapis.com/mcp").unwrap();
+
+        let discovery = build_explicit_discovery(&oauth_settings, &server_url).unwrap();
+
+        assert_eq!(
+            discovery.auth_server_metadata.issuer.as_str(),
+            "https://accounts.google.com/"
+        );
+        assert_eq!(
+            discovery
+                .auth_server_metadata
+                .authorization_endpoint
+                .as_str(),
+            "https://accounts.google.com/o/oauth2/v2/auth"
+        );
+        assert_eq!(
+            discovery.auth_server_metadata.token_endpoint.as_str(),
+            "https://oauth2.googleapis.com/token"
+        );
+        assert_eq!(
+            discovery.resource_metadata.resource.as_str(),
+            "https://container.googleapis.com/mcp"
+        );
+        assert_eq!(
+            discovery.scopes,
+            vec!["https://www.googleapis.com/auth/cloud-platform"]
+        );
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_multiple_scopes() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: Some("https://auth.example.com/authorize".to_string()),
+            token_url: Some("https://auth.example.com/token".to_string()),
+            scope: Some("read write admin".to_string()),
+        };
+        let server_url = url::Url::parse("https://mcp.example.com").unwrap();
+
+        let discovery = build_explicit_discovery(&oauth_settings, &server_url).unwrap();
+
+        assert_eq!(discovery.scopes, vec!["read", "write", "admin"]);
+        assert_eq!(
+            discovery.resource_metadata.scopes_supported,
+            Some(vec![
+                "read".to_string(),
+                "write".to_string(),
+                "admin".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_no_scope() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: Some("https://auth.example.com/authorize".to_string()),
+            token_url: Some("https://auth.example.com/token".to_string()),
+            scope: None,
+        };
+        let server_url = url::Url::parse("https://mcp.example.com").unwrap();
+
+        let discovery = build_explicit_discovery(&oauth_settings, &server_url).unwrap();
+
+        assert!(discovery.scopes.is_empty());
+        assert_eq!(discovery.resource_metadata.scopes_supported, None);
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_invalid_authorize_url() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: Some("not a url".to_string()),
+            token_url: Some("https://auth.example.com/token".to_string()),
+            scope: None,
+        };
+        let server_url = url::Url::parse("https://mcp.example.com").unwrap();
+
+        let result = build_explicit_discovery(&oauth_settings, &server_url);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid authorize_url"));
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_invalid_token_url() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: Some("https://auth.example.com/authorize".to_string()),
+            token_url: Some("not a url".to_string()),
+            scope: None,
+        };
+        let server_url = url::Url::parse("https://mcp.example.com").unwrap();
+
+        let result = build_explicit_discovery(&oauth_settings, &server_url);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid token_url"));
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_missing_authorize_url() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: None,
+            token_url: Some("https://auth.example.com/token".to_string()),
+            scope: None,
+        };
+        let server_url = url::Url::parse("https://mcp.example.com").unwrap();
+
+        let result = build_explicit_discovery(&oauth_settings, &server_url);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("authorize_url is required"));
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_missing_token_url() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: Some("https://auth.example.com/authorize".to_string()),
+            token_url: None,
+            scope: None,
+        };
+        let server_url = url::Url::parse("https://mcp.example.com").unwrap();
+
+        let result = build_explicit_discovery(&oauth_settings, &server_url);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("token_url is required"));
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_issuer_derived_from_authorize_url_origin() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: Some(
+                "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize".to_string(),
+            ),
+            token_url: Some(
+                "https://login.microsoftonline.com/tenant/oauth2/v2.0/token".to_string(),
+            ),
+            scope: None,
+        };
+        let server_url = url::Url::parse("https://mcp.azure.com").unwrap();
+
+        let discovery = build_explicit_discovery(&oauth_settings, &server_url).unwrap();
+
+        assert_eq!(
+            discovery.auth_server_metadata.issuer.as_str(),
+            "https://login.microsoftonline.com/"
+        );
+    }
+
+    #[test]
+    fn test_build_explicit_discovery_metadata_fields() {
+        let oauth_settings = OAuthClientSettings {
+            client_id: "id".to_string(),
+            client_secret: None,
+            authorize_url: Some("https://auth.example.com/authorize".to_string()),
+            token_url: Some("https://auth.example.com/token".to_string()),
+            scope: None,
+        };
+        let server_url = url::Url::parse("https://mcp.example.com").unwrap();
+
+        let discovery = build_explicit_discovery(&oauth_settings, &server_url).unwrap();
+
+        assert_eq!(discovery.auth_server_metadata.registration_endpoint, None);
+        assert_eq!(
+            discovery.auth_server_metadata.grant_types_supported,
+            Some(vec![
+                "authorization_code".to_string(),
+                "refresh_token".to_string()
+            ])
+        );
+        assert_eq!(
+            discovery
+                .auth_server_metadata
+                .code_challenge_methods_supported,
+            Some(vec!["S256".to_string()])
+        );
+        assert!(
+            !discovery
+                .auth_server_metadata
+                .client_id_metadata_document_supported
+        );
     }
 }
