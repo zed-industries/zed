@@ -1033,9 +1033,7 @@ impl BlockMap {
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
                     .filter_map(|block| {
-                        if block.style == BlockStyle::Spacer
-                            && wrap_snapshot
-                                .intersects_fold(block.placement.start().to_offset(buffer))
+                        if wrap_snapshot.intersects_fold(block.placement.start().to_offset(buffer))
                         {
                             return None;
                         }
