@@ -103,6 +103,70 @@ pub fn git_timestamp(
     })
 }
 
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+    use gpui::{TestAppContext, UpdateGlobal};
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            ProjectSettings::register(cx);
+        });
+    }
+
+    fn set_git_date_format(cx: &mut TestAppContext, date_format: Option<&str>) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().date_format =
+                        date_format.map(ToOwned::to_owned);
+                });
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_custom_git_timestamp_uses_git_date_format_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let timestamp = time::macros::datetime!(2020-06-15 12:34:56 UTC);
+
+        cx.read(|cx| {
+            assert_eq!(custom_git_timestamp(timestamp, cx), None);
+        });
+
+        set_git_date_format(cx, Some("commit [year]-[month]"));
+
+        cx.read(|cx| {
+            assert_eq!(
+                custom_git_timestamp(timestamp, cx).as_deref(),
+                Some("commit 2020-06")
+            );
+            assert_eq!(
+                git_timestamp(timestamp, time_format::TimestampFormat::Relative, cx),
+                "commit 2020-06"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_git_timestamp_falls_back_when_git_date_format_is_invalid(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_git_date_format(cx, Some("[invalid]"));
+        let timestamp = OffsetDateTime::now_utc();
+
+        cx.read(|cx| {
+            assert_eq!(custom_git_timestamp(timestamp, cx), None);
+            assert_eq!(
+                git_timestamp(timestamp, time_format::TimestampFormat::Relative, cx),
+                "Just now"
+            );
+        });
+    }
+}
+
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
@@ -1306,7 +1370,7 @@ mod view_commit_tests {
     use project::project_settings::ProjectSettings;
     use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use std::path::Path;
     use std::sync::Arc;
     use theme::LoadThemes;
