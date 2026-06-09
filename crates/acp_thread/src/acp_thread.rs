@@ -893,6 +893,33 @@ impl ContentBlock {
         }
     }
 
+    /// Updates a Markdown block in place from a streaming text `block`, reusing
+    /// the existing `Markdown` entity rather than recreating it. Appends only the
+    /// new suffix when the update is a continuation (the common streaming case),
+    /// otherwise re-sets the source. Returns `false` when an in-place update isn't
+    /// applicable, so the caller can fall back to replacing the block wholesale.
+    ///
+    /// Recreating the entity on every streamed snapshot causes the rendered
+    /// element to tear down and rebuild, which flickers badly.
+    pub fn update_text_in_place(&mut self, block: &acp::ContentBlock, cx: &mut App) -> bool {
+        let ContentBlock::Markdown { markdown } = self else {
+            return false;
+        };
+        let acp::ContentBlock::Text(text_content) = block else {
+            return false;
+        };
+        let new_content = &text_content.text;
+        markdown.update(cx, |markdown, cx| {
+            let current = markdown.source().to_string();
+            match new_content.strip_prefix(&current) {
+                Some("") => {}
+                Some(suffix) => markdown.append(suffix, cx),
+                None => markdown.reset(new_content.clone().into(), cx),
+            }
+        });
+        true
+    }
+
     fn decode_image(
         image_content: &acp::ImageContent,
     ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
@@ -1061,6 +1088,17 @@ impl ToolCallContent {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<bool> {
+        // Update streaming text in place so the rendered markdown element is
+        // reused across snapshots instead of being recreated (which flickers).
+        if let (
+            Self::ContentBlock(block),
+            acp::ToolCallContent::Content(acp::Content { content, .. }),
+        ) = (&mut *self, &new)
+            && block.update_text_in_place(content, cx)
+        {
+            return Ok(true);
+        }
+
         let needs_update = match (&self, &new) {
             (Self::Diff(old_diff), acp::ToolCallContent::Diff(new_diff)) => {
                 old_diff.read(cx).needs_update(
@@ -1261,6 +1299,20 @@ pub struct RetryStatus {
     pub max_attempts: usize,
     pub started_at: Instant,
     pub duration: Duration,
+    pub meta: Option<acp::Meta>,
+}
+
+pub const REFUSAL_FALLBACK_MODEL_META_KEY: &str = "refusal_fallback_model";
+
+pub fn meta_with_refusal_fallback(model_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(REFUSAL_FALLBACK_MODEL_META_KEY.into(), model_name.into())])
+}
+
+pub fn refusal_fallback_model_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(REFUSAL_FALLBACK_MODEL_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
 }
 
 struct RunningTurn {
