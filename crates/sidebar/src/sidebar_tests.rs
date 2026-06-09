@@ -6523,6 +6523,200 @@ async fn test_thread_resets_to_main_when_git_worktree_deleted(cx: &mut TestAppCo
 }
 
 #[gpui::test]
+async fn test_opening_thread_with_worktree_deleted_while_zed_was_closed_falls_back_to_main(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    // The thread metadata references a linked worktree that is neither on
+    // disk nor in the repo's git state: it was deleted while Zed was closed,
+    // so no GitWorktreeListChanged event could ever fire for it.
+    let project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_thread_metadata_with_main_paths(
+        "wt-thread",
+        "Worktree Thread",
+        PathList::new(&[PathBuf::from("/wt/rosewood")]),
+        PathList::new(&[PathBuf::from("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Worktree Thread {rosewood}"]
+    );
+
+    // Activate the thread the way a sidebar click on a closed-workspace row
+    // does.
+    let session = acp::SessionId::new("wt-thread");
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session))
+            .cloned()
+            .unwrap()
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        let key = workspace::ProjectGroupKey::from_worktree_paths(&metadata.worktree_paths, None);
+        sidebar.open_workspace_and_activate_thread(
+            metadata.clone(),
+            metadata.folder_paths().clone(),
+            &key,
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    // The metadata was repointed at the main checkout before opening…
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let store = store.read(cx);
+        let entry = store
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session))
+            .unwrap();
+        assert_eq!(entry.folder_paths().paths(), &[PathBuf::from("/project")]);
+        assert_eq!(
+            entry.main_worktree_paths().paths(),
+            &[PathBuf::from("/project")]
+        );
+    });
+
+    // …so no workspace was opened at the dead path; the existing main
+    // workspace was reused.
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        let workspace_paths: Vec<_> = multi_workspace
+            .workspaces()
+            .map(|workspace| workspace_path_list(workspace, cx).paths().to_vec())
+            .collect();
+        assert_eq!(workspace_paths, vec![vec![PathBuf::from("/project")]]);
+    });
+
+    // The chip is gone in the sidebar.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Worktree Thread"]
+    );
+}
+
+#[gpui::test]
+async fn test_opening_thread_with_live_worktree_keeps_worktree_paths(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    // The linked worktree exists on disk.
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt/rosewood"),
+            ref_name: Some("refs/heads/rosewood".into()),
+            sha: "abc".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_thread_metadata_with_main_paths(
+        "wt-thread",
+        "Worktree Thread",
+        PathList::new(&[PathBuf::from("/wt/rosewood")]),
+        PathList::new(&[PathBuf::from("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    let session = acp::SessionId::new("wt-thread");
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session))
+            .cloned()
+            .unwrap()
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        let key = workspace::ProjectGroupKey::from_worktree_paths(&metadata.worktree_paths, None);
+        sidebar.open_workspace_and_activate_thread(
+            metadata.clone(),
+            metadata.folder_paths().clone(),
+            &key,
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    // The metadata is untouched and a workspace was opened at the worktree.
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let store = store.read(cx);
+        let entry = store
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session))
+            .unwrap();
+        assert_eq!(
+            entry.folder_paths().paths(),
+            &[PathBuf::from("/wt/rosewood")]
+        );
+    });
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(
+            multi_workspace
+                .workspaces()
+                .any(|workspace| workspace_path_list(workspace, cx).paths()
+                    == [PathBuf::from("/wt/rosewood")]),
+            "a workspace should have been opened at the live worktree path"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

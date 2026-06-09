@@ -28,9 +28,10 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
+    Action as _, AnyElement, App, AsyncWindowContext, ClickEvent, Context, DismissEvent, Entity,
+    EntityId, FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render,
+    SharedString, Task, TaskExt, WeakEntity, Window, WindowHandle, linear_color_stop,
+    linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use language_model::LanguageModelRegistry;
@@ -3876,22 +3877,26 @@ impl Sidebar {
         let provisional_key = Some(project_group_key.clone());
         let active_workspace = multi_workspace.read(cx).workspace().clone();
         let modal_workspace = active_workspace.clone();
-
-        let open_task = multi_workspace.update(cx, |this, cx| {
-            this.find_or_create_workspace(
-                folder_paths,
-                host,
-                provisional_key,
-                |options, window, cx| connect_remote(active_workspace, options, window, cx),
-                &[],
-                None,
-                OpenMode::Activate,
-                window,
-                cx,
-            )
-        });
+        let fs = active_workspace.read(cx).app_state().fs.clone();
 
         cx.spawn_in(window, async move |this, cx| {
+            let (metadata, folder_paths) =
+                Self::resolve_deleted_worktree_paths(metadata, folder_paths, fs, cx).await;
+
+            let open_task = multi_workspace.update_in(cx, |this, window, cx| {
+                this.find_or_create_workspace(
+                    folder_paths,
+                    host,
+                    provisional_key,
+                    |options, window, cx| connect_remote(active_workspace, options, window, cx),
+                    &[],
+                    None,
+                    OpenMode::Activate,
+                    window,
+                    cx,
+                )
+            })?;
+
             let result = open_task.await;
             // Dismiss the modal as soon as the open attempt completes so
             // failures or cancellations do not leave a stale connection modal behind.
@@ -3913,6 +3918,84 @@ impl Sidebar {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    /// Lazy fallback for worktrees deleted while Zed was closed (so no
+    /// `GitWorktreeListChanged` event could fire): if the thread's worktree
+    /// pairs reference linked-worktree folders that no longer exist on disk,
+    /// repoint those pairs at their main worktree paths and persist before
+    /// opening. Threads with archived-worktree records keep their recorded
+    /// paths — restoring those is the archive flow's job.
+    async fn resolve_deleted_worktree_paths(
+        metadata: ThreadMetadata,
+        folder_paths: PathList,
+        fs: Arc<dyn fs::Fs>,
+        cx: &mut AsyncWindowContext,
+    ) -> (ThreadMetadata, PathList) {
+        // Remote project directories can't be inspected from here.
+        if metadata.remote_connection.is_some() {
+            return (metadata, folder_paths);
+        }
+
+        let linked_folder_paths: Vec<PathBuf> = metadata
+            .worktree_paths
+            .ordered_pairs()
+            .filter(|(main, folder)| main != folder)
+            .map(|(_, folder)| folder.clone())
+            .collect();
+        if linked_folder_paths.is_empty() {
+            return (metadata, folder_paths);
+        }
+
+        let mut deleted_folder_paths = Vec::new();
+        for folder_path in linked_folder_paths {
+            // Treat fs errors as "still exists": only a confirmed missing
+            // directory may rewrite the thread's paths.
+            if matches!(fs.metadata(&folder_path).await, Ok(None)) {
+                deleted_folder_paths.push(folder_path);
+            }
+        }
+        if deleted_folder_paths.is_empty() {
+            return (metadata, folder_paths);
+        }
+
+        let archived_worktrees = match cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .get_archived_worktrees_for_thread(metadata.thread_id, cx)
+        }) {
+            Ok(task) => task.await.log_err(),
+            Err(_) => None,
+        };
+        // On a lookup failure, conservatively assume records exist and leave
+        // the paths alone.
+        let Some(archived_worktrees) = archived_worktrees else {
+            return (metadata, folder_paths);
+        };
+        if !archived_worktrees.is_empty() {
+            return (metadata, folder_paths);
+        }
+
+        let mut worktree_paths = metadata.worktree_paths.clone();
+        for folder_path in &deleted_folder_paths {
+            worktree_paths.reset_folder_path_to_main(folder_path);
+        }
+
+        let updated = cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.update_worktree_paths(&[metadata.thread_id], worktree_paths.clone(), cx);
+            });
+        });
+        if updated.log_err().is_none() {
+            return (metadata, folder_paths);
+        }
+
+        let folder_paths = worktree_paths.folder_path_list().clone();
+        let metadata = ThreadMetadata {
+            worktree_paths,
+            ..metadata
+        };
+        (metadata, folder_paths)
     }
 
     fn find_current_workspace_for_path_list(
