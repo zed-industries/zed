@@ -1,6 +1,5 @@
-//! # panel
 use gpui::actions;
-use ui::{Tab, prelude::*};
+use ui::prelude::*;
 
 actions!(
     panel,
@@ -12,19 +11,7 @@ actions!(
     ]
 );
 
-pub trait PanelHeader: workspace::Panel {
-    fn header_height(&self, cx: &mut App) -> Pixels {
-        Tab::container_height(cx)
-    }
-
-    fn panel_header_container(&self, _window: &mut Window, cx: &mut App) -> Div {
-        h_flex()
-            .h(self.header_height(cx))
-            .w_full()
-            .px_1()
-            .flex_none()
-    }
-}
+pub trait PanelHeader: workspace::Panel {}
 
 /// Implement this trait to enable a panel to have tabs.
 pub trait PanelTabs: PanelHeader {

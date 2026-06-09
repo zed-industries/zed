@@ -29,7 +29,7 @@ use theme::ThemeRegistry;
 use util::{rel_path::rel_path_buf, test::TempTree};
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -319,7 +319,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -351,7 +350,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -534,7 +532,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
-                agent_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),
@@ -1112,7 +1109,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // Start a new instance of the language server.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        )
     });
     cx.executor().run_until_parked();
 
@@ -1153,7 +1155,12 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .await;
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        )
     });
 
     // The extension re-fetches the latest version of the language server.

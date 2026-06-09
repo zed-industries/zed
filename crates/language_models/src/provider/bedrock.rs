@@ -7,6 +7,7 @@ use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::{Credentials, Token};
 use aws_http_client::AwsHttpClient;
+use bedrock::BedrockSystemContentBlock;
 use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
 use bedrock::bedrock_client::types::{
@@ -31,12 +32,11 @@ use gpui::{
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    TokenUsage, env_var,
+    AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage, env_var,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,12 +49,21 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use http_client::CustomHeaders;
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("amazon-bedrock");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Amazon Bedrock");
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &[
+    "host",
+    "x-amz-date",
+    "x-amz-security-token",
+    "x-amz-content-sha256",
+    "amz-sdk-invocation-id",
+    "amz-sdk-request",
+];
 
 /// Credentials stored in the keychain for static authentication.
 /// Region is handled separately since it's orthogonal to auth method.
@@ -107,6 +116,7 @@ impl BedrockCredentials {
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AmazonBedrockSettings {
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
     pub region: Option<String>,
     pub endpoint: Option<String>,
     pub profile_name: Option<String>,
@@ -617,8 +627,17 @@ impl BedrockModel {
             return futures::future::ready(Err(BedrockError::Other(anyhow!("App state dropped"))))
                 .boxed();
         };
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .custom_headers
+                .clone()
+        });
 
-        let task = Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request));
+        let task = Tokio::spawn(
+            cx,
+            bedrock::stream_completion(runtime_client, request, extra_headers),
+        );
         async move { task.await.map_err(|e| BedrockError::Other(e.into()))? }.boxed()
     }
 }
@@ -671,11 +690,21 @@ impl LanguageModel for BedrockModel {
                     is_default: true,
                 },
                 language_model::LanguageModelEffortLevel {
+                    name: "XHigh".into(),
+                    value: "xhigh".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
                     name: "Max".into(),
                     value: "max".into(),
                     is_default: false,
                 },
             ]
+            .into_iter()
+            .filter(|effort_level| {
+                effort_level.value != "xhigh" || self.model.supports_xhigh_adaptive_thinking()
+            })
+            .collect()
         } else {
             Vec::new()
         }
@@ -797,16 +826,6 @@ impl LanguageModel for BedrockModel {
         });
 
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        self.model
-            .cache_configuration()
-            .map(|config| LanguageModelCacheConfiguration {
-                max_cache_anchors: config.max_cache_anchors,
-                should_speculate: false,
-                min_total_token: config.min_total_token,
-            })
     }
 }
 
@@ -1104,11 +1123,24 @@ pub fn into_bedrock(
         )
     };
 
+    let mut system_blocks: Vec<BedrockSystemContentBlock> = Vec::new();
+    if !system_message.is_empty() {
+        system_blocks.push(BedrockSystemContentBlock::Text(system_message));
+        if supports_caching {
+            system_blocks.push(BedrockSystemContentBlock::CachePoint(
+                CachePointBlock::builder()
+                    .r#type(CachePointType::Default)
+                    .build()
+                    .context("failed to build system cache point block")?,
+            ));
+        }
+    }
+
     Ok(bedrock::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: Some(system_message),
+        system: system_blocks,
         tools: tool_config,
         thinking: if request.thinking_allowed {
             match thinking_mode {
@@ -1125,6 +1157,7 @@ pub fn into_bedrock(
                             "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
                             "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
                             "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
+                            "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
                             "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
                             _ => None,
                         })

@@ -18,7 +18,7 @@
 use crate::PinchEvent;
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
+    Display, Element, ElementId, Entity, EntityId, FocusHandle, Global, GlobalElementId, Hitbox,
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
     KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
@@ -46,7 +46,7 @@ use std::{
 use super::ImageCacheProvider;
 
 const DRAG_THRESHOLD: f64 = 2.;
-const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
+const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
 /// The styling information for a given group.
@@ -408,6 +408,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::on_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[track_caller]
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Window, &mut App) + 'static) {
         self.action_listeners.push((
             TypeId::of::<A>(),
@@ -642,6 +643,12 @@ impl Interactivity {
             build: Rc::new(build_tooltip),
             hoverable: true,
         });
+    }
+
+    /// Set the delay before this element's tooltip is shown.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip_show_delay`].
+    pub fn tooltip_show_delay(&mut self, delay: Duration) {
+        self.tooltip_show_delay = Some(delay);
     }
 
     /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
@@ -975,6 +982,7 @@ pub trait InteractiveElement: Sized {
     /// The fluent API equivalent to [`Interactivity::on_action`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[track_caller]
     fn on_action<A: Action>(
         mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
@@ -1175,6 +1183,124 @@ pub trait InteractiveElement: Sized {
 /// A trait for elements that want to use the standard GPUI interactivity features
 /// that require state.
 pub trait StatefulInteractiveElement: InteractiveElement {
+    /// Set the accessible role for this element.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    fn role(mut self, role: accesskit::Role) -> Self {
+        debug_assert!(
+            role != accesskit::Role::GenericContainer,
+            "GenericContainer is filtered out of the a11y tree and has no effect"
+        );
+        self.interactivity().override_role = Some(role);
+        self
+    }
+
+    /// Set the accessible label for this element.
+    fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_label = Some(label.into());
+        self
+    }
+
+    /// Set the selected state for this element.
+    fn aria_selected(mut self, selected: bool) -> Self {
+        self.interactivity().aria_selected = Some(selected);
+        self
+    }
+
+    /// Set the expanded state for this element.
+    fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.interactivity().aria_expanded = Some(expanded);
+        self
+    }
+
+    /// Set the toggled state for this element.
+    fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
+        self.interactivity().aria_toggled = Some(toggled);
+        self
+    }
+
+    /// Set the numeric value for this element.
+    fn aria_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the minimum numeric value for this element.
+    fn aria_min_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_min_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the maximum numeric value for this element.
+    fn aria_max_numeric_value(mut self, value: f64) -> Self {
+        self.interactivity().aria_max_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the orientation of this element.
+    fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
+        self.interactivity().aria_orientation = Some(orientation);
+        self
+    }
+
+    /// Set the heading level of this element.
+    fn aria_level(mut self, level: usize) -> Self {
+        self.interactivity().aria_level = Some(level);
+        self
+    }
+
+    /// Set the position in set of this element.
+    fn aria_position_in_set(mut self, position: usize) -> Self {
+        self.interactivity().aria_position_in_set = Some(position);
+        self
+    }
+
+    /// Set the size of set for this element.
+    fn aria_size_of_set(mut self, size: usize) -> Self {
+        self.interactivity().aria_size_of_set = Some(size);
+        self
+    }
+
+    /// Set the row index for this element.
+    fn aria_row_index(mut self, index: usize) -> Self {
+        self.interactivity().aria_row_index = Some(index);
+        self
+    }
+
+    /// Set the column index for this element.
+    fn aria_column_index(mut self, index: usize) -> Self {
+        self.interactivity().aria_column_index = Some(index);
+        self
+    }
+
+    /// Set the row count for this element.
+    fn aria_row_count(mut self, count: usize) -> Self {
+        self.interactivity().aria_row_count = Some(count);
+        self
+    }
+
+    /// Set the column count for this element.
+    fn aria_column_count(mut self, count: usize) -> Self {
+        self.interactivity().aria_column_count = Some(count);
+        self
+    }
+
+    /// Register a handler for an accessibility action on this element.
+    /// The handler is called when a screen reader requests the given action.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    fn on_a11y_action(
+        mut self,
+        action: accesskit::Action,
+        listener: impl FnMut(Option<&accesskit::ActionData>, &mut crate::Window, &mut crate::App)
+        + 'static,
+    ) -> Self {
+        self.interactivity()
+            .a11y_action_listeners
+            .push((action, Box::new(listener)));
+        self
+    }
+
     /// Set this element to focusable.
     fn focusable(mut self) -> Self {
         self.interactivity().focusable = true;
@@ -1319,6 +1445,16 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         Self: Sized,
     {
         self.interactivity().hoverable_tooltip(build_tooltip);
+        self
+    }
+
+    /// Set the delay before this element's tooltip is shown.
+    /// The fluent API equivalent to [`Interactivity::tooltip_show_delay`].
+    fn tooltip_show_delay(mut self, delay: Duration) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().tooltip_show_delay(delay);
         self
     }
 }
@@ -1472,6 +1608,18 @@ impl Element for Div {
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
         self.interactivity.source_location()
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        // Nodes with `GenericContainer` should never be reported to accesskit.
+        // Equivalent to an HTML div with no role.
+        self.interactivity
+            .override_role
+            .filter(|role| *role != accesskit::Role::GenericContainer)
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.interactivity.write_a11y_info(node);
     }
 
     #[stacksafe]
@@ -1704,11 +1852,31 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
+    pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
+
+    pub(crate) a11y_action_listeners:
+        Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
+    pub(crate) override_role: Option<accesskit::Role>,
+    pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_selected: Option<bool>,
+    pub(crate) aria_expanded: Option<bool>,
+    pub(crate) aria_toggled: Option<accesskit::Toggled>,
+    pub(crate) aria_numeric_value: Option<f64>,
+    pub(crate) aria_min_numeric_value: Option<f64>,
+    pub(crate) aria_max_numeric_value: Option<f64>,
+    pub(crate) aria_orientation: Option<accesskit::Orientation>,
+    pub(crate) aria_level: Option<usize>,
+    pub(crate) aria_position_in_set: Option<usize>,
+    pub(crate) aria_size_of_set: Option<usize>,
+    pub(crate) aria_row_index: Option<usize>,
+    pub(crate) aria_column_index: Option<usize>,
+    pub(crate) aria_row_count: Option<usize>,
+    pub(crate) aria_column_count: Option<usize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1830,6 +1998,16 @@ impl Interactivity {
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
+
+            if window.a11y.is_active() {
+                if let Some(global_id) = global_id {
+                    let node_id = global_id.accesskit_node_id();
+                    window.a11y.focus_ids.insert(node_id, focus_handle.id);
+                    if focus_handle.is_focused(window) && window.a11y.nodes.has_node(node_id) {
+                        window.a11y.nodes.set_focus(node_id);
+                    }
+                }
+            }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -2054,6 +2232,22 @@ impl Interactivity {
                                         }
 
                                         self.paint_keyboard_listeners(window, cx);
+
+                                        if window.a11y.is_active() {
+                                            if let Some(global_id) = global_id {
+                                                if !self.a11y_action_listeners.is_empty() {
+                                                    let node_id = global_id.accesskit_node_id();
+                                                    for (action, listener) in
+                                                        self.a11y_action_listeners.drain(..)
+                                                    {
+                                                        window.on_a11y_action(
+                                                            node_id, action, listener,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         f(&style, window, cx);
 
                                         if let Some(_hitbox) = hitbox {
@@ -2571,6 +2765,7 @@ impl Interactivity {
                     build_tooltip,
                     check_is_hovered,
                     check_is_hovered_during_prepaint,
+                    self.tooltip_show_delay,
                     window,
                 );
             }
@@ -2857,6 +3052,63 @@ impl Interactivity {
 
         style
     }
+
+    pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        if let Some(label) = &self.aria_label {
+            node.set_label(label.to_string());
+        }
+        if let Some(selected) = self.aria_selected {
+            node.set_selected(selected);
+        }
+        if let Some(expanded) = self.aria_expanded {
+            node.set_expanded(expanded);
+        }
+        if let Some(toggled) = self.aria_toggled {
+            node.set_toggled(toggled);
+        }
+        if let Some(value) = self.aria_numeric_value {
+            node.set_numeric_value(value);
+        }
+        if let Some(value) = self.aria_min_numeric_value {
+            node.set_min_numeric_value(value);
+        }
+        if let Some(value) = self.aria_max_numeric_value {
+            node.set_max_numeric_value(value);
+        }
+        if let Some(orientation) = self.aria_orientation {
+            node.set_orientation(orientation);
+        }
+        if let Some(level) = self.aria_level {
+            node.set_level(level);
+        }
+        if let Some(position) = self.aria_position_in_set {
+            node.set_position_in_set(position);
+        }
+        if let Some(size) = self.aria_size_of_set {
+            node.set_size_of_set(size);
+        }
+        if let Some(index) = self.aria_row_index {
+            node.set_row_index(index);
+        }
+        if let Some(index) = self.aria_column_index {
+            node.set_column_index(index);
+        }
+        if let Some(count) = self.aria_row_count {
+            node.set_row_count(count);
+        }
+        if let Some(count) = self.aria_column_count {
+            node.set_column_count(count);
+        }
+        if !self.click_listeners.is_empty() {
+            node.add_action(accesskit::Action::Click);
+        }
+        if self.tracked_focus_handle.is_some() || self.focusable {
+            node.add_action(accesskit::Action::Focus);
+        }
+        for (action, _) in &self.a11y_action_listeners {
+            node.add_action(*action);
+        }
+    }
 }
 
 /// The per-frame state of an interactive element. Used for tracking stateful interactions like clicks
@@ -2961,8 +3213,12 @@ pub(crate) fn register_tooltip_mouse_handlers(
     build_tooltip: Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered: Rc<dyn Fn(&Window) -> bool>,
     check_is_hovered_during_prepaint: Rc<dyn Fn(&Window) -> bool>,
+    show_delay: Option<Duration>,
     window: &mut Window,
 ) {
+    let current_view = window.current_view();
+    let show_delay = show_delay.unwrap_or(DEFAULT_TOOLTIP_SHOW_DELAY);
+
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
         let build_tooltip = build_tooltip.clone();
@@ -2973,7 +3229,10 @@ pub(crate) fn register_tooltip_mouse_handlers(
                 &build_tooltip,
                 &check_is_hovered,
                 &check_is_hovered_during_prepaint,
+                tooltip_id,
+                current_view,
                 phase,
+                show_delay,
                 window,
                 cx,
             )
@@ -3015,7 +3274,10 @@ fn handle_tooltip_mouse_move(
     build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered: &Rc<dyn Fn(&Window) -> bool>,
     check_is_hovered_during_prepaint: &Rc<dyn Fn(&Window) -> bool>,
+    tooltip_id: Option<TooltipId>,
+    current_view: EntityId,
     phase: DispatchPhase,
+    show_delay: Duration,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -3025,6 +3287,7 @@ fn handle_tooltip_mouse_move(
         None,
         CancelShow,
         ScheduleShow,
+        CheckVisible,
     }
 
     let action = match active_tooltip.borrow().as_ref() {
@@ -3044,9 +3307,26 @@ fn handle_tooltip_mouse_move(
                 Action::CancelShow
             }
         }
-        // These are handled in check_visible_and_update.
-        Some(ActiveTooltip::Visible { .. }) | Some(ActiveTooltip::WaitingForHide { .. }) => {
-            Action::None
+        Some(ActiveTooltip::Visible { is_hoverable, .. }) => {
+            if phase.capture()
+                && !check_is_hovered(window)
+                && (!*is_hoverable
+                    || !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)))
+            {
+                Action::CheckVisible
+            } else {
+                Action::None
+            }
+        }
+        Some(ActiveTooltip::WaitingForHide { .. }) => {
+            if phase.capture()
+                && (check_is_hovered(window)
+                    || tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)))
+            {
+                Action::CheckVisible
+            } else {
+                Action::None
+            }
         }
     };
 
@@ -3062,7 +3342,7 @@ fn handle_tooltip_mouse_move(
                 let build_tooltip = build_tooltip.clone();
                 let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
                 async move |cx| {
-                    cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
+                    cx.background_executor().timer(show_delay).await;
                     let Some(active_tooltip) = weak_active_tooltip.upgrade() else {
                         return;
                     };
@@ -3107,6 +3387,7 @@ fn handle_tooltip_mouse_move(
                     _task: delayed_show_task,
                 });
         }
+        Action::CheckVisible => cx.notify(current_view),
     }
 }
 
@@ -3261,6 +3542,14 @@ where
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         self.element.source_location()
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        self.element.a11y_role()
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.element.write_a11y_info(node);
     }
 
     fn request_layout(
@@ -3579,7 +3868,10 @@ impl ScrollHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext};
+    use crate::{
+        AppContext as _, Context, InputEvent, MouseMoveEvent, TestAppContext,
+        util::FluentBuilder as _,
+    };
     use std::rc::Weak;
 
     struct TestTooltipView;
@@ -3666,6 +3958,7 @@ mod tests {
 
     struct TooltipOwner {
         captured_active_tooltip: CapturedActiveTooltip,
+        show_delay_override: Option<Duration>,
     }
 
     impl Render for TooltipOwner {
@@ -3678,7 +3971,10 @@ mod tests {
                             .id("target")
                             .w(px(50.))
                             .h(px(50.))
-                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+                            .tooltip(|_, cx| cx.new(|_| TestTooltipView).into())
+                            .when_some(self.show_delay_override, |this, delay| {
+                                this.tooltip_show_delay(delay)
+                            }),
                     )
                     .into_any_element(),
                 captured_active_tooltip: self.captured_active_tooltip.clone(),
@@ -3724,7 +4020,9 @@ mod tests {
         assert_eq!(handle.offset().y, px(-25.));
     }
 
-    fn setup_tooltip_owner_test() -> (
+    fn setup_tooltip_owner_test(
+        show_delay_override: Option<Duration>,
+    ) -> (
         TestAppContext,
         crate::AnyWindowHandle,
         CapturedActiveTooltip,
@@ -3735,6 +4033,7 @@ mod tests {
             let captured_active_tooltip = captured_active_tooltip.clone();
             move |_, _| TooltipOwner {
                 captured_active_tooltip,
+                show_delay_override,
             }
         });
         let any_window = window.into();
@@ -3770,7 +4069,7 @@ mod tests {
 
     #[test]
     fn tooltip_waiting_for_show_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
@@ -3791,13 +4090,44 @@ mod tests {
     }
 
     #[test]
-    fn tooltip_is_released_when_its_owner_disappears() {
-        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test();
+    fn tooltip_respects_custom_show_delay() {
+        let extra_delay = Duration::from_secs(1);
+        let show_delay_override = DEFAULT_TOOLTIP_SHOW_DELAY + extra_delay;
+        let (mut test_app, _any_window, captured_active_tooltip) =
+            setup_tooltip_owner_test(Some(show_delay_override));
 
         let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
         let active_tooltip = weak_active_tooltip.upgrade().unwrap();
 
-        test_app.dispatcher.advance_clock(TOOLTIP_SHOW_DELAY);
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::WaitingForShow { .. })
+        ));
+
+        test_app.dispatcher.advance_clock(extra_delay);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+    }
+
+    #[test]
+    fn tooltip_is_released_when_its_owner_disappears() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
         test_app.run_until_parked();
 
         assert!(matches!(
@@ -3814,5 +4144,39 @@ mod tests {
         drop(active_tooltip);
 
         assert!(weak_active_tooltip.upgrade().is_none());
+    }
+
+    #[test]
+    fn tooltip_hides_after_mouse_leaves_origin() {
+        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
+
+        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
+        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
+
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+
+        assert!(matches!(
+            active_tooltip.borrow().as_ref(),
+            Some(ActiveTooltip::Visible { .. })
+        ));
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(75.), px(75.)),
+                        modifiers: Default::default(),
+                        pressed_button: None,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert!(active_tooltip.borrow().is_none());
     }
 }
