@@ -3594,13 +3594,11 @@ impl ThreadView {
     fn render_context_compaction(
         &self,
         entry_ix: usize,
-        total_entries: usize,
         compaction: &acp_thread::ContextCompaction,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let is_compacting = entry_ix + 1 == total_entries
-            && self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
+        let is_compacting = compaction.status == acp_thread::ContextCompactionStatus::InProgress;
         let summary = compaction.summary.clone();
         let is_expanded = self.expanded_compactions.contains(&entry_ix);
 
@@ -3620,10 +3618,12 @@ impl ThreadView {
                             .color(Color::Muted),
                     )
                     .child(
-                        Label::new(if is_compacting {
-                            "Compacting context…"
-                        } else {
-                            "Context compacted"
+                        Label::new(match compaction.status {
+                            acp_thread::ContextCompactionStatus::InProgress => {
+                                "Compacting context…"
+                            }
+                            acp_thread::ContextCompactionStatus::Completed => "Context compacted",
+                            acp_thread::ContextCompactionStatus::Canceled => "Compaction cancelled",
                         })
                         .size(LabelSize::Custom(self.tool_name_font_size()))
                         .color(Color::Muted),
@@ -5654,7 +5654,7 @@ impl ThreadView {
                 self.render_completed_plan(entries, window, cx)
             }
             AgentThreadEntry::ContextCompaction(compaction) => {
-                self.render_context_compaction(entry_ix, total_entries, compaction, window, cx)
+                self.render_context_compaction(entry_ix, compaction, window, cx)
             }
         };
 

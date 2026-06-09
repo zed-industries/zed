@@ -1413,11 +1413,17 @@ impl Thread {
                     );
                     match info {
                         CompactionInfo::Summary(summary) => {
-                            stream.send_context_compaction(compaction_id.clone());
+                            stream.send_context_compaction(
+                                compaction_id.clone(),
+                                acp_thread::ContextCompactionStatus::Completed,
+                            );
                             stream.send_context_compaction_update(compaction_id.clone(), summary);
                         }
                         CompactionInfo::ProviderNative { .. } => {
-                            stream.send_context_compaction(compaction_id);
+                            stream.send_context_compaction(
+                                compaction_id,
+                                acp_thread::ContextCompactionStatus::Completed,
+                            );
                         }
                     }
                 }
@@ -2691,7 +2697,10 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         log::debug!("Running compaction");
         let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
-        event_stream.send_context_compaction(compaction_id.clone());
+        event_stream.send_context_compaction(
+            compaction_id.clone(),
+            acp_thread::ContextCompactionStatus::InProgress,
+        );
         let stream = futures::select! {
             result = model.stream_completion(request, cx).fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
@@ -2755,6 +2764,10 @@ impl Thread {
         }
 
         log::debug!("Compaction succeeded:\n{summary}");
+        event_stream.update_context_compaction_status(
+            compaction_id,
+            acp_thread::ContextCompactionStatus::Completed,
+        );
 
         this.update(cx, |this, cx| {
             let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
@@ -4626,10 +4639,18 @@ impl ThreadEventStream {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
     }
 
-    fn send_context_compaction(&self, id: acp_thread::ContextCompactionId) {
+    fn send_context_compaction(
+        &self,
+        id: acp_thread::ContextCompactionId,
+        status: acp_thread::ContextCompactionStatus,
+    ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ContextCompaction(
-                acp_thread::ContextCompaction { id, summary: None },
+                acp_thread::ContextCompaction {
+                    id,
+                    status,
+                    summary: None,
+                },
             )))
             .ok();
     }
@@ -4644,6 +4665,23 @@ impl ThreadEventStream {
                 acp_thread::ContextCompactionUpdate {
                     id,
                     summary_delta: summary_delta.to_string(),
+                    status: None,
+                },
+            )))
+            .ok();
+    }
+
+    fn update_context_compaction_status(
+        &self,
+        id: acp_thread::ContextCompactionId,
+        status: acp_thread::ContextCompactionStatus,
+    ) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompactionUpdate(
+                acp_thread::ContextCompactionUpdate {
+                    id,
+                    summary_delta: String::new(),
+                    status: Some(status),
                 },
             )))
             .ok();

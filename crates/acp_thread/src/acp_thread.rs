@@ -298,12 +298,20 @@ pub enum AgentThreadEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextCompactionId(pub Arc<str>);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextCompactionStatus {
+    InProgress,
+    Completed,
+    Canceled,
+}
+
 /// A point in the thread where the conversation history was compacted to free
 /// up room in the model's context window. The summary can be expanded to inspect
 /// what the model retained.
 #[derive(Debug)]
 pub struct ContextCompaction {
     pub id: ContextCompactionId,
+    pub status: ContextCompactionStatus,
     /// The compaction summary, streamed in as the model produces it. This is
     /// `None` for provider-native compaction, which produces no summary to show.
     pub summary: Option<Entity<Markdown>>,
@@ -313,6 +321,7 @@ pub struct ContextCompaction {
 pub struct ContextCompactionUpdate {
     pub id: ContextCompactionId,
     pub summary_delta: String,
+    pub status: Option<ContextCompactionStatus>,
 }
 
 impl AgentThreadEntry {
@@ -2063,19 +2072,25 @@ impl AcpThread {
             return;
         };
 
-        if compaction.summary.is_none() {
-            compaction.summary = Some(cx.new(|cx| {
-                Markdown::new(
-                    update.summary_delta.into(),
-                    Some(language_registry),
-                    None,
-                    cx,
-                )
-            }));
-        } else if let Some(summary) = compaction.summary.clone() {
-            summary.update(cx, |markdown, cx| {
-                markdown.append(&update.summary_delta, cx)
-            });
+        if !update.summary_delta.is_empty() {
+            if compaction.summary.is_none() {
+                compaction.summary = Some(cx.new(|cx| {
+                    Markdown::new(
+                        update.summary_delta.into(),
+                        Some(language_registry),
+                        None,
+                        cx,
+                    )
+                }));
+            } else if let Some(summary) = compaction.summary.clone() {
+                summary.update(cx, |markdown, cx| {
+                    markdown.append(&update.summary_delta, cx)
+                });
+            }
+        }
+
+        if let Some(status) = update.status {
+            compaction.status = status;
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -2669,7 +2684,7 @@ impl AcpThread {
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
                         if canceled {
-                            this.mark_pending_tools_as_canceled();
+                            this.mark_pending_entries_as_canceled(cx);
                         }
 
                         if !canceled {
@@ -2745,25 +2760,34 @@ impl AcpThread {
         self.connection.cancel(&self.session_id, cx);
 
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
-        self.mark_pending_tools_as_canceled();
+        self.mark_pending_entries_as_canceled(cx);
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
     }
 
-    fn mark_pending_tools_as_canceled(&mut self) {
-        for entry in self.entries.iter_mut() {
-            if let AgentThreadEntry::ToolCall(call) = entry {
-                let cancel = matches!(
-                    call.status,
-                    ToolCallStatus::Pending
-                        | ToolCallStatus::WaitingForConfirmation { .. }
-                        | ToolCallStatus::InProgress
-                );
-
-                if cancel {
-                    call.status = ToolCallStatus::Canceled;
+    fn mark_pending_entries_as_canceled(&mut self, cx: &mut Context<Self>) {
+        for (ix, entry) in self.entries.iter_mut().enumerate() {
+            match entry {
+                AgentThreadEntry::ToolCall(call) => {
+                    let cancel = matches!(
+                        call.status,
+                        ToolCallStatus::Pending
+                            | ToolCallStatus::WaitingForConfirmation { .. }
+                            | ToolCallStatus::InProgress
+                    );
+                    if cancel {
+                        call.status = ToolCallStatus::Canceled;
+                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    }
                 }
+                AgentThreadEntry::ContextCompaction(compaction) => {
+                    if compaction.status == ContextCompactionStatus::InProgress {
+                        compaction.status = ContextCompactionStatus::Canceled;
+                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    }
+                }
+                _ => {}
             }
         }
     }
