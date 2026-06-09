@@ -50,6 +50,8 @@ actions!(
         ToggleLayout,
         /// TODO!(yara)
         ToggleSplitMenu,
+        /// Take the picker's content and open it in a multibuffer
+        ToMultiBuffer,
     ]
 );
 
@@ -774,6 +776,15 @@ impl<D: PickerDelegate> Picker<D> {
         } else {
             cx.propagate()
         }
+    }
+
+    fn to_multibuffer(
+        &mut self,
+        _: &ToMultiBuffer,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        // TODO!(yara) open the previewed buffer in a multibuffer.
     }
 
     fn toggle_layout(&mut self, _: &ToggleLayout, _window: &mut Window, cx: &mut Context<Self>) {

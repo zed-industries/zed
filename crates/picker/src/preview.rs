@@ -140,7 +140,30 @@ impl EditorPreview {
         let preview_editor = cx.new(|cx: &mut Context<Editor>| {
             let capability = language::Capability::ReadWrite; // Later narrowed per buffer
             let multi_buffer = cx.new(|_| MultiBuffer::without_headers(capability));
-            Editor::for_multibuffer(multi_buffer, None, window, cx)
+            let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
+
+            // We want editing to happen in the multibuffer not in the modal. The editor acts
+            // as one big <send to multibuffer> button.
+            editor.set_read_only(true);
+            editor.set_input_enabled(false);
+            editor.scroll_manager.set_forbid_vertical_scroll(true);
+            editor.disable_scrollbars_and_minimap(window, cx);
+            editor.disable_inline_diagnostics();
+            editor.disable_diagnostics(cx);
+            editor.disable_expand_excerpt_buttons(cx);
+            editor.disable_mouse_wheel_zoom();
+            editor.set_show_gutter(false, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_bookmarks(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_runnables(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
+            editor.set_show_cursor_when_unfocused(true, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            editor
         });
 
         Self {

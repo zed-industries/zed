@@ -1,8 +1,10 @@
-use gpui::{Entity, MouseDownEvent};
+use gpui::{Action, Entity, MouseDownEvent};
 use ui::{
-    ActiveTheme, App, Color, Div, IntoElement, Label, LabelCommon, LabelSize, ParentElement,
-    Styled, Window, div, h_flex, px, v_flex,
+    ActiveTheme, App, Color, Div, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
+    ParentElement, StatefulInteractiveElement, Styled, Window, div, h_flex, px, v_flex,
 };
+
+use crate::ToMultiBuffer;
 
 // use gpui::{DragMoveEvent, Entity, MouseButton, MouseDownEvent};
 // use ui::{
@@ -61,7 +63,7 @@ impl EditorPreview {
                 div()
                     .flex_1()
                     .overflow_hidden()
-                    .child(self.preview_editor.clone()),
+                    .child(self.editor_as_giant_button()),
             )
     }
 
@@ -75,8 +77,25 @@ impl EditorPreview {
             div()
                 .h(layout.preview_height)
                 .overflow_hidden()
-                .child(self.preview_editor.clone()),
+                .child(self.editor_as_giant_button()),
         )
+    }
+
+    fn editor_as_giant_button(&self) -> impl IntoElement {
+        div()
+            .relative()
+            .size_full()
+            .child(self.preview_editor.clone())
+            .child(
+                div()
+                    .id("picker-preview-editor")
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(ToMultiBuffer.boxed_clone(), cx);
+                    }),
+            )
     }
 
     // pub(crate) fn render_telescope_preview_resize(

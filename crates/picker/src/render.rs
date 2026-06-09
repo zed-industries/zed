@@ -105,6 +105,7 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
             .on_action(cx.listener(Self::toggle_layout))
+            .on_action(cx.listener(Self::to_multibuffer))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
