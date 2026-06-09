@@ -307,6 +307,34 @@ pub struct AvailableCommand {
     pub description: Arc<str>,
     pub requires_argument: bool,
     pub source: Option<SharedString>,
+    /// Source category used to group the command in the slash popup. `None`
+    /// means the command came from an external ACP agent.
+    pub category: Option<acp_thread::CommandCategory>,
+}
+
+impl AvailableCommand {
+    /// Stable ordering used so command groups render in a consistent order
+    /// after skills: built-in commands, then MCP, then external ACP agents.
+    fn category_order(&self) -> u8 {
+        match self.category {
+            Some(acp_thread::CommandCategory::Native) => 0,
+            Some(acp_thread::CommandCategory::Mcp) => 1,
+            None => 2,
+        }
+    }
+
+    /// Completion group key and header label for this command's category.
+    fn group(&self) -> CompletionGroup {
+        let (key, label) = match self.category {
+            Some(acp_thread::CommandCategory::Native) => ("commands", "Commands"),
+            Some(acp_thread::CommandCategory::Mcp) => ("mcp-commands", "MCP Server Commands"),
+            None => ("acp-commands", "ACP Agent Commands"),
+        };
+        CompletionGroup {
+            key: key.into(),
+            label: Some(label.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1348,9 +1376,15 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 
                 cx.background_spawn(async move {
                     let mut slash_candidates = slash_candidates.await;
+                    // Sort skills first, then commands grouped by category, so
+                    // the section headers render in a stable order. `sort_by_key`
+                    // is stable, so fuzzy-match order is preserved within a
+                    // group.
                     slash_candidates.sort_by_key(|(candidate, _)| match candidate {
                         SlashCompletionCandidate::Skill(_) => 0,
-                        SlashCompletionCandidate::Command(_) => 1,
+                        SlashCompletionCandidate::Command(command) => {
+                            1 + command.category_order() as u32
+                        }
                     });
                     let completions = slash_candidates
                         .into_iter()
@@ -1403,6 +1437,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 
                                 let is_missing_argument =
                                     command.requires_argument && argument.is_none();
+                                let group = show_section_headers.then(|| command.group());
 
                                 Completion {
                                     replace_range: source_range.clone(),
@@ -1437,10 +1472,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             false
                                         }
                                     })),
-                                    group: show_section_headers.then(|| CompletionGroup {
-                                        key: "agent-commands".into(),
-                                        label: Some("Agent Commands".into()),
-                                    }),
+                                    group,
                                 }
                             }
                         })

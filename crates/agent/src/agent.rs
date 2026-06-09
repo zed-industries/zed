@@ -14,6 +14,7 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
+use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
@@ -1401,17 +1402,21 @@ impl NativeAgent {
         project_state: Option<&ProjectState>,
         cx: &App,
     ) -> Vec<acp::AvailableCommand> {
-        // `/compact` is a built-in command of the Zed agent. It's always
-        // available — independent of project state, MCP prompts, or skills —
-        // and other (e.g. ACP) agents bring their own `/compact` if they have
-        // one, so this list only governs the native agent.
-        let compact_command = acp::AvailableCommand::new(
-            "compact",
-            "Summarize the conversation so far to free up context",
-        );
+        let compact_command = cx.has_flag::<HandoffFeatureFlag>().then(|| {
+            // `/compact` is a built-in command of the Zed agent when handoff is
+            // enabled. Other (e.g. ACP) agents bring their own `/compact` if
+            // they have one, so this list only governs the native agent.
+            acp::AvailableCommand::new(
+                "compact",
+                "Summarize the conversation so far to free up context",
+            )
+            .meta(acp_thread::meta_with_command_category(
+                acp_thread::CommandCategory::Native,
+            ))
+        });
 
         let Some(state) = project_state else {
-            return vec![compact_command];
+            return compact_command.into_iter().collect();
         };
         let registry = state.context_server_registry.read(cx);
 
@@ -1438,7 +1443,10 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default());
+                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
+                    .meta(acp_thread::meta_with_command_category(
+                        acp_thread::CommandCategory::Mcp,
+                    ));
 
             match prompt.arguments.as_deref() {
                 Some([arg]) => {
@@ -1458,9 +1466,7 @@ impl NativeAgent {
             Some(command)
         });
 
-        std::iter::once(compact_command)
-            .chain(mcp_commands)
-            .collect()
+        compact_command.into_iter().chain(mcp_commands).collect()
     }
 
     pub fn load_thread(
@@ -1781,10 +1787,11 @@ impl NativeAgent {
 
     /// Run a summary-based context compaction in response to the built-in
     /// `/compact` slash command. Unlike a skill or MCP prompt, this doesn't
-    /// add any user message to the model context — it just compacts the
-    /// existing conversation and streams the resulting summary back to the UI.
+    /// add command text to the model context — it just compacts the existing
+    /// conversation and streams the resulting summary back to the UI.
     fn send_compact_command(
         &self,
+        message_id: UserMessageId,
         session_id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -1797,7 +1804,7 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
-            let response_stream = thread.update(cx, |thread, cx| thread.compact(cx))?;
+            let response_stream = thread.update(cx, |thread, cx| thread.compact(message_id, cx))?;
 
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
@@ -2128,6 +2135,12 @@ struct Command<'a> {
 }
 
 impl<'a> Command<'a> {
+    fn is_unqualified(&self, prompt_name: &str) -> bool {
+        self.prompt_name == prompt_name
+            && self.explicit_server_id.is_none()
+            && self.skill_scope.is_none()
+    }
+
     fn parse(prompt: &'a [acp::ContentBlock]) -> Option<Self> {
         let acp::ContentBlock::Text(text_content) = prompt.first()? else {
             return None;
@@ -2468,13 +2481,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             // `build_available_commands_for_project`). It takes precedence
             // over MCP prompts and skills of the same name and forces a
             // summary-based context compaction.
-            if parsed_command.prompt_name == "compact"
-                && parsed_command.explicit_server_id.is_none()
-                && parsed_command.skill_scope.is_none()
-            {
-                return self
-                    .0
-                    .update(cx, |agent, cx| agent.send_compact_command(session_id, cx));
+            if cx.has_flag::<HandoffFeatureFlag>() && parsed_command.is_unqualified("compact") {
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_compact_command(id, session_id, cx)
+                });
             }
 
             // Skill scope qualifiers (`/:<name>` and
@@ -3478,12 +3488,14 @@ mod internal_tests {
 
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
+    use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
-        LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
+        CompletionIntent, LanguageModelCompletionEvent, LanguageModelProviderId,
+        LanguageModelProviderName,
     };
     use serde_json::json;
     use settings::SettingsStore;
@@ -3499,6 +3511,180 @@ mod internal_tests {
             disable_model_invocation: false,
             embedded_body: None,
         }
+    }
+
+    async fn setup_native_agent_session(
+        cx: &mut TestAppContext,
+    ) -> (
+        Rc<NativeAgentConnection>,
+        Entity<NativeAgent>,
+        Entity<Project>,
+        Entity<AcpThread>,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        (connection, agent, project, acp_thread)
+    }
+
+    fn native_thread_for_session(
+        agent: &Entity<NativeAgent>,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> Entity<Thread> {
+        agent.read_with(cx, |agent, _cx| {
+            agent.sessions.get(session_id).unwrap().thread.clone()
+        })
+    }
+
+    fn request_texts_after_system(
+        messages: &[language_model::LanguageModelRequestMessage],
+    ) -> Vec<String> {
+        messages
+            .iter()
+            .skip(1)
+            .map(language_model::LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_compact_command_requires_handoff_feature_flag(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let has_compact = NativeAgent::build_available_commands_for_project(None, cx)
+                .iter()
+                .any(|command| command.name == "compact");
+            assert!(!has_compact);
+
+            cx.update_flags(true, vec!["handoff".to_string()]);
+
+            let commands = NativeAgent::build_available_commands_for_project(None, cx);
+            let compact = commands.iter().find(|command| command.name == "compact");
+            let compact = compact.expect("compact command should be available behind the flag");
+            assert_eq!(
+                acp_thread::command_category_from_meta(&compact.meta),
+                Some(acp_thread::CommandCategory::Native),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compact_prompt_is_regular_prompt_without_handoff(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+
+        let message_id = UserMessageId::new();
+        let prompt_task = cx.update(|cx| {
+            connection.prompt(
+                message_id.clone(),
+                acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let request = model.pending_completions().pop().unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec!["/compact".to_string()]
+        );
+
+        model.send_completion_stream_text_chunk(&request, "regular response");
+        model.end_completion_stream(&request);
+        cx.run_until_parked();
+        prompt_task.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_compact_prompt_routes_to_manual_compaction_with_handoff(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| cx.update_flags(true, vec!["handoff".to_string()]));
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            let path_style = project.read(cx).path_style(cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.push_acp_user_block(
+                    old_message_id,
+                    [acp::ContentBlock::from("old user")],
+                    path_style,
+                    cx,
+                );
+                thread.push_acp_agent_block("old assistant".into(), cx);
+            });
+        });
+
+        let compact_message_id = UserMessageId::new();
+        let prompt_task = cx.update(|cx| {
+            connection.prompt(
+                compact_message_id,
+                acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let request = model.pending_completions().pop().unwrap();
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec![
+                "old user".to_string(),
+                "old assistant".to_string(),
+                COMPACTION_PROMPT.to_string(),
+            ]
+        );
+
+        model.send_completion_stream_text_chunk(&request, "summary");
+        model.end_completion_stream(&request);
+        cx.run_until_parked();
+        prompt_task.await.unwrap();
+    }
+
+    #[test]
+    fn test_qualified_compact_commands_are_not_native_compact() {
+        let unqualified_blocks = [acp::ContentBlock::from("/compact")];
+        let unqualified = Command::parse(&unqualified_blocks).unwrap();
+        assert!(unqualified.is_unqualified("compact"));
+
+        let mcp_blocks = [acp::ContentBlock::from("/server.compact")];
+        let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
+        assert_eq!(mcp_qualified.prompt_name, "compact");
+        assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
+        assert!(!mcp_qualified.is_unqualified("compact"));
+
+        let skill_blocks = [acp::ContentBlock::from("/:compact")];
+        let skill_qualified = Command::parse(&skill_blocks).unwrap();
+        assert_eq!(skill_qualified.prompt_name, "compact");
+        assert_eq!(skill_qualified.skill_scope, Some(""));
+        assert!(!skill_qualified.is_unqualified("compact"));
     }
 
     fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {

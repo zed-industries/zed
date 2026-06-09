@@ -2231,9 +2231,12 @@ impl Thread {
     /// compaction progress followed by a terminal stop event.
     pub fn compact(
         &mut self,
+        id: UserMessageId,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.model()
+        let model = self
+            .model
+            .clone()
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
 
         // Flush any pending message and cancel an in-flight turn before we
@@ -2242,22 +2245,48 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
+        let compaction = self.forced_compaction_target_ix().map(|request_end_ix| {
+            let request = self.build_compaction_request(request_end_ix, &model, cx);
+            self.current_request_token_usage = TokenUsage::default();
+            (model, request)
+        });
+
+        self.clear_summary();
+
+        // Record the slash-command user message id so rewind/truncate can find
+        // it, but keep the command itself out of model context. Empty user
+        // messages are skipped when request history is built.
+        self.messages.push(Arc::new(Message::User(UserMessage {
+            id,
+            content: Arc::from([]),
+        })));
+        cx.notify();
+
+        let compaction = compaction.map(|(model, request)| {
+            let insertion_ix = self.messages.len();
+            (model, request, insertion_ix)
+        });
+
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
-        self.running_turn = Some(RunningTurn {
-            event_stream: event_stream.clone(),
-            tools: BTreeMap::default(),
-            cancellation_tx,
-            streaming_tool_inputs: HashMap::default(),
-            _task: cx.spawn(async move |this, cx| {
-                let result = Self::perform_forced_compaction(
-                    &this,
-                    &event_stream,
-                    cancellation_rx.clone(),
-                    cx,
-                )
-                .await;
+        let task = cx.spawn({
+            let event_stream = event_stream.clone();
+            async move |this, cx| {
+                let result = if let Some((model, request, insertion_ix)) = compaction {
+                    Self::stream_compaction(
+                        &this,
+                        &event_stream,
+                        cancellation_rx.clone(),
+                        model,
+                        request,
+                        insertion_ix,
+                        cx,
+                    )
+                    .await
+                } else {
+                    Ok(ControlFlow::Continue(()))
+                };
 
                 // If we were cancelled, `cancel()` already took `running_turn`
                 // (possibly for a new turn), so leave it alone.
@@ -2274,8 +2303,14 @@ impl Thread {
                 }
 
                 _ = this.update(cx, |this, _| this.running_turn.take());
-            }),
+            }
         });
+        self.running_turn = Some(RunningTurn::new(
+            event_stream,
+            BTreeMap::default(),
+            cancellation_tx,
+            task,
+        ));
 
         Ok(events_rx)
     }
@@ -2331,13 +2366,11 @@ impl Thread {
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
         self.clear_summary();
+        let tools = self.enabled_tools(cx);
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
-        self.running_turn = Some(RunningTurn {
-            event_stream: event_stream.clone(),
-            tools: self.enabled_tools(cx),
-            cancellation_tx,
-            streaming_tool_inputs: HashMap::default(),
-            _task: cx.spawn(async move |this, cx| {
+        let task = cx.spawn({
+            let event_stream = event_stream.clone();
+            async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
                 let turn_result =
@@ -2377,8 +2410,9 @@ impl Thread {
                 }
 
                 _ = this.update(cx, |this, _| this.running_turn.take());
-            }),
+            }
         });
+        self.running_turn = Some(RunningTurn::new(event_stream, tools, cancellation_tx, task));
         Ok(events_rx)
     }
 
@@ -2664,39 +2698,6 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
             let insertion_ix = this.compaction_message_target_ix()?;
-            let model = this.model.clone()?;
-            let request = this.build_compaction_request(insertion_ix, &model, cx);
-            this.current_request_token_usage = TokenUsage::default();
-            Some((model, request, insertion_ix))
-        })?
-        else {
-            return Ok(ControlFlow::Continue(()));
-        };
-
-        Self::stream_compaction(
-            this,
-            event_stream,
-            cancellation_rx,
-            model,
-            request,
-            insertion_ix,
-            cx,
-        )
-        .await
-    }
-
-    /// Force a context compaction regardless of token usage or context window
-    /// size, inserting a summary at the end of the thread. Backs the
-    /// always-available `/compact` slash command in the Zed agent. Always uses
-    /// the summary strategy (never provider-native compaction).
-    async fn perform_forced_compaction(
-        this: &WeakEntity<Self>,
-        event_stream: &ThreadEventStream,
-        cancellation_rx: watch::Receiver<bool>,
-        cx: &mut AsyncApp,
-    ) -> Result<ControlFlow<()>> {
-        let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
-            let insertion_ix = this.forced_compaction_target_ix()?;
             let model = this.model.clone()?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
@@ -4171,6 +4172,21 @@ struct RunningTurn {
 }
 
 impl RunningTurn {
+    fn new(
+        event_stream: ThreadEventStream,
+        tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+        cancellation_tx: watch::Sender<bool>,
+        task: Task<()>,
+    ) -> Self {
+        Self {
+            _task: task,
+            event_stream,
+            tools,
+            cancellation_tx,
+            streaming_tool_inputs: HashMap::default(),
+        }
+    }
+
     fn cancel(mut self) -> Task<()> {
         log::debug!("Cancelling in progress turn");
         self.cancellation_tx.send(true).ok();
@@ -5859,10 +5875,10 @@ mod tests {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         // A context window below the minimum and no recorded token usage would
-        // both disable *automatic* compaction. `/compact` must force it anyway,
-        // and without requiring the handoff feature flag.
+        // both disable *automatic* compaction. Manual compaction forces it anyway.
         model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
         let user_message_id = UserMessageId::new();
+        let compact_message_id = UserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -5877,7 +5893,11 @@ mod tests {
         });
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(compact_message_id.clone(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -5896,8 +5916,9 @@ mod tests {
         model.end_completion_stream(&compaction_request);
         cx.run_until_parked();
 
-        // The compaction summary is appended to the thread, and no follow-up
-        // model turn is requested — `/compact` only compacts.
+        // The compaction summary is appended after a zero-content user message
+        // marker, and no follow-up model turn is requested — `/compact` only
+        // compacts.
         assert!(model.pending_completions().is_empty());
         cx.update(|cx| {
             thread.read_with(cx, |thread, _cx| {
@@ -5905,11 +5926,25 @@ mod tests {
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
                 assert!(matches!(
                     &*thread.messages[2],
+                    Message::User(UserMessage { id, content }) if id == &compact_message_id && content.is_empty()
+                ));
+                assert!(matches!(
+                    &*thread.messages[3],
                     Message::Compaction(CompactionInfo::Summary(summary)) if summary.as_ref() == "summary of old context"
                 ));
                 // Re-running `/compact` with nothing new to summarize is a
                 // no-op: the thread already ends in a compaction.
                 assert_eq!(thread.forced_compaction_target_ix(), None);
+            });
+
+            thread
+                .update(cx, |thread, cx| thread.truncate(compact_message_id.clone(), cx))
+                .unwrap();
+
+            thread.read_with(cx, |thread, _cx| {
+                assert_eq!(thread.messages.len(), 2);
+                assert!(matches!(&*thread.messages[0], Message::User(_)));
+                assert!(matches!(&*thread.messages[1], Message::Agent(_)));
             });
         });
     }
