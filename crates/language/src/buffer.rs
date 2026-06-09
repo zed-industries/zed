@@ -3331,7 +3331,7 @@ impl Buffer {
         self.text.set_group_interval(group_interval);
     }
 
-    // todo!() make ep use this
+    // TODO: see if ep can use this instead of Buffer::branch
     pub fn snapshot_with_edits<I, S, T>(
         &mut self,
         edits: I,
