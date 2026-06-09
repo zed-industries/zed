@@ -63,8 +63,10 @@ pub fn bench_platform(
     })
 }
 
-/// Frame budget used when a benchmark doesn't specify one, in nanoseconds (120fps).
-const DEFAULT_FRAME_BUDGET_NANOS: u128 = 1_000_000_000 / 120;
+/// Default target frame rate when a benchmark doesn't specify `fps = N`.
+const DEFAULT_FPS: u64 = 120;
+
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
 /// A small report produced by GPUI benchmarks.
 #[derive(Clone)]
@@ -75,13 +77,20 @@ pub struct BenchReport {
 
 impl Default for BenchReport {
     fn default() -> Self {
-        Self::with_frame_budget_nanos(DEFAULT_FRAME_BUDGET_NANOS)
+        Self::with_fps(DEFAULT_FPS)
     }
 }
 
 impl BenchReport {
+    /// Creates a report whose per-frame budget is one frame at `fps` when
+    /// counting frame budget overruns.
+    pub fn with_fps(fps: u64) -> Self {
+        assert!(fps > 0, "frame rate must be greater than zero");
+        Self::with_frame_budget_nanos(NANOS_PER_SECOND / fps as u128)
+    }
+
     /// Creates a report that treats `frame_budget_nanos` as the per-frame budget
-    /// when counting missed frames.
+    /// when counting frame budget overruns.
     pub fn with_frame_budget_nanos(frame_budget_nanos: u128) -> Self {
         Self {
             frame_snapshot: Rc::new(RefCell::new(WindowFrameSnapshot::new())),
@@ -122,7 +131,7 @@ impl BenchReport {
     }
 
     /// Returns how many whole frame budgets `foreground_time` exceeded the
-    /// per-frame budget by. This is a synthetic proxy for missed frames: the
+    /// per frame budget by. This is a synthetic proxy for missed frames: the
     /// benchmark harness has no vsync, so it counts how many frame deadlines
     /// would have elapsed while the foreground thread was busy.
     fn budget_overruns(&self, foreground_time: Duration) -> u64 {
@@ -353,7 +362,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         read(&app)
     }
 
-    /// Runs queued foreground tasks on this thread and waits for in-flight
+    /// Runs queued foreground tasks on this thread and waits for in flight
     /// background work to finish. Timers that aren't due yet are not waited
     /// for (see [`BenchDispatcher::run_until_idle`]).
     pub fn run_until_idle(&self) {

@@ -300,7 +300,7 @@ impl PlatformWindow for TestWindow {
     fn draw(&self, scene: &Scene) {
         let mut state = self.0.lock();
         // Use the constant directly: calling `self.scale_factor()` here would
-        // re-lock the (non-reentrant) state mutex and deadlock.
+        // re-lock the (non reentrant) state mutex and deadlock.
         let device_size: Size<DevicePixels> =
             state.bounds.size.to_device_pixels(TEST_WINDOW_SCALE_FACTOR);
         if let Some(renderer) = &mut state.renderer {

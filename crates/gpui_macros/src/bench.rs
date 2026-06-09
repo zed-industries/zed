@@ -23,13 +23,10 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         }
     }
 
-    // When no `fps` is given, `BenchReport::default()` supplies the default
-    // frame budget so there is a single source of truth in `bench_context`.
+    // The frame budget math lives in `BenchReport` so `bench_context` is the
+    // single source of truth; `default()` supplies the default frame rate.
     let report_expr = match fps {
-        Some(fps) => {
-            let frame_budget_nanos: u128 = 1_000_000_000 / fps as u128;
-            quote! { gpui::BenchReport::with_frame_budget_nanos(#frame_budget_nanos) }
-        }
+        Some(fps) => quote! { gpui::BenchReport::with_fps(#fps) },
         None => quote! { gpui::BenchReport::default() },
     };
 

@@ -205,7 +205,7 @@ impl BenchDispatcher {
         }
     }
 
-    /// Runs queued main-thread tasks and waits until no background or timer
+    /// Runs queued main thread tasks and waits until no background or timer
     /// work is queued, running, or already due.
     ///
     /// Timers that haven't reached their due time yet are *not* waited for:
@@ -223,9 +223,7 @@ impl BenchDispatcher {
             if self.drain_main_queue() {
                 continue;
             }
-            // A timer that is due but not yet picked up by the timer thread
-            // counts as pending work. Checked before taking the in-flight lock
-            // to respect the timer-state -> in-flight lock order.
+
             if self.has_due_timer() {
                 let mut inflight = self.idle.inflight.lock();
                 self.idle
