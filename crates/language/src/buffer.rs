@@ -13,7 +13,6 @@ use crate::{
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     text_diff::text_diff,
-    unified_diff_with_offsets,
 };
 pub use crate::{
     Grammar, HighlightId, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet,
@@ -783,7 +782,13 @@ impl EditPreview {
         let old_end = Point::new(old_end.row + 4, 0).min(self.old_snapshot.max_point());
         let new_end = Point::new(new_end.row + 4, 0).min(self.applied_edits_snapshot.max_point());
 
-        let diff_body = unified_diff_with_offsets(
+        let path = file.map(|f| f.path().as_unix_str());
+        let output = match path {
+            Some(path) => format!("--- a/{}\n+++ b/{}\n", path, path),
+            None => String::new(),
+        };
+
+        Some(crate::text_diff::unified_diff_with_offsets_and_output(
             &self
                 .old_snapshot
                 .text_for_range(start..old_end)
@@ -794,15 +799,8 @@ impl EditPreview {
                 .collect::<String>(),
             start.row,
             start.row,
-        );
-
-        let path = file.map(|f| f.path().as_unix_str());
-        let header = match path {
-            Some(p) => format!("--- a/{}\n+++ b/{}\n", p, p),
-            None => String::new(),
-        };
-
-        Some(format!("{}{}", header, diff_body))
+            output,
+        ))
     }
 
     pub fn highlight_edits(

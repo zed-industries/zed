@@ -36,11 +36,52 @@ pub fn unified_diff_with_context(
     new_start_line: u32,
     context_lines: u32,
 ) -> String {
+    unified_diff_with_context_and_output(
+        old_text,
+        new_text,
+        old_start_line,
+        new_start_line,
+        context_lines,
+        String::new(),
+    )
+}
+
+pub(crate) fn unified_diff_with_offsets_and_output(
+    old_text: &str,
+    new_text: &str,
+    old_start_line: u32,
+    new_start_line: u32,
+    output: String,
+) -> String {
+    unified_diff_with_context_and_output(
+        old_text,
+        new_text,
+        old_start_line,
+        new_start_line,
+        3,
+        output,
+    )
+}
+
+fn unified_diff_with_context_and_output(
+    old_text: &str,
+    new_text: &str,
+    old_start_line: u32,
+    new_start_line: u32,
+    context_lines: u32,
+    output: String,
+) -> String {
     let input = InternedInput::new(old_text, new_text);
     diff(
         Algorithm::Histogram,
         &input,
-        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines),
+        OffsetUnifiedDiffBuilder::new(
+            &input,
+            old_start_line,
+            new_start_line,
+            context_lines,
+            output,
+        ),
     )
 }
 
@@ -70,6 +111,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
         old_line_offset: u32,
         new_line_offset: u32,
         context_lines: u32,
+        dst: String,
     ) -> Self {
         Self {
             before_hunk_start: 0,
@@ -80,7 +122,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
             new_line_offset,
             context_lines,
             buffer: String::with_capacity(8),
-            dst: String::new(),
+            dst,
             interner: &input.interner,
             before: &input.before,
             after: &input.after,
