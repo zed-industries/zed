@@ -307,8 +307,7 @@ unsafe fn build_classes() {
         // Helper classes used to encode/restore native window state (frame plus macOS Space).
         // See `MacWindow::encode_restorable_state` / `restore_native_state`.
         SPACES_ARCHIVER_DELEGATE_CLASS = {
-            let mut decl =
-                ClassDecl::new("GPUISpacesArchiverDelegate", class!(NSObject)).unwrap();
+            let mut decl = ClassDecl::new("GPUISpacesArchiverDelegate", class!(NSObject)).unwrap();
             decl.add_method(
                 sel!(archiver:willEncodeObject:),
                 spaces_archiver_will_encode_object as extern "C" fn(&Object, Sel, id, id) -> id,

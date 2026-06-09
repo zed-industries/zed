@@ -3213,8 +3213,7 @@ mod tests {
     async fn test_restorable_window_state_round_trip() {
         zlog::init_test();
 
-        let db =
-            WorkspaceDb::open_test_db("test_restorable_window_state_round_trip").await;
+        let db = WorkspaceDb::open_test_db("test_restorable_window_state_round_trip").await;
 
         // A workspace row must exist to satisfy the foreign key.
         let id = db.next_id().await.unwrap();
