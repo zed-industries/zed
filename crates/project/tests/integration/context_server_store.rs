@@ -897,6 +897,7 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
                 url: server_url.to_string(),
                 headers: Default::default(),
                 timeout: None,
+                oauth: None,
             },
         )],
         cx,
@@ -963,6 +964,7 @@ async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
             url: url::Url::parse("http://localhost:8080").expect("Failed to parse test URL"),
             headers: Default::default(),
             timeout: None,
+            oauth: None,
         }),
         &mut async_cx,
     )
@@ -998,6 +1000,7 @@ async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext
                 url: "http://localhost:8080".to_string(),
                 headers: Default::default(),
                 timeout: Some(120),
+                oauth: None,
             },
         )],
     )
@@ -1021,6 +1024,7 @@ async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext
             url: url::Url::parse("http://localhost:8080").expect("Failed to parse test URL"),
             headers: Default::default(),
             timeout: Some(120),
+            oauth: None,
         }),
         &mut async_cx,
     )

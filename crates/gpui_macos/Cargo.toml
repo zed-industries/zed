@@ -22,6 +22,8 @@ screen-capture = ["gpui/screen-capture"]
 gpui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+accesskit.workspace = true
+accesskit_macos.workspace = true
 anyhow.workspace = true
 async-task = "4.7"
 block = "0.1"

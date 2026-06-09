@@ -147,7 +147,7 @@ If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it m
 
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
 
-If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. you can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` or `vulkan-tools` package on various distributions) to try to troubleshoot where the issue is coming from like so:
+If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. You can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` or `vulkan-tools` package on various distributions) to try to troubleshoot where the issue is coming from like so:
 
 ```
 vkcube
@@ -163,7 +163,7 @@ If you see errors like `ERROR_INITIALIZATION_FAILED` or `GPU Crashed` or `ERROR_
 
 On some systems the file `/etc/prime-discrete` can be used to enforce the use of a discrete GPU using [PRIME](https://wiki.archlinux.org/title/PRIME). Depending on the details of your setup, you may need to change the contents of this file to "on" (to force discrete graphics) or "off" (to force integrated graphics).
 
-On others, you may be able to the environment variable `DRI_PRIME=1` when running Zed to force the use of the discrete GPU.
+On others, you may be able to set the environment variable `DRI_PRIME=1` when running Zed to force the use of the discrete GPU.
 
 If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See [#13880](https://github.com/zed-industries/zed/issues/13880))
 
@@ -262,7 +262,7 @@ Some window managers, such as `Hyprland`, don't provide a file picker by default
 
 ### Zed isn't remembering my login
 
-These feature also requires XDG desktop portals, specifically:
+This feature also requires XDG desktop portals, specifically:
 
 - `org.freedesktop.portal.Secret` or
 - `org.freedesktop.Secrets`

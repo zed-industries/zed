@@ -17,7 +17,7 @@ impl LlmApiToken {
         &self,
         client: &CloudApiClient,
         system_id: Option<String>,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<String, ClientApiError> {
         let lock = self.0.upgradable_read().await;
         if let Some(token) = lock.as_ref() {
@@ -37,9 +37,13 @@ impl LlmApiToken {
         &self,
         client: &CloudApiClient,
         system_id: Option<String>,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<String, ClientApiError> {
         Self::fetch(self.0.write().await, client, system_id, organization_id).await
+    }
+
+    pub async fn clear(&self) {
+        *self.0.write().await = None;
     }
 
     /// Clears the existing token before attempting to fetch a new one.
@@ -50,7 +54,7 @@ impl LlmApiToken {
         &self,
         client: &CloudApiClient,
         system_id: Option<String>,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<String, ClientApiError> {
         let mut lock = self.0.write().await;
         *lock = None;
@@ -61,7 +65,7 @@ impl LlmApiToken {
         mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &CloudApiClient,
         system_id: Option<String>,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<String, ClientApiError> {
         let result = client.create_llm_token(system_id, organization_id).await;
         match result {

@@ -174,7 +174,6 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
 
@@ -357,9 +356,7 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            cx.bind_keys(
-                settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
-            );
+            cx.bind_keys(settings::KeymapFile::load_asset_cached(os_keymap, cx).unwrap());
             language_model::LanguageModelRegistry::test(cx);
         });
 
