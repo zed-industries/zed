@@ -959,7 +959,7 @@ mod tests {
             model_parameters: vec![],
             auto_compact: agent_settings::AutoCompactSettings {
                 enabled: false,
-                threshold: 0.8,
+                threshold: agent_settings::AutoCompactThreshold::DEFAULT,
             },
             enable_feedback: false,
             expand_edit_card: true,

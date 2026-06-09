@@ -1104,15 +1104,15 @@
     "auto_compact": {
       // Whether to automatically compact the agent's context near the limit.
       "enabled": true,
-      // The threshold at which auto-compaction runs, interpreted in one of three
-      // ways depending on its value:
-      //   - A decimal from 0 to 1 is a percentage of the model's context window
-      //     (e.g. 0.8 compacts once the context is 80% full).
-      //   - An integer greater than 1 is an absolute number of used tokens to
-      //     compact after (e.g. 100000 compacts after 100,000 tokens are used).
-      //   - A negative integer is a number of tokens remaining in the context
-      //     window (e.g. -20000 compacts once fewer than 20,000 tokens are left).
-      "threshold": 0.8,
+      // The threshold at which auto-compaction runs. One of:
+      //   - A percentage string ending in "%" (e.g. "80%"), measured against
+      //     the model's context window. Decimals are allowed (e.g. "95.5%").
+      //   - A positive integer: compact after that many tokens have been used
+      //     (e.g. 100000 compacts after 100,000 tokens are used).
+      //   - A negative integer: compact once that many tokens remain in the
+      //     context window (e.g. -20000 compacts once fewer than 20,000 remain).
+      // 0 is not a valid threshold.
+      "threshold": "80%",
     },
     // When enabled, show voting thumbs for feedback on agent edits.
     "enable_feedback": true,
