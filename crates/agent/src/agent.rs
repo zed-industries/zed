@@ -164,7 +164,7 @@ impl From<&Skill> for NativeAvailableSkill {
     }
 }
 
-const COMPACT_COMMAND_NAME: &str = "compact";
+pub const COMPACT_COMMAND_NAME: &str = "compact";
 
 /// Returns the set of MCP prompt names that must be server-qualified
 /// (`/<server>.<name>`) to stay unambiguous in the slash-command popup: names

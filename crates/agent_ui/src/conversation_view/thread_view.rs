@@ -3623,7 +3623,7 @@ impl ThreadView {
                     .loading(is_compacting)
                     .disabled(is_compacting)
                     .start_icon(
-                        Icon::new(IconName::Scissors)
+                        Icon::new(IconName::Compact)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )

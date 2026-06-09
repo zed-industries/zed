@@ -1500,6 +1500,11 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     command.requires_argument && argument.is_none();
                                 let group = show_section_headers.then(|| command.group());
 
+                                let icon_path = (command.category
+                                    == Some(acp_thread::CommandCategory::Native)
+                                    && command.name.as_ref() == agent::COMPACT_COMMAND_NAME)
+                                    .then(|| IconName::Compact.path().into());
+
                                 Completion {
                                     replace_range: source_range.clone(),
                                     new_text,
@@ -1510,7 +1515,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         ),
                                     ),
                                     source: project::CompletionSource::Custom,
-                                    icon_path: None,
+                                    icon_path,
                                     icon_color: None,
                                     match_start: None,
                                     snippet_deduplication_key: None,
