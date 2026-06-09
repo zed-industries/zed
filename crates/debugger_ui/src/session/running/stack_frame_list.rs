@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use dap::adapters::DebugAdapterName;
+use editor::{Editor, SelectionEffects};
 use db::kvp::KeyValueStore;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
@@ -394,123 +395,248 @@ impl StackFrameList {
     ) -> Task<Result<()>> {
         let stack_frame_id = stack_frame.id;
         self.opened_stack_frame_id = Some(stack_frame_id);
-        let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Err(anyhow!("Project path not found")));
-        };
         let row = stack_frame.line.saturating_sub(1) as u32;
+
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame_id,
         ));
-        cx.spawn_in(window, async move |this, cx| {
-            let (worktree, relative_path) = this
-                .update(cx, |this, cx| {
-                    this.workspace.update(cx, |workspace, cx| {
-                        workspace.project().update(cx, |this, cx| {
-                            this.find_or_create_worktree(&abs_path, false, cx)
-                        })
-                    })
-                })??
-                .await?;
-            let buffer = this
-                .update(cx, |this, cx| {
-                    this.workspace.update(cx, |this, cx| {
-                        this.project().update(cx, |this, cx| {
-                            let worktree_id = worktree.read(cx).id();
-                            this.open_buffer(
-                                ProjectPath {
-                                    worktree_id,
-                                    path: relative_path,
-                                },
-                                cx,
-                            )
-                        })
-                    })
-                })??
-                .await?;
-            let position = buffer.read_with(cx, |this, _| {
-                this.snapshot().anchor_after(PointUtf16::new(row, 0))
+
+        let source_reference = stack_frame
+            .source
+            .as_ref()
+            .and_then(|s| s.source_reference)
+            .unwrap_or(0);
+
+        if source_reference > 0 {
+            let Some(source) = stack_frame.source else {
+                debug_panic!("source_reference > 0 but stack frame has no source");
+                return Task::ready(Err(anyhow!("Stack frame has no source")));
+            };
+            let source_name = source.name.clone().or(source.path.clone());
+            let fetch_task = self.session.update(cx, |session, cx| {
+                session.fetch_source_buffer(source, cx)
             });
-            let opened_item = this
-                .update_in(cx, |this, window, cx| {
+
+            let source_path = source_name
+                .as_deref()
+                .map(|name| Arc::from(Path::new(name)));
+
+            cx.spawn_in(window, async move |this, cx| {
+                let buffer = fetch_task.await.map_err(|error| anyhow!("{error}"))?;
+
+                let position = buffer.read_with(cx, |buffer, _| {
+                    buffer.snapshot().anchor_after(PointUtf16::new(row, 0))
+                });
+
+                let editor = this.update_in(cx, |this, window, cx| {
                     this.workspace.update(cx, |workspace, cx| {
-                        let project_path = buffer
-                            .read(cx)
-                            .project_path(cx)
-                            .context("Could not select a stack frame for unnamed buffer")?;
+                        let buffer_id = buffer.entity_id();
+                        let existing_editor = workspace.panes().iter().find_map(|pane| {
+                            pane.read(cx).items_of_type::<Editor>().find(|editor| {
+                                editor.read(cx).buffer().read(cx).as_singleton().is_some_and(
+                                    |singleton| singleton.entity_id() == buffer_id,
+                                )
+                            })
+                        });
 
-                        let open_preview = true;
-
-                        let active_debug_line_pane = workspace
-                            .project()
-                            .read(cx)
-                            .breakpoint_store()
-                            .read(cx)
-                            .active_debug_line_pane_id()
-                            .and_then(|id| workspace.pane_for_entity_id(id));
-
-                        let debug_pane = if let Some(pane) = active_debug_line_pane {
-                            Some(pane.downgrade())
+                        let editor = if let Some(editor) = existing_editor {
+                            workspace.activate_item(&editor, true, true, window, cx);
+                            editor
                         } else {
-                            // No debug pane set yet. Find a pane where the target file
-                            // is already the active tab so we don't disrupt other panes.
-                            let pane_with_active_file = workspace.panes().iter().find(|pane| {
-                                pane.read(cx)
-                                    .active_item()
-                                    .and_then(|item| item.project_path(cx))
-                                    .is_some_and(|path| path == project_path)
+                            let editor = cx.new(|cx| {
+                                let mut editor = Editor::for_buffer(
+                                    buffer.clone(),
+                                    Some(workspace.project().clone()),
+                                    window,
+                                    cx,
+                                );
+                                editor.set_read_only(true);
+                                editor
                             });
 
-                            pane_with_active_file.map(|pane| pane.downgrade())
+                            if let Some(ref title) = source_name {
+                                editor.update(cx, |editor, cx| {
+                                    editor.buffer().update(cx, |multi_buffer, cx| {
+                                        multi_buffer.set_title(title.clone(), cx);
+                                    });
+                                });
+                            }
+
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor.clone()),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+
+                            editor
                         };
 
-                        anyhow::Ok(workspace.open_path_preview(
-                            project_path,
-                            debug_pane,
-                            true,
-                            true,
-                            open_preview,
-                            window,
-                            cx,
-                        ))
-                    })
-                })???
-                .await?;
+                        let target = language::Point::new(row, 0);
+                        editor.update(cx, |editor, cx| {
+                            editor.change_selections(
+                                SelectionEffects::default(),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_ranges([target..target]);
+                                },
+                            );
+                            editor.request_autoscroll(
+                                editor::scroll::Autoscroll::center(),
+                                cx,
+                            );
+                        });
 
-            this.update(cx, |this, cx| {
-                let thread_id = this.state.read_with(cx, |state, _| {
-                    state.thread_id.context("No selected thread ID found")
+                        editor
+                    })
                 })??;
 
-                this.workspace.update(cx, |workspace, cx| {
-                    if let Some(pane_id) = workspace
-                        .pane_for(&*opened_item)
-                        .map(|pane| pane.entity_id())
-                    {
-                        workspace
-                            .project()
-                            .read(cx)
-                            .breakpoint_store()
-                            .update(cx, |store, _cx| {
-                                store.set_active_debug_pane_id(pane_id);
-                            });
-                    }
+                this.update(cx, |this, cx| {
+                    this.set_active_debug_position(
+                        &editor,
+                        source_path,
+                        position,
+                        stack_frame_id,
+                        cx,
+                    )
+                })?
+            })
+        } else {
+            let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
+                return Task::ready(Err(anyhow!("Project path not found")));
+            };
 
-                    let breakpoint_store = workspace.project().read(cx).breakpoint_store();
+            cx.spawn_in(window, async move |this, cx| {
+                let (worktree, relative_path) = this
+                    .update(cx, |this, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.project().update(cx, |this, cx| {
+                                this.find_or_create_worktree(&abs_path, false, cx)
+                            })
+                        })
+                    })??
+                    .await?;
+                let buffer = this
+                    .update(cx, |this, cx| {
+                        this.workspace.update(cx, |this, cx| {
+                            this.project().update(cx, |this, cx| {
+                                let worktree_id = worktree.read(cx).id();
+                                this.open_buffer(
+                                    ProjectPath {
+                                        worktree_id,
+                                        path: relative_path,
+                                    },
+                                    cx,
+                                )
+                            })
+                        })
+                    })??
+                    .await?;
+                let position = buffer.read_with(cx, |this, _| {
+                    this.snapshot().anchor_after(PointUtf16::new(row, 0))
+                });
+                let opened_item = this
+                    .update_in(cx, |this, window, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            let project_path = buffer
+                                .read(cx)
+                                .project_path(cx)
+                                .context(
+                                    "Could not select a stack frame for unnamed buffer",
+                                )?;
 
-                    breakpoint_store.update(cx, |store, cx| {
-                        store.set_active_position(
-                            ActiveStackFrame {
-                                session_id: this.session.read(cx).session_id(),
-                                thread_id,
-                                stack_frame_id,
-                                path: abs_path,
-                                position,
-                            },
-                            cx,
-                        );
-                    })
-                })
-            })?
+                            let open_preview = true;
+
+                            let active_debug_line_pane = workspace
+                                .project()
+                                .read(cx)
+                                .breakpoint_store()
+                                .read(cx)
+                                .active_debug_line_pane_id()
+                                .and_then(|id| workspace.pane_for_entity_id(id));
+
+                            let debug_pane = if let Some(pane) = active_debug_line_pane {
+                                Some(pane.downgrade())
+                            } else {
+                                let pane_with_active_file =
+                                    workspace.panes().iter().find(|pane| {
+                                        pane.read(cx)
+                                            .active_item()
+                                            .and_then(|item| item.project_path(cx))
+                                            .is_some_and(|path| path == project_path)
+                                    });
+
+                                pane_with_active_file.map(|pane| pane.downgrade())
+                            };
+
+                            anyhow::Ok(workspace.open_path_preview(
+                                project_path,
+                                debug_pane,
+                                true,
+                                true,
+                                open_preview,
+                                window,
+                                cx,
+                            ))
+                        })
+                    })???
+                    .await?;
+
+                this.update(cx, |this, cx| {
+                    this.set_active_debug_position(
+                        &*opened_item,
+                        Some(abs_path),
+                        position,
+                        stack_frame_id,
+                        cx,
+                    )
+                })?
+            })
+        }
+    }
+
+    fn set_active_debug_position(
+        &self,
+        item: &dyn workspace::item::ItemHandle,
+        path: Option<Arc<Path>>,
+        position: text::Anchor,
+        stack_frame_id: StackFrameId,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let thread_id = self.state.read_with(cx, |state, _| {
+            state.thread_id.context("No selected thread ID found")
+        })??;
+
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(pane_id) = workspace
+                .pane_for(item)
+                .map(|pane| pane.entity_id())
+            {
+                workspace
+                    .project()
+                    .read(cx)
+                    .breakpoint_store()
+                    .update(cx, |store, _cx| {
+                        store.set_active_debug_pane_id(pane_id);
+                    });
+            }
+
+            let breakpoint_store = workspace.project().read(cx).breakpoint_store();
+
+            breakpoint_store.update(cx, |store, cx| {
+                store.set_active_position(
+                    ActiveStackFrame {
+                        session_id: self.session.read(cx).session_id(),
+                        thread_id,
+                        stack_frame_id,
+                        path,
+                        position,
+                    },
+                    cx,
+                );
+            })
         })
     }
 

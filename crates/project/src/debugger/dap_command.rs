@@ -1973,3 +1973,37 @@ impl LocalDapCommand for dap::WriteMemoryArguments {
         Ok(message)
     }
 }
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct SourceCommand {
+    pub source: Option<dap::Source>,
+    pub source_reference: u64,
+}
+
+#[derive(Debug)]
+pub struct SourceCommandResponse {
+    pub content: String,
+    pub mime_type: Option<String>,
+}
+
+impl LocalDapCommand for SourceCommand {
+    type Response = SourceCommandResponse;
+    type DapRequest = dap::requests::Source;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::SourceArguments {
+            source: self.source.clone(),
+            source_reference: self.source_reference,
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(SourceCommandResponse {
+            content: message.content,
+            mime_type: message.mime_type,
+        })
+    }
+}
