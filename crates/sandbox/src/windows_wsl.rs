@@ -72,24 +72,27 @@ pub fn wrap_invocation(
     let wsl_exe = wsl_exe_path();
     ensure!(
         wsl_exe.is_file(),
-        "{WSL_SANDBOX_ERROR_PREFIX}: WSL (`wsl.exe`) is not installed"
+        "{WSL_SANDBOX_ERROR_PREFIX}: WSL (`wsl.exe`) was not found at `{}`",
+        wsl_exe.display()
     );
-    ensure!(
-        wsl_command_succeeds(
-            &wsl_exe,
-            distro.as_deref(),
-            &["--exec", "sh", "-lc", "true"]
-        ),
-        "{WSL_SANDBOX_ERROR_PREFIX}: WSL is installed, but no usable default distro was found"
-    );
-    ensure!(
-        wsl_command_succeeds(
-            &wsl_exe,
-            distro.as_deref(),
-            &["--exec", "sh", "-lc", "command -v bwrap >/dev/null"]
-        ),
-        "{WSL_SANDBOX_ERROR_PREFIX}: Bubblewrap (`bwrap`) is not installed in WSL"
-    );
+    check_wsl_command(
+        &wsl_exe,
+        distro.as_deref(),
+        &["--exec", "sh", "-lc", "true"],
+        "start a shell in WSL",
+    )?;
+    check_wsl_command(
+        &wsl_exe,
+        distro.as_deref(),
+        &["--exec", "sh", "-lc", "command -v bwrap >/dev/null"],
+        "find Bubblewrap (`bwrap`) in WSL",
+    )
+    .with_context(|| {
+        format!(
+            "{WSL_SANDBOX_ERROR_PREFIX}: Bubblewrap (`bwrap`) is not installed in {}",
+            wsl_distro_label(distro.as_deref())
+        )
+    })?;
 
     let mut wsl_args = Vec::new();
     if let Some(distro) = distro.as_deref() {
@@ -133,7 +136,12 @@ fn select_distro(
     Ok(distro)
 }
 
-fn wsl_command_succeeds(wsl_exe: &Path, distro: Option<&str>, args: &[&str]) -> bool {
+fn check_wsl_command(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    args: &[&str],
+    description: &str,
+) -> Result<()> {
     let mut command = Command::new(wsl_exe);
     if let Some(distro) = distro {
         command.args(["-d", distro]);
@@ -141,10 +149,39 @@ fn wsl_command_succeeds(wsl_exe: &Path, distro: Option<&str>, args: &[&str]) -> 
     command
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+        .stdout(Stdio::null());
+
+    let output = command.output().with_context(|| {
+        format!("{WSL_SANDBOX_ERROR_PREFIX}: failed to invoke WSL while trying to {description}")
+    })?;
+    ensure!(
+        output.status.success(),
+        "{WSL_SANDBOX_ERROR_PREFIX}: failed to {description} in {}{}",
+        wsl_distro_label(distro),
+        command_failure_details(output.status.code(), &output.stderr)
+    );
+    Ok(())
+}
+
+fn command_failure_details(exit_code: Option<i32>, stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let stderr = stderr.trim();
+    let exit_status = match exit_code {
+        Some(code) => format!("exit code {code}"),
+        None => "terminated by signal".to_string(),
+    };
+    if stderr.is_empty() {
+        format!(" ({exit_status})")
+    } else {
+        format!(" ({exit_status}; stderr: {stderr})")
+    }
+}
+
+fn wsl_distro_label(distro: Option<&str>) -> String {
+    match distro {
+        Some(distro) => format!("WSL distro `{distro}`"),
+        None => "the default WSL distro".to_string(),
+    }
 }
 
 fn wsl_exe_path() -> PathBuf {

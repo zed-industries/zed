@@ -459,10 +459,10 @@ async fn run_terminal_tool(
         Err(error)
             if cfg!(target_os = "windows")
                 && sandbox_wrap.is_some()
-                && is_windows_wsl_sandbox_error(&error.to_string()) =>
+                && is_windows_wsl_sandbox_error(&format!("{error:#}")) =>
         {
-            if !prompt_to_turn_off_windows_sandboxing(&event_stream, &error.to_string(), cx).await?
-            {
+            let error = format!("{error:#}");
+            if !prompt_to_turn_off_windows_sandboxing(&event_stream, &error, cx).await? {
                 return Ok(
                     "Command cancelled: Windows sandboxing is unavailable, and the user chose to keep sandboxing enabled."
                         .to_string(),
