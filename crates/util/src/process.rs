@@ -76,10 +76,18 @@ impl Child {
         // Assign the child to a job object configured to kill the entire
         // process tree when the last job handle is closed, so descendants
         // (e.g. node workers and MCP servers spawned by agent servers) are
-        // reaped even if the direct child doesn't clean them up. Processes
-        // spawned by the child after this assignment are automatically part
-        // of the job; the assignment happens right after spawning, before
-        // the child has had a chance to spawn descendants of its own.
+        // reaped even if the direct child doesn't clean them up. Any process
+        // the child spawns after this assignment is automatically part of the
+        // job.
+        //
+        // There is a small race: descendants the child spawns between the
+        // `spawn()` call returning and the assignment below escape the job.
+        // Closing it fully would require creating the process suspended
+        // (`CREATE_SUSPENDED`), assigning it, then resuming it, which the
+        // std/smol process APIs don't support without reimplementing process
+        // creation. The window is microseconds, and the children we care
+        // about (`npx`, `node`, etc.) take far longer to load their runtime
+        // and spawn anything, so in practice nothing escapes.
         let job = windows_job::JobObject::new()
             .and_then(|job| {
                 job.assign_process(process.id())?;
