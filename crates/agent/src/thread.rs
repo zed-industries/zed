@@ -11,13 +11,12 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
-use zed_env_vars::{EnvVar, env_var};
 
 use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, COMPACTION_PROMPT, SUMMARIZE_THREAD_DETAILED_PROMPT,
-    SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -70,16 +69,11 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
-const AGENT_COMPACTION_REMAINING_TOKEN_BUDGET: u64 = 40_000;
-
 /// Auto-compaction is only available for models whose context window is at least
 /// this large. For smaller models there isn't enough headroom for a compaction
 /// pass to be worthwhile, so we leave the thread uncompacted and let the UI warn
 /// the user instead.
 pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
-
-static AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR: std::sync::LazyLock<EnvVar> =
-    env_var!("AGENT_COMPACTION_REMAINING_TOKEN_BUDGET");
 
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
@@ -2658,7 +2652,7 @@ impl Thread {
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
-            let insertion_ix = this.compaction_message_target_ix()?;
+            let insertion_ix = this.compaction_message_target_ix(cx)?;
             let model = this.model.clone()?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
@@ -3765,11 +3759,17 @@ impl Thread {
             .rposition(|message| matches!(&**message, Message::Compaction(_)))
     }
 
-    fn compaction_message_target_ix(&self) -> Option<usize> {
+    fn compaction_message_target_ix(&self, cx: &App) -> Option<usize> {
+        let auto_compact = AgentSettings::get_global(cx).auto_compact;
+        if !auto_compact.enabled {
+            return None;
+        }
+
         let model = self.model.as_ref()?;
+        let max_token_count = model.max_token_count();
         // Models with a small context window don't leave enough headroom for a
         // compaction pass; the UI warns the user about the token limit instead.
-        if model.max_token_count() < MIN_COMPACTION_CONTEXT_WINDOW {
+        if max_token_count < MIN_COMPACTION_CONTEXT_WINDOW {
             return None;
         }
         let (usage_ix, usage) = {
@@ -3796,17 +3796,8 @@ impl Thread {
         }
 
         let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
-
-        let remaining_budget = AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR
-            .value
-            .as_ref()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(AGENT_COMPACTION_REMAINING_TOKEN_BUDGET);
-
-        let compaction_threshold = model
-            .max_token_count()
-            .saturating_sub(model.max_output_tokens().unwrap_or_default())
-            .saturating_sub(remaining_budget);
+        let compaction_threshold =
+            auto_compact_threshold_token_count(auto_compact.threshold, max_token_count);
         if active_tokens < compaction_threshold {
             return None;
         }
@@ -4022,6 +4013,21 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+fn auto_compact_threshold_token_count(
+    threshold: AutoCompactThreshold,
+    max_token_count: u64,
+) -> u64 {
+    match threshold {
+        AutoCompactThreshold::Percentage(percent) => {
+            ((max_token_count as f64) * percent).ceil() as u64
+        }
+        AutoCompactThreshold::TokensUsed(tokens) => tokens,
+        AutoCompactThreshold::TokensRemaining(tokens) => {
+            max_token_count.saturating_sub(tokens).saturating_add(1)
+        }
+    }
 }
 
 fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
@@ -5599,6 +5605,12 @@ mod tests {
         })
     }
 
+    fn set_auto_compact_settings(cx: &mut App, auto_compact: agent_settings::AutoCompactSettings) {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.auto_compact = auto_compact;
+        AgentSettings::override_global(settings, cx);
+    }
+
     #[test]
     fn test_summary_compaction_renders_for_request_and_markdown() {
         let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
@@ -5654,12 +5666,54 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_compaction_threshold_uses_latest_reported_usage(cx: &mut TestAppContext) {
+    async fn test_compaction_threshold_uses_percentage_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         let user_message_id = UserMessageId::new();
 
         cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "below limit"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 899_999,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 900_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_respects_enabled_setting(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: false,
+                    threshold: AutoCompactThreshold::Percentage(0.9),
+                },
+            );
             thread.update(cx, |thread, cx| {
                 thread.set_model(model, cx);
                 thread
@@ -5673,35 +5727,77 @@ mod tests {
                     },
                 );
 
-                assert_eq!(thread.compaction_message_target_ix(), Some(1));
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
             });
         });
     }
 
     #[gpui::test]
-    async fn test_compaction_threshold_reserves_max_output_tokens(cx: &mut TestAppContext) {
+    async fn test_compaction_threshold_respects_token_settings(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        model.set_max_token_count(272_000);
-        model.set_max_output_tokens(Some(128_000));
         let user_message_id = UserMessageId::new();
 
         cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: AutoCompactThreshold::TokensUsed(100_000),
+                },
+            );
             thread.update(cx, |thread, cx| {
                 thread.set_model(model, cx);
                 thread.messages.push(user_text_message(
                     user_message_id.clone(),
-                    "near output-reserved limit",
+                    "fixed token limit",
                 ));
                 thread.request_token_usage.insert(
                     user_message_id.clone(),
                     language_model::TokenUsage {
-                        input_tokens: 105_000,
+                        input_tokens: 99_999,
                         ..Default::default()
                     },
                 );
 
-                assert_eq!(thread.compaction_message_target_ix(), Some(1));
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 100_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+
+                set_auto_compact_settings(
+                    cx,
+                    agent_settings::AutoCompactSettings {
+                        enabled: true,
+                        threshold: AutoCompactThreshold::TokensRemaining(20_000),
+                    },
+                );
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 980_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 980_001,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
             });
         });
     }
@@ -5728,7 +5824,7 @@ mod tests {
                     },
                 );
 
-                assert_eq!(thread.compaction_message_target_ix(), None);
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
             });
         });
     }
@@ -5830,7 +5926,7 @@ mod tests {
                     .push(user_text_message(user_message_id.clone(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
                 // Auto-compaction would be a no-op here.
-                assert_eq!(thread.compaction_message_target_ix(), None);
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
             });
         });
 
