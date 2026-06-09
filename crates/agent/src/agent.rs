@@ -1883,6 +1883,9 @@ impl NativeAgent {
             })??;
 
             let response_stream = thread.update(cx, |thread, cx| thread.compact(message_id, cx))?;
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread.update_token_usage(None, cx);
+            });
 
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(

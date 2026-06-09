@@ -6016,6 +6016,71 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_context_compaction_preserves_token_usage(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(
+                        acp::UsageUpdate::new(5000, 10000).cost(acp::Cost::new(0.42, "USD")),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            thread.push_context_compaction(
+                ContextCompaction {
+                    id: ContextCompactionId("compaction-1".into()),
+                    status: ContextCompactionStatus::InProgress,
+                    summary: None,
+                },
+                cx,
+            );
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("context compaction should not clear token usage on its own");
+            assert_eq!(usage.used_tokens, 5000);
+            assert_eq!(usage.max_tokens, 10000);
+
+            let cost = thread
+                .cost()
+                .expect("context compaction should not clear cost on its own");
+            assert!((cost.amount - 0.42).abs() < f64::EPSILON);
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(1000, 10000)),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("token_usage should be restored by the next usage update");
+            assert_eq!(usage.used_tokens, 1000);
+            assert_eq!(usage.max_tokens, 10000);
+        });
+    }
+
+    #[gpui::test]
     async fn test_usage_update_without_cost_preserves_existing_cost(cx: &mut TestAppContext) {
         init_test(cx);
 
