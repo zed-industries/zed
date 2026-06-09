@@ -28,6 +28,10 @@ test-support = [
 ]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
+# Replaces the profiler's internal spinlocks with deadlock-detecting mutexes
+# from the `deloxide` crate. Not enabled by default because of its runtime
+# overhead; intended for debugging lock-ordering issues in the profiler.
+deadlock-detection = ["dep:deloxide"]
 wayland = [
     "bitflags",
 ]
@@ -103,6 +107,7 @@ waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
 spin = "0.10.0"
+deloxide = { version = "1.0", optional = true }
 pollster.workspace = true
 url.workspace = true
 uuid.workspace = true
