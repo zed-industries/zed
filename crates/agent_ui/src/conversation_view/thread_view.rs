@@ -3598,7 +3598,7 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let is_compacting = compaction.status == acp_thread::ContextCompactionStatus::InProgress;
+        let is_compacting = compaction.is_in_progress();
         let summary = compaction.summary.clone();
         let is_expanded = self.expanded_compactions.contains(&entry_ix);
 
@@ -6194,7 +6194,10 @@ impl ThreadView {
 
     /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
     pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
-        let is_generating = matches!(self.thread.read(cx).status(), ThreadStatus::Generating);
+        let thread = self.thread.read(cx);
+
+        let is_generating =
+            matches!(thread.status(), ThreadStatus::Generating) && !thread.is_compacting();
 
         if is_generating && !self.generating_indicator_in_list {
             let entries_count = self.thread.read(cx).entries().len();
