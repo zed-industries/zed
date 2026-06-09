@@ -79,6 +79,23 @@ pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
 
 /// Key used in ACP `AvailableCommand` meta to record which source produced a
 /// slash command, so the completion popup can group commands by category.
+///
+/// Why this lives in `meta` (a `serde_json::Map<String, Value>`) rather than a
+/// typed `category` field: `acp::AvailableCommand` comes from the external
+/// `agent-client-protocol-schema` crate and is the single command type shared
+/// by *every* agent — the native Zed agent and third-party ACP agents alike.
+/// The completion UI consumes all of them uniformly as `acp::AvailableCommand`,
+/// and we can't add a Zed-specific field to a protocol struct we don't own, so
+/// `meta` (the schema's designated extension point for implementation-specific
+/// data) is where this rides. Because `meta` is JSON, the category is encoded
+/// as a string (see [`CommandCategory::as_str`]).
+///
+/// This is a real serialization boundary even for the native agent: although
+/// its producer (`NativeAgent`) and consumer (the agent UI) are in the same
+/// process, the data travels as an ACP `AvailableCommandsUpdate`. External ACP
+/// agents simply don't set this key, and that absence is itself meaningful —
+/// [`command_category_from_meta`] returns `None`, which groups those commands
+/// on their own (see [`CommandCategory`]).
 pub const COMMAND_CATEGORY_META_KEY: &str = "command_category";
 
 /// The source category of a slash command, used to group commands in the
@@ -93,10 +110,12 @@ pub enum CommandCategory {
 }
 
 impl CommandCategory {
-    /// Wire encoding stored under [`COMMAND_CATEGORY_META_KEY`]. These string
-    /// values are a contract between the agent that produces commands and the
-    /// UI that groups them; keep `as_str`/`from_str` in sync and avoid
-    /// repurposing existing strings.
+    /// Wire encoding stored under [`COMMAND_CATEGORY_META_KEY`]. The category
+    /// has to be serialized into the JSON `meta` bag (see that key's docs for
+    /// why it can't be a typed field), and a string is simply the enum's JSON
+    /// form there. These exact string values are a contract between the agent
+    /// that produces commands and the UI that groups them, so keep
+    /// `as_str`/`from_str` in sync and avoid repurposing existing strings.
     fn as_str(self) -> &'static str {
         match self {
             Self::Native => "native",
