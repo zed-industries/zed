@@ -288,6 +288,21 @@ unsafe fn build_classes() {
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
             );
+
+            // Undocumented SPI, also implemented by Chromium's content view: tells
+            // AppKit/the window server which parts of the view should be treated as
+            // opaque app content rather than title bar, scoping the system's
+            // title-bar machinery (window-move, and on macOS 27 the title bar
+            // gesture recognizers whose multi-click disambiguation delays single
+            // clicks by the double-click interval) away from our custom-drawn
+            // title bar. Our layer-backed Metal view is "locally transparent" from
+            // AppKit's perspective, so without this AppKit assumes the title-bar
+            // region under `NSFullSizeContentViewWindowMask` is its own.
+            decl.add_method(
+                sel!(_opaqueRectForWindowMoveWhenInTitlebar),
+                opaque_rect_for_window_move_when_in_titlebar
+                    as extern "C" fn(&Object, Sel) -> NSRect,
+            );
             decl.register()
         };
         BLURRED_VIEW_CLASS = {
@@ -2751,6 +2766,13 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let mut lock = window_state.as_ref().lock();
     lock.first_mouse = true;
     YES
+}
+
+extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel) -> NSRect {
+    // Declare the entire view as opaque content for window-move purposes; window
+    // dragging from the custom title bar is initiated by the app itself via
+    // `performWindowDragWithEvent:`.
+    unsafe { msg_send![this, bounds] }
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {
