@@ -36,18 +36,18 @@ pub fn is_wsl_sandbox_error(error: &anyhow::Error) -> bool {
 /// into a Linux shell invocation (typically `/bin/sh -c ...`) before calling
 /// this function.
 ///
-/// All writable directories and the cwd must be directories that can be mapped
-/// into WSL. WSL UNC paths may specify a distro; native drive-letter paths map
-/// to `/mnt/<drive>/...` and use either that distro or the default distro.
+/// All writable paths and the cwd must be paths that can be mapped into WSL.
+/// WSL UNC paths may specify a distro; native drive-letter paths map to
+/// `/mnt/<drive>/...` and use either that distro or the default distro.
 pub fn wrap_invocation(
     program: &str,
     args: &[String],
-    writable_directories: &[&Path],
+    writable_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
 ) -> Result<(String, Vec<String>)> {
     let cwd = match cwd {
-        Some(cwd) => Some(path_to_wsl(cwd).with_context(|| {
+        Some(cwd) => Some(directory_to_wsl(cwd).with_context(|| {
             format!(
                 "{WSL_SANDBOX_ERROR_PREFIX}: failed to map terminal cwd `{}` into WSL",
                 cwd.display()
@@ -56,19 +56,19 @@ pub fn wrap_invocation(
         None => None,
     };
 
-    let writable_directories = writable_directories
+    let writable_paths = writable_paths
         .iter()
-        .map(|directory| {
-            path_to_wsl(directory).with_context(|| {
+        .map(|path| {
+            path_to_wsl(path).with_context(|| {
                 format!(
-                    "{WSL_SANDBOX_ERROR_PREFIX}: failed to map writable directory `{}` into WSL",
-                    directory.display()
+                    "{WSL_SANDBOX_ERROR_PREFIX}: failed to map writable path `{}` into WSL",
+                    path.display()
                 )
             })
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let distro = select_distro(cwd.as_ref(), &writable_directories)?;
+    let distro = select_distro(cwd.as_ref(), &writable_paths)?;
     let wsl_exe = wsl_exe_path();
     ensure!(
         wsl_exe.is_file(),
@@ -103,7 +103,7 @@ pub fn wrap_invocation(
     }
     wsl_args.extend(["--exec".to_string(), "bwrap".to_string()]);
     wsl_args.extend(build_bwrap_args(
-        &writable_directories,
+        &writable_paths,
         permissions,
         cwd.as_ref().map(|path| path.path.as_str()),
     ));
@@ -114,12 +114,9 @@ pub fn wrap_invocation(
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
 }
 
-fn select_distro(
-    cwd: Option<&WslPath>,
-    writable_directories: &[WslPath],
-) -> Result<Option<String>> {
+fn select_distro(cwd: Option<&WslPath>, writable_paths: &[WslPath]) -> Result<Option<String>> {
     let mut distro = cwd.and_then(|path| path.distro.clone());
-    for path in writable_directories {
+    for path in writable_paths {
         let Some(path_distro) = path.distro.as_ref() else {
             continue;
         };
@@ -193,7 +190,7 @@ fn wsl_exe_path() -> PathBuf {
 }
 
 fn build_bwrap_args(
-    writable_directories: &[WslPath],
+    writable_paths: &[WslPath],
     permissions: SandboxPermissions,
     cwd: Option<&str>,
 ) -> Vec<String> {
@@ -204,8 +201,8 @@ fn build_bwrap_args(
     } else {
         push_bind(&mut args, "--ro-bind", "/", "/");
         args.extend(["--tmpfs".to_string(), "/tmp".to_string()]);
-        for directory in writable_directories {
-            push_bind(&mut args, "--bind", &directory.path, &directory.path);
+        for path in writable_paths {
+            push_bind(&mut args, "--bind", &path.path, &path.path);
         }
     }
 
@@ -244,12 +241,25 @@ fn push_bind(args: &mut Vec<String>, flag: &str, source: &str, destination: &str
     ]);
 }
 
-fn path_to_wsl(path: &Path) -> Result<WslPath> {
+fn directory_to_wsl(path: &Path) -> Result<WslPath> {
     ensure!(
         path.is_dir(),
-        "Windows sandboxing via WSL can only grant existing directories: {}",
+        "Windows sandboxing via WSL can only use an existing directory as cwd: {}",
         path.display()
     );
+    map_path_to_wsl(path)
+}
+
+fn path_to_wsl(path: &Path) -> Result<WslPath> {
+    ensure!(
+        path.is_dir() || path.is_file(),
+        "Windows sandboxing via WSL can only grant existing files or directories: {}",
+        path.display()
+    );
+    map_path_to_wsl(path)
+}
+
+fn map_path_to_wsl(path: &Path) -> Result<WslPath> {
     let path = path.to_string_lossy();
     parse_wsl_unc_path(&path).or_else(|_| parse_native_drive_path(&path))
 }
@@ -371,6 +381,24 @@ mod tests {
             None,
         );
         assert!(!args.iter().any(|arg| arg == "--unshare-net"));
+    }
+
+    #[test]
+    fn bwrap_binds_explicit_writable_file_paths() {
+        let args = build_bwrap_args(
+            &[WslPath {
+                distro: None,
+                path: "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md".to_string(),
+            }],
+            SandboxPermissions::default(),
+            None,
+        );
+        assert!(args.windows(3).any(|window| window
+            == [
+                "--bind",
+                "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md",
+                "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md"
+            ]));
     }
 
     #[test]
