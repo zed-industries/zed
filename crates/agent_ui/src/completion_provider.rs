@@ -1321,8 +1321,12 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
             PromptCompletion::SlashCommand(SlashCommandCompletion {
                 command, argument, ..
             }) => {
-                let show_section_headers = command.is_none() && argument.is_none();
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
+                // Keep the category section headers visible while the user is
+                // still narrowing the command name (`/c`); only drop them once
+                // they've moved on to typing the command's argument, where
+                // grouping no longer applies.
+                let show_section_headers = argument.is_none();
                 // Resolve the muted-text highlight up front: the
                 // completion build happens on a background thread where
                 // `cx.theme()` isn't available.
