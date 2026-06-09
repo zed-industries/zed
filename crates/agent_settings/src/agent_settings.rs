@@ -1,6 +1,7 @@
 mod agent_profile;
 mod user_agents_md;
 
+use std::cmp::Ordering::{Equal, Greater, Less};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
@@ -150,8 +151,8 @@ pub enum AutoCompactThreshold {
 
 impl AutoCompactThreshold {
     /// The threshold used when none is configured, or when the configured value
-    /// is invalid (80% of the context window).
-    pub const DEFAULT: Self = Self::Percentage(0.8);
+    /// is invalid (90% of the context window).
+    pub const DEFAULT: Self = Self::Percentage(0.9);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -164,7 +165,7 @@ fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshol
     let trimmed = raw.trim();
     if let Some(percent) = trimmed.strip_suffix('%') {
         let value: f64 = percent
-            .trim()
+            .trim_end()
             .parse()
             .with_context(|| format!("invalid auto_compact threshold percentage {raw:?}"))?;
         anyhow::ensure!(
@@ -176,15 +177,13 @@ fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshol
         let tokens: i64 = trimmed.parse().with_context(|| {
             format!(
                 "invalid auto_compact threshold {raw:?}; \
-                 expected a percentage like \"80%\" or an integer number of tokens"
+                 expected a percentage like \"90%\" or an integer number of tokens"
             )
         })?;
         match tokens.cmp(&0) {
-            std::cmp::Ordering::Greater => Ok(AutoCompactThreshold::TokensUsed(tokens as u64)),
-            std::cmp::Ordering::Less => {
-                Ok(AutoCompactThreshold::TokensRemaining(tokens.unsigned_abs()))
-            }
-            std::cmp::Ordering::Equal => {
+            Greater => Ok(AutoCompactThreshold::TokensUsed(tokens as u64)),
+            Less => Ok(AutoCompactThreshold::TokensRemaining(tokens.unsigned_abs())),
+            Equal => {
                 anyhow::bail!("auto_compact threshold of 0 is not valid")
             }
         }
@@ -895,9 +894,10 @@ mod tests {
         use AutoCompactThreshold::*;
 
         assert_eq!(
-            parse_auto_compact_threshold("80%").unwrap(),
-            Percentage(0.8)
+            parse_auto_compact_threshold("90%").unwrap(),
+            Percentage(0.9)
         );
+        assert_eq!(AutoCompactThreshold::DEFAULT, Percentage(0.9));
         assert_eq!(
             parse_auto_compact_threshold("  92.5% ").unwrap(),
             Percentage(0.925)

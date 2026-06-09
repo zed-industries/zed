@@ -175,7 +175,7 @@ pub struct AutoCompactSettingsContent {
     /// The threshold at which auto-compaction runs. This is one of:
     ///
     /// - A percentage string ending in `%`, e.g. `"90%"`, measured against the
-    ///   model's context window. `"80%"` compacts once the context is 80% full.
+    ///   model's context window. `"90%"` compacts once the context is 90% full.
     /// - A positive integer: compaction runs once that many tokens have been
     ///   used. For example, `100000` compacts after 100,000 tokens are used.
     /// - A negative integer: compaction runs once that many tokens remain in
@@ -184,7 +184,7 @@ pub struct AutoCompactSettingsContent {
     ///
     /// `0` is not a valid threshold.
     ///
-    /// Default: "80%"
+    /// Default: "90%"
     pub threshold: Option<AutoCompactThreshold>,
 }
 
