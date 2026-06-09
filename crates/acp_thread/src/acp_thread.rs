@@ -545,7 +545,12 @@ impl ToolCall {
     }
 
     fn update_acp_status(&mut self, status: acp::ToolCallStatus) {
-        if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status {
+        if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status
+            && matches!(
+                status,
+                acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
+            )
+        {
             *current_status = status;
         } else {
             self.status = status.into();
@@ -4696,6 +4701,68 @@ mod tests {
             }
             RequestPermissionOutcome::Cancelled => {
                 panic!("permission request should resolve after authorization")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_terminal_tool_call_update_closes_open_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01completed_while_waiting");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Cancelled => {}
+            RequestPermissionOutcome::Selected(_) => {
+                panic!("terminal tool call update should close pending permission request")
             }
         }
     }
