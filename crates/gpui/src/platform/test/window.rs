@@ -15,6 +15,11 @@ use std::{
     sync::{self, Arc},
 };
 
+/// The backing scale factor every test window reports, mirroring a retina
+/// display. Scene primitives are produced in pixels scaled by this factor, so
+/// rendering must use the same value to size its target.
+const TEST_WINDOW_SCALE_FACTOR: f32 = 2.0;
+
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) handle: AnyWindowHandle,
@@ -148,7 +153,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        2.0
+        TEST_WINDOW_SCALE_FACTOR
     }
 
     fn appearance(&self) -> WindowAppearance {
@@ -294,8 +299,10 @@ impl PlatformWindow for TestWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.0.lock();
-        let scale_factor = 2.0;
-        let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
+        // Use the constant directly: calling `self.scale_factor()` here would
+        // re-lock the (non-reentrant) state mutex and deadlock.
+        let device_size: Size<DevicePixels> =
+            state.bounds.size.to_device_pixels(TEST_WINDOW_SCALE_FACTOR);
         if let Some(renderer) = &mut state.renderer {
             renderer.render_scene(scene, device_size).warn_on_err();
         }
@@ -310,8 +317,7 @@ impl PlatformWindow for TestWindow {
         let mut state = self.0.lock();
         let size = state.bounds.size;
         if let Some(renderer) = &mut state.renderer {
-            let scale_factor = 2.0;
-            let device_size: Size<DevicePixels> = size.to_device_pixels(scale_factor);
+            let device_size: Size<DevicePixels> = size.to_device_pixels(TEST_WINDOW_SCALE_FACTOR);
             renderer.render_scene_to_image(scene, device_size)
         } else {
             anyhow::bail!("render_to_image not available: no HeadlessRenderer configured")

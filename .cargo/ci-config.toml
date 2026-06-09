@@ -14,3 +14,5 @@ rustflags = ["-D", "warnings"]
 # We don't need fullest debug information for dev stuff (tests etc.) in CI.
 [profile.dev]
 debug = "limited"
+
+

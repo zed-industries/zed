@@ -56,6 +56,12 @@ impl IdleTracker {
         }
     }
 
+    /// Returns a guard that decrements the in-flight count when dropped, so
+    /// the count stays correct even if the runnable being executed panics.
+    fn decrement_on_drop(&self) -> impl Drop + '_ {
+        gpui_util::defer(|| self.decrement())
+    }
+
     fn notify(&self) {
         self.condvar.notify_all();
     }
@@ -127,12 +133,12 @@ impl BenchDispatcher {
                 .name(format!("BenchWorker-{i}"))
                 .spawn(move || {
                     while let Ok(runnable) = receiver.pop() {
+                        let _decrement = idle.decrement_on_drop();
                         let location = runnable.metadata().location;
                         let spawned = runnable.metadata().spawned;
                         profiler::update_running_task(spawned, location);
                         runnable.run();
                         profiler::save_task_timing();
-                        idle.decrement();
                     }
                 })
                 .expect("failed to spawn benchmark worker thread");
@@ -168,16 +174,20 @@ impl BenchDispatcher {
                         };
                         // Count the firing timer as in-flight before releasing
                         // the lock so it can spawn follow-up work that
-                        // `run_until_idle` will wait for.
+                        // `run_until_idle` will wait for. Lock order is always
+                        // timer state, then in-flight count; `run_until_idle`
+                        // never takes them in the opposite order.
                         idle.increment();
                         drop(state);
 
-                        let location = entry.runnable.metadata().location;
-                        let spawned = entry.runnable.metadata().spawned;
-                        profiler::update_running_task(spawned, location);
-                        entry.runnable.run();
-                        profiler::save_task_timing();
-                        idle.decrement();
+                        {
+                            let _decrement = idle.decrement_on_drop();
+                            let location = entry.runnable.metadata().location;
+                            let spawned = entry.runnable.metadata().spawned;
+                            profiler::update_running_task(spawned, location);
+                            entry.runnable.run();
+                            profiler::save_task_timing();
+                        }
 
                         state = timers.state.lock();
                     }
@@ -196,11 +206,14 @@ impl BenchDispatcher {
     }
 
     /// Runs queued main-thread tasks and waits until no background or timer
-    /// work is queued or running.
+    /// work is queued, running, or already due.
     ///
-    /// Pending timers that haven't fired yet are *not* waited for; tasks
-    /// sleeping on a timer are considered idle. Must be called on the thread
-    /// that created this dispatcher.
+    /// Timers that haven't reached their due time yet are *not* waited for:
+    /// the dispatcher runs in real time and cannot skip ahead like the
+    /// `TestDispatcher`'s virtual clock, so waiting on a future timer would
+    /// block for its full real duration. Tasks sleeping on such timers are
+    /// considered idle. Must be called on the thread that created this
+    /// dispatcher.
     pub fn run_until_idle(&self) {
         assert!(
             self.is_main_thread(),
@@ -210,14 +223,25 @@ impl BenchDispatcher {
             if self.drain_main_queue() {
                 continue;
             }
+            // A timer that is due but not yet picked up by the timer thread
+            // counts as pending work. Checked before taking the in-flight lock
+            // to respect the timer-state -> in-flight lock order.
+            if self.has_due_timer() {
+                let mut inflight = self.idle.inflight.lock();
+                self.idle
+                    .condvar
+                    .wait_for(&mut inflight, Duration::from_millis(1));
+                continue;
+            }
             let mut inflight = self.idle.inflight.lock();
             if *inflight == 0 {
                 drop(inflight);
                 // Work that completed just before we took the lock may have
                 // queued new main-thread tasks; their sends happened before the
                 // corresponding in-flight decrements, so one more drain
-                // observes them all.
-                if self.drain_main_queue() {
+                // observes them all. Also re-check timers that became due in
+                // the meantime.
+                if self.drain_main_queue() || self.has_due_timer() {
                     continue;
                 }
                 return;
@@ -228,6 +252,14 @@ impl BenchDispatcher {
                 .condvar
                 .wait_for(&mut inflight, Duration::from_millis(100));
         }
+    }
+
+    fn has_due_timer(&self) -> bool {
+        let state = self.timers.state.lock();
+        state
+            .heap
+            .peek()
+            .is_some_and(|entry| entry.due <= Instant::now())
     }
 
     fn drain_main_queue(&self) -> bool {

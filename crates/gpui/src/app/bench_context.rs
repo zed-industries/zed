@@ -38,8 +38,9 @@ use crate::{
 /// for benchmark windows, e.g. `gpui_platform::current_headless_renderer`.
 /// When present, scenes drawn by benchmarks are rasterized through the real
 /// sprite atlas and submitted to the GPU on present, so quad/sprite
-/// regressions show up in measurements. When `None` (or on platforms without a
-/// headless renderer), presenting discards the scene.
+/// regressions show up in measurements. When `None`, presenting discards the
+/// scene. Currently only macOS provides a headless renderer (Metal), so GPU
+/// submission is excluded from benchmark measurements on other platforms.
 pub fn bench_platform(
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
 ) -> Rc<dyn Platform> {
@@ -110,17 +111,21 @@ impl BenchReport {
         }
     }
 
-    fn total_missed_frames(&self, histogram: &Histogram<u64>) -> u64 {
+    fn total_budget_overruns(&self, histogram: &Histogram<u64>) -> u64 {
         histogram
             .iter_recorded()
             .map(|value| {
-                self.missed_frames(Duration::from_nanos(value.value_iterated_to()))
+                self.budget_overruns(Duration::from_nanos(value.value_iterated_to()))
                     * value.count_at_value()
             })
             .sum()
     }
 
-    fn missed_frames(&self, foreground_time: Duration) -> u64 {
+    /// Returns how many whole frame budgets `foreground_time` exceeded the
+    /// per-frame budget by. This is a synthetic proxy for missed frames: the
+    /// benchmark harness has no vsync, so it counts how many frame deadlines
+    /// would have elapsed while the foreground thread was busy.
+    fn budget_overruns(&self, foreground_time: Duration) -> u64 {
         let foreground_nanos = foreground_time.as_nanos();
         if foreground_nanos <= self.frame_budget_nanos {
             return 0;
@@ -181,12 +186,12 @@ impl BenchReport {
         );
         eprintln!("    max: {}", format_duration(max_foreground_time));
         eprintln!(
-            "    missed frames total: {}",
-            self.total_missed_frames(histogram)
+            "    frame budget overruns total: {}",
+            self.total_budget_overruns(histogram)
         );
         eprintln!(
-            "    missed frames max: {}",
-            self.missed_frames(max_foreground_time)
+            "    frame budget overruns max: {}",
+            self.budget_overruns(max_foreground_time)
         );
     }
 }
@@ -216,7 +221,9 @@ fn format_duration(duration: Duration) -> String {
 }
 
 /// Enables frame tracing for the duration of a measurement and collects the
-/// frames recorded within it, restoring the previous tracing state on finish.
+/// frames recorded within it. The previous tracing state is restored on drop,
+/// so a panicking measurement doesn't leave tracing enabled for unrelated code
+/// (e.g. a later benchmark in the same process).
 struct FrameTraceScope {
     collector: FrameTimingCollector,
     was_already_enabled: bool,
@@ -231,12 +238,17 @@ impl FrameTraceScope {
         }
     }
 
-    fn finish(&mut self) -> Vec<FrameTiming> {
-        let timings = self.collector.collect_unseen();
+    fn finish(mut self) -> Vec<FrameTiming> {
+        self.collector.collect_unseen()
+        // Dropping `self` restores the previous tracing state.
+    }
+}
+
+impl Drop for FrameTraceScope {
+    fn drop(&mut self) {
         if !self.was_already_enabled {
             profiler::set_frame_trace_enabled(false);
         }
-        timings
     }
 }
 
@@ -258,6 +270,10 @@ pub struct BenchAppContext<'a, 'measurement> {
 
 impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Creates a new benchmark app context backed by the provided platform.
+    ///
+    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// (see [`bench_platform`]) so the context can drain foreground work via
+    /// [`Self::run_until_idle`]; panics otherwise.
     pub fn new(
         platform: Rc<dyn Platform>,
         benchmark_name: Option<&'static str>,
@@ -267,6 +283,10 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     }
 
     /// Creates a new benchmark app context backed by the provided platform.
+    ///
+    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// (see [`bench_platform`]) so the context can drain foreground work via
+    /// [`Self::run_until_idle`]; panics otherwise.
     #[doc(hidden)]
     pub fn new_with_platform_and_report(
         platform: Rc<dyn Platform>,
@@ -284,6 +304,13 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         report: BenchReport,
     ) -> Self {
         let background_executor = platform.background_executor();
+        // Validate up front so misconfiguration fails at construction with a
+        // clear message instead of deep inside `run_until_idle`.
+        assert!(
+            background_executor.dispatcher().as_bench().is_some(),
+            "BenchAppContext requires a platform whose executors are backed by a \
+             BenchDispatcher; construct one with gpui::bench_platform"
+        );
         let foreground_executor = platform.foreground_executor();
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
@@ -327,12 +354,13 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     }
 
     /// Runs queued foreground tasks on this thread and waits for in-flight
-    /// background work to finish. Pending timers are not waited for.
+    /// background work to finish. Timers that aren't due yet are not waited
+    /// for (see [`BenchDispatcher::run_until_idle`]).
     pub fn run_until_idle(&self) {
         self.background_executor
             .dispatcher()
             .as_bench()
-            .expect("BenchAppContext requires a platform backed by a BenchDispatcher")
+            .expect("validated in BenchAppContext::build")
             .run_until_idle();
     }
 
@@ -345,7 +373,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// benchmark's frame report through the GPUI frame profiler.
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
-        let mut collector = FrameTraceScope::start();
+        let collector = FrameTraceScope::start();
         let mut benchmark = || benchmark(self);
         bencher.iter(&mut benchmark);
         self.report.record_frame_timings(collector.finish().iter());
@@ -376,7 +404,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             })
             .expect("cannot benchmark renderer for entity without a current window");
 
-        let mut collector = FrameTraceScope::start();
+        let collector = FrameTraceScope::start();
 
         let mut benchmark = || {
             self.with_window(view.entity_id(), |window, cx| {
