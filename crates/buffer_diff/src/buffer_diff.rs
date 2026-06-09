@@ -22,15 +22,10 @@ pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
-    /// Invariant: If you have any hunks they point to
-    /// valid places in the base and new text
-    hunks: SumTree<InternalDiffHunk>,
-    pending_hunks: SumTree<PendingHunk>,
     base_text_buffer: Entity<language::Buffer>,
-    base_text: language::BufferSnapshot,
-    base_text_exists: bool,
-    buffer_snapshot: text::BufferSnapshot,
+    diff_snapshot: Option<BufferDiffSnapshot>,
     secondary_diff: Option<Entity<BufferDiff>>,
+    buffer_snapshot: text::BufferSnapshot,
 }
 
 #[derive(Clone)]
@@ -716,12 +711,18 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         file_exists: bool,
     ) -> Option<Rope> {
-        let head_text = self
+        let Some(diff_snapshot) = &mut self.diff_snapshot else {
+            return None;
+        };
+        let Some(unstaged_diff_snapshot) = &unstaged_diff.diff_snapshot else {
+            return None;
+        };
+        let head_text = diff_snapshot
             .base_text_exists
-            .then(|| self.base_text.as_rope().clone());
-        let index_text = unstaged_diff
+            .then(|| diff_snapshot.base_text.as_rope().clone());
+        let index_text = unstaged_diff_snapshot
             .base_text_exists
-            .then(|| unstaged_diff.base_text.as_rope().clone());
+            .then(|| unstaged_diff_snapshot.base_text.as_rope().clone());
 
         // If the file doesn't exist in either HEAD or the index, then the
         // entire file must be either created or deleted in the index.
@@ -748,13 +749,15 @@ impl BufferDiff {
                     buffer_version: buffer.version().clone(),
                     new_status,
                 };
-                self.pending_hunks = SumTree::from_item(hunk, buffer);
+                diff_snapshot.pending_hunks = SumTree::from_item(hunk, buffer);
                 return new_index_text;
             }
         };
 
         let mut pending_hunks = SumTree::new(buffer);
-        let mut old_pending_hunks = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
+        let mut old_pending_hunks = diff_snapshot
+            .pending_hunks
+            .cursor::<DiffHunkSummary>(buffer);
 
         // first, merge new hunks into pending_hunks
         for DiffHunk {
@@ -801,7 +804,9 @@ impl BufferDiff {
         // append the remainder
         pending_hunks.append(old_pending_hunks.suffix(), buffer);
 
-        let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
+        let mut unstaged_hunk_cursor = unstaged_diff_snapshot
+            .hunks
+            .cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next();
 
         // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
@@ -905,7 +910,7 @@ impl BufferDiff {
         }
         drop(pending_hunks_iter);
         drop(old_pending_hunks);
-        self.pending_hunks = pending_hunks;
+        diff_snapshot.pending_hunks = pending_hunks;
 
         #[cfg(debug_assertions)] // invariants: non-overlapping and sorted
         {
@@ -1525,15 +1530,10 @@ impl BufferDiff {
             base_buffer
         });
 
-        let base_text_snapshot = base_text.read(cx).snapshot();
-
         BufferDiff {
             buffer_id: buffer.remote_id(),
-            hunks: SumTree::new(buffer),
-            pending_hunks: SumTree::new(buffer),
             base_text_buffer: base_text,
-            base_text: base_text_snapshot,
-            base_text_exists: false,
+            diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
         }
@@ -1542,19 +1542,13 @@ impl BufferDiff {
     pub fn new_with_base_text_buffer(
         buffer: &text::BufferSnapshot,
         base_text_buffer: Entity<language::Buffer>,
-        base_text_exists: bool,
-        cx: &mut App,
+        _base_text_exists: bool,
+        _cx: &mut App,
     ) -> Self {
-        // FIXME this is wrong??
-        let base_text = base_text_buffer.read(cx).snapshot();
-
         BufferDiff {
             buffer_id: buffer.remote_id(),
-            hunks: SumTree::new(buffer),
-            pending_hunks: SumTree::new(buffer),
             base_text_buffer,
-            base_text,
-            base_text_exists,
+            diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
         }
@@ -1579,13 +1573,19 @@ impl BufferDiff {
 
         let base_text_snapshot = base_text.read(cx).snapshot();
 
-        BufferDiff {
-            buffer_id: buffer.remote_id(),
+        let diff_snapshot = BufferDiffSnapshot {
             hunks: SumTree::new(buffer),
             pending_hunks: SumTree::new(buffer),
-            base_text_buffer: base_text,
             base_text: base_text_snapshot,
             base_text_exists: true,
+            buffer_snapshot: buffer.clone(),
+            secondary_diff: None,
+        };
+
+        BufferDiff {
+            buffer_id: buffer.remote_id(),
+            base_text_buffer: base_text,
+            diff_snapshot: Some(diff_snapshot),
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
         }
@@ -1626,8 +1626,11 @@ impl BufferDiff {
     }
 
     pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
+        let Some(diff_snapshot) = &mut self.diff_snapshot else {
+            return;
+        };
         if self.secondary_diff.is_some() {
-            self.pending_hunks = SumTree::from_summary(DiffHunkSummary {
+            diff_snapshot.pending_hunks = SumTree::from_summary(DiffHunkSummary {
                 buffer_range: Anchor::min_min_range_for_buffer(self.buffer_id),
                 diff_base_byte_range: 0..0,
                 added_rows: 0,
@@ -1715,8 +1718,6 @@ impl BufferDiff {
             base_text.as_deref().unwrap_or_default(),
             &base_text_snapshot.text()
         );
-        debug_assert_eq!(base_text_snapshot.remote_id(), self.base_text.remote_id());
-        debug_assert_eq!(buffer.remote_id(), self.buffer_snapshot.remote_id());
 
         let language = base_text_snapshot.language();
         let diff_options = build_diff_options(
@@ -1727,13 +1728,20 @@ impl BufferDiff {
         let buffer_snapshot = buffer.clone();
         let base_text_snapshot = base_text_snapshot.clone();
         let base_text_exists = base_text.is_some();
-        let base_text_changed = self.base_text.version() != base_text_snapshot.version();
-        let buffer_changed = self.buffer_snapshot.version() != buffer_snapshot.version();
-        let prev_hunks = self.hunks.clone();
+        let unchanged_hunks = self.diff_snapshot.as_ref().and_then(|diff_snapshot| {
+            if diff_snapshot.base_text_exists == base_text_exists
+                && diff_snapshot.base_text.version() == base_text_snapshot.version()
+                && diff_snapshot.buffer_snapshot.version() == buffer_snapshot.version()
+            {
+                Some(diff_snapshot.hunks.clone())
+            } else {
+                None
+            }
+        });
 
         cx.background_executor().spawn(async move {
-            let hunks = if !base_text_changed && !buffer_changed {
-                prev_hunks
+            let hunks = if let Some(unchanged_hunks) = unchanged_hunks {
+                unchanged_hunks
             } else if let Some(base_text) = base_text {
                 compute_hunks(
                     Some((base_text, base_text_snapshot.as_rope().clone())),
@@ -1769,18 +1777,35 @@ impl BufferDiff {
             buffer_snapshot: new_buffer_snapshot,
         } = update;
         let buffer = &new_buffer_snapshot;
-        let old_snapshot = self.snapshot(cx);
-        let old_base_text_exists = self.base_text_exists;
+        let old_snapshot = self
+            .diff_snapshot
+            .clone()
+            .unwrap_or_else(|| BufferDiffSnapshot {
+                hunks: SumTree::new(buffer),
+                pending_hunks: SumTree::new(buffer),
+                base_text: new_base_text.clone(),
+                base_text_exists: false,
+                buffer_snapshot: new_buffer_snapshot.clone(),
+                secondary_diff: None,
+            });
+        let mut new_snapshot = BufferDiffSnapshot {
+            hunks: new_hunks.clone(),
+            base_text: new_base_text.clone(),
+            base_text_exists: new_base_text_exists,
+            buffer_snapshot: new_buffer_snapshot.clone(),
+            pending_hunks: old_snapshot.pending_hunks.clone(),
+            secondary_diff: None,
+        };
 
+        let old_base_text_exists = old_snapshot.base_text_exists;
         let old_buffer_snapshot = &old_snapshot.buffer_snapshot;
-        let old_base_snapshot = &old_snapshot.base_text;
-        let new_base_snapshot = &new_base_text;
+        let old_base_text = &old_snapshot.base_text;
         let base_text_changed = old_base_text_exists != new_base_text_exists
             || (new_base_text_exists
-                && (old_base_snapshot.remote_id() != new_base_snapshot.remote_id()
-                    || new_base_snapshot
+                && (old_base_text.remote_id() != new_base_text.remote_id()
+                    || new_base_text
                         .version()
-                        .changed_since(old_base_snapshot.version())));
+                        .changed_since(old_base_text.version())));
         let DiffChanged {
             mut changed_range,
             mut base_text_changed_range,
@@ -1793,8 +1818,8 @@ impl BufferDiff {
                 &old_snapshot.hunks,
                 old_buffer_snapshot,
                 buffer,
-                old_base_snapshot,
-                new_base_snapshot,
+                old_base_text,
+                &new_base_text,
             ),
             _ => {
                 let full_range = text::Anchor::min_max_range_for_buffer(self.buffer_id);
@@ -1809,7 +1834,11 @@ impl BufferDiff {
         };
 
         if base_text_changed || clear_pending_hunks {
-            if let Some((first, last)) = self.pending_hunks.first().zip(self.pending_hunks.last()) {
+            if let Some((first, last)) = old_snapshot
+                .pending_hunks
+                .first()
+                .zip(old_snapshot.pending_hunks.last())
+            {
                 let pending_range = first.buffer_range.start..last.buffer_range.end;
                 if let Some(range) = &mut changed_range {
                     range.start = *range.start.min(&pending_range.start, buffer);
@@ -1834,7 +1863,7 @@ impl BufferDiff {
                     extended_range = Some(pending_range);
                 }
             }
-            self.pending_hunks = SumTree::new(buffer);
+            new_snapshot.pending_hunks = SumTree::new(buffer);
         }
 
         if let Some(secondary_changed_range) = secondary_diff_change
@@ -1863,9 +1892,7 @@ impl BufferDiff {
             }
         }
 
-        self.base_text_exists = new_base_text_exists;
-        self.base_text = new_base_text;
-        self.hunks = new_hunks;
+        self.diff_snapshot = Some(new_snapshot);
         self.buffer_snapshot = new_buffer_snapshot;
 
         let result = DiffChanged {
@@ -1890,26 +1917,33 @@ impl BufferDiff {
         self.set_snapshot_with_secondary(new_state, None, false, cx)
     }
 
-    pub fn base_text(&self, _cx: &App) -> language::BufferSnapshot {
-        self.base_text.clone()
+    pub fn base_text(&self, cx: &App) -> language::BufferSnapshot {
+        self.base_text_buffer.read(cx).snapshot()
     }
 
     pub fn base_text_exists(&self) -> bool {
-        self.base_text_exists
+        self.diff_snapshot
+            .as_ref()
+            .is_some_and(|diff_snapshot| diff_snapshot.base_text_exists)
     }
 
     pub fn snapshot(&self, cx: &App) -> BufferDiffSnapshot {
-        BufferDiffSnapshot {
-            hunks: self.hunks.clone(),
-            pending_hunks: self.pending_hunks.clone(),
-            base_text: self.base_text.clone(),
-            base_text_exists: self.base_text_exists,
-            buffer_snapshot: self.buffer_snapshot.clone(),
-            secondary_diff: self.secondary_diff.as_ref().map(|diff| {
-                debug_assert!(diff.read(cx).secondary_diff.is_none());
-                Arc::new(diff.read(cx).snapshot(cx))
-            }),
-        }
+        let mut snapshot = self.diff_snapshot.clone().unwrap_or_else(|| {
+            let base_text = self.base_text_buffer.read(cx).snapshot();
+            BufferDiffSnapshot {
+                hunks: SumTree::new(&self.buffer_snapshot),
+                pending_hunks: SumTree::new(&self.buffer_snapshot),
+                base_text,
+                base_text_exists: false,
+                buffer_snapshot: self.buffer_snapshot.clone(),
+                secondary_diff: None,
+            }
+        });
+        snapshot.secondary_diff = self.secondary_diff.as_ref().map(|diff| {
+            debug_assert!(diff.read(cx).secondary_diff.is_none());
+            Arc::new(diff.read(cx).snapshot(cx))
+        });
+        snapshot
     }
 
     /// Used in cases where the change set isn't derived from git.
@@ -1979,7 +2013,13 @@ impl BufferDiff {
     }
 
     pub fn base_text_string(&self, _cx: &App) -> Option<String> {
-        self.base_text_exists.then(|| self.base_text.text())
+        self.diff_snapshot.as_ref().and_then(|diff_snapshot| {
+            if diff_snapshot.base_text_exists {
+                Some(diff_snapshot.base_text.text())
+            } else {
+                None
+            }
+        })
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1988,7 +2028,7 @@ impl BufferDiff {
         let fut = self.update_diff(
             buffer.clone(),
             &base_text,
-            self.base_text_exists.then(|| Arc::from(base_text.text())),
+            self.base_text_exists().then(|| Arc::from(base_text.text())),
             cx,
         );
         let fg_executor = cx.foreground_executor().clone();
