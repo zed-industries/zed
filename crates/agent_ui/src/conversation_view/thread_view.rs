@@ -1452,8 +1452,78 @@ impl ThreadView {
             }
         }
 
+        // A built-in command (e.g. `/compact`) with trailing text: send the bare
+        // command and queue the rest, so the extra text isn't silently dropped.
+        let native_command =
+            leading_native_command(text, self.session_capabilities.read().available_commands());
+        if let Some(command_name) = native_command {
+            cx.emit(AcpThreadViewEvent::Interacted);
+            self.send_command_queueing_remainder(message_editor, command_name, window, cx);
+            return;
+        }
+
         cx.emit(AcpThreadViewEvent::Interacted);
         self.send_impl(message_editor, window, cx)
+    }
+
+    /// Sends a bare `/command` turn and queues everything the user typed after
+    /// it as a follow-up message. The queued remainder auto-processes when the
+    /// command turn stops, so e.g. `/compact do X` compacts and then runs `do X`
+    /// rather than discarding it.
+    fn send_command_queueing_remainder(
+        &mut self,
+        message_editor: Entity<MessageEditor>,
+        command_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Resolve the editor contents before clearing it: the resolve task
+        // reads the editor lazily, so clearing first would wipe the contents.
+        let contents = self.resolve_message_contents(&message_editor, cx);
+        self.thread_error.take();
+        self.thread_feedback.clear();
+        self.editing_message.take();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (mut content, tracked_buffers) = contents.await?;
+
+            cx.update(|window, cx| {
+                message_editor.update(cx, |message_editor, cx| {
+                    message_editor.clear(window, cx);
+                });
+            })?;
+
+            // Strip the leading `/command` from the first text block; whatever
+            // remains (including any later mention blocks) becomes the queued
+            // follow-up message.
+            if let Some(acp::ContentBlock::Text(text_content)) = content.first_mut() {
+                text_content.text = strip_leading_command(&text_content.text, &command_name);
+            }
+            if matches!(
+                content.first(),
+                Some(acp::ContentBlock::Text(text)) if text.text.trim().is_empty()
+            ) {
+                content.remove(0);
+            }
+
+            let command_block =
+                acp::ContentBlock::Text(acp::TextContent::new(format!("/{command_name}")));
+
+            this.update_in(cx, |this, window, cx| {
+                // Queue the remainder first, then start the command turn; the
+                // queue auto-processes when the command turn stops.
+                if !content.is_empty() {
+                    this.add_to_queue(content, tracked_buffers, cx);
+                }
+                this.send_content(
+                    Task::ready(Ok(Some((vec![command_block], Vec::new())))),
+                    window,
+                    cx,
+                );
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn send_impl(
@@ -10557,6 +10627,41 @@ pub(crate) fn open_link(
     }
 }
 
+/// If `text` is a built-in (native-category) slash command followed by extra
+/// text — e.g. `/compact summarize the API work` — returns the command name.
+/// Built-in commands ignore trailing arguments, so the caller sends the bare
+/// command and queues the remainder rather than discarding it. Commands from
+/// MCP servers and ACP agents are excluded: their trailing text is a real
+/// argument the agent consumes.
+fn leading_native_command(
+    text: &str,
+    available_commands: &[acp::AvailableCommand],
+) -> Option<String> {
+    let rest = text.trim_start().strip_prefix('/')?;
+    let name_end = rest.find(char::is_whitespace)?;
+    let name = &rest[..name_end];
+    if rest[name_end..].trim().is_empty() {
+        return None;
+    }
+    let is_native = available_commands.iter().any(|command| {
+        command.name == name
+            && acp_thread::command_category_from_meta(&command.meta)
+                == Some(acp_thread::CommandCategory::Native)
+    });
+    is_native.then(|| name.to_string())
+}
+
+/// Removes a leading `/command_name` token from `text`, returning the trimmed
+/// remainder. Falls back to the trimmed input if the prefix isn't present.
+fn strip_leading_command(text: &str, command_name: &str) -> String {
+    let trimmed = text.trim_start();
+    trimmed
+        .strip_prefix('/')
+        .and_then(|rest| rest.strip_prefix(command_name))
+        .map(|rest| rest.trim_start().to_string())
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10564,6 +10669,56 @@ mod tests {
     use serde_json::json;
     use util::path;
     use workspace::MultiWorkspace;
+
+    fn native_command(name: &str) -> acp::AvailableCommand {
+        acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ))
+    }
+
+    fn mcp_command(name: &str) -> acp::AvailableCommand {
+        acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Mcp,
+        ))
+    }
+
+    #[test]
+    fn test_leading_native_command_only_splits_native_with_remainder() {
+        let commands = [native_command("compact"), mcp_command("deploy")];
+
+        // Native command with trailing text -> split.
+        assert_eq!(
+            leading_native_command("/compact summarize the API work", &commands),
+            Some("compact".to_string())
+        );
+        // Leading/trailing whitespace is tolerated.
+        assert_eq!(
+            leading_native_command("  /compact   do x  ", &commands),
+            Some("compact".to_string())
+        );
+
+        // Bare native command (no remainder) -> no split; it sends normally.
+        assert_eq!(leading_native_command("/compact", &commands), None);
+        assert_eq!(leading_native_command("/compact   ", &commands), None);
+
+        // MCP/ACP commands consume their trailing text as an argument.
+        assert_eq!(leading_native_command("/deploy prod", &commands), None);
+
+        // Unknown command, or not a slash command at all.
+        assert_eq!(leading_native_command("/unknown foo", &commands), None);
+        assert_eq!(leading_native_command("just a message", &commands), None);
+    }
+
+    #[test]
+    fn test_strip_leading_command() {
+        assert_eq!(strip_leading_command("/compact do x", "compact"), "do x");
+        assert_eq!(
+            strip_leading_command("  /compact  do x ", "compact"),
+            "do x "
+        );
+        // No matching prefix: returns the trimmed input unchanged.
+        assert_eq!(strip_leading_command("hello", "compact"), "hello");
+    }
 
     #[gpui::test]
     async fn test_open_link_bare_path(cx: &mut gpui::TestAppContext) {

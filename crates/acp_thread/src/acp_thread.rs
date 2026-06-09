@@ -77,6 +77,49 @@ pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
     acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
 
+/// Key used in ACP `AvailableCommand` meta to record which source produced a
+/// slash command, so the completion popup can group commands by category.
+pub const COMMAND_CATEGORY_META_KEY: &str = "command_category";
+
+/// The source category of a slash command, used to group commands in the
+/// completion popup. Only the native Zed agent annotates its commands; commands
+/// from external ACP agents carry no category and are grouped on their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandCategory {
+    /// Built-in Zed agent commands (e.g. `/compact`).
+    Native,
+    /// Commands sourced from MCP server prompts.
+    Mcp,
+}
+
+impl CommandCategory {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Mcp => "mcp",
+        }
+    }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "native" => Some(Self::Native),
+            "mcp" => Some(Self::Mcp),
+            _ => None,
+        }
+    }
+}
+
+pub fn meta_with_command_category(category: CommandCategory) -> acp::Meta {
+    acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
+}
+
+pub fn command_category_from_meta(meta: &Option<acp::Meta>) -> Option<CommandCategory> {
+    meta.as_ref()
+        .and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
+        .and_then(|v| v.as_str())
+        .and_then(CommandCategory::from_str)
+}
+
 /// Key used in ACP ToolCall meta to store the session id and message indexes
 pub const SUBAGENT_SESSION_INFO_META_KEY: &str = "subagent_session_info";
 
@@ -3439,6 +3482,27 @@ mod tests {
         time::Duration,
     };
     use util::{path, path_list::PathList};
+
+    #[test]
+    fn command_category_meta_round_trips() {
+        // Exhaustive list of variants. The match below has no wildcard arm, so
+        // adding a `CommandCategory` variant fails to compile here until it's
+        // covered, keeping the `as_str`/`from_str` wire contract in sync.
+        let all = [CommandCategory::Native, CommandCategory::Mcp];
+        for category in all {
+            match category {
+                CommandCategory::Native | CommandCategory::Mcp => {}
+            }
+            let meta = meta_with_command_category(category);
+            assert_eq!(command_category_from_meta(&Some(meta)), Some(category));
+        }
+
+        // Absent meta and unknown categories both decode to `None`.
+        assert_eq!(command_category_from_meta(&None), None);
+        let unknown =
+            acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
+        assert_eq!(command_category_from_meta(&Some(unknown)), None);
+    }
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
