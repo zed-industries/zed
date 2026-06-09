@@ -6741,8 +6741,10 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
+    let action_log = cx.new(|_cx| action_log::ActionLog::new(project.clone()));
+
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::CopyPathTool::new(project));
+    let tool = Arc::new(crate::CopyPathTool::new(project, action_log));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {

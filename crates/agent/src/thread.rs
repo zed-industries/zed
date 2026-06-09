@@ -1873,7 +1873,10 @@ impl Thread {
         let update_agent_location = self.parent_thread_id().is_none();
 
         let language_registry = self.project.read(cx).languages().clone();
-        self.add_tool(CopyPathTool::new(self.project.clone()));
+        self.add_tool(CopyPathTool::new(
+            self.project.clone(),
+            self.action_log.clone(),
+        ));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
         self.add_tool(DeletePathTool::new(
             self.project.clone(),
