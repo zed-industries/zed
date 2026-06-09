@@ -9,7 +9,6 @@
   (else_clause)
 ] @indent
 
-
 (expression_statement
   (_) @indent
   ";" @end)
