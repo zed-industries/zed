@@ -2412,10 +2412,10 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     if lock.background_appearance == WindowBackgroundAppearance::Blurred {
         unsafe {
             // Keep the Metal layer transparent; only hide the blur on inactive
-            // windows and fill an opaque, theme-aware light window background.
-            // The translucent content then shows its own light color over white
-            // instead of being dimmed over the (now hidden) blur. Active windows
-            // stay near-clear so the blur shows through.
+            // windows and fill the system window background color (adapts to
+            // light/dark). The translucent content then shows over that solid
+            // surface instead of being dimmed over the (now hidden) blur.
+            // Active windows stay near-clear so the blur shows through.
             let background_color = if is_active {
                 // Not using `+[NSColor clearColor]` to avoid broken shadow.
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 0.0001)

@@ -122,7 +122,7 @@ pub(crate) struct MetalRenderer {
     shadows_pipeline_state: metal::RenderPipelineState,
     quads_pipeline_state: metal::RenderPipelineState,
     // Same as `quads_pipeline_state` but preserves the destination alpha, used
-    // for quads painted as glass content (see `Window::with_glass_content`).
+    // for quads painted as glass content (see `Styled::glass`).
     quads_glass_pipeline_state: metal::RenderPipelineState,
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,

@@ -3218,24 +3218,6 @@ impl Window {
         result
     }
 
-    /// Paints everything inside `f` as "glass content".
-    ///
-    /// Glass content only blends its RGB and preserves the destination alpha
-    /// channel, so rounded, anti-aliased edges painted on top of a translucent
-    /// glass surface (a window using a system glass/blur background) don't punch
-    /// a hole through that surface along their anti-aliased edge. Use this for
-    /// the content drawn on top of a translucent surface (sidebars, panels)
-    /// when the window background is a system glass effect.
-    pub fn with_glass_content<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.invalidator.debug_assert_paint_or_prepaint();
-
-        let previous = self.glass_content;
-        self.glass_content = true;
-        let result = f(self);
-        self.glass_content = previous;
-        result
-    }
-
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the

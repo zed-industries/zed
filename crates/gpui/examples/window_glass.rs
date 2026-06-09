@@ -6,8 +6,7 @@ use gpui::{
 };
 use gpui_platform::application;
 
-/// A small mail client demonstrating [`Styled::glass`] /
-/// [`Window::with_glass_content`].
+/// A small mail client demonstrating [`Styled::glass`].
 ///
 /// The window uses a system glass background, so the wallpaper shows through
 /// the translucent sidebar. Following Apple's Liquid Glass guidance, only the

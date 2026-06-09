@@ -299,8 +299,8 @@ pub struct Style {
 
     /// Paint this element's content as "glass content": it only blends RGB and
     /// preserves the destination alpha, so rounded anti-aliased edges drawn on
-    /// top of a translucent glass surface don't punch through it. See
-    /// [`crate::Window::with_glass_content`].
+    /// top of a translucent glass surface don't punch through it. Set via
+    /// [`crate::Styled::glass`].
     pub glass_content: bool,
 
     /// The grid columns of this element
