@@ -8,6 +8,7 @@ use crate::{
         ActionButtonState, HistoryNavigationDirection, alignment_element, input_base_styles,
         render_action_button, render_text_input, should_navigate_history,
     },
+    text_finder::{SearchMatch, TextFinder},
 };
 use anyhow::Context as _;
 use collections::HashMap;
@@ -31,7 +32,7 @@ use menu::Confirm;
 use multi_buffer;
 use project::{
     Project, ProjectPath, SearchResults,
-    search::{SearchInputKind, SearchQuery},
+    search::{SearchInputKind, SearchQuery, SearchResult},
     search_history::SearchHistoryCursor,
 };
 use settings::Settings;
@@ -40,7 +41,10 @@ use std::{
     mem,
     ops::{Not, Range},
     pin::pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
@@ -66,7 +70,9 @@ actions!(
         /// Toggles the search filters panel.
         ToggleFilters,
         /// Toggles collapse/expand state of all search result excerpts.
-        ToggleAllSearchResults
+        ToggleAllSearchResults,
+        /// Open a text picker showing the current result in a modal.
+        OpenTextFinder
     ]
 );
 
@@ -230,9 +236,9 @@ fn contains_uppercase(str: &str) -> bool {
 
 pub struct ProjectSearch {
     project: Entity<Project>,
-    excerpts: Entity<MultiBuffer>,
-    pending_search: Option<Task<Option<()>>>,
-    match_ranges: Vec<Range<Anchor>>,
+    pub excerpts: Entity<MultiBuffer>,
+    pub pending_search: Option<Task<Option<SearchResults<SearchResult>>>>,
+    pub match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
     search_id: usize,
@@ -241,6 +247,7 @@ pub struct ProjectSearch {
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
+    pub project_search_turning_into_text_finder: Arc<AtomicBool>,
     _excerpts_subscription: Subscription,
 }
 
@@ -255,7 +262,7 @@ enum InputPanel {
 pub struct ProjectSearchView {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    entity: Entity<ProjectSearch>,
+    pub entity: Entity<ProjectSearch>,
     query_editor: Entity<Editor>,
     replacement_editor: Entity<Editor>,
     results_editor: Entity<Editor>,
@@ -303,6 +310,7 @@ impl ProjectSearch {
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
+            project_search_turning_into_text_finder: Arc::new(AtomicBool::new(false)),
             _excerpts_subscription: subscription,
         }
     }
@@ -327,6 +335,7 @@ impl ProjectSearch {
                 search_history_cursor: self.search_history_cursor.clone(),
                 search_included_history_cursor: self.search_included_history_cursor.clone(),
                 search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+                project_search_turning_into_text_finder: Arc::new(AtomicBool::new(false)),
                 _excerpts_subscription: subscription,
             }
         })
@@ -389,6 +398,8 @@ impl ProjectSearch {
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+        let project_search_turning_into_text_finder =
+            Arc::clone(&self.project_search_turning_into_text_finder);
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)
@@ -412,8 +423,13 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
-            let SearchResults { rx, _task_handle } = search;
+            let SearchResults {
+                rx,
+                tx,
+                task_handle,
+            } = search;
 
+            let rx_for_sharing_with_text_finder = rx.clone();
             let mut matches = pin!(rx.ready_chunks(1024));
             project_search
                 .update(cx, |project_search, cx| {
@@ -476,6 +492,22 @@ impl ProjectSearch {
                         })
                         .ok()?;
                 }
+
+                // We do not want to end the task before all the results taken
+                // from the mpsc rx are in
+                if project_search_turning_into_text_finder.load(Ordering::Relaxed) {
+                    break;
+                }
+            }
+
+            if project_search_turning_into_text_finder.load(Ordering::Relaxed) {
+                let rx = rx_for_sharing_with_text_finder;
+                // get the remaining items from `ReadyChunks`, discarding the `ReadyChunks`
+                return Some(SearchResults {
+                    rx,
+                    tx,
+                    task_handle,
+                });
             }
 
             project_search
@@ -2139,6 +2171,15 @@ impl ProjectSearchBar {
             })
         }
     }
+
+    fn open_text_finder(&mut self, _: &OpenTextFinder, window: &mut Window, _: &mut Context<Self>) {
+        let Some(search) = &self.active_project_search else {
+            tracing::warn!("active_project_search was none");
+            return;
+        };
+
+        TextFinder::open_from_project_search(Entity::clone(search), window);
+    }
 }
 
 impl Render for ProjectSearchBar {
@@ -2525,6 +2566,7 @@ impl Render for ProjectSearchBar {
             })
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))
+            .on_action(cx.listener(Self::open_text_finder))
             .child(search_line)
             .children(query_error_line)
             .children(replace_line)

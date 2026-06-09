@@ -422,7 +422,11 @@ impl PickerDelegate for QuickSearchDelegate {
             }
 
             let mut first_batch = true;
-            let SearchResults { rx, _task_handle } = search_results;
+            let SearchResults {
+                rx,
+                task_handle: _task_handle,
+                ..
+            } = search_results;
             let mut results_stream = std::pin::pin!(rx.ready_chunks(SEARCH_RESULTS_BATCH_SIZE));
 
             while let Some(results) = results_stream.next().await {

@@ -16,22 +16,14 @@ mod delegate;
 mod render;
 use delegate::Delegate;
 
+use crate::ProjectSearchView;
+
 actions!(
     // TODO! reuse most of the ones from project search
-    text_picker,
-    [
-        ReplaceNext,
-        ReplaceAll,
-        ToggleFilters,
-        ToggleLayout,
-        ToggleSplitMenu,
-        ToggleHistory
-    ]
+    text_finder,
+    [ToProjectSearch,]
 );
 
-// TODO! pick a name?
-//   like FileFinder so TextFinder?
-//   like ProjectSearchPicker?
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
@@ -63,7 +55,26 @@ impl TextFinder {
         });
     }
 
-    fn open(window: &mut Window, cx: &mut Context<Workspace>) -> Task<()> {
+    pub fn open_from_project_search(
+        project_search_view: Entity<ProjectSearchView>,
+        window: &mut Window,
+    ) {
+        // TODO!(yara) merge with new and open flow
+        let delegate = Delegate::new(weak_workspace, project, cx);
+        let project = delegate.project.clone();
+        let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
+        let picker_focus_handle = picker.focus_handle(cx);
+        picker.update(cx, |picker, _| {
+            picker.delegate.focus_handle = picker_focus_handle.clone();
+        });
+
+        Self {
+            picker,
+            init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
+        }
+    }
+
+    pub fn open(window: &mut Window, cx: &mut Context<Workspace>) -> Task<()> {
         cx.spawn_in(window, async move |workspace, cx| {
             workspace
                 .update_in(cx, |workspace, window, cx| {
