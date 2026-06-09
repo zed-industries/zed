@@ -313,28 +313,21 @@ pub struct AvailableCommand {
 }
 
 impl AvailableCommand {
-    /// Single source of truth mapping a command's category to its completion
-    /// group: render order (after skills), group key, and header label.
-    /// Built-in commands sort first, then MCP, then external ACP agents.
-    fn category_group(
-        category: Option<acp_thread::CommandCategory>,
-    ) -> (u8, &'static str, &'static str) {
-        match category {
-            Some(acp_thread::CommandCategory::Native) => (0, "commands", "Commands"),
-            Some(acp_thread::CommandCategory::Mcp) => (1, "mcp-commands", "MCP Server Commands"),
-            None => (2, "acp-commands", "ACP Agent Commands"),
-        }
-    }
-
-    /// Stable ordering used so command groups render in a consistent order
-    /// after skills.
     fn category_order(&self) -> u8 {
-        Self::category_group(self.category).0
+        match self.category {
+            Some(acp_thread::CommandCategory::Native) => 0,
+            Some(acp_thread::CommandCategory::Mcp) => 1,
+            None => 2,
+        }
     }
 
     /// Completion group key and header label for this command's category.
     fn group(&self) -> CompletionGroup {
-        let (_, key, label) = Self::category_group(self.category);
+        let (key, label) = match self.category {
+            Some(acp_thread::CommandCategory::Native) => ("commands", "Commands"),
+            Some(acp_thread::CommandCategory::Mcp) => ("mcp-commands", "MCP Server Commands"),
+            None => ("acp-commands", "Commands"),
+        };
         CompletionGroup {
             key: key.into(),
             label: Some(label.into()),
@@ -372,10 +365,6 @@ fn slash_completion_group_key(candidate: &SlashCompletionCandidate) -> u32 {
 /// first) so that each group's entries stay contiguous while the groups
 /// themselves are ordered by their best-ranked member. The sort is stable, so
 /// within a group the original order is preserved.
-///
-/// This lets the completion menu both render one header per group and still
-/// surface the single best match at the top (where it becomes the default
-/// selection).
 fn group_by_relevance<T>(items: &mut [T], group_key: impl Fn(&T) -> u32) {
     let mut group_best_rank: collections::HashMap<u32, usize> = collections::HashMap::default();
     for (rank, item) in items.iter().enumerate() {
@@ -1359,9 +1348,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 // they've moved on to typing the command's argument, where
                 // grouping no longer applies.
                 let show_section_headers = argument.is_none();
-                // Resolve the muted-text highlight up front: the
-                // completion build happens on a background thread where
-                // `cx.theme()` isn't available.
+
                 let source_highlight_id = cx
                     .theme()
                     .syntax()

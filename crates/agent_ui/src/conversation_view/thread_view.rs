@@ -1431,8 +1431,6 @@ impl ThreadView {
 
         // A built-in command (e.g. `/compact`) with trailing text: send the bare
         // command and queue the rest, so the extra text isn't silently dropped.
-        // Resolve into an owned name first so the capabilities read guard is
-        // dropped before the `&mut self` call below.
         let native_command =
             leading_native_command(text, self.session_capabilities.read().available_commands());
         if let Some(command_name) = native_command {

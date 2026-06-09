@@ -113,9 +113,6 @@ impl From<&Skill> for NativeAvailableSkill {
     }
 }
 
-/// Name of the built-in `/compact` slash command. Reserved by the native
-/// agent (when the handoff flag is on) so it can't be silently shadowed by a
-/// same-named MCP prompt or skill.
 const COMPACT_COMMAND_NAME: &str = "compact";
 
 /// Returns the set of MCP prompt names that must be server-qualified
@@ -1427,9 +1424,6 @@ impl NativeAgent {
         cx: &App,
     ) -> Vec<acp::AvailableCommand> {
         let compact_command = cx.has_flag::<HandoffFeatureFlag>().then(|| {
-            // `/compact` is a built-in command of the Zed agent when handoff is
-            // enabled. Other (e.g. ACP) agents bring their own `/compact` if
-            // they have one, so this list only governs the native agent.
             acp::AvailableCommand::new(
                 COMPACT_COMMAND_NAME,
                 "Summarize the conversation so far to free up context",
@@ -1808,9 +1802,7 @@ impl NativeAgent {
     }
 
     /// Run a summary-based context compaction in response to the built-in
-    /// `/compact` slash command. Unlike a skill or MCP prompt, this doesn't
-    /// add command text to the model context — it just compacts the existing
-    /// conversation and streams the resulting summary back to the UI.
+    /// `/compact` slash command.
     fn send_compact_command(
         &self,
         message_id: UserMessageId,
@@ -2499,10 +2491,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
-            // `/compact` is a built-in command of the Zed agent (see
-            // `build_available_commands_for_project`). It takes precedence
-            // over MCP prompts and skills of the same name and forces a
-            // summary-based context compaction.
             if cx.has_flag::<HandoffFeatureFlag>()
                 && parsed_command.is_unqualified(COMPACT_COMMAND_NAME)
             {

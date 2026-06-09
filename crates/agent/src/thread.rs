@@ -2225,15 +2225,7 @@ impl Thread {
     }
 
     /// Force a manual context compaction using the summary strategy,
-    /// regardless of the current token usage or context window size. Backs the
-    /// always-available `/compact` slash command in the Zed agent. Returns an
-    /// event stream mirroring a normal turn so the UI can render the
-    /// compaction progress followed by a terminal stop event.
-    ///
-    /// `id` is the slash-command user message id. It is only committed to the
-    /// thread (as a zero-content rewind marker preceding the summary) once the
-    /// compaction succeeds, so a cancelled, failed, or no-op compaction leaves
-    /// no trailing marker behind.
+    /// regardless of the current token usage or context window size.
     pub fn compact(
         &mut self,
         id: UserMessageId,
@@ -2798,20 +2790,6 @@ impl Thread {
                     }
                 }
                 CompactionInsertion::Manual { marker_id } => {
-                    // Append the slash-command user message as a zero-content
-                    // rewind marker (matching the UI's `/compact` bubble),
-                    // immediately followed by the summary. Empty user messages
-                    // are skipped when request history is built, so the marker
-                    // stays out of model context while still giving
-                    // rewind/truncate a target.
-                    //
-                    // The marker has no recorded `request_token_usage`, so the
-                    // context meter reads as empty until the next turn. That's
-                    // the intended signal: compaction just freed the context,
-                    // and the post-compaction size is only known once the next
-                    // request reports usage (no tokenizer is available here, and
-                    // the compaction request's own usage reflects the larger,
-                    // pre-compaction conversation).
                     this.messages.push(Arc::new(Message::User(UserMessage {
                         id: marker_id,
                         content: Arc::from([]),
@@ -3890,15 +3868,8 @@ impl Thread {
         Some(insertion_ix)
     }
 
-    /// Insertion point for a manually-triggered compaction. Unlike
-    /// [`Self::compaction_message_target_ix`], this ignores the token
-    /// threshold and the minimum-context-window guard because the user
-    /// explicitly asked to compact. Returns `None` only when there is nothing
-    /// to summarize (no messages, or the thread already ends in a compaction).
-    ///
-    /// Note this is evaluated up front against the current history; the summary
-    /// itself is appended at the end of the thread once it streams in (see
-    /// [`CompactionInsertion::Manual`]).
+    /// Insertion point for a manually-triggered compaction.
+    /// Returns `None` only when there is nothing to summarize (no messages, or the thread already ends in a compaction).
     fn forced_compaction_target_ix(&self) -> Option<usize> {
         if matches!(
             self.messages.last().map(|message| &**message),
@@ -4179,10 +4150,7 @@ enum CompactionInsertion {
     /// Automatic compaction inserts the summary at an index computed up front
     /// (which may be before a trailing not-yet-answered user message).
     Auto { insertion_ix: usize },
-    /// Manual `/compact` appends a zero-content user message (the rewind marker
-    /// matching the UI's `/compact` bubble) followed by the summary. The marker
-    /// is only committed on success, so cancelled or failed compactions leave
-    /// no trailing marker.
+    /// Manual `/compact` appends a zero-content user message followed by the summary.
     Manual { marker_id: UserMessageId },
 }
 
