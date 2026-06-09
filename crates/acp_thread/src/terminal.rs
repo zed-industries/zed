@@ -185,6 +185,7 @@ pub(crate) fn apply_windows_wsl_sandbox_wrap(
     sandbox_wrap: SandboxWrap,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
+        .non_interactive()
         .redirect_stdin_to_dev_null()
         .build(Some(command), args);
     let writable: Vec<_> = sandbox_wrap
