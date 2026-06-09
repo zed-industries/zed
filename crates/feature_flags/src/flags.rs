@@ -42,7 +42,7 @@ impl FeatureFlag for HandoffFeatureFlag {
     type Value = PresenceFlag;
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
 register_feature_flag!(HandoffFeatureFlag);
