@@ -1145,21 +1145,14 @@ impl GitStore {
                 DiffKind::Unstaged => {
                     let diff_state = diff_state.read(cx);
                     let base_text_buffer = diff_state.index_text_buffer.clone();
-                    let base_text_exists = diff_state.index_text.is_some();
                     cx.new(|cx| {
-                        BufferDiff::new_with_base_text_buffer(
-                            &text_snapshot,
-                            base_text_buffer,
-                            base_text_exists,
-                            cx,
-                        )
+                        BufferDiff::new_with_base_text_buffer(&text_snapshot, base_text_buffer, cx)
                     })
                 }
                 DiffKind::Staged => {
                     let diff_state = diff_state.read(cx);
                     let index_text_buffer = diff_state.index_text_buffer.clone();
                     let base_text_buffer = diff_state.head_text_buffer.clone();
-                    let base_text_exists = diff_state.head_text.is_some();
                     index_text_buffer.update(cx, |index_text_buffer, cx| {
                         if let Some(language_registry) = language_registry.clone() {
                             index_text_buffer.set_language_registry(language_registry);
@@ -1171,7 +1164,6 @@ impl GitStore {
                         BufferDiff::new_with_base_text_buffer(
                             &index_text_snapshot,
                             base_text_buffer,
-                            base_text_exists,
                             cx,
                         )
                     })
@@ -1179,14 +1171,8 @@ impl GitStore {
                 DiffKind::Uncommitted => {
                     let diff_state = diff_state.read(cx);
                     let base_text_buffer = diff_state.head_text_buffer.clone();
-                    let base_text_exists = diff_state.head_text.is_some();
                     cx.new(|cx| {
-                        BufferDiff::new_with_base_text_buffer(
-                            &text_snapshot,
-                            base_text_buffer,
-                            base_text_exists,
-                            cx,
-                        )
+                        BufferDiff::new_with_base_text_buffer(&text_snapshot, base_text_buffer, cx)
                     })
                 }
                 DiffKind::SinceOid(_) => {
@@ -1212,12 +1198,10 @@ impl GitStore {
                             diff
                         } else {
                             let base_text_buffer = diff_state.index_text_buffer.clone();
-                            let base_text_exists = diff_state.index_text.is_some();
                             let unstaged_diff = cx.new(|cx| {
                                 BufferDiff::new_with_base_text_buffer(
                                     &text_snapshot,
                                     base_text_buffer,
-                                    base_text_exists,
                                     cx,
                                 )
                             });

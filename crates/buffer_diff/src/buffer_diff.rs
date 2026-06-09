@@ -16,7 +16,7 @@ use sum_tree::SumTree;
 use text::{
     Anchor, Bias, BufferId, Edit, OffsetRangeExt, Patch, Point, ToOffset as _, ToPoint as _,
 };
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
@@ -1531,7 +1531,6 @@ impl BufferDiff {
     pub fn new_with_base_text_buffer(
         buffer: &text::BufferSnapshot,
         base_text_buffer: Entity<language::Buffer>,
-        _base_text_exists: bool,
         _cx: &mut App,
     ) -> Self {
         BufferDiff {
@@ -1726,6 +1725,10 @@ impl BufferDiff {
         debug_assert_eq!(
             base_text.as_deref().unwrap_or_default(),
             &base_text_snapshot.text()
+        );
+        debug_assert_eq!(
+            base_text_snapshot.remote_id(),
+            self.base_text_buffer.read(cx).remote_id()
         );
 
         let language = base_text_snapshot.language();
@@ -1982,13 +1985,21 @@ impl BufferDiff {
             let base_text_diff = base_text_diff.await;
             let Some(edited_base_text) = this
                 .update(cx, |this, cx| {
-                    this.base_text_buffer.update(cx, |base_text_buffer, cx| {
-                        base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
-                        assert!(base_text_buffer.version() == base_text_diff.base_version);
-                        base_text_buffer.snapshot_with_edits(base_text_diff.edits, cx)
-                    })
+                    if this.base_text_buffer.read(cx).version() != base_text_diff.base_version {
+                        log::warn!("dropping concurrent diff update");
+                        debug_panic!("incorrect concurrent call to set_base_text");
+                        return None;
+                    }
+                    let edited_base_text =
+                        this.base_text_buffer.update(cx, |base_text_buffer, cx| {
+                            base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
+                            assert!(base_text_buffer.version() == base_text_diff.base_version);
+                            base_text_buffer.snapshot_with_edits(base_text_diff.edits, cx)
+                        });
+                    Some(edited_base_text)
                 })
                 .log_err()
+                .flatten()
             else {
                 return;
             };
@@ -2009,6 +2020,12 @@ impl BufferDiff {
             };
             let state = state.await;
             this.update(cx, |this, cx| {
+                if &this.base_text_buffer.read(cx).version() != edited_base_text.base_version() {
+                    log::warn!("dropping concurrent diff update");
+                    debug_panic!("incorrect concurrent call to set_base_text");
+                    return;
+                }
+
                 this.base_text_buffer.update(cx, |base_text_buffer, cx| {
                     base_text_buffer.fast_forward(edited_base_text, cx)
                 });
