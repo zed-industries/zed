@@ -62,6 +62,12 @@ pub(crate) struct Client {
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
+    /// Wall-clock-equivalent timestamp of the most recent inbound JSON-RPC
+    /// frame from the server (response, request, OR notification — anything).
+    /// `request_with` consults this to decide whether the server is genuinely
+    /// silent or just slow-but-talking. Stored as the executor's clock so
+    /// `cx.executor().advance_clock()` works in tests.
+    inbound_activity_at: Arc<Mutex<Instant>>,
     /// Single-slot side channel for the last transport-level error. When the
     /// output task encounters a send failure it stashes the error here and
     /// exits; the next request to observe cancellation `.take()`s it so it can
@@ -205,18 +211,21 @@ impl Client {
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
+        let inbound_activity_at = Arc::new(Mutex::new(cx.background_executor().now()));
 
         let receive_input_task = cx.spawn({
             let subscription_set = subscription_set.clone();
             let response_handlers = response_handlers.clone();
             let request_handlers = request_handlers.clone();
             let transport = transport.clone();
+            let inbound_activity_at = inbound_activity_at.clone();
             async move |cx| {
                 Self::handle_input(
                     transport,
                     subscription_set,
                     request_handlers,
                     response_handlers,
+                    inbound_activity_at,
                     cx,
                 )
                 .log_err()
@@ -259,6 +268,7 @@ impl Client {
             transport,
             request_timeout,
             last_transport_error,
+            inbound_activity_at,
         })
     }
 
@@ -273,12 +283,20 @@ impl Client {
         subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
         request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        inbound_activity_at: Arc<Mutex<Instant>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let mut receiver = transport.receive();
 
         while let Some(message) = receiver.next().await {
             log::trace!("recv: {}", &message);
+            // Mark the connection as alive on every inbound frame, regardless
+            // of whether it parses or routes anywhere. The MCP spec lets
+            // servers emit `notifications/progress` (or any other notification)
+            // during long-running tool calls; treating *any* frame as a
+            // liveness signal keeps the per-request idle timer honest without
+            // having to plumb progress tokens through to the request future.
+            *inbound_activity_at.lock() = cx.background_executor().now();
             if let Ok(request) = serde_json::from_str::<AnyRequest>(&message) {
                 let mut request_handlers = request_handlers.lock();
                 if let Some(handler) = request_handlers.get_mut(request.method) {
@@ -401,17 +419,11 @@ impl Client {
             .context("failed to write to context server's stdin");
 
         let executor = self.executor.clone();
-        let started = Instant::now();
+        let started = executor.now();
         handle_response?;
         send?;
 
-        let mut timeout_fut = pin!(
-            match timeout {
-                Some(timeout) => future::Either::Left(executor.timer(timeout)),
-                None => future::Either::Right(future::pending()),
-            }
-            .fuse()
-        );
+        let mut response_fut = pin!(rx.fuse());
         let mut cancel_fut = pin!(
             match cancel_rx {
                 Some(rx) => future::Either::Left(async {
@@ -422,42 +434,77 @@ impl Client {
             .fuse()
         );
 
-        select! {
-            response = rx.fuse() => {
-                let elapsed = started.elapsed();
-                log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
-                match response {
-                    Ok(response) => {
-                        let parsed: AnyResponse = serde_json::from_str(&response)?;
-                        if let Some(error) = parsed.error {
-                            Err(anyhow!(error.message))
-                        } else if let Some(result) = parsed.result {
-                            Ok(serde_json::from_str(result.get())?)
-                        } else {
-                            anyhow::bail!("Invalid response: no result or error");
-                        }
+        // Idle-timer loop: rather than a single fixed `timer(timeout)`, we
+        // re-arm a per-iteration timer pegged to the last inbound activity
+        // timestamp. Any frame the server emits — response, request, OR
+        // notification (including `notifications/progress`) — bumps that
+        // timestamp inside `handle_input` and therefore extends our deadline.
+        // A genuinely silent server still bails after `timeout` of true
+        // silence, preserving the protective behavior of the old timer.
+        loop {
+            let sleep_for = match timeout {
+                Some(timeout) => {
+                    let last_activity = (*self.inbound_activity_at.lock()).max(started);
+                    let deadline = last_activity + timeout;
+                    let now = executor.now();
+                    if now >= deadline {
+                        log::error!(
+                            "cancelled csp request task for {method:?} id {id} after {:?} of server silence",
+                            timeout
+                        );
+                        anyhow::bail!("Context server request timeout");
                     }
-                    Err(_canceled) => {
-                        if let Some(err) = self.last_transport_error.lock().take() {
-                            return Err(err);
+                    Some(deadline - now)
+                }
+                None => None,
+            };
+            let mut timer_fut = pin!(
+                match sleep_for {
+                    Some(duration) => future::Either::Left(executor.timer(duration)),
+                    None => future::Either::Right(future::pending()),
+                }
+                .fuse()
+            );
+
+            select! {
+                response = response_fut.as_mut() => {
+                    let elapsed = executor.now().saturating_duration_since(started);
+                    log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
+                    match response {
+                        Ok(response) => {
+                            let parsed: AnyResponse = serde_json::from_str(&response)?;
+                            if let Some(error) = parsed.error {
+                                return Err(anyhow!(error.message));
+                            } else if let Some(result) = parsed.result {
+                                return Ok(serde_json::from_str(result.get())?);
+                            } else {
+                                anyhow::bail!("Invalid response: no result or error");
+                            }
                         }
-                        anyhow::bail!("cancelled")
+                        Err(_canceled) => {
+                            if let Some(err) = self.last_transport_error.lock().take() {
+                                return Err(err);
+                            }
+                            anyhow::bail!("cancelled")
+                        }
                     }
                 }
-            }
-            _ = cancel_fut => {
-                self.notify(
-                    Cancelled::METHOD,
-                    ClientNotification::Cancelled(CancelledParams {
-                        request_id: RequestId::Int(id),
-                        reason: None
-                    })
-                ).log_err();
-                anyhow::bail!(RequestCanceled)
-            }
-            _ = timeout_fut => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
-                anyhow::bail!("Context server request timeout");
+                _ = cancel_fut.as_mut() => {
+                    self.notify(
+                        Cancelled::METHOD,
+                        ClientNotification::Cancelled(CancelledParams {
+                            request_id: RequestId::Int(id),
+                            reason: None
+                        })
+                    ).log_err();
+                    anyhow::bail!(RequestCanceled)
+                }
+                _ = timer_fut => {
+                    // Re-evaluate the deadline at the top of the loop. If new
+                    // activity arrived during the sleep, the next iteration
+                    // computes a longer deadline; otherwise we bail there.
+                    continue;
+                }
             }
         }
     }
@@ -590,5 +637,145 @@ impl Drop for NotificationSubscription {
             handler_ids.retain(|id| *id != self.id);
             !handler_ids.is_empty()
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::{FakeTransport, create_fake_transport};
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use std::time::Duration;
+
+    const TEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+    }
+
+    fn new_test_client(cx: &mut TestAppContext, transport: Arc<FakeTransport>) -> Client {
+        cx.update(|cx| {
+            Client::new(
+                ContextServerId("test".into()),
+                "test".into(),
+                transport,
+                Some(TEST_TIMEOUT),
+                cx.to_async(),
+            )
+            .expect("Client construction should succeed")
+        })
+    }
+
+    #[gpui::test]
+    async fn request_times_out_when_server_is_silent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let transport =
+            Arc::new(create_fake_transport("silent-server", cx.executor()));
+        let client = new_test_client(cx, transport.clone());
+
+        let request: Task<anyhow::Result<serde_json::Value>> =
+            cx.spawn(async move |_| client.request("tools/call", json!({"name": "slow"})).await);
+
+        cx.executor().advance_clock(TEST_TIMEOUT + Duration::from_secs(1));
+        let result = request.await;
+        assert!(
+            result.is_err(),
+            "expected timeout error after silence, got {result:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn progress_notifications_keep_request_alive_past_timeout(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let transport =
+            Arc::new(create_fake_transport("progress-emitter", cx.executor()));
+        let client = new_test_client(cx, transport.clone());
+
+        let request_transport = transport.clone();
+        let request: Task<anyhow::Result<serde_json::Value>> = cx.spawn(async move |cx| {
+            let task = client.request::<serde_json::Value>("tools/call", json!({"name": "slow"}));
+            // Park until the client has actually emitted the request so the
+            // FakeTransport has registered the in-flight call before we start
+            // injecting progress.
+            cx.background_executor().timer(Duration::from_millis(1)).await;
+            // Fire-and-forget the response after the test pumps the clock
+            // past what would have been the original timeout.
+            let _ = request_transport;
+            task.await
+        });
+
+        // Emit a `notifications/progress` every 30 s for 3 minutes — well past
+        // the 60 s default timeout. Each notification must reset the idle
+        // timer; if the fix is correct, the request never times out.
+        for tick in 1..=6u64 {
+            cx.executor().advance_clock(Duration::from_secs(30));
+            transport.inject_message(
+                json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {
+                        "progressToken": 0,
+                        "progress": tick * 10,
+                        "total": 100,
+                    }
+                })
+                .to_string(),
+            );
+            cx.executor().run_until_parked();
+        }
+
+        // Now have the "server" deliver the response.
+        transport.inject_message(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": {"content": [{"type": "text", "text": "done"}], "isError": false}
+            })
+            .to_string(),
+        );
+
+        let result = request.await;
+        assert!(
+            result.is_ok(),
+            "request should have completed once response arrived; got {result:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn request_times_out_after_progress_stops(cx: &mut TestAppContext) {
+        init_test(cx);
+        let transport = Arc::new(create_fake_transport("stalled-server", cx.executor()));
+        let client = new_test_client(cx, transport.clone());
+
+        let request: Task<anyhow::Result<serde_json::Value>> =
+            cx.spawn(async move |_| client.request("tools/call", json!({"name": "slow"})).await);
+
+        // Bump the timer along for a while with a couple of progress
+        // notifications to confirm the activity reset path works...
+        for tick in 1..=2u64 {
+            cx.executor().advance_clock(Duration::from_secs(30));
+            transport.inject_message(
+                json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {"progressToken": 0, "progress": tick * 25, "total": 100}
+                })
+                .to_string(),
+            );
+            cx.executor().run_until_parked();
+        }
+
+        // ...then go silent for longer than the timeout. The request must
+        // bail out once the silence gap exceeds the configured threshold,
+        // even though earlier activity reset the timer.
+        cx.executor().advance_clock(TEST_TIMEOUT + Duration::from_secs(1));
+        let result = request.await;
+        assert!(
+            result.is_err(),
+            "expected timeout once progress stopped, got {result:?}"
+        );
     }
 }
