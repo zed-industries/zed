@@ -5,9 +5,10 @@ use hdrhistogram::Histogram;
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
-    Entity, EntityId, Focusable, ForegroundExecutor, FrameLatencySnapshot, Global, Platform,
-    Render, Reservation, Task, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform, Render, Reservation, Task,
+    VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
+    profiler::{self, FrameTiming, FrameTimingCollector},
 };
 
 /// Frame budget used when a benchmark doesn't specify one, in nanoseconds (120fps).
@@ -36,25 +37,26 @@ impl BenchReport {
         }
     }
 
-    fn record_frame_latency_delta(
-        &self,
-        before: &FrameLatencySnapshot,
-        after: &FrameLatencySnapshot,
-    ) {
-        let mut dirty_to_draw = after.dirty_to_draw_histogram.clone();
-        dirty_to_draw
-            .subtract(&before.dirty_to_draw_histogram)
-            .unwrap();
-
-        let mut draw = after.draw_histogram.clone();
-        draw.subtract(&before.draw_histogram).unwrap();
-
-        self.frame_snapshot
-            .borrow_mut()
-            .record(WindowFrameSnapshot {
-                dirty_to_draw,
-                draw,
-            });
+    fn record_frame_timings<'i>(&self, timings: impl IntoIterator<Item = &'i FrameTiming>) {
+        let mut snapshot = self.frame_snapshot.borrow_mut();
+        for timing in timings {
+            snapshot
+                .draw
+                .record(timing.draw_duration().as_nanos() as u64)
+                .ok();
+            if let Some(dirty_to_draw) = timing.dirty_to_draw_duration() {
+                snapshot
+                    .dirty_to_draw
+                    .record(dirty_to_draw.as_nanos() as u64)
+                    .ok();
+            }
+            if timing.invalidations > 0 {
+                snapshot
+                    .invalidations_per_frame
+                    .record(timing.invalidations)
+                    .ok();
+            }
+        }
     }
 
     fn total_missed_frames(&self, histogram: &Histogram<u64>) -> u64 {
@@ -89,6 +91,13 @@ impl BenchReport {
         eprintln!("  note: includes Criterion warmup/calibration");
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
+        if !frame_snapshot.invalidations_per_frame.is_empty() {
+            eprintln!(
+                "  invalidations per frame: mean {:.2}, max {}",
+                frame_snapshot.invalidations_per_frame.mean(),
+                frame_snapshot.invalidations_per_frame.max()
+            );
+        }
     }
 
     fn print_histogram(&self, name: &str, histogram: &Histogram<u64>) {
@@ -134,19 +143,16 @@ impl BenchReport {
 struct WindowFrameSnapshot {
     dirty_to_draw: Histogram<u64>,
     draw: Histogram<u64>,
+    invalidations_per_frame: Histogram<u64>,
 }
 
 impl WindowFrameSnapshot {
     fn new() -> Self {
         Self {
-            dirty_to_draw: Histogram::new(3).unwrap(),
-            draw: Histogram::new(3).unwrap(),
+            dirty_to_draw: Histogram::new(3).expect("3 significant digits is valid"),
+            draw: Histogram::new(3).expect("3 significant digits is valid"),
+            invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
         }
-    }
-
-    fn record(&mut self, snapshot: WindowFrameSnapshot) {
-        self.dirty_to_draw.add(snapshot.dirty_to_draw).unwrap();
-        self.draw.add(snapshot.draw).unwrap();
     }
 
     fn is_empty(&self) -> bool {
@@ -261,6 +267,10 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// bench builds, flushing the update's effects synchronously draws dirty
     /// windows. The entity should be part of the window's render tree, such as the
     /// root view or a child of it.
+    ///
+    /// Frame timings are collected through the GPUI frame profiler
+    /// ([`crate::profiler::record_frame_timing`]), which is enabled for the
+    /// duration of the measurement.
     pub fn bench_renderer<V>(
         &mut self,
         view: Entity<V>,
@@ -269,12 +279,14 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         V: 'static + Render,
     {
         let bencher = self.take_bencher("bench_renderer");
-        let report = self.report.clone();
-        let before = self
+        let window_id = self
             .with_window(view.entity_id(), |window, _| {
-                window.frame_latency_snapshot()
+                window.window_handle().window_id()
             })
             .expect("cannot benchmark renderer for entity without a current window");
+
+        let was_already_enabled = !profiler::set_frame_trace_enabled(true);
+        let mut collector = FrameTimingCollector::new();
 
         let mut benchmark = || {
             self.with_window(view.entity_id(), |window, cx| {
@@ -284,12 +296,15 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         };
         bencher.iter(&mut benchmark);
 
-        let after = self
-            .with_window(view.entity_id(), |window, _| {
-                window.frame_latency_snapshot()
-            })
-            .expect("cannot benchmark renderer for entity without a current window");
-        report.record_frame_latency_delta(&before, &after);
+        let timings = collector.collect_unseen();
+        if !was_already_enabled {
+            profiler::set_frame_trace_enabled(false);
+        }
+        self.report.record_frame_timings(
+            timings
+                .iter()
+                .filter(|timing| timing.window_id == window_id),
+        );
         self.replace_bencher(bencher);
     }
 

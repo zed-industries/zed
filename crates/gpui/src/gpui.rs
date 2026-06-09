@@ -33,7 +33,7 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
-/// Profiling utilities for task timing and thread performance tracking.
+/// Profiling utilities for task, frame, and thread performance tracking.
 pub mod profiler;
 #[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
 #[expect(missing_docs)]
