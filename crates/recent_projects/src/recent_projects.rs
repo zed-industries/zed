@@ -140,7 +140,7 @@ pub async fn get_recent_projects(
         .iter()
         .flat_map(|workspace| workspace.identity_paths.paths().iter().cloned())
         .collect();
-    all_paths.sort();
+    all_paths.sort_unstable();
     all_paths.dedup();
     let path_details =
         util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
@@ -219,7 +219,7 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
         .iter()
         .map(|wt| wt.read(cx).abs_path().to_path_buf())
         .collect();
-    all_paths.sort();
+    all_paths.sort_unstable();
     all_paths.dedup();
     let path_details =
         util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
@@ -348,7 +348,7 @@ pub fn init(cx: &mut App) {
                         Please note that Zed currently does not support opening network share folders inside wsl.
                     "#};
 
-                    let _ = cx.prompt(gpui::PromptLevel::Critical, "Invalid path", Some(&message), &["Ok"]).await;
+                    let _ = cx.prompt(gpui::PromptLevel::Critical, "Invalid path", Some(&message), &["OK"]).await;
                     return;
                 }
 
@@ -492,7 +492,7 @@ pub fn init(cx: &mut App) {
                         gpui::PromptLevel::Critical,
                         "Cannot open Dev Container from remote project",
                         None,
-                        &["Ok"],
+                        &["OK"],
                     )
                     .await
                     .ok();

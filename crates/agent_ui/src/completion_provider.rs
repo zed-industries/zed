@@ -12,7 +12,9 @@ use anyhow::Result;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
-use gpui::{App, BackgroundExecutor, Entity, Focusable, SharedString, Task, WeakEntity, Window};
+use gpui::{
+    App, BackgroundExecutor, Entity, Focusable, Hsla, SharedString, Task, WeakEntity, Window,
+};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use multi_buffer::ToOffset as _;
@@ -303,22 +305,27 @@ pub struct AvailableSkill {
 }
 
 fn skill_completion_icon_path(
-    _skill: &AvailableSkill,
+    skill: &AvailableSkill,
     uri: &MentionUri,
     cx: &mut App,
 ) -> SharedString {
-    uri.icon_path(cx)
+    if skill.warning.is_some() {
+        IconName::Warning.path().into()
+    } else {
+        uri.icon_path(cx)
+    }
+}
+
+fn skill_completion_icon_color(skill: &AvailableSkill, cx: &App) -> Option<Hsla> {
+    skill.warning.is_some().then(|| cx.theme().status().warning)
 }
 
 fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
-    if let Some(warning) = &skill.warning {
-        CompletionDocumentation::WarningAndMultiLinePlainText {
-            warning: "".into(),
-            plain_text: Some(warning.clone()),
-        }
-    } else {
-        CompletionDocumentation::MultiLinePlainText(skill.description.to_string().into())
-    }
+    let text = match &skill.warning {
+        Some(warning) => warning.clone(),
+        None => skill.description.to_string().into(),
+    };
+    CompletionDocumentation::MultiLinePlainText(text)
 }
 
 #[derive(Debug, Clone)]
@@ -400,6 +407,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text: format!("@{} ", mode.keyword()),
                 label: CodeLabel::plain(mode.label().to_string(), None),
                 icon_path: Some(mode.icon().path().into()),
+                icon_color: None,
                 documentation: None,
                 source: project::CompletionSource::Custom,
                 match_start: None,
@@ -457,6 +465,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
+            icon_color: None,
             confirm: Some(confirm_completion_callback(
                 title,
                 source_range.start,
@@ -505,6 +514,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_path),
+            icon_color: skill_completion_icon_color(&skill, cx),
             confirm: Some(confirm_completion_callback(
                 crease_text,
                 source_range.start,
@@ -569,6 +579,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -635,6 +646,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -676,6 +688,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -726,6 +739,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             new_text,
             label: CodeLabel::plain(action.label().to_string(), None),
             icon_path: Some(action.icon().path().into()),
+            icon_color: None,
             documentation: None,
             source: project::CompletionSource::Custom,
             match_start: None,
@@ -820,6 +834,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -862,6 +877,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -1325,6 +1341,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 type SkillInfo = (
                     String,
                     SharedString,
+                    Option<Hsla>,
                     Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>,
                 );
                 let slash_candidates: Task<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>> = {
@@ -1344,6 +1361,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         let new_text = format!("{} ", uri.as_link());
                                         let new_text_len = new_text.len();
                                         let icon_path = skill_completion_icon_path(skill, &uri, cx);
+                                        let icon_color = skill_completion_icon_color(skill, cx);
                                         let crease_text: SharedString = uri.name().into();
                                         let confirm = confirm_completion_callback(
                                             crease_text,
@@ -1355,7 +1373,10 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             mention_set.clone(),
                                             workspace.clone(),
                                         );
-                                        (candidate, Some((new_text, icon_path, confirm)))
+                                        (
+                                            candidate,
+                                            Some((new_text, icon_path, icon_color, confirm)),
+                                        )
                                     }
                                     SlashCompletionCandidate::Command(_) => (candidate, None),
                                 })
@@ -1379,7 +1400,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     Some(&skill.source),
                                     source_highlight_id,
                                 );
-                                let Some((new_text, icon_path, confirm)) = skill_info else {
+                                let Some((new_text, icon_path, icon_color, confirm)) = skill_info
+                                else {
                                     unreachable!("skill candidates always have confirm callbacks")
                                 };
                                 Completion {
@@ -1389,6 +1411,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     documentation: Some(skill_completion_documentation(&skill)),
                                     source: project::CompletionSource::Custom,
                                     icon_path: Some(icon_path),
+                                    icon_color,
                                     match_start: None,
                                     snippet_deduplication_key: None,
                                     insert_text_mode: None,
@@ -1429,6 +1452,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     ),
                                     source: project::CompletionSource::Custom,
                                     icon_path: None,
+                                    icon_color: None,
                                     match_start: None,
                                     snippet_deduplication_key: None,
                                     insert_text_mode: None,

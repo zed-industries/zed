@@ -82,6 +82,7 @@ pub struct CommitView {
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
+    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
 }
@@ -324,7 +325,9 @@ impl CommitView {
                             .or(first_worktree_id)
                     })
                     .context("project has no worktrees")?;
-                let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+                let short_sha = commit_sha
+                    .get(0..git::SHORT_SHA_LENGTH)
+                    .unwrap_or(&commit_sha);
                 let file_name = file
                     .path
                     .file_name()
@@ -469,6 +472,7 @@ impl CommitView {
             multibuffer,
             stash,
             repository,
+            project,
             workspace,
             remote,
         }
@@ -1171,7 +1175,7 @@ impl Item for CommitView {
         let Some(workspace_entity) = self.workspace.upgrade() else {
             return Task::ready(None);
         };
-        let project = workspace_entity.read(cx).project().clone();
+        let project = self.project.clone();
         let diff_view_style = self.editor.read(cx).diff_view_style();
         let multibuffer = self.multibuffer.clone();
         Task::ready(Some(cx.new(|cx| {
@@ -1221,6 +1225,7 @@ impl Item for CommitView {
                 commit: self.commit.clone(),
                 stash: self.stash,
                 repository: self.repository.clone(),
+                project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
             }

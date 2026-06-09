@@ -260,8 +260,13 @@ impl RelatedExcerptStore {
                         (id, distance)
                     })
                     .collect();
-                identifiers_with_distance.sort_by_key(|(_, distance)| *distance);
-                identifiers_with_distance.truncate(MAX_CONTEXT_IDENTIFIER_COUNT);
+                // Only the closest `MAX_CONTEXT_IDENTIFIER_COUNT` identifiers are
+                // used below, so select that prefix instead of fully sorting.
+                util::truncate_to_bottom_n_sorted_by(
+                    &mut identifiers_with_distance,
+                    MAX_CONTEXT_IDENTIFIER_COUNT,
+                    &|(_, a), (_, b)| a.cmp(b),
+                );
 
                 let mut cursor_distances: HashMap<Identifier, usize> = HashMap::default();
                 let mut current_rank = 0;

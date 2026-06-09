@@ -1,15 +1,18 @@
 use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
-use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{BackgroundExecutor, HighlightStyle};
+use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
+use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
 use std::ops::Range;
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,
+    /// Candidates contain the full path of each item, used for matching.
     candidates: Vec<StringMatchCandidate>,
-    pub path_candidates: Vec<StringMatchCandidate>,
-    path_candidate_prefixes: Vec<usize>,
+    /// leaf_offsets stores the byte offset within that full path where the
+    /// item's own text starts. Anything before this offset is ancestor
+    /// path text used purely as match context.
+    leaf_offsets: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -17,7 +20,7 @@ pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
     pub source_range_for_text: Range<T>,
-    pub text: String,
+    pub text: SharedString,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
     pub body_range: Option<Range<T>>,
@@ -25,7 +28,42 @@ pub struct OutlineItem<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SymbolPath(pub String);
+pub struct SymbolPath(pub SharedString);
+
+/// Result of [`Outline::search`]. Real fuzzy matches are `Match`; `Ancestor`
+/// rows are synthetic entries pointing at parent items, included so callers can
+/// show the full path of each match (Even when the ancestor has been filtered
+/// out due to not matching) but treat those synthetic ancestors differently
+/// from an entry that actually matched (e.g. they are not eligible for
+/// auto-selection).
+#[derive(Clone, Debug)]
+pub enum OutlineSearchEntry {
+    Match(StringMatch),
+    Ancestor { candidate_id: usize },
+}
+
+impl OutlineSearchEntry {
+    pub fn candidate_id(&self) -> usize {
+        match self {
+            Self::Match(m) => m.candidate_id,
+            Self::Ancestor { candidate_id } => *candidate_id,
+        }
+    }
+
+    pub fn as_match(&self) -> Option<&StringMatch> {
+        match self {
+            Self::Match(m) => Some(m),
+            Self::Ancestor { .. } => None,
+        }
+    }
+
+    pub fn into_match(self) -> Option<StringMatch> {
+        match self {
+            Self::Match(m) => Some(m),
+            Self::Ancestor { .. } => None,
+        }
+    }
+}
 
 impl<T: ToPoint> OutlineItem<T> {
     /// Converts to an equivalent outline item, but with parameterized over Points.
@@ -108,9 +146,8 @@ impl<T: ToPoint> OutlineItem<T> {
 
 impl<T> Outline<T> {
     pub fn new(items: Vec<OutlineItem<T>>) -> Self {
-        let mut candidates = Vec::new();
-        let mut path_candidates = Vec::new();
-        let mut path_candidate_prefixes = Vec::new();
+        let mut candidates = Vec::with_capacity(items.len());
+        let mut leaf_offsets = Vec::with_capacity(items.len());
         let mut path_text = String::new();
         let mut path_stack = Vec::new();
 
@@ -122,25 +159,16 @@ impl<T> Outline<T> {
             if !path_text.is_empty() {
                 path_text.push(' ');
             }
-            path_candidate_prefixes.push(path_text.len());
+            leaf_offsets.push(path_text.len());
             path_text.push_str(&item.text);
             path_stack.push(path_text.len());
-
-            let candidate_text = item
-                .name_ranges
-                .iter()
-                .map(|range| &item.text[range.start..range.end])
-                .collect::<String>();
-
-            path_candidates.push(StringMatchCandidate::new(id, &path_text));
-            candidates.push(StringMatchCandidate::new(id, &candidate_text));
+            candidates.push(StringMatchCandidate::new(id, &path_text));
         }
 
         Self {
-            candidates,
-            path_candidates,
-            path_candidate_prefixes,
             items,
+            candidates,
+            leaf_offsets,
         }
     }
 
@@ -149,7 +177,7 @@ impl<T> Outline<T> {
         const SIMILARITY_THRESHOLD: f64 = 0.6;
 
         let (position, similarity) = self
-            .path_candidates
+            .candidates
             .iter()
             .enumerate()
             .map(|(index, candidate)| {
@@ -159,7 +187,7 @@ impl<T> Outline<T> {
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;
 
         if similarity >= SIMILARITY_THRESHOLD {
-            self.path_candidates
+            self.candidates
                 .get(position)
                 .map(|candidate| SymbolPath(candidate.string.clone()))
                 .zip(self.items.get(position))
@@ -168,89 +196,104 @@ impl<T> Outline<T> {
         }
     }
 
-    /// Find all outline symbols according to a longest subsequence match with the query, ordered descending by match score.
-    pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
+    /// Find all outline symbols that match with the nucleo fuzzy matcher, ordered by tree position.
+    /// Each real match is preceded by [`OutlineSearchEntry::Ancestor`] rows carrying parent
+    /// `candidate_id`s, so callers can render tree context above the match.
+    pub async fn search(
+        &self,
+        query: &str,
+        executor: BackgroundExecutor,
+    ) -> Vec<OutlineSearchEntry> {
         let query = query.trim_start();
-        let is_path_query = query.contains(' ');
-        let smart_case = query.chars().any(|c| c.is_uppercase());
-        let mut matches = fuzzy::match_strings(
-            if is_path_query {
-                &self.path_candidates
-            } else {
-                &self.candidates
-            },
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let mut matches = fuzzy_nucleo::match_strings_async(
+            &self.candidates,
             query,
-            smart_case,
-            true,
+            Case::Smart,
+            LengthPenalty::On,
             100,
             &Default::default(),
-            executor.clone(),
+            executor,
         )
         .await;
         matches.sort_unstable_by_key(|m| m.candidate_id);
 
-        let mut tree_matches = Vec::new();
-
-        let mut prev_item_ix = 0;
-        for mut string_match in matches {
-            let outline_match = &self.items[string_match.candidate_id];
-            string_match.string.clone_from(&outline_match.text);
-
-            if is_path_query {
-                let prefix_len = self.path_candidate_prefixes[string_match.candidate_id];
-                string_match
-                    .positions
-                    .retain(|position| *position >= prefix_len);
-                for position in &mut string_match.positions {
-                    *position -= prefix_len;
-                }
-            } else {
-                let mut name_ranges = outline_match.name_ranges.iter();
-                let Some(mut name_range) = name_ranges.next() else {
-                    continue;
-                };
-                let mut preceding_ranges_len = 0;
-                for position in &mut string_match.positions {
-                    while *position >= preceding_ranges_len + name_range.len() {
-                        preceding_ranges_len += name_range.len();
-                        name_range = name_ranges.next().unwrap();
-                    }
-                    *position = name_range.start + (*position - preceding_ranges_len);
-                }
+        // Single-atom queries (no whitespace) require *all* matched chars to
+        // land in the leaf — typing "drop" should only surface leaves that
+        // actually contain "drop", not items whose ancestor path happens to.
+        // We can rely on that behavior because nucleo prefers matches at the
+        // end of the haystack, so the leafiest part of the candidate.
+        //
+        // Multi-atom queries (whitespace-separated) use the ancestor path
+        // for scoping. Rows whose entire match landed in an ancestor are
+        // kept as context, with empty positions and zero score, so
+        // descendants of a matched container surface alongside it. The
+        // picker's score-based auto-select skips them so they never steal
+        // focus from a row with real highlights.
+        let single_atom = !query.contains(char::is_whitespace);
+        matches.retain_mut(|string_match| {
+            let leaf_offset = self.leaf_offsets[string_match.candidate_id];
+            let total = string_match.positions.len();
+            string_match
+                .positions
+                .retain(|position| *position >= leaf_offset);
+            let kept = string_match.positions.len();
+            if single_atom && kept != total {
+                return false;
             }
-
-            let insertion_ix = tree_matches.len();
-            let mut cur_depth = outline_match.depth;
-            for (ix, item) in self.items[prev_item_ix..string_match.candidate_id]
-                .iter()
-                .enumerate()
-                .rev()
-            {
-                if cur_depth == 0 {
-                    break;
-                }
-
-                let candidate_index = ix + prev_item_ix;
-                if item.depth == cur_depth - 1 {
-                    tree_matches.insert(
-                        insertion_ix,
-                        StringMatch {
-                            candidate_id: candidate_index,
-                            score: Default::default(),
-                            positions: Default::default(),
-                            string: Default::default(),
-                        },
-                    );
-                    cur_depth -= 1;
-                }
+            if kept == 0 {
+                string_match.score = 0.0;
             }
+            for position in &mut string_match.positions {
+                *position -= leaf_offset;
+            }
+            string_match
+                .string
+                .clone_from(&self.items[string_match.candidate_id].text);
+            true
+        });
 
-            prev_item_ix = string_match.candidate_id + 1;
-            tree_matches.push(string_match);
-        }
-
-        tree_matches
+        expand_tree(|i| self.items[i].depth, matches)
     }
+}
+
+/// Interleaves synthetic [`OutlineSearchEntry::Ancestor`] rows before each match so callers
+/// can render the parent chain as tree context above the match.
+///
+/// `matches` must be sorted ascending by `candidate_id` (which is what
+/// [`Outline::search`] produces), this is so that we preserve the tree
+/// structure of the outline. `depth_at` returns the tree depth for the item at
+/// a given candidate index. Ancestors that already appear earlier in the output
+/// either as their own match or as an ancestor of an earlier match, are not
+/// duplicated.
+fn expand_tree(
+    depth_at: impl Fn(usize) -> usize,
+    matches: Vec<StringMatch>,
+) -> Vec<OutlineSearchEntry> {
+    debug_assert!(matches.is_sorted_by_key(|m| m.candidate_id));
+    let mut out = Vec::with_capacity(matches.len());
+    let mut prev_item_ix = 0;
+    for string_match in matches {
+        let insertion_ix = out.len();
+        let mut cur_depth = depth_at(string_match.candidate_id);
+        for ix in (prev_item_ix..string_match.candidate_id).rev() {
+            if cur_depth == 0 {
+                break;
+            }
+            if depth_at(ix) == cur_depth - 1 {
+                out.insert(
+                    insertion_ix,
+                    OutlineSearchEntry::Ancestor { candidate_id: ix },
+                );
+                cur_depth -= 1;
+            }
+        }
+        prev_item_ix = string_match.candidate_id + 1;
+        out.push(OutlineSearchEntry::Match(string_match));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -273,7 +316,7 @@ mod tests {
             depth: 0,
             range: range.clone(),
             source_range_for_text: range,
-            text: "completion".to_string(),
+            text: "completion".into(),
             highlight_ranges: Vec::new(),
             name_ranges: Vec::new(),
             body_range: None,
@@ -290,7 +333,7 @@ mod tests {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 9),
-                text: "class Foo".to_string(),
+                text: "class Foo".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![6..9],
                 body_range: None,
@@ -300,21 +343,27 @@ mod tests {
                 depth: 0,
                 range: Point::new(2, 0)..Point::new(2, 7),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 7),
-                text: "private".to_string(),
+                text: "private".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![],
                 body_range: None,
                 annotation_range: None,
             },
         ]);
+        assert!(
+            outline.search("", cx.executor()).await.is_empty(),
+            "empty queries return no matches; the picker handles 'show all' itself",
+        );
         assert_eq!(
             outline
-                .search(" ", cx.executor())
+                .search("foo", cx.executor())
                 .await
                 .into_iter()
-                .map(|mat| mat.string)
-                .collect::<Vec<String>>(),
-            vec!["class Foo".to_string()]
+                .filter_map(OutlineSearchEntry::into_match)
+                .map(|m| m.string)
+                .collect::<Vec<SharedString>>(),
+            vec![SharedString::from("class Foo")],
+            "'private' (empty name_ranges) is correctly excluded; only the matching 'class Foo' is returned",
         );
     }
 
@@ -325,7 +374,7 @@ mod tests {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 10),
-                text: "fn process".to_string(),
+                text: "fn process".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![3..10],
                 body_range: None,
@@ -335,7 +384,7 @@ mod tests {
                 depth: 0,
                 range: Point::new(7, 0)..Point::new(12, 0),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 20),
-                text: "struct DataProcessor".to_string(),
+                text: "struct DataProcessor".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![7..20],
                 body_range: None,
