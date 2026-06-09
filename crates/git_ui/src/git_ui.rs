@@ -81,10 +81,12 @@ pub fn get_provider_icon(name: &str) -> IconName {
 }
 
 pub fn custom_git_timestamp(timestamp: OffsetDateTime, cx: &App) -> Option<String> {
-    let format = ProjectSettings::get_global(cx).git.date_format.as_deref()?;
-    let format = time::format_description::parse(format).ok()?;
     let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    timestamp.to_offset(local_offset).format(&format).ok()
+    ProjectSettings::get_global(cx)
+        .git
+        .date_format
+        .as_ref()?
+        .format(timestamp, local_offset)
 }
 
 pub fn git_timestamp(

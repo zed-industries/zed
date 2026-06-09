@@ -11534,16 +11534,19 @@ impl EditorSnapshot {
                         let timestamp_width = ProjectSettings::get_global(cx)
                             .git
                             .date_format
-                            .as_deref()
+                            .as_ref()
                             .and_then(|format| {
-                                let format = time::format_description::parse(format).ok()?;
-                                time::macros::datetime!(2020-09-30 23:59:59 UTC)
-                                    .format(&format)
-                                    .ok()
+                                let local_offset = time::UtcOffset::current_local_offset()
+                                    .unwrap_or(time::UtcOffset::UTC);
+                                format
+                                    .format(
+                                        time::macros::datetime!(2020-09-30 23:59:59 UTC),
+                                        local_offset,
+                                    )
+                                    .map(|timestamp| timestamp.len())
                             })
-                            .map_or(MAX_RELATIVE_TIMESTAMP.len(), |timestamp| {
-                                timestamp.len().max(MAX_RELATIVE_TIMESTAMP.len())
-                            });
+                            .unwrap_or(0)
+                            .max(MAX_RELATIVE_TIMESTAMP.len());
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
                             + timestamp_width
