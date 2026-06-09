@@ -113,6 +113,30 @@ impl From<&Skill> for NativeAvailableSkill {
     }
 }
 
+/// Name of the built-in `/compact` slash command. Reserved by the native
+/// agent (when the handoff flag is on) so it can't be silently shadowed by a
+/// same-named MCP prompt or skill.
+const COMPACT_COMMAND_NAME: &str = "compact";
+
+/// Returns the set of MCP prompt names that must be server-qualified
+/// (`/<server>.<name>`) to stay unambiguous in the slash-command popup: names
+/// shared by more than one MCP prompt, or names colliding with a reserved
+/// built-in command (e.g. `/compact`). A built-in always wins an unqualified
+/// invocation, so colliding MCP prompts are only reachable when prefixed.
+fn ambiguous_mcp_prompt_names<'a>(
+    reserved: impl IntoIterator<Item = &'a str>,
+    prompt_names: impl IntoIterator<Item = &'a str>,
+) -> HashSet<&'a str> {
+    let mut counts: HashMap<&str, usize> = HashMap::default();
+    for name in reserved.into_iter().chain(prompt_names) {
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .filter_map(|(name, count)| (count > 1).then_some(name))
+        .collect()
+}
+
 struct ProjectState {
     project: Entity<Project>,
     project_context: Entity<ProjectContext>,
@@ -1407,7 +1431,7 @@ impl NativeAgent {
             // enabled. Other (e.g. ACP) agents bring their own `/compact` if
             // they have one, so this list only governs the native agent.
             acp::AvailableCommand::new(
-                "compact",
+                COMPACT_COMMAND_NAME,
                 "Summarize the conversation so far to free up context",
             )
             .meta(acp_thread::meta_with_command_category(
@@ -1420,21 +1444,19 @@ impl NativeAgent {
         };
         let registry = state.context_server_registry.read(cx);
 
-        let mut prompt_name_counts: HashMap<&str, usize> = HashMap::default();
-        for context_server_prompt in registry.prompts() {
-            *prompt_name_counts
-                .entry(context_server_prompt.prompt.name.as_str())
-                .or_insert(0) += 1;
-        }
+        // Reserve the built-in command name (when active) so a same-named MCP
+        // prompt is force-prefixed (`/<server>.compact`) and stays reachable:
+        // an unqualified `/compact` always routes to the native command.
+        let reserved = compact_command.as_ref().map(|_| COMPACT_COMMAND_NAME);
+        let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
+            reserved,
+            registry.prompts().map(|p| p.prompt.name.as_str()),
+        );
 
         let mcp_commands = registry.prompts().flat_map(|context_server_prompt| {
             let prompt = &context_server_prompt.prompt;
 
-            let should_prefix = prompt_name_counts
-                .get(prompt.name.as_str())
-                .copied()
-                .unwrap_or(0)
-                > 1;
+            let should_prefix = ambiguous_prompt_names.contains(prompt.name.as_str());
 
             let name = if should_prefix {
                 format!("{}.{}", context_server_prompt.server_id, prompt.name)
@@ -2481,7 +2503,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             // `build_available_commands_for_project`). It takes precedence
             // over MCP prompts and skills of the same name and forces a
             // summary-based context compaction.
-            if cx.has_flag::<HandoffFeatureFlag>() && parsed_command.is_unqualified("compact") {
+            if cx.has_flag::<HandoffFeatureFlag>()
+                && parsed_command.is_unqualified(COMPACT_COMMAND_NAME)
+            {
                 return self.0.update(cx, |agent, cx| {
                     agent.send_compact_command(id, session_id, cx)
                 });
@@ -3666,6 +3690,25 @@ mod internal_tests {
         model.end_completion_stream(&request);
         cx.run_until_parked();
         prompt_task.await.unwrap();
+    }
+
+    #[test]
+    fn test_ambiguous_mcp_prompt_names() {
+        // Reserving the built-in `/compact` forces a same-named MCP prompt to be
+        // server-qualified so it stays reachable; unique names stay bare.
+        let ambiguous = ambiguous_mcp_prompt_names([COMPACT_COMMAND_NAME], ["compact", "deploy"]);
+        assert!(ambiguous.contains("compact"));
+        assert!(!ambiguous.contains("deploy"));
+
+        // Without the reservation (handoff off), a unique MCP prompt is left bare.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
+        assert!(ambiguous.is_empty());
+
+        // Two MCP prompts sharing a name are both qualified regardless of
+        // reservation.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["dup", "dup", "unique"]);
+        assert!(ambiguous.contains("dup"));
+        assert!(!ambiguous.contains("unique"));
     }
 
     #[test]

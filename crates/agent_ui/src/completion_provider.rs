@@ -313,23 +313,28 @@ pub struct AvailableCommand {
 }
 
 impl AvailableCommand {
-    /// Stable ordering used so command groups render in a consistent order
-    /// after skills: built-in commands, then MCP, then external ACP agents.
-    fn category_order(&self) -> u8 {
-        match self.category {
-            Some(acp_thread::CommandCategory::Native) => 0,
-            Some(acp_thread::CommandCategory::Mcp) => 1,
-            None => 2,
+    /// Single source of truth mapping a command's category to its completion
+    /// group: render order (after skills), group key, and header label.
+    /// Built-in commands sort first, then MCP, then external ACP agents.
+    fn category_group(
+        category: Option<acp_thread::CommandCategory>,
+    ) -> (u8, &'static str, &'static str) {
+        match category {
+            Some(acp_thread::CommandCategory::Native) => (0, "commands", "Commands"),
+            Some(acp_thread::CommandCategory::Mcp) => (1, "mcp-commands", "MCP Server Commands"),
+            None => (2, "acp-commands", "ACP Agent Commands"),
         }
+    }
+
+    /// Stable ordering used so command groups render in a consistent order
+    /// after skills.
+    fn category_order(&self) -> u8 {
+        Self::category_group(self.category).0
     }
 
     /// Completion group key and header label for this command's category.
     fn group(&self) -> CompletionGroup {
-        let (key, label) = match self.category {
-            Some(acp_thread::CommandCategory::Native) => ("commands", "Commands"),
-            Some(acp_thread::CommandCategory::Mcp) => ("mcp-commands", "MCP Server Commands"),
-            None => ("acp-commands", "ACP Agent Commands"),
-        };
+        let (_, key, label) = Self::category_group(self.category);
         CompletionGroup {
             key: key.into(),
             label: Some(label.into()),
@@ -350,6 +355,33 @@ impl SlashCompletionCandidate {
             Self::Command(command) => &command.name,
         }
     }
+}
+
+/// Stable group identity for a slash completion: skills are one group, commands
+/// are grouped by category. This identifies which section header an entry sits
+/// under; the order the groups appear in is decided by relevance (see
+/// [`group_by_relevance`]).
+fn slash_completion_group_key(candidate: &SlashCompletionCandidate) -> u32 {
+    match candidate {
+        SlashCompletionCandidate::Skill(_) => 0,
+        SlashCompletionCandidate::Command(command) => 1 + command.category_order() as u32,
+    }
+}
+
+/// Reorders `items` (which must already be in relevance/score order, best
+/// first) so that each group's entries stay contiguous while the groups
+/// themselves are ordered by their best-ranked member. The sort is stable, so
+/// within a group the original order is preserved.
+///
+/// This lets the completion menu both render one header per group and still
+/// surface the single best match at the top (where it becomes the default
+/// selection).
+fn group_by_relevance<T>(items: &mut [T], group_key: impl Fn(&T) -> u32) {
+    let mut group_best_rank: collections::HashMap<u32, usize> = collections::HashMap::default();
+    for (rank, item) in items.iter().enumerate() {
+        group_best_rank.entry(group_key(item)).or_insert(rank);
+    }
+    items.sort_by_key(|item| group_best_rank[&group_key(item)]);
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -1380,15 +1412,16 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 
                 cx.background_spawn(async move {
                     let mut slash_candidates = slash_candidates.await;
-                    // Sort skills first, then commands grouped by category, so
-                    // the section headers render in a stable order. `sort_by_key`
-                    // is stable, so fuzzy-match order is preserved within a
-                    // group.
-                    slash_candidates.sort_by_key(|(candidate, _)| match candidate {
-                        SlashCompletionCandidate::Skill(_) => 0,
-                        SlashCompletionCandidate::Command(command) => {
-                            1 + command.category_order() as u32
-                        }
+                    // `slash_candidates` arrives in fuzzy-match order (best
+                    // first). Keep each group's items contiguous so section
+                    // headers render once, but order the groups by their
+                    // best-scoring member. That way an exact/prefix match (e.g.
+                    // `/compa` -> `compact`) floats its whole section to the top
+                    // and becomes the default selection, instead of being
+                    // buried under a less relevant skill. Within a group, the
+                    // fuzzy-match order is preserved (the sort is stable).
+                    group_by_relevance(&mut slash_candidates, |(candidate, _)| {
+                        slash_completion_group_key(candidate)
                     });
                     let completions = slash_candidates
                         .into_iter()
@@ -2796,6 +2829,82 @@ mod tests {
         assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("/ ", 0), None);
+    }
+
+    #[test]
+    fn test_section_headers_visible_until_argument() {
+        // Section headers stay visible while the user narrows the command name
+        // (`/`, `/comp`, `/compact `) and only disappear once they start typing
+        // the command's argument, where category grouping no longer applies.
+        let show_section_headers = |input: &str| {
+            SlashCommandCompletion::try_parse(input, 0)
+                .unwrap()
+                .argument
+                .is_none()
+        };
+
+        assert!(show_section_headers("/"));
+        assert!(show_section_headers("/comp"));
+        assert!(show_section_headers("/compact"));
+        assert!(show_section_headers("/compact "));
+        assert!(!show_section_headers("/compact now"));
+    }
+
+    #[test]
+    fn test_command_category_grouping() {
+        fn command(category: Option<acp_thread::CommandCategory>) -> AvailableCommand {
+            AvailableCommand {
+                name: "cmd".into(),
+                description: "".into(),
+                requires_argument: false,
+                source: None,
+                category,
+            }
+        }
+
+        let native = command(Some(acp_thread::CommandCategory::Native));
+        let mcp = command(Some(acp_thread::CommandCategory::Mcp));
+        let acp = command(None);
+
+        // Commands order Native < Mcp < external ACP.
+        assert!(native.category_order() < mcp.category_order());
+        assert!(mcp.category_order() < acp.category_order());
+
+        assert_eq!(native.group().label, Some("Commands".into()));
+        assert_eq!(mcp.group().label, Some("MCP Server Commands".into()));
+        assert_eq!(acp.group().label, Some("ACP Agent Commands".into()));
+
+        // Each category gets a distinct group key so the popup renders a
+        // separate section header per source.
+        let keys = [native.group().key, mcp.group().key, acp.group().key];
+        let unique: std::collections::HashSet<_> = keys.iter().cloned().collect();
+        assert_eq!(unique.len(), 3);
+    }
+
+    #[test]
+    fn test_group_by_relevance_floats_best_group_and_keeps_groups_contiguous() {
+        // Items arrive in fuzzy-score order (best first). The group containing
+        // the best match floats to the top, groups stay contiguous, and the
+        // within-group order is preserved.
+        let mut items = [
+            ("compact", 1u32),  // best match, group 1
+            ("skill-a", 0u32),  // group 0
+            ("deploy", 2u32),   // group 2
+            ("skill-b", 0u32),  // group 0 (after skill-a in score order)
+            ("native-b", 1u32), // group 1 (after compact)
+        ];
+        group_by_relevance(&mut items, |(_, key)| *key);
+        let order: Vec<&str> = items.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            order,
+            vec!["compact", "native-b", "skill-a", "skill-b", "deploy"]
+        );
+
+        // When the best match is a skill, the skill group leads instead.
+        let mut items = [("skill-a", 0u32), ("compact", 1u32)];
+        group_by_relevance(&mut items, |(_, key)| *key);
+        let order: Vec<&str> = items.iter().map(|(name, _)| *name).collect();
+        assert_eq!(order, vec!["skill-a", "compact"]);
     }
 
     #[test]

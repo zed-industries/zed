@@ -93,6 +93,10 @@ pub enum CommandCategory {
 }
 
 impl CommandCategory {
+    /// Wire encoding stored under [`COMMAND_CATEGORY_META_KEY`]. These string
+    /// values are a contract between the agent that produces commands and the
+    /// UI that groups them; keep `as_str`/`from_str` in sync and avoid
+    /// repurposing existing strings.
     fn as_str(self) -> &'static str {
         match self {
             Self::Native => "native",
@@ -100,6 +104,9 @@ impl CommandCategory {
         }
     }
 
+    /// Decodes a category from its wire string. Unknown values (e.g. a category
+    /// added by a newer producer) decode to `None` so the command still shows
+    /// up, grouped with external ACP commands, rather than being dropped.
     fn from_str(value: &str) -> Option<Self> {
         match value {
             "native" => Some(Self::Native),
@@ -3484,6 +3491,27 @@ mod tests {
         time::Duration,
     };
     use util::{path, path_list::PathList};
+
+    #[test]
+    fn command_category_meta_round_trips() {
+        // Exhaustive list of variants. The match below has no wildcard arm, so
+        // adding a `CommandCategory` variant fails to compile here until it's
+        // covered, keeping the `as_str`/`from_str` wire contract in sync.
+        let all = [CommandCategory::Native, CommandCategory::Mcp];
+        for category in all {
+            match category {
+                CommandCategory::Native | CommandCategory::Mcp => {}
+            }
+            let meta = meta_with_command_category(category);
+            assert_eq!(command_category_from_meta(&Some(meta)), Some(category));
+        }
+
+        // Absent meta and unknown categories both decode to `None`.
+        assert_eq!(command_category_from_meta(&None), None);
+        let unknown =
+            acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
+        assert_eq!(command_category_from_meta(&Some(unknown)), None);
+    }
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();

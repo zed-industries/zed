@@ -2229,6 +2229,11 @@ impl Thread {
     /// always-available `/compact` slash command in the Zed agent. Returns an
     /// event stream mirroring a normal turn so the UI can render the
     /// compaction progress followed by a terminal stop event.
+    ///
+    /// `id` is the slash-command user message id. It is only committed to the
+    /// thread (as a zero-content rewind marker preceding the summary) once the
+    /// compaction succeeds, so a cancelled, failed, or no-op compaction leaves
+    /// no trailing marker behind.
     pub fn compact(
         &mut self,
         id: UserMessageId,
@@ -2252,20 +2257,7 @@ impl Thread {
         });
 
         self.clear_summary();
-
-        // Record the slash-command user message id so rewind/truncate can find
-        // it, but keep the command itself out of model context. Empty user
-        // messages are skipped when request history is built.
-        self.messages.push(Arc::new(Message::User(UserMessage {
-            id,
-            content: Arc::from([]),
-        })));
         cx.notify();
-
-        let compaction = compaction.map(|(model, request)| {
-            let insertion_ix = self.messages.len();
-            (model, request, insertion_ix)
-        });
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
@@ -2273,14 +2265,14 @@ impl Thread {
         let task = cx.spawn({
             let event_stream = event_stream.clone();
             async move |this, cx| {
-                let result = if let Some((model, request, insertion_ix)) = compaction {
+                let result = if let Some((model, request)) = compaction {
                     Self::stream_compaction(
                         &this,
                         &event_stream,
                         cancellation_rx.clone(),
                         model,
                         request,
-                        insertion_ix,
+                        CompactionInsertion::Manual { marker_id: id },
                         cx,
                     )
                     .await
@@ -2713,7 +2705,7 @@ impl Thread {
             cancellation_rx,
             model,
             request,
-            insertion_ix,
+            CompactionInsertion::Auto { insertion_ix },
             cx,
         )
         .await
@@ -2725,7 +2717,7 @@ impl Thread {
         mut cancellation_rx: watch::Receiver<bool>,
         model: Arc<dyn LanguageModel>,
         request: LanguageModelRequest,
-        insertion_ix: usize,
+        insertion: CompactionInsertion,
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
         log::debug!("Running compaction");
@@ -2797,10 +2789,35 @@ impl Thread {
 
         this.update(cx, |this, cx| {
             let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
-            if insertion_ix <= this.messages.len() {
-                this.messages.insert(insertion_ix, compaction);
-            } else {
-                this.messages.push(compaction);
+            match insertion {
+                CompactionInsertion::Auto { insertion_ix } => {
+                    if insertion_ix <= this.messages.len() {
+                        this.messages.insert(insertion_ix, compaction);
+                    } else {
+                        this.messages.push(compaction);
+                    }
+                }
+                CompactionInsertion::Manual { marker_id } => {
+                    // Append the slash-command user message as a zero-content
+                    // rewind marker (matching the UI's `/compact` bubble),
+                    // immediately followed by the summary. Empty user messages
+                    // are skipped when request history is built, so the marker
+                    // stays out of model context while still giving
+                    // rewind/truncate a target.
+                    //
+                    // The marker has no recorded `request_token_usage`, so the
+                    // context meter reads as empty until the next turn. That's
+                    // the intended signal: compaction just freed the context,
+                    // and the post-compaction size is only known once the next
+                    // request reports usage (no tokenizer is available here, and
+                    // the compaction request's own usage reflects the larger,
+                    // pre-compaction conversation).
+                    this.messages.push(Arc::new(Message::User(UserMessage {
+                        id: marker_id,
+                        content: Arc::from([]),
+                    })));
+                    this.messages.push(compaction);
+                }
             }
             cx.notify();
         })?;
@@ -3878,6 +3895,10 @@ impl Thread {
     /// threshold and the minimum-context-window guard because the user
     /// explicitly asked to compact. Returns `None` only when there is nothing
     /// to summarize (no messages, or the thread already ends in a compaction).
+    ///
+    /// Note this is evaluated up front against the current history; the summary
+    /// itself is appended at the end of the thread once it streams in (see
+    /// [`CompactionInsertion::Manual`]).
     fn forced_compaction_target_ix(&self) -> Option<usize> {
         if matches!(
             self.messages.last().map(|message| &**message),
@@ -4150,6 +4171,19 @@ fn take_text_within_byte_budget(text: String, remaining_bytes: &mut usize) -> Op
     let text = text[..end].to_string();
 
     if text.is_empty() { None } else { Some(text) }
+}
+
+/// Describes where a streamed compaction summary should land in the thread
+/// once it completes successfully.
+enum CompactionInsertion {
+    /// Automatic compaction inserts the summary at an index computed up front
+    /// (which may be before a trailing not-yet-answered user message).
+    Auto { insertion_ix: usize },
+    /// Manual `/compact` appends a zero-content user message (the rewind marker
+    /// matching the UI's `/compact` bubble) followed by the summary. The marker
+    /// is only committed on success, so cancelled or failed compactions leave
+    /// no trailing marker.
+    Manual { marker_id: UserMessageId },
 }
 
 struct RunningTurn {
@@ -5947,6 +5981,150 @@ mod tests {
                 assert!(matches!(&*thread.messages[1], Message::Agent(_)));
             });
         });
+    }
+
+    /// Cancelling an in-flight manual compaction must not leave the zero-content
+    /// rewind marker (or a partial summary) dangling at the end of the thread.
+    #[gpui::test]
+    async fn test_manual_compact_cancelled_leaves_no_marker(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let _events = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .unwrap();
+        cx.run_until_parked();
+        // The compaction request is in flight but hasn't streamed a summary.
+        assert_eq!(model.pending_completions().len(), 1);
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.cancel(cx)))
+            .await;
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages.len(), 2);
+            assert!(matches!(&*thread.messages[0], Message::User(_)));
+            assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+        });
+    }
+
+    /// A failed compaction (here, an empty summary) reports an error and leaves
+    /// the thread untouched — no marker, no compaction.
+    #[gpui::test]
+    async fn test_manual_compact_empty_summary_leaves_no_marker(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let mut events = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .unwrap();
+        cx.run_until_parked();
+
+        let request = model.pending_completions().pop().unwrap();
+        // End the stream without emitting any summary text.
+        model.end_completion_stream(&request);
+        cx.run_until_parked();
+
+        // An error is surfaced, and the thread is left exactly as it was. The
+        // compaction task drops the event stream after failing, so the channel
+        // closes and this drain terminates.
+        let mut saw_error = false;
+        while let Some(event) = events.next().await {
+            if event.is_err() {
+                saw_error = true;
+            }
+        }
+        assert!(saw_error, "expected an error event for the empty summary");
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages.len(), 2);
+            assert!(matches!(&*thread.messages[0], Message::User(_)));
+            assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+        });
+    }
+
+    /// `/compact` on an empty thread (nothing to summarize) is a no-op: it
+    /// issues no model request and adds no marker.
+    #[gpui::test]
+    async fn test_manual_compact_noop_on_empty_thread(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
+
+        let _events = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(model.pending_completions().is_empty());
+        thread.read_with(cx, |thread, _cx| {
+            assert!(thread.messages.is_empty());
+        });
+    }
+
+    /// The zero-content marker replays as an empty user message, which the UI
+    /// drops (it renders content blocks, of which there are none), so reloading
+    /// a compacted thread doesn't surface an empty `/compact` bubble.
+    #[gpui::test]
+    async fn test_manual_compact_marker_replays_as_empty_user_message(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let marker_id = UserMessageId::new();
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "before"));
+                thread.messages.push(agent_text_message("answer"));
+                thread.messages.push(Arc::new(Message::User(UserMessage {
+                    id: marker_id.clone(),
+                    content: Arc::from([]),
+                })));
+                thread.messages.push(summary_compaction("summary"));
+                thread.replay(cx)
+            })
+        });
+
+        // Skip the leading "before"/"answer" replay events.
+        let _ = replay_events.next().await;
+        let _ = replay_events.next().await;
+
+        let event = replay_events.next().await;
+        match event {
+            Some(Ok(ThreadEvent::UserMessage(message))) => {
+                assert_eq!(message.id, marker_id);
+                assert!(
+                    message.content.is_empty(),
+                    "marker should replay with no content so the UI renders nothing"
+                );
+            }
+            _ => panic!("expected the marker to replay as a user message, got {event:?}"),
+        }
+
+        let event = replay_events.next().await;
+        assert!(
+            matches!(&event, Some(Ok(ThreadEvent::ContextCompaction(_)))),
+            "expected the compaction to replay after the marker, got {event:?}"
+        );
     }
 
     #[gpui::test]
