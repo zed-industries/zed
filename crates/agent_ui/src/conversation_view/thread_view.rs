@@ -33,8 +33,7 @@ use workspace::notifications::NotificationId;
 
 use super::*;
 
-// TODO: Replace with the final link explaining Anthropic's data retention policy.
-const DATA_RETENTION_LEARN_MORE_URL: &str = "#link-tbd";
+const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
 #[derive(Default)]
 struct ThreadFeedbackState {
