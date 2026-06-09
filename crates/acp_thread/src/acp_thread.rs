@@ -4365,7 +4365,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_duplicate_tool_call_update_preserves_open_permission_request(
+    async fn test_duplicate_tool_call_update_preserves_open_permission_request_until_authorized(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -4464,6 +4464,13 @@ mod tests {
             thread.authorize_tool_call(tool_call_id.clone(), selected_outcome, cx);
         });
 
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::InProgress));
+        });
+
         match permission_task.await {
             RequestPermissionOutcome::Selected(outcome) => {
                 assert_eq!(outcome.option_id, allow_option_id);
@@ -4473,6 +4480,31 @@ mod tests {
                 panic!("permission request should remain open after duplicate tool call update")
             }
         }
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::Completed)
+                            .title("Completed")
+                            .content(vec!["done".into()]),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Completed");
+            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "done");
+        });
     }
 
     #[gpui::test]
