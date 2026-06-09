@@ -2,9 +2,6 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse::Parser, spanned::Spanned};
 
-/// Default target frame rate when a benchmark doesn't specify `fps = N`.
-const DEFAULT_FPS: u64 = 120;
-
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut fps: Option<u64> = None;
     if !args.is_empty() {
@@ -26,7 +23,15 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         }
     }
 
-    let frame_budget_nanos: u128 = 1_000_000_000 / fps.unwrap_or(DEFAULT_FPS) as u128;
+    // When no `fps` is given, `BenchReport::default()` supplies the default
+    // frame budget so there is a single source of truth in `bench_context`.
+    let report_expr = match fps {
+        Some(fps) => {
+            let frame_budget_nanos: u128 = 1_000_000_000 / fps as u128;
+            quote! { gpui::BenchReport::with_frame_budget_nanos(#frame_budget_nanos) }
+        }
+        None => quote! { gpui::BenchReport::default() },
+    };
 
     let mut inner_fn = match syn::parse::<ItemFn>(function) {
         Ok(function) => function,
@@ -48,12 +53,14 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
         #inner_fn
 
         fn #outer_fn_name(criterion: &mut criterion::Criterion) {
-            let report = gpui::BenchReport::with_frame_budget_nanos(#frame_budget_nanos);
+            let report = #report_expr;
             criterion.bench_function(stringify!(#outer_fn_name), {
                 let report = report.clone();
                 move |bencher| {
                     let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                        gpui_platform::current_platform(true),
+                        gpui::bench_platform(Some(Box::new(|| {
+                            gpui_platform::current_headless_renderer()
+                        }))),
                         Some(stringify!(#outer_fn_name)),
                         bencher,
                         report.clone(),

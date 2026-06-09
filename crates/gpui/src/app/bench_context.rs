@@ -1,15 +1,66 @@
-use std::{cell::RefCell, future::Future, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::{OnceCell, RefCell},
+    future::Future,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Result, anyhow};
 use hdrhistogram::Histogram;
 
 use crate::{
-    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
-    Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform, Render, Reservation, Task,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BenchDispatcher,
+    Bounds, Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global,
+    NoopTextSystem, Platform, PlatformHeadlessRenderer, Render, Reservation, Task, TestPlatform,
     VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
     profiler::{self, FrameTiming, FrameTimingCollector},
 };
+
+/// Returns this thread's shared benchmark platform, creating it on first use.
+///
+/// The platform is a [`TestPlatform`] backed by a multithreaded
+/// [`BenchDispatcher`], so background work runs with production concurrency in
+/// real time. It is cached per thread and reused across benchmark invocations
+/// so worker and timer threads persist for the whole process instead of being
+/// recreated for every Criterion calibration pass.
+///
+/// Text is shaped with [`NoopTextSystem`] (one glyph per character at fixed
+/// advances). This keeps results deterministic across machines and font
+/// installations while preserving the structure of downstream layout and paint
+/// work; absolute timings exclude production text shaping (roughly 10% of draw
+/// time for a full editor frame). Benchmarks that need real shaping can build
+/// a [`TestPlatform`] with a platform text system and pass it to
+/// [`BenchAppContext::new_with_platform_and_report`].
+///
+/// `headless_renderer_factory` (only used on first call) supplies a renderer
+/// for benchmark windows, e.g. `gpui_platform::current_headless_renderer`.
+/// When present, scenes drawn by benchmarks are rasterized through the real
+/// sprite atlas and submitted to the GPU on present, so quad/sprite
+/// regressions show up in measurements. When `None` (or on platforms without a
+/// headless renderer), presenting discards the scene.
+pub fn bench_platform(
+    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+) -> Rc<dyn Platform> {
+    thread_local! {
+        static PLATFORM: OnceCell<Rc<TestPlatform>> = const { OnceCell::new() };
+    }
+    PLATFORM.with(|cell| {
+        cell.get_or_init(|| {
+            let dispatcher = Arc::new(BenchDispatcher::new());
+            let background_executor = BackgroundExecutor::new(dispatcher.clone());
+            let foreground_executor = ForegroundExecutor::new(dispatcher);
+            TestPlatform::with_platform(
+                background_executor,
+                foreground_executor,
+                Arc::new(NoopTextSystem::new()),
+                headless_renderer_factory,
+            )
+        })
+        .clone() as Rc<dyn Platform>
+    })
+}
 
 /// Frame budget used when a benchmark doesn't specify one, in nanoseconds (120fps).
 const DEFAULT_FRAME_BUDGET_NANOS: u128 = 1_000_000_000 / 120;
@@ -164,6 +215,31 @@ fn format_duration(duration: Duration) -> String {
     format!("{:.3}ms", duration.as_secs_f64() * 1000.)
 }
 
+/// Enables frame tracing for the duration of a measurement and collects the
+/// frames recorded within it, restoring the previous tracing state on finish.
+struct FrameTraceScope {
+    collector: FrameTimingCollector,
+    was_already_enabled: bool,
+}
+
+impl FrameTraceScope {
+    fn start() -> Self {
+        let was_already_enabled = !profiler::set_frame_trace_enabled(true);
+        Self {
+            collector: FrameTimingCollector::new(),
+            was_already_enabled,
+        }
+    }
+
+    fn finish(&mut self) -> Vec<FrameTiming> {
+        let timings = self.collector.collect_unseen();
+        if !self.was_already_enabled {
+            profiler::set_frame_trace_enabled(false);
+        }
+        timings
+    }
+}
+
 /// A GPUI app context for Criterion benchmarks.
 ///
 /// `BenchAppContext` is intentionally separate from `TestAppContext`: it owns a
@@ -250,14 +326,29 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         read(&app)
     }
 
+    /// Runs queued foreground tasks on this thread and waits for in-flight
+    /// background work to finish. Pending timers are not waited for.
+    pub fn run_until_idle(&self) {
+        self.background_executor
+            .dispatcher()
+            .as_bench()
+            .expect("BenchAppContext requires a platform backed by a BenchDispatcher")
+            .run_until_idle();
+    }
+
     /// Measures a generic benchmark workload using Criterion's iteration loop.
     ///
-    /// The closure is invoked once per Criterion iteration an
+    /// The closure is invoked once per Criterion iteration with this
     /// benchmark app context so it can update GPUI state.
+    ///
+    /// Any window draws triggered by the workload are recorded into the
+    /// benchmark's frame report through the GPUI frame profiler.
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
+        let mut collector = FrameTraceScope::start();
         let mut benchmark = || benchmark(self);
         bencher.iter(&mut benchmark);
+        self.report.record_frame_timings(collector.finish().iter());
         self.replace_bencher(bencher);
     }
 
@@ -285,21 +376,24 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             })
             .expect("cannot benchmark renderer for entity without a current window");
 
-        let was_already_enabled = !profiler::set_frame_trace_enabled(true);
-        let mut collector = FrameTimingCollector::new();
+        let mut collector = FrameTraceScope::start();
 
         let mut benchmark = || {
             self.with_window(view.entity_id(), |window, cx| {
                 view.update(cx, |view, cx| update(view, window, cx));
             })
             .expect("cannot benchmark renderer for entity without a current window");
+            // Submit the frame drawn by the update's effect flush, mirroring
+            // production where every drawn frame is presented. With a headless
+            // renderer this includes scene submission to the GPU.
+            self.with_window(view.entity_id(), |window, _| {
+                window.present_if_needed();
+            })
+            .expect("cannot benchmark renderer for entity without a current window");
         };
         bencher.iter(&mut benchmark);
 
-        let timings = collector.collect_unseen();
-        if !was_already_enabled {
-            profiler::set_frame_trace_enabled(false);
-        }
+        let timings = collector.finish();
         self.report.record_frame_timings(
             timings
                 .iter()
@@ -326,6 +420,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             window
         };
 
+        self.run_until_idle();
         BenchWindowContext {
             cx: self.clone(),
             window,
@@ -348,9 +443,11 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs GPUI benchmark teardown.
     pub fn teardown(mut self) {
+        self.run_until_idle();
         self.update(|cx| {
             cx.quit();
         });
+        self.run_until_idle();
     }
 }
 
@@ -462,6 +559,12 @@ impl<'a, 'measurement> BenchWindowContext<'a, 'measurement> {
     /// Returns the window associated with this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
         self.window
+    }
+
+    /// Runs queued foreground tasks on this thread and waits for in-flight
+    /// background work to finish. Pending timers are not waited for.
+    pub fn run_until_idle(&self) {
+        self.cx.run_until_idle();
     }
 
     /// Updates the benchmark window.

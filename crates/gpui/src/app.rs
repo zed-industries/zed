@@ -24,7 +24,7 @@ use slotmap::SlotMap;
 
 pub use async_context::*;
 #[cfg(feature = "bench")]
-pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext};
+pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext, bench_platform};
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;

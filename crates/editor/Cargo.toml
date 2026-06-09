@@ -109,7 +109,7 @@ zlog.workspace = true
 criterion.workspace = true
 ctor.workspace = true
 gpui = { workspace = true, features = ["bench"] }
-gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
