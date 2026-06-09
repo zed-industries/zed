@@ -3564,6 +3564,100 @@ async fn test_db_thread_markdown_matches_live_thread(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_db_thread_restores_tracked_buffers(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        language_model::init(cx);
+        language_model::LanguageModelRegistry::test(cx);
+    });
+
+    let ThreadTest {
+        thread,
+        fs,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    // Create a file in the workspace
+    fs.insert_file(
+        path!("/test/file.txt"),
+        "a\nb\nc\n".to_string().into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    let project = thread.read_with(cx, |thread, _| thread.project().clone());
+    let file_path = project
+        .read_with(cx, |project, cx| {
+            project.find_project_path(path!("/test/file.txt"), cx)
+        })
+        .unwrap();
+    let buffer = project
+        .update(cx, |project, cx| project.open_buffer(file_path, cx))
+        .await
+        .unwrap();
+
+    let diff_base = text::Rope::from("a\nchanged_b\nc\n");
+    let status = action_log::TrackedBufferStatus::Modified;
+
+    // Restore the tracked buffer to action_log
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.action_log.update(cx, |log, cx| {
+                log.restore_tracked_buffer(buffer.clone(), diff_base, status, cx);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    // Verify it is tracked in the live thread
+    cx.read(|cx| {
+        let snapshots = thread
+            .read(cx)
+            .action_log
+            .read(cx)
+            .tracked_buffer_snapshots(cx);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].diff_base.to_string(), "a\nchanged_b\nc\n");
+    });
+
+    // Save thread to DbThread
+    let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(db_thread.tracked_buffers.len(), 1);
+    assert_eq!(db_thread.tracked_buffers[0].diff_base, "a\nchanged_b\nc\n");
+
+    // Reconstruct Thread from DbThread
+    let context_server_registry =
+        thread.read_with(cx, |thread, _| thread.context_server_registry.clone());
+    let templates = thread.read_with(cx, |thread, _| thread.templates.clone());
+    let _model = thread.read_with(cx, |thread, _| thread.model().cloned());
+    let restored_thread = cx.new(|cx| {
+        Thread::from_db(
+            thread.read(cx).id().clone(),
+            db_thread,
+            project.clone(),
+            project_context,
+            context_server_registry,
+            templates,
+            cx,
+        )
+    });
+
+    // Run background tasks (like opening buffer and restoring tracked state)
+    cx.run_until_parked();
+
+    // Verify restored thread's action_log tracks the buffer and diff_base correctly!
+    cx.read(|cx| {
+        let snapshots = restored_thread
+            .read(cx)
+            .action_log
+            .read(cx)
+            .tracked_buffer_snapshots(cx);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].diff_base.to_string(), "a\nchanged_b\nc\n");
+    });
+}
+
+#[gpui::test]
 async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
