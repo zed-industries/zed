@@ -554,10 +554,15 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         cx.new(|cx| {
-            let subscriptions = vec![cx.subscribe(
-                &LanguageModelRegistry::global(cx),
-                Self::handle_models_updated_event,
-            )];
+            let subscriptions = vec![
+                cx.subscribe(
+                    &LanguageModelRegistry::global(cx),
+                    Self::handle_models_updated_event,
+                ),
+                // Flush thread content on quit so an in-flight async save
+                // can't leave a thread orphaned ("no thread found with ID").
+                cx.on_app_quit(Self::flush_threads_on_quit),
+            ];
 
             if !cx.has_global::<SkillIndex>() {
                 cx.set_global(SkillIndex::default());
@@ -1765,6 +1770,48 @@ impl NativeAgent {
             thread_store.update(cx, |store, cx| store.reload(cx));
             Ok(())
         });
+    }
+
+    /// Commits every non-empty thread's content on shutdown so the async
+    /// `save_thread` losing the race can't leave metadata without content.
+    fn flush_threads_on_quit(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        let database_future = ThreadsDatabase::connect(cx);
+
+        let mut saves = Vec::new();
+        for session in self.sessions.values() {
+            let thread = session.thread.read(cx);
+            if thread.is_empty() {
+                continue;
+            }
+            let Some(state) = self.projects.get(&session.project_id) else {
+                continue;
+            };
+            let folder_paths = PathList::new(
+                &state
+                    .project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                    .collect::<Vec<_>>(),
+            );
+            saves.push((thread.id().clone(), folder_paths, thread.to_db(cx)));
+        }
+
+        async move {
+            let Ok(database) = database_future.await else {
+                return;
+            };
+            for (id, folder_paths, db_thread) in saves {
+                let db_thread = db_thread.await;
+                database
+                    .save_thread(id, db_thread, folder_paths)
+                    .await
+                    .log_err();
+            }
+        }
     }
 
     fn send_mcp_prompt(
