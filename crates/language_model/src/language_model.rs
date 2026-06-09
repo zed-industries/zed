@@ -60,6 +60,18 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether requests to this model require the user to consent to the
+    /// upstream provider retaining inference logs (i.e. the model cannot be
+    /// offered with Zero Data Retention).
+    fn requires_data_retention(&self) -> bool {
+        false
+    }
+
+    /// When this model refuses a request, the model ID to fall back to (same provider).
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        None
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
