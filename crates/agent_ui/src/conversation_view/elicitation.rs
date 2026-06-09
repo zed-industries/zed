@@ -8,8 +8,7 @@ use gpui::{AnyElement, App, Div, Empty, Entity, Hsla, Rems, SharedString, Window
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, Color, ContextMenu, Icon, IconName, IconPosition, IconSize, Label, LabelSize,
-    PopoverMenu, PopoverMenuHandle, ToggleState, prelude::*,
+    Button, Checkbox, Color, Icon, IconName, IconSize, Label, LabelSize, ToggleState, prelude::*,
 };
 
 #[derive(Clone)]
@@ -604,7 +603,6 @@ fn render_preview_card(
                 entry_ix,
                 &elicitation,
                 form_state,
-                PopoverMenuHandle::<ContextMenu>::default(),
                 preview_style(cx),
                 ElicitationCardHandlers::noop(),
             )
@@ -976,7 +974,6 @@ pub(crate) struct ElicitationCard<'a> {
     entry_ix: usize,
     elicitation: &'a Elicitation,
     form_state: Option<&'a ElicitationFormState>,
-    dropdown_handle: PopoverMenuHandle<ContextMenu>,
     style: ElicitationCardStyle,
     handlers: ElicitationCardHandlers,
 }
@@ -986,7 +983,6 @@ impl<'a> ElicitationCard<'a> {
         entry_ix: usize,
         elicitation: &'a Elicitation,
         form_state: Option<&'a ElicitationFormState>,
-        dropdown_handle: PopoverMenuHandle<ContextMenu>,
         style: ElicitationCardStyle,
         handlers: ElicitationCardHandlers,
     ) -> Self {
@@ -994,7 +990,6 @@ impl<'a> ElicitationCard<'a> {
             entry_ix,
             elicitation,
             form_state,
-            dropdown_handle,
             style,
             handlers,
         }
@@ -1143,7 +1138,7 @@ impl<'a> ElicitationCard<'a> {
                         }
                         _ => Vec::new(),
                     };
-                    self.render_select(field_name, value.clone(), options)
+                    self.render_single_select(field_name, value.as_ref(), options)
                 }
                 ElicitationFieldState::MultiSelect(selected) => {
                     let options = match property {
@@ -1198,75 +1193,73 @@ impl<'a> ElicitationCard<'a> {
             .into_any_element()
     }
 
-    fn render_select(
+    fn render_single_select(
         &self,
         field_name: &str,
-        selected_value: Option<String>,
+        selected_value: Option<&String>,
         options: Vec<ElicitationOption>,
     ) -> AnyElement {
-        let current_label = selected_value
-            .as_ref()
-            .and_then(|value| {
-                options
-                    .iter()
-                    .find(|option| &option.value == value)
-                    .map(|option| option.label.clone())
-            })
-            .unwrap_or_else(|| SharedString::from("Choose"));
-        let dropdown_handle = self.dropdown_handle.clone();
+        let entry_ix = self.entry_ix;
+        let style = self.style;
         let elicitation_id = self.elicitation.id.clone();
         let field_name = field_name.to_string();
         let on_single_select_change = self.handlers.on_single_select_change.clone();
 
-        PopoverMenu::new(format!("elicitation-select-{}-{field_name}", self.entry_ix))
-            .with_handle(dropdown_handle)
-            .trigger(
-                Button::new(
-                    format!("elicitation-select-trigger-{}-{field_name}", self.entry_ix),
-                    current_label,
-                )
-                .end_icon(
-                    Icon::new(IconName::ChevronDown)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                )
-                .label_size(LabelSize::Small),
-            )
-            .menu(move |window, cx| {
-                let options = options.clone();
+        v_flex()
+            .gap_1()
+            .children(options.into_iter().map(move |option| {
+                let option_value = option.value.clone();
+                let option_id =
+                    format!("elicitation-select-option-{entry_ix}-{field_name}-{option_value}");
+                let is_selected =
+                    selected_value.is_some_and(|selected_value| selected_value == &option.value);
                 let elicitation_id = elicitation_id.clone();
                 let field_name = field_name.clone();
-                let selected_value = selected_value.clone();
                 let on_single_select_change = on_single_select_change.clone();
 
-                Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                    for option in options.iter() {
-                        let option_value = option.value.clone();
-                        let option_label = option.label.clone();
-                        let is_selected = selected_value
-                            .as_ref()
-                            .is_some_and(|selected| selected == &option_value);
-                        let elicitation_id = elicitation_id.clone();
-                        let field_name = field_name.clone();
-                        let on_single_select_change = on_single_select_change.clone();
-                        menu = menu.toggleable_entry(
-                            option_label,
-                            is_selected,
-                            IconPosition::End,
-                            None,
-                            move |_window, cx| {
-                                on_single_select_change(
-                                    elicitation_id.clone(),
-                                    field_name.clone(),
-                                    option_value.clone(),
-                                    cx,
-                                );
-                            },
+                h_flex()
+                    .id(option_id)
+                    .w_full()
+                    .min_h(rems_from_px(28.))
+                    .items_center()
+                    .gap_2()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(if is_selected {
+                        style.border_color
+                    } else {
+                        style.border_color.opacity(0.5)
+                    })
+                    .bg(if is_selected {
+                        style.header_background
+                    } else {
+                        style.editor_background
+                    })
+                    .px_2()
+                    .py_1()
+                    .hover({
+                        let header_background = style.header_background;
+                        move |this| this.bg(header_background).cursor_pointer()
+                    })
+                    .on_click(move |_, _window, cx| {
+                        on_single_select_change(
+                            elicitation_id.clone(),
+                            field_name.clone(),
+                            option_value.clone(),
+                            cx,
                         );
-                    }
-                    menu
-                }))
-            })
+                    })
+                    .child(
+                        div()
+                            .size_3()
+                            .flex_none()
+                            .rounded_full()
+                            .border_1()
+                            .border_color(style.border_color)
+                            .when(is_selected, |this| this.bg(style.border_color)),
+                    )
+                    .child(Label::new(option.label).size(LabelSize::Small).truncate())
+            }))
             .into_any_element()
     }
 

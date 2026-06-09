@@ -610,7 +610,6 @@ pub struct ConversationView {
     /// Shared with the child [`ThreadView`] when one is constructed.
     pub(crate) code_span_resolver: AgentCodeSpanResolver,
     request_elicitation_form_states: HashMap<ElicitationEntryId, ElicitationFormState>,
-    request_elicitation_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -892,7 +891,6 @@ impl ConversationView {
             draft_prompt_persist_task: None,
             code_span_resolver,
             request_elicitation_form_states: HashMap::default(),
-            request_elicitation_dropdown_handle: PopoverMenuHandle::default(),
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -2495,7 +2493,6 @@ impl ConversationView {
             rems_from_px(13.),
         );
         let handlers = self.request_elicitation_card_handlers(cx);
-        let dropdown_handle = self.request_elicitation_dropdown_handle.clone();
 
         store
             .read(cx)
@@ -2507,7 +2504,6 @@ impl ConversationView {
                     ix,
                     elicitation,
                     self.request_elicitation_form_states.get(&elicitation.id),
-                    dropdown_handle.clone(),
                     style,
                     handlers.clone(),
                 )

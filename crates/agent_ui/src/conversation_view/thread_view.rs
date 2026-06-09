@@ -570,7 +570,6 @@ pub struct ThreadView {
     pub model_selector: Option<Entity<ModelSelectorPopover>>,
     pub profile_selector: Option<Entity<ProfileSelector>>,
     pub permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
-    pub elicitation_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     pub thread_retry_status: Option<RetryStatus>,
     pub(super) thread_error: Option<ThreadError>,
     pub thread_error_markdown: Option<Entity<Markdown>>,
@@ -961,7 +960,6 @@ impl ThreadView {
             resumed_without_history,
             _subscriptions: subscriptions,
             permission_dropdown_handle: PopoverMenuHandle::default(),
-            elicitation_dropdown_handle: PopoverMenuHandle::default(),
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
@@ -5900,7 +5898,6 @@ impl ThreadView {
             entry_ix,
             elicitation,
             self.elicitation_form_states.get(&elicitation.id),
-            self.elicitation_dropdown_handle.clone(),
             ElicitationCardStyle::new(
                 self.tool_card_border_color(cx),
                 self.tool_card_header_bg(cx),
