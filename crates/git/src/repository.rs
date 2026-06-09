@@ -3487,7 +3487,17 @@ impl GitBinary {
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
-        self.git_directory.join(format!("index-{}.tmp", id))
+        // Keep the scratch index OUT of the watched `.git` directory. The agent
+        // checkpoint feature creates one of these per repo per turn, and Zed
+        // watches every repo's `.git` dir for git state — so writing them here
+        // generates a burst of fs events per checkpoint, which in a large
+        // multi-repo workspace floods the file watcher (zed-industries/zed#58444;
+        // amplified on Linux by the per-event watch broadcast in #25843).
+        //
+        // The temp index is transient scratch: `with_temp_index` copies the real
+        // index *from* `self.git_directory` and never renames this file back into
+        // place, so it can live anywhere writable.
+        std::env::temp_dir().join(format!("zed-git-index-{id}.tmp"))
     }
 
     pub async fn run<S>(&self, args: &[S]) -> Result<String>
@@ -4322,13 +4332,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_path_for_index_id_uses_real_git_directory(cx: &mut TestAppContext) {
+    async fn test_path_for_index_id_is_outside_git_directory(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let working_directory = PathBuf::from("/code/worktree");
         let git_directory = PathBuf::from("/code/repo/.git/modules/worktree");
         let git = GitBinary::new(
             PathBuf::from("git"),
-            working_directory,
+            working_directory.clone(),
             git_directory.clone(),
             cx.executor(),
             false,
@@ -4336,9 +4346,17 @@ mod tests {
 
         let path = git.path_for_index_id(Uuid::nil());
 
+        // The scratch index must not live inside the watched `.git` directory (or
+        // anywhere in the worktree), so checkpoint churn doesn't flood the file
+        // watcher (#58444).
+        assert!(
+            !path.starts_with(&git_directory),
+            "scratch index leaked into .git: {path:?}"
+        );
+        assert!(!path.starts_with(&working_directory));
         assert_eq!(
             path,
-            git_directory.join(format!("index-{}.tmp", Uuid::nil()))
+            std::env::temp_dir().join(format!("zed-git-index-{}.tmp", Uuid::nil()))
         );
     }
 
