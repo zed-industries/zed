@@ -10,9 +10,10 @@ use editor::{
 };
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    FocusHandle, Focusable, Font, FontFeatures, FontStyle, KeyContext, KeyDownEvent, Keystroke,
+    MouseButton, MouseDownEvent, Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled,
+    Subscription, Task, TaskExt, TextStyleRefinement, WeakEntity, actions, anchored, deferred, div,
+    relative,
 };
 use menu;
 use persistence::TerminalDb;
@@ -42,6 +43,7 @@ use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
 use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
@@ -121,6 +123,49 @@ fn compose_terminal_submission(text: &str) -> String {
         input.push('\r');
     }
     input
+}
+
+/// The terminal's text style as an editor text-style refinement, so the input
+/// composer renders exactly like the terminal it feeds — same font family,
+/// size, weight, features and line height — rather than the editor's default
+/// buffer style. Mirrors the resolution in [`TerminalElement`].
+fn terminal_input_text_style(cx: &App) -> TextStyleRefinement {
+    let settings = ThemeSettings::get_global(cx);
+    let terminal_settings = TerminalSettings::get_global(cx);
+
+    let font_family = terminal_settings.font_family.as_ref().map_or_else(
+        || settings.buffer_font.family.clone(),
+        |font_family| font_family.0.clone().into(),
+    );
+    let font_fallbacks = terminal_settings
+        .font_fallbacks
+        .as_ref()
+        .or(settings.buffer_font.fallbacks.as_ref())
+        .cloned();
+    let font_features = terminal_settings
+        .font_features
+        .as_ref()
+        .unwrap_or(&FontFeatures::disable_ligatures())
+        .clone();
+    let font_weight = terminal_settings.font_weight.unwrap_or_default();
+    let font_size = terminal_settings
+        .font_size
+        .map_or(settings.buffer_font_size(cx), |size| {
+            theme_settings::adjusted_font_size(size, cx)
+        });
+
+    TextStyleRefinement {
+        font_family: Some(font_family),
+        font_features: Some(font_features),
+        font_fallbacks,
+        font_weight: Some(font_weight),
+        font_style: Some(FontStyle::Normal),
+        font_size: Some(font_size.into()),
+        // The terminal grid lays out lines at `font_size * line_height`, so use
+        // the same multiplier (relative to the font size) here.
+        line_height: Some(relative(terminal_settings.line_height.value())),
+        ..Default::default()
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -541,6 +586,9 @@ impl TerminalView {
 
         let editor = cx.new(|cx| Editor::auto_height(3, 3, window, cx));
         editor.update(cx, |editor, cx| {
+            // Render the composer in the terminal's own text style so a typed
+            // command looks exactly as it will in the terminal above it.
+            editor.set_text_style_refinement(terminal_input_text_style(cx));
             editor.focus_handle(cx).focus(window, cx);
         });
 
@@ -2434,6 +2482,33 @@ mod tests {
                     "second toggle closes the overlay"
                 );
             });
+        });
+    }
+
+    #[gpui::test]
+    async fn terminal_input_style_matches_terminal_font(cx: &mut TestAppContext) {
+        use settings::{FontFamilyName, TerminalLineHeight};
+
+        let (_project, _workspace, _window) = init_test_with_window(cx).await;
+
+        // Configure a distinct terminal font and line height.
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let terminal = settings.terminal.get_or_insert_default();
+                terminal.font_family = Some(FontFamilyName("Courier New".into()));
+                terminal.line_height = Some(TerminalLineHeight::Custom(2.0));
+            });
+        });
+
+        cx.update(|cx| {
+            let style = terminal_input_text_style(cx);
+            // The composer renders in the configured terminal font (proving it
+            // uses the terminal style, not the application UI font).
+            assert_eq!(style.font_family, Some("Courier New".into()));
+            // Line height follows the configured terminal multiplier, relative to
+            // the font size, matching how the terminal grid lays out lines.
+            assert_eq!(style.line_height, Some(relative(2.0)));
+            assert!(style.font_size.is_some());
         });
     }
 
