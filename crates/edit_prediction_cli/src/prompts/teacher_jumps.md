@@ -51,9 +51,10 @@ All of the code you can see — the current file **and** every related excerpt �
 - Each codeblock contains one **marker-bounded span**:
   - The codeblock must **start** with a marker tag (e.g. `<|marker_b1f8|>`) and **end** with another marker tag (e.g. `<|marker_Tx2v|>`).
   - Both markers must come from the **same excerpt**, with the start marker appearing before the end marker.
-  - The content between these two markers is the full replacement for that span in the original code.
+  - The content between these two markers is the full replacement for that span in the original code. **Every original line you do not reproduce is deleted.** You cannot stop early: write the span's content all the way to the end marker, even when your actual change only touches the beginning of the span.
   - Choose the **narrowest** pair of markers that fully contains your predicted edit, to minimize unnecessary output.
-  - Reproduce any unchanged lines within the chosen span faithfully — do not omit or alter them.
+  - Reproduce any unchanged lines within the chosen span faithfully — do not omit or alter them. Before writing the end marker, verify that the lines just before it match the original lines just before that marker (unless you intend to delete them).
+  - To delete code, prefer a span whose end marker lies **beyond** the deleted code, so that your output still ends with reproduced unchanged lines. Output that reproduces the start of a span and then stops at the end marker is treated as malformed (truncated), not as a deletion.
   - Do not include any intermediate marker tags in your output — only the start and end markers.
 - All edits apply to the code **as shown above** (the original snapshot): the spans of different edits must not overlap, and a later edit must not depend on the text inserted by an earlier one.
 - If no edit is needed (the code is already complete and correct, or there is no clear next edit to make), output a single codeblock containing only `NO_EDITS`:

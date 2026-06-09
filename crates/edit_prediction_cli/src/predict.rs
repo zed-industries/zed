@@ -723,7 +723,9 @@ pub async fn reprocess_after_batch_wait(
     examples: &mut [Example],
     args: &PredictArgs,
 ) -> anyhow::Result<()> {
-    let Some(PredictionProvider::Teacher(backend, _)) = args.provider else {
+    let (Some(PredictionProvider::Teacher(backend, _))
+    | Some(PredictionProvider::TeacherJumps(backend))) = args.provider
+    else {
         return Ok(());
     };
 
@@ -782,7 +784,8 @@ pub async fn wait_for_batches(provider: Option<&PredictionProvider>) -> anyhow::
 
 fn pending_batch_count(provider: Option<&PredictionProvider>) -> anyhow::Result<usize> {
     match provider {
-        Some(PredictionProvider::Teacher(backend, _)) => match backend {
+        Some(PredictionProvider::Teacher(backend, _))
+        | Some(PredictionProvider::TeacherJumps(backend)) => match backend {
             TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
                 let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                     AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
