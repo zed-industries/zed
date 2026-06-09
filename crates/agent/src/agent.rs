@@ -3576,15 +3576,47 @@ mod internal_tests {
     #[gpui::test]
     async fn test_compact_command_requires_handoff_feature_flag(cx: &mut TestAppContext) {
         init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
         cx.update(|cx| {
-            let has_compact = NativeAgent::build_available_commands_for_project(None, cx)
-                .iter()
-                .any(|command| command.name == "compact");
-            assert!(!has_compact);
+            let commands = acp_thread.read(cx).available_commands();
+            assert!(commands.is_empty());
+        });
 
-            cx.update_flags(true, vec!["handoff".to_string()]);
+        cx.update(|cx| cx.update_flags(true, vec!["handoff".to_string()]));
 
-            let commands = NativeAgent::build_available_commands_for_project(None, cx);
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let commands = acp_thread.read(cx).available_commands();
+
             let compact = commands.iter().find(|command| command.name == "compact");
             let compact = compact.expect("compact command should be available behind the flag");
             assert_eq!(
