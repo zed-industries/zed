@@ -1654,6 +1654,7 @@ impl Buffer {
             return EditedBufferSnapshot {
                 base_version,
                 snapshot,
+                did_edit: false,
             };
         }
         let timestamp = self.lamport_clock.tick();
@@ -1662,6 +1663,7 @@ impl Buffer {
         EditedBufferSnapshot {
             base_version,
             snapshot,
+            did_edit: true,
         }
     }
 
@@ -1679,6 +1681,7 @@ impl Buffer {
 pub struct EditedBufferSnapshot {
     pub base_version: clock::Global,
     pub snapshot: BufferSnapshot,
+    pub did_edit: bool,
 }
 
 #[cfg(any(test, feature = "test-support"))]

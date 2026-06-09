@@ -3331,12 +3331,18 @@ impl Buffer {
     }
 
     pub fn fast_forward(&mut self, edited: EditedBufferSnapshot, cx: &mut Context<Self>) {
-        let was_dirty = self.is_dirty();
         let base_version = edited.text.base_version.clone();
+        let did_edit = edited.text.did_edit;
         self.text.fast_forward(edited.text);
-        self.did_edit(&base_version, was_dirty, true, cx);
-        self.did_finish_parsing(edited.snapshot.syntax, None, cx);
-        self.reparse = None;
+        if edited.snapshot.language == self.language {
+            self.reparse = None;
+            self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+            if did_edit {
+                cx.emit(BufferEvent::Edited { is_local: true });
+            }
+        } else {
+            self.did_edit(&base_version, false, true, cx);
+        }
     }
 }
 
