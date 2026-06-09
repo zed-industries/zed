@@ -338,7 +338,7 @@
       "ctrl-x": "vim::Decrement",
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
-      "a": "vim::InsertAfter",
+      "a": "vim::HelixAppend",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
@@ -494,6 +494,10 @@
       "n": "vim::HelixSelectNext",
       "shift-n": "vim::HelixSelectPrevious",
 
+      // Macros — Helix swaps Vim's q/Q: Q records, q replays
+      "q": "vim::ReplayLastRecording",
+      "shift-q": "vim::ToggleRecord",
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
@@ -503,6 +507,8 @@
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
       "g r": "editor::FindAllReferences",
+      "g i": "editor::GoToImplementation",
+      "g a": "pane::AlternateFile",
       "g n": "pane::ActivateNextItem",
       "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",
@@ -943,7 +949,7 @@
       "space w j": "workspace::ActivatePaneDown",
       "space w k": "workspace::ActivatePaneUp",
       "space w l": "workspace::ActivatePaneRight",
-	  "space w q": "pane::CloseActiveItem",
+      "space w q": "pane::CloseActiveItem",
     },
   },
   {
@@ -1056,8 +1062,8 @@
       "ctrl-d": "git_graph::ScrollDown",
       "ctrl-u": "git_graph::ScrollUp",
       "shift-g": "menu::SelectLast",
-      "g g": "menu::SelectFirst"
-    }
+      "g g": "menu::SelectFirst",
+    },
   },
   {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
@@ -1203,6 +1209,20 @@
       "/": "vim::SwitchToInsertMode",
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
+    },
+  },
+  {
+    "context": "SkillCreator",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "SkillCreator > Editor",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
 ]

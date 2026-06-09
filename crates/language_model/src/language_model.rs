@@ -60,6 +60,18 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether requests to this model require the user to consent to the
+    /// upstream provider retaining inference logs (i.e. the model cannot be
+    /// offered with Zero Data Retention).
+    fn requires_data_retention(&self) -> bool {
+        false
+    }
+
+    /// When this model refuses a request, the model ID to fall back to (same provider).
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        None
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
@@ -289,6 +301,20 @@ pub trait LanguageModelProvider: 'static {
         cx: &mut App,
     ) -> AnyView;
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+
+    /// Copy shown the first time a user enables fast mode for a model from
+    /// this provider. Returning `None` skips the confirmation prompt and lets
+    /// the toggle apply silently.
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        None
+    }
+}
+
+/// Provider-specific copy shown the first time a user enables fast mode.
+#[derive(Debug, Clone)]
+pub struct FastModeConfirmation {
+    pub title: SharedString,
+    pub message: SharedString,
 }
 
 #[derive(Default, Clone, PartialEq, Eq)]

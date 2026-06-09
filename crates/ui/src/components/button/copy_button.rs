@@ -139,11 +139,11 @@ impl Component for CopyButton {
         ComponentScope::Input
     }
 
-    fn description() -> Option<&'static str> {
-        Some("An icon button that encapsulates the logic to copy a string into the clipboard.")
+    fn description() -> &'static str {
+        "An icon button that encapsulates the logic to copy a string into the clipboard."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let label_text = "Here's an example label";
 
         let examples = vec![
@@ -195,6 +195,6 @@ impl Component for CopyButton {
             ),
         ];
 
-        Some(example_group(examples).vertical().into_any_element())
+        example_group(examples).vertical().into_any_element()
     }
 }

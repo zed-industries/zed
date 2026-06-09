@@ -37,7 +37,7 @@ pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut
             Err(err) => cx.update(|window, cx| {
                 if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
+                        workspace.show_error(format!("Error: {err}"), cx);
                     })
                 } else {
                     log::error!("{:?}", err);

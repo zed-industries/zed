@@ -2,6 +2,7 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
+use super::tool_permissions::resolve_creatable_global_skill_path;
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
@@ -11,7 +12,7 @@ use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::language_settings::{self, FormatOnSave};
-use language::{Buffer, BufferEvent, LanguageRegistry};
+use language::{Buffer, BufferEditSource, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
@@ -277,6 +278,7 @@ pub(crate) enum EditSessionResult {
 
 pub(crate) async fn run_session(
     result: EditSessionResult,
+    event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<EditSessionOutput, EditSessionOutput> {
     match result {
@@ -302,6 +304,11 @@ pub(crate) async fn run_session(
                 .ensure_buffer_saved(&session.buffer, cx)
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
+            if diff.is_empty() {
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                    acp::ToolCallContent::Content(acp::Content::new(error.clone())),
+                ]));
+            }
             Err(EditSessionOutput::Error {
                 error,
                 input_path: Some(session.input_path),
@@ -311,11 +318,16 @@ pub(crate) async fn run_session(
         EditSessionResult::Failed {
             error,
             session: None,
-        } => Err(EditSessionOutput::Error {
-            error,
-            input_path: None,
-            diff: String::new(),
-        }),
+        } => {
+            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                acp::ToolCallContent::Content(acp::Content::new(error.clone())),
+            ]));
+            Err(EditSessionOutput::Error {
+                error,
+                input_path: None,
+                diff: String::new(),
+            })
+        }
     }
 }
 
@@ -350,6 +362,16 @@ pub(crate) struct EditSession {
     pipeline: Pipeline,
     context: Arc<EditSessionContext>,
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
+}
+
+/// The destination of an edit session, identified by its absolute path on
+/// disk. `project_path` is `Some` for files that live inside one of the
+/// project's worktrees (i.e. that the standard project-path machinery can
+/// resolve), and `None` for global skill files reached through the
+/// `~/.agents/skills` allowlist.
+struct EditSessionTarget {
+    abs_path: PathBuf,
+    project_path: Option<ProjectPath>,
 }
 
 enum Pipeline {
@@ -598,21 +620,14 @@ impl EditPipeline {
 
                 log::debug!("new_text_chunk: done=true, final_text='{}'", final_text);
 
-                if !final_text.is_empty() {
-                    let char_ops = streaming_diff.push_new(&final_text);
-                    apply_char_operations(
-                        &char_ops,
-                        buffer,
-                        &original_snapshot,
-                        &mut edit_cursor,
-                        &context.action_log,
-                        cx,
-                    );
-                }
-
-                let remaining_ops = streaming_diff.finish();
+                let mut char_ops = if final_text.is_empty() {
+                    Vec::new()
+                } else {
+                    streaming_diff.push_new(&final_text)
+                };
+                char_ops.extend(streaming_diff.finish());
                 apply_char_operations(
-                    &remaining_ops,
+                    &char_ops,
                     buffer,
                     &original_snapshot,
                     &mut edit_cursor,
@@ -639,16 +654,34 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<Self, String> {
-        let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
+        let target = if let Some(abs_path) =
+            resolve_global_skill_path_for_edit_session(mode, &path, &context, cx).await?
+        {
+            EditSessionTarget {
+                abs_path,
+                project_path: None,
+            }
+        } else {
+            let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
 
-        let Some(abs_path) =
-            cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
-        else {
-            return Err(format!(
-                "Worktree at '{}' does not exist",
-                path.to_string_lossy()
-            ));
+            let Some(abs_path) =
+                cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
+            else {
+                return Err(format!(
+                    "Worktree at '{}' does not exist",
+                    path.to_string_lossy()
+                ));
+            };
+
+            EditSessionTarget {
+                abs_path,
+                project_path: Some(project_path),
+            }
         };
+        let EditSessionTarget {
+            abs_path,
+            project_path,
+        } = target;
 
         event_stream.update_fields(
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
@@ -658,11 +691,20 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        let buffer = context
-            .project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))
-            .await
-            .map_err(|e| e.to_string())?;
+        let buffer = match project_path {
+            Some(project_path) => context
+                .project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await
+                .map_err(|e| e.to_string())?,
+            None => context
+                .project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(abs_path.clone(), cx)
+                })
+                .await
+                .map_err(|e| e.to_string())?,
+        };
 
         let file_changed_since_last_read =
             ensure_buffer_saved(&buffer, &abs_path, mode, &context, event_stream, cx).await?;
@@ -853,22 +895,26 @@ fn apply_char_operations(
     action_log: &Entity<ActionLog>,
     cx: &mut AsyncApp,
 ) {
+    let mut edits: Vec<_> = Vec::new();
     for op in ops {
         match op {
             CharOperation::Insert { text } => {
                 let anchor = snapshot.anchor_after(*edit_cursor);
-                agent_edit_buffer(&buffer, [(anchor..anchor, text.as_str())], action_log, cx);
+                edits.push((anchor..anchor, text.as_str().into()));
             }
             CharOperation::Delete { bytes } => {
                 let delete_end = *edit_cursor + bytes;
                 let anchor_range = snapshot.anchor_range_inside(*edit_cursor..delete_end);
-                agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
+                edits.push((anchor_range, Arc::<str>::from("")));
                 *edit_cursor = delete_end;
             }
             CharOperation::Keep { bytes } => {
                 *edit_cursor += bytes;
             }
         }
+    }
+    if !edits.is_empty() {
+        agent_edit_buffer(buffer, edits, action_log, cx);
     }
 }
 
@@ -926,7 +972,9 @@ fn agent_edit_buffer<I, S, T>(
 {
     cx.update(|cx| {
         buffer.update(cx, |buffer, cx| {
+            buffer.start_transaction();
             buffer.edit(edits, None, cx);
+            buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
         });
         action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
     });
@@ -1053,6 +1101,72 @@ async fn resolve_dirty_buffer(
         }
     }
     Ok(())
+}
+
+/// Mirrors [`resolve_path`]'s pre-auth validation for the global-skill
+/// branch: returns `Ok(Some(abs_path))` if the path lives under
+/// `~/.agents/skills` and is in a valid state for the requested mode,
+/// `Ok(None)` if the path isn't a global skill at all (so the caller should
+/// fall through to project-path resolution), or `Err(message)` if the path
+/// is a global skill but can't be used (missing in Edit mode, parent
+/// missing in Write mode, etc.).
+///
+/// Errors returned from here surface to the model as tool-result errors
+/// without prompting the user — same contract as [`resolve_path`]. The
+/// idea is that "file doesn't exist" or "parent isn't a directory" are
+/// model mistakes, not decisions the user should be asked to approve.
+async fn resolve_global_skill_path_for_edit_session(
+    mode: EditSessionMode,
+    path: &PathBuf,
+    context: &EditSessionContext,
+    cx: &mut AsyncApp,
+) -> Result<Option<PathBuf>, String> {
+    let fs = context
+        .project
+        .read_with(cx, |project, _cx| project.fs().clone());
+    let Some(abs_path) = resolve_creatable_global_skill_path(path, fs.as_ref()).await else {
+        return Ok(None);
+    };
+
+    match mode {
+        EditSessionMode::Edit => {
+            let metadata = fs
+                .metadata(&abs_path)
+                .await
+                .map_err(|e| format!("Can't edit file: {e}"))?
+                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+            if metadata.is_dir {
+                return Err("Can't edit file: path is a directory".to_string());
+            }
+        }
+        EditSessionMode::Write => {
+            if let Some(metadata) = fs
+                .metadata(&abs_path)
+                .await
+                .map_err(|e| format!("Can't write to file: {e}"))?
+            {
+                if metadata.is_dir {
+                    return Err("Can't write to file: path is a directory".to_string());
+                }
+            } else {
+                let parent_path = abs_path
+                    .parent()
+                    .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
+                let parent_metadata = fs
+                    .metadata(parent_path)
+                    .await
+                    .map_err(|e| format!("Can't create file: {e}"))?
+                    .ok_or_else(|| {
+                        "Can't create file: parent directory doesn't exist".to_string()
+                    })?;
+                if !parent_metadata.is_dir {
+                    return Err("Can't create file: parent is not a directory".to_string());
+                }
+            }
+        }
+    }
+
+    Ok(Some(abs_path))
 }
 
 fn resolve_path(

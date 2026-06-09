@@ -300,6 +300,7 @@ pub fn into_anthropic(
                     "low" => Some(crate::Effort::Low),
                     "medium" => Some(crate::Effort::Medium),
                     "high" => Some(crate::Effort::High),
+                    "xhigh" => Some(crate::Effort::XHigh),
                     "max" => Some(crate::Effort::Max),
                     _ => None,
                 };
@@ -703,6 +704,44 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_xhigh_effort_is_serialized_for_adaptive_thinking() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".into()),
+            speed: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-opus-4-8".to_string(),
+            1.0,
+            128_000,
+            AnthropicModelMode::AdaptiveThinking,
+            AnthropicPromptCacheMode::Automatic,
+        );
+
+        assert_eq!(
+            anthropic_request
+                .output_config
+                .and_then(|config| config.effort),
+            Some(crate::Effort::XHigh)
+        );
     }
 
     #[test]
