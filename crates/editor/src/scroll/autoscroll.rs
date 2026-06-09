@@ -311,7 +311,7 @@ impl Editor {
             return 0;
         };
 
-        let point = target_point.to_point(display_map);
+        let point = buffer_snapshot.clip_point(target_point.to_point(display_map), Bias::Left);
         let mut item_ranges = buffer_snapshot
             .outline_ranges_containing(point..point)
             .collect::<Vec<_>>();

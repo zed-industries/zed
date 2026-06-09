@@ -195,6 +195,7 @@
     "bindings": {
       "ctrl-k ctrl-r": "git::Restore",
       "ctrl-alt-y": "git::ToggleStaged",
+      "ctrl-alt-shift-y": "git::ToggleStagedSelectedLines",
       "alt-y": "git::StageAndNext",
       "alt-shift-y": "git::UnstageAndNext",
     },
