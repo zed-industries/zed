@@ -1,4 +1,5 @@
 pub mod excerpt_ranges;
+pub mod hashed_regions;
 pub mod multi_region;
 pub mod udiff;
 

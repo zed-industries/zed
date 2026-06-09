@@ -290,7 +290,7 @@ pub fn write_editable_with_markers(
 ///
 /// When a marker tag sits on its own line (followed by `\n`), the trailing
 /// newline is also removed so the surrounding lines stay joined naturally.
-fn strip_marker_tags(text: &str) -> String {
+pub(crate) fn strip_marker_tags(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut pos = 0;
     let bytes = text.as_bytes();

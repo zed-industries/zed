@@ -7,10 +7,15 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::AsyncApp;
+use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Arc;
 use zeta_prompt::{
-    ZetaFormat, format_expected_output, format_zeta_prompt, multi_region, resolve_cursor_region,
+    ZetaFormat, ZetaPromptInput, format_expected_output, format_zeta_prompt,
+    hashed_regions::{self, SnippetMarkers, SnippetSource},
+    resolve_cursor_region,
 };
 
 fn resolved_excerpt_ranges_for_format(
@@ -71,22 +76,10 @@ pub async fn run_format_prompt(
                 provider: args.provider,
             });
         }
-        PredictionProvider::TeacherMultiRegion(_)
-        | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
-            step_progress.set_substatus("formatting teacher multi-region prompt");
+        PredictionProvider::TeacherJumps(_) | PredictionProvider::TeacherJumpsNonBatching(_) => {
+            step_progress.set_substatus("formatting teacher jumps prompt");
 
-            let zeta_format = ZetaFormat::default();
-            let (editable_range, context_range) =
-                resolved_excerpt_ranges_for_format(prompt_inputs, zeta_format);
-
-            let include_diagnostics = matches!(zeta_format, ZetaFormat::V0420Diagnostics);
-
-            let prompt = TeacherMultiRegionPrompt::format_prompt(
-                example,
-                editable_range,
-                context_range,
-                include_diagnostics,
-            );
+            let prompt = TeacherJumpsPrompt::format_prompt(example, args.related_files_budget)?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output: None,
@@ -351,36 +344,46 @@ impl TeacherPrompt {
     }
 }
 
-pub struct TeacherMultiRegionPrompt;
+/// Teacher prompt for long-range edit prediction ("jumps"). All prompt
+/// context — the cursor file and every related-file excerpt — is annotated
+/// with hashed region markers (V0609HashedRegions), and the teacher may
+/// output a sequence of marker-bounded edits targeting any of it.
+pub struct TeacherJumpsPrompt;
 
-impl TeacherMultiRegionPrompt {
+struct ParsedSpanEdit {
+    snippet_ix: usize,
+    range: Range<usize>,
+    new_text: String,
+    cursor_offset_in_new_text: Option<usize>,
+}
+
+impl TeacherJumpsPrompt {
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
     pub(crate) const NO_EDITS: &str = "NO_EDITS";
 
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
 
-    pub fn format_prompt(
-        example: &Example,
-        editable_range: Range<usize>,
-        context_range: Range<usize>,
-        include_diagnostics: bool,
-    ) -> String {
-        let edit_history = Self::format_edit_history(&example.spec.edit_history);
-        let context = Self::format_context(example);
-        let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
-        let diagnostics = include_diagnostics
-            .then(|| TeacherPrompt::format_diagnostics(example))
-            .map(|diagnostics| format!("# 4. Diagnostics\n\n{diagnostics}"));
+    pub const DEFAULT_RELATED_FILES_BUDGET: usize = 8192;
 
-        let prompt_template = crate::prompt_assets::get_prompt("teacher_multi_region.md");
+    pub fn format_prompt(example: &Example, related_files_budget: usize) -> Result<String> {
+        let prompt_inputs = example
+            .prompt_inputs
+            .as_ref()
+            .context("example is missing prompt inputs")?;
+        let marker_table = hashed_regions::build_marker_table(prompt_inputs);
+
+        let edit_history = Self::format_edit_history(&example.spec.edit_history);
+        let context = Self::format_context(prompt_inputs, &marker_table, related_files_budget);
+        let cursor_excerpt = Self::format_cursor_excerpt(example, prompt_inputs, &marker_table)?;
+
+        let prompt_template = crate::prompt_assets::get_prompt("teacher_jumps.md");
         let prompt = prompt_template
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
-            .replace("{{diagnostics}}", diagnostics.as_deref().unwrap_or(""))
             .replace("{{cursor_excerpt}}", &cursor_excerpt);
 
-        prompt
+        Ok(prompt)
     }
 
     pub fn parse(example: &Example, response: &str) -> Result<(String, Option<ActualCursor>)> {
@@ -400,88 +403,189 @@ impl TeacherMultiRegionPrompt {
             .as_ref()
             .context("example is missing prompt inputs")?;
 
-        let zeta_format = ZetaFormat::default();
-        let (editable_range, _) = resolved_excerpt_ranges_for_format(prompt_inputs, zeta_format);
-        let excerpt = prompt_inputs.cursor_excerpt.as_ref();
-        let old_editable_region = &excerpt[editable_range.clone()];
-        let marker_offsets = multi_region::compute_marker_offsets(old_editable_region);
-
-        let codeblock =
-            extract_last_codeblock(&response).context("no codeblock found in model response")?;
-        let (start_num, end_num, raw_new_span) = multi_region::extract_marker_span(&codeblock)?;
-
-        let start_idx = start_num
-            .checked_sub(1)
-            .context("marker numbers are 1-indexed")?;
-        let end_idx = end_num
-            .checked_sub(1)
-            .context("marker numbers are 1-indexed")?;
-        let start_byte = *marker_offsets
-            .get(start_idx)
-            .context("start marker number out of range")?;
-        let end_byte = *marker_offsets
-            .get(end_idx)
-            .context("end marker number out of range")?;
-
-        if start_byte > end_byte {
-            return Err(anyhow!("start marker must come before end marker"));
+        let marker_table = hashed_regions::build_marker_table(prompt_inputs);
+        let mut marker_index: HashMap<&str, (usize, usize)> = HashMap::new();
+        for (snippet_ix, snippet) in marker_table.iter().enumerate() {
+            for (id, offset) in &snippet.markers {
+                marker_index.insert(id.as_str(), (snippet_ix, *offset));
+            }
         }
 
-        let cursor_in_span = raw_new_span.find(Self::USER_CURSOR_MARKER);
-        let new_span = raw_new_span.replace(Self::USER_CURSOR_MARKER, "");
-
-        let old_span = &old_editable_region[start_byte..end_byte];
-        let mut new_span = new_span;
-        if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
-            new_span.push('\n');
-        }
-        if !old_span.ends_with('\n') && new_span.ends_with('\n') {
-            new_span.pop();
+        let codeblocks: Vec<String> = extract_all_codeblocks(response)
+            .into_iter()
+            .filter(|block| block.contains(hashed_regions::MARKER_TAG_PREFIX))
+            .collect();
+        if codeblocks.is_empty() {
+            return Err(anyhow!(
+                "no marker-bounded edit codeblocks found in model response"
+            ));
         }
 
-        let mut new_editable_region = String::new();
-        new_editable_region.push_str(&old_editable_region[..start_byte]);
-        new_editable_region.push_str(&new_span);
-        new_editable_region.push_str(&old_editable_region[end_byte..]);
+        let mut edits = Vec::new();
+        for codeblock in &codeblocks {
+            let (start_id, end_id, raw_new_span) = hashed_regions::extract_marker_span(codeblock)?;
+            let &(start_snippet, start_byte) = marker_index
+                .get(start_id.as_str())
+                .with_context(|| format!("unknown start marker `{start_id}`"))?;
+            let &(end_snippet, end_byte) = marker_index
+                .get(end_id.as_str())
+                .with_context(|| format!("unknown end marker `{end_id}`"))?;
 
-        let cursor_offset = cursor_in_span.map(|pos| start_byte + pos);
+            if start_snippet != end_snippet {
+                return Err(anyhow!(
+                    "markers `{start_id}` and `{end_id}` belong to different context snippets"
+                ));
+            }
+            if start_byte >= end_byte {
+                return Err(anyhow!(
+                    "start marker `{start_id}` must come before end marker `{end_id}`"
+                ));
+            }
 
-        if old_editable_region.starts_with('\n') && !new_editable_region.starts_with('\n') {
-            new_editable_region.insert(0, '\n');
+            let snippet_text = Self::snippet_text(prompt_inputs, &marker_table[start_snippet])?;
+            let old_span = &snippet_text[start_byte..end_byte];
+
+            let cursor_in_span = raw_new_span.find(Self::USER_CURSOR_MARKER);
+            let mut new_span = raw_new_span.replace(Self::USER_CURSOR_MARKER, "");
+            if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
+                new_span.push('\n');
+            }
+            if !old_span.ends_with('\n') && new_span.ends_with('\n') {
+                new_span.pop();
+            }
+
+            edits.push(ParsedSpanEdit {
+                snippet_ix: start_snippet,
+                range: start_byte..end_byte,
+                new_text: new_span,
+                cursor_offset_in_new_text: cursor_in_span,
+            });
         }
 
-        let editable_region_offset = editable_range.start;
-        let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
+        // Emit one diff section per edited snippet, in the order snippets
+        // first appear in the model's edit sequence.
+        let mut snippet_order: Vec<usize> = Vec::new();
+        for edit in &edits {
+            if !snippet_order.contains(&edit.snippet_ix) {
+                snippet_order.push(edit.snippet_ix);
+            }
+        }
 
-        let editable_region_lines = old_editable_region.lines().count() as u32;
-        let diff = language::unified_diff_with_context(
-            old_editable_region,
-            &new_editable_region,
-            editable_region_start_line as u32,
-            editable_region_start_line as u32,
-            editable_region_lines,
-        );
+        let mut diff_output = String::new();
+        let mut actual_cursor = None;
 
-        let diff = indoc::formatdoc! {"
-            --- a/{path}
-            +++ b/{path}
-            {diff}",
-            path = example.spec.cursor_path.to_string_lossy(),
-            diff = diff,
-        };
+        for &snippet_ix in &snippet_order {
+            let snippet = &marker_table[snippet_ix];
+            let mut snippet_edits: Vec<&ParsedSpanEdit> = edits
+                .iter()
+                .filter(|edit| edit.snippet_ix == snippet_ix)
+                .collect();
+            snippet_edits.sort_by_key(|edit| edit.range.start);
+            for window in snippet_edits.windows(2) {
+                if window[1].range.start < window[0].range.end {
+                    return Err(anyhow!("edits overlap within the same context snippet"));
+                }
+            }
 
-        let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
-            ActualCursor::from_editable_region(
-                &example.spec.cursor_path,
-                editable_region_cursor_offset,
-                &new_editable_region,
-                excerpt,
-                editable_region_offset,
-                editable_region_start_line,
-            )
-        });
+            let old_text = Self::snippet_text(prompt_inputs, snippet)?;
+            let (path, start_row) =
+                Self::snippet_path_and_start_row(example, prompt_inputs, snippet)?;
 
-        Ok((diff, actual_cursor))
+            let mut new_text = String::new();
+            let mut position = 0;
+            let mut cursor_in_new_text = None;
+            for edit in &snippet_edits {
+                new_text.push_str(&old_text[position..edit.range.start]);
+                if let Some(cursor_offset) = edit.cursor_offset_in_new_text {
+                    cursor_in_new_text = Some(new_text.len() + cursor_offset);
+                }
+                new_text.push_str(&edit.new_text);
+                position = edit.range.end;
+            }
+            new_text.push_str(&old_text[position..]);
+
+            let diff =
+                language::unified_diff_with_context(old_text, &new_text, start_row, start_row, 3);
+            if !diff.is_empty() {
+                let path_str = path.to_string_lossy();
+                writeln!(diff_output, "--- a/{path_str}")?;
+                writeln!(diff_output, "+++ b/{path_str}")?;
+                diff_output.push_str(&diff);
+                if !diff_output.ends_with('\n') {
+                    diff_output.push('\n');
+                }
+            }
+
+            if actual_cursor.is_none() {
+                if let Some(cursor_offset) = cursor_in_new_text {
+                    actual_cursor = Some(ActualCursor::from_editable_region(
+                        path,
+                        cursor_offset,
+                        &new_text,
+                        old_text,
+                        0,
+                        start_row as usize,
+                    ));
+                }
+            }
+        }
+
+        Ok((diff_output, actual_cursor))
+    }
+
+    fn snippet_text<'a>(
+        prompt_inputs: &'a ZetaPromptInput,
+        snippet: &SnippetMarkers,
+    ) -> Result<&'a str> {
+        match snippet.source {
+            SnippetSource::CursorFile => Ok(prompt_inputs.cursor_excerpt.as_ref()),
+            SnippetSource::RelatedFile {
+                file_ix,
+                excerpt_ix,
+            } => {
+                let related_files = prompt_inputs
+                    .related_files
+                    .as_deref()
+                    .context("prompt inputs are missing related files")?;
+                let file = related_files
+                    .get(file_ix)
+                    .context("related file index out of range")?;
+                let excerpt = file
+                    .excerpts
+                    .get(excerpt_ix)
+                    .context("related excerpt index out of range")?;
+                Ok(excerpt.text.as_ref())
+            }
+        }
+    }
+
+    fn snippet_path_and_start_row<'a>(
+        example: &'a Example,
+        prompt_inputs: &'a ZetaPromptInput,
+        snippet: &SnippetMarkers,
+    ) -> Result<(&'a Path, u32)> {
+        match snippet.source {
+            // Scoring applies the cursor-file patch to `cursor_excerpt`, so
+            // hunk rows stay excerpt-relative (row 0 = excerpt start).
+            SnippetSource::CursorFile => Ok((example.spec.cursor_path.as_ref(), 0)),
+            SnippetSource::RelatedFile {
+                file_ix,
+                excerpt_ix,
+            } => {
+                let related_files = prompt_inputs
+                    .related_files
+                    .as_deref()
+                    .context("prompt inputs are missing related files")?;
+                let file = related_files
+                    .get(file_ix)
+                    .context("related file index out of range")?;
+                let excerpt = file
+                    .excerpts
+                    .get(excerpt_ix)
+                    .context("related excerpt index out of range")?;
+                Ok((file.path.as_ref(), excerpt.row_range.start))
+            }
+        }
     }
 
     fn format_edit_history(edit_history: &str) -> String {
@@ -499,55 +603,149 @@ impl TeacherMultiRegionPrompt {
         }
     }
 
-    pub fn format_context(example: &Example) -> String {
-        let related_files = example
-            .prompt_inputs
-            .as_ref()
-            .and_then(|pi| pi.related_files.as_deref());
-        let Some(related_files) = related_files else {
+    /// Render related files with hashed region markers, within a token
+    /// budget. Mirrors `zeta_prompt::format_related_files_within_budget`,
+    /// but inserts marker tags into every included excerpt.
+    fn format_context(
+        prompt_inputs: &ZetaPromptInput,
+        marker_table: &[SnippetMarkers],
+        max_tokens: usize,
+    ) -> String {
+        let Some(related_files) = prompt_inputs.related_files.as_deref() else {
             return "(No context)".to_string();
         };
-
         if related_files.is_empty() {
             return "(No context)".to_string();
         }
 
-        let prefix = "`````";
-        let suffix = "`````\n\n";
-        let max_tokens = 1024;
-        zeta_prompt::format_related_files_within_budget(related_files, &prefix, &suffix, max_tokens)
+        let estimate_tokens = |bytes: usize| bytes / 3;
+
+        struct RenderedExcerpt {
+            file_ix: usize,
+            excerpt_ix: usize,
+            order: usize,
+            rendered: String,
+        }
+
+        let mut candidates = Vec::new();
+        for (file_ix, file) in related_files.iter().enumerate() {
+            for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
+                let markers = marker_table.iter().find_map(|snippet| {
+                    (snippet.source
+                        == SnippetSource::RelatedFile {
+                            file_ix,
+                            excerpt_ix,
+                        })
+                    .then_some(&snippet.markers)
+                });
+                let mut rendered = String::new();
+                match markers {
+                    Some(markers) => hashed_regions::write_snippet_with_markers(
+                        &mut rendered,
+                        &excerpt.text,
+                        markers,
+                        None,
+                    ),
+                    None => rendered.push_str(&excerpt.text),
+                }
+                if !rendered.ends_with('\n') {
+                    rendered.push('\n');
+                }
+                if excerpt.row_range.end < file.max_row {
+                    rendered.push_str("...\n");
+                }
+                candidates.push(RenderedExcerpt {
+                    file_ix,
+                    excerpt_ix,
+                    order: excerpt.order,
+                    rendered,
+                });
+            }
+        }
+
+        let file_headers: Vec<String> = related_files
+            .iter()
+            .map(|file| format!("`````{}\n", file.path.to_string_lossy()))
+            .collect();
+        let file_suffix = "`````\n\n";
+
+        let mut selection_order: Vec<usize> = (0..candidates.len()).collect();
+        selection_order.sort_by_key(|&candidate_ix| {
+            let candidate = &candidates[candidate_ix];
+            (candidate.order, candidate.file_ix, candidate.excerpt_ix)
+        });
+
+        let mut total_tokens = 0;
+        let mut included = vec![false; candidates.len()];
+        let mut file_included = vec![false; related_files.len()];
+        for &candidate_ix in &selection_order {
+            let candidate = &candidates[candidate_ix];
+            let header_cost = if file_included[candidate.file_ix] {
+                0
+            } else {
+                estimate_tokens(file_headers[candidate.file_ix].len() + file_suffix.len())
+            };
+            let excerpt_cost = estimate_tokens(candidate.rendered.len());
+            if total_tokens + header_cost + excerpt_cost > max_tokens {
+                break;
+            }
+            total_tokens += header_cost + excerpt_cost;
+            file_included[candidate.file_ix] = true;
+            included[candidate_ix] = true;
+        }
+
+        let mut result = String::new();
+        let mut last_file_ix = None;
+        for (candidate_ix, candidate) in candidates.iter().enumerate() {
+            if !included[candidate_ix] {
+                continue;
+            }
+            if last_file_ix != Some(candidate.file_ix) {
+                if last_file_ix.is_some() {
+                    result.push_str(file_suffix);
+                }
+                result.push_str(&file_headers[candidate.file_ix]);
+                last_file_ix = Some(candidate.file_ix);
+            }
+            result.push_str(&candidate.rendered);
+        }
+        if last_file_ix.is_some() {
+            result.push_str(file_suffix);
+        }
+
+        if result.is_empty() {
+            "(No context)".to_string()
+        } else {
+            result
+        }
     }
 
     fn format_cursor_excerpt(
         example: &Example,
-        editable_range: Range<usize>,
-        context_range: Range<usize>,
-    ) -> String {
-        let mut result = String::new();
+        prompt_inputs: &ZetaPromptInput,
+        marker_table: &[SnippetMarkers],
+    ) -> Result<String> {
+        let cursor_markers = marker_table
+            .iter()
+            .find_map(|snippet| {
+                (snippet.source == SnippetSource::CursorFile).then_some(&snippet.markers)
+            })
+            .context("marker table is missing the cursor file snippet")?;
 
-        let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
         let excerpt = prompt_inputs.cursor_excerpt.as_ref();
         let cursor_offset = prompt_inputs.cursor_offset_in_excerpt;
 
-        let editable_text = &excerpt[editable_range.clone()];
-        let cursor_in_editable = cursor_offset - editable_range.start;
-
         let path_str = example.spec.cursor_path.to_string_lossy();
-        result.push_str(&format!("`````{path_str}\n"));
-
-        result.push_str(&excerpt[context_range.start..editable_range.start]);
-
-        multi_region::write_editable_with_markers(
+        let mut result = format!("`````{path_str}\n");
+        hashed_regions::write_snippet_with_markers(
             &mut result,
-            editable_text,
-            cursor_in_editable,
-            Self::USER_CURSOR_MARKER,
+            excerpt,
+            cursor_markers,
+            Some((cursor_offset, Self::USER_CURSOR_MARKER)),
         );
-
-        result.push_str(&excerpt[editable_range.end..context_range.end]);
         result.push_str("\n`````");
 
-        result
+        Ok(result)
     }
 }
 
@@ -595,6 +793,42 @@ pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> 
     result.push_str("\n`````");
 
     Some(result)
+}
+
+/// Extract all top-level fenced codeblocks from `text`, in order.
+///
+/// A fence opens with 3+ backticks (optionally followed by an info string)
+/// and closes with a line of at least as many backticks, so codeblocks that
+/// themselves contain shorter fences are handled.
+pub(crate) fn extract_all_codeblocks(text: &str) -> Vec<String> {
+    let mut codeblocks = Vec::new();
+    let mut current_block: Option<(usize, Vec<&str>)> = None;
+
+    for line in text.lines() {
+        match &mut current_block {
+            None => {
+                let backtick_count = line.chars().take_while(|&c| c == '`').count();
+                if backtick_count >= 3 {
+                    current_block = Some((backtick_count, Vec::new()));
+                }
+            }
+            Some((opening_count, lines)) => {
+                let trimmed = line.trim();
+                if trimmed.len() >= *opening_count && trimmed.chars().all(|c| c == '`') {
+                    let mut content = lines.join("\n");
+                    if !content.is_empty() {
+                        content.push('\n');
+                    }
+                    codeblocks.push(content);
+                    current_block = None;
+                } else {
+                    lines.push(line);
+                }
+            }
+        }
+    }
+
+    codeblocks
 }
 
 pub(crate) fn extract_last_codeblock(text: &str) -> Option<String> {
@@ -645,6 +879,235 @@ pub(crate) fn extract_last_codeblock(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeta_prompt::multi_region;
+
+    fn make_example(
+        cursor_excerpt: &str,
+        cursor_offset: usize,
+        related: &[(&str, &[(&str, u32)])],
+    ) -> Example {
+        let related_files = related
+            .iter()
+            .map(|(path, excerpts)| zeta_prompt::RelatedFile {
+                path: std::sync::Arc::from(std::path::Path::new(path)),
+                max_row: 1000,
+                excerpts: excerpts
+                    .iter()
+                    .map(|(text, start_row)| zeta_prompt::RelatedExcerpt {
+                        row_range: *start_row..*start_row + text.matches('\n').count() as u32,
+                        text: std::sync::Arc::from(*text),
+                        order: 0,
+                        context_source: zeta_prompt::ContextSource::CurrentFile,
+                    })
+                    .collect(),
+                in_open_source_repo: false,
+            })
+            .collect();
+
+        Example {
+            spec: edit_prediction::example_spec::ExampleSpec {
+                name: "test".to_string(),
+                repository_url: "https://github.com/zed-industries/zed.git".to_string(),
+                revision: "HEAD".to_string(),
+                tags: Vec::new(),
+                reasoning: None,
+                uncommitted_diff: String::new(),
+                recently_opened_files: Vec::new(),
+                recently_viewed_files: Vec::new(),
+                uncommitted_diff_contains_edit_history: false,
+                cursor_path: std::sync::Arc::from(std::path::Path::new("src/main.rs")),
+                cursor_position: "0:0".to_string(),
+                edit_history: String::new(),
+                expected_patches: Vec::new(),
+                rejected_patch: None,
+                telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
+            },
+            prompt_inputs: Some(zeta_prompt::ZetaPromptInput {
+                cursor_path: std::path::Path::new("src/main.rs").into(),
+                cursor_excerpt: cursor_excerpt.into(),
+                cursor_offset_in_excerpt: cursor_offset,
+                excerpt_start_row: Some(0),
+                events: Vec::new(),
+                related_files: Some(related_files),
+                active_buffer_diagnostics: Vec::new(),
+                excerpt_ranges: zeta_prompt::ExcerptRanges::default(),
+                syntax_ranges: None,
+                in_open_source_repo: false,
+                can_collect_data: false,
+                repo_url: None,
+            }),
+            prompt: None,
+            predictions: Vec::new(),
+            score: Vec::new(),
+            qa: Vec::new(),
+            zed_version: None,
+            state: None,
+        }
+    }
+
+    #[test]
+    fn test_teacher_jumps_format_prompt_markers_everywhere() {
+        let example = make_example(
+            "fn main() {\n    let x = 1;\n}\n",
+            16,
+            &[("src/lib.rs", &[("pub fn helper() {}\n", 5)])],
+        );
+        let prompt = TeacherJumpsPrompt::format_prompt(&example, 8192).unwrap();
+
+        assert!(prompt.contains(TeacherJumpsPrompt::USER_CURSOR_MARKER));
+        assert!(prompt.contains("`````src/main.rs\n"));
+        assert!(prompt.contains("`````src/lib.rs\n"));
+        // Markers in both the current file and the related excerpt.
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        for snippet in &marker_table {
+            for (id, _) in &snippet.markers {
+                assert!(
+                    prompt.contains(&hashed_regions::marker_tag(id)),
+                    "prompt is missing marker {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_single_edit_in_cursor_file() {
+        let example = make_example("fn main() {\n    let x = 1;\n}\n", 16, &[]);
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let cursor_markers = &marker_table[0].markers;
+        let start_tag = hashed_regions::marker_tag(&cursor_markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&cursor_markers[cursor_markers.len() - 1].0);
+
+        let response = format!(
+            "The user is changing x.\n\n`````\n{start_tag}\nfn main() {{\n    let x = 2;<|user_cursor|>\n}}\n{end_tag}\n`````\n"
+        );
+        let (patch, cursor) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+
+        assert!(patch.contains("--- a/src/main.rs"), "patch: {patch}");
+        assert!(patch.contains("-    let x = 1;"), "patch: {patch}");
+        assert!(patch.contains("+    let x = 2;"), "patch: {patch}");
+        let cursor = cursor.unwrap();
+        assert_eq!(cursor.path, "src/main.rs");
+        assert_eq!(cursor.row, 1);
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_sequence_across_files() {
+        let example = make_example(
+            "fn fetch_user_cached() {}\n",
+            0,
+            &[(
+                "src/server.rs",
+                &[("fn handle() {\n    fetch_user();\n}\n", 10)],
+            )],
+        );
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        assert_eq!(marker_table.len(), 2);
+        let related_markers = &marker_table[1].markers;
+        let start_tag = hashed_regions::marker_tag(&related_markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&related_markers[related_markers.len() - 1].0);
+
+        let response = format!(
+            "Updating the call site to use the new name.\n\n\
+             `````\n{start_tag}\nfn handle() {{\n    fetch_user_cached();\n}}\n{end_tag}\n`````\n"
+        );
+        let (patch, cursor) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+
+        assert!(patch.contains("--- a/src/server.rs"), "patch: {patch}");
+        assert!(patch.contains("-    fetch_user();"), "patch: {patch}");
+        assert!(
+            patch.contains("+    fetch_user_cached();"),
+            "patch: {patch}"
+        );
+        // Hunk rows are file-absolute for related files (1-based in the
+        // hunk header, excerpt starts at 0-based row 10).
+        assert!(patch.contains("@@ -11,"), "patch: {patch}");
+        assert!(cursor.is_none());
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_multiple_edits_same_file() {
+        let cursor_excerpt = "\
+            fn alpha() {\n    one();\n}\n\nfn beta() {\n    two();\n}\n\n\
+            fn gamma() {\n    three();\n}\n\nfn delta() {\n    four();\n}\n";
+        let example = make_example(cursor_excerpt, 0, &[]);
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let markers = &marker_table[0].markers;
+        assert!(
+            markers.len() >= 3,
+            "expected internal markers, got {markers:?}"
+        );
+
+        // First edit: between the first two markers; second edit: between the
+        // second and last markers.
+        let tag = |ix: usize| hashed_regions::marker_tag(&markers[ix].0);
+        let old_first_span = &cursor_excerpt[markers[0].1..markers[1].1];
+        let old_second_span = &cursor_excerpt[markers[1].1..markers[markers.len() - 1].1];
+        let new_first_span = old_first_span.replace("one()", "uno()");
+        let new_second_span = old_second_span.replace("four()", "cuatro()");
+
+        let response = format!(
+            "Renaming calls.\n\n`````\n{}\n{}{}\n`````\n\n`````\n{}\n{}{}\n`````\n",
+            tag(0),
+            new_first_span,
+            tag(1),
+            tag(1),
+            new_second_span,
+            tag(markers.len() - 1),
+        );
+        let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+
+        assert!(patch.contains("+    uno();"), "patch: {patch}");
+        assert!(patch.contains("+    cuatro();"), "patch: {patch}");
+        assert_eq!(patch.matches("--- a/src/main.rs").count(), 1);
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_no_edits() {
+        let example = make_example("fn main() {}\n", 0, &[]);
+        let (patch, cursor) =
+            TeacherJumpsPrompt::parse(&example, "All good.\n\n`````\nNO_EDITS\n`````\n").unwrap();
+        assert!(patch.is_empty());
+        assert!(cursor.is_none());
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_rejects_unknown_marker() {
+        let example = make_example("fn main() {}\n", 0, &[]);
+        let response = "`````\n<|marker_zzzz|>\nnew\n<|marker_yyyy|>\n`````\n";
+        assert!(TeacherJumpsPrompt::parse(&example, response).is_err());
+    }
+
+    #[test]
+    fn test_extract_all_codeblocks_multiple() {
+        let text = indoc::indoc! {"
+            First edit:
+
+            `````
+            block one
+            `````
+
+            Second edit:
+
+            `````
+            block two
+            with ``` nested
+            `````
+            "};
+        let blocks = extract_all_codeblocks(text);
+        assert_eq!(
+            blocks,
+            vec![
+                "block one\n".to_string(),
+                "block two\nwith ``` nested\n".to_string()
+            ]
+        );
+    }
 
     #[test]
     fn test_extract_last_code_block() {
