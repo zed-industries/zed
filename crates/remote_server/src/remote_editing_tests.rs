@@ -1637,6 +1637,68 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
 }
 
 #[gpui::test]
+async fn test_remote_root_repo_common_dir_not_polluted_by_ancestor_git(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // Regression test (remote): when a remote worktree is rooted at a
+    // subdirectory of a monorepo (no `.git` at the worktree root, but an
+    // ancestor has one), the value carried over the wire must be `None`.
+    // Otherwise sibling subdirectories collapse into one entry in recent
+    // projects. See PR #55715.
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "monorepo": {
+                ".git": {},
+                "frontend": {
+                    "file.txt": "content",
+                },
+                "backend": {
+                    "file.txt": "content",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    let (worktree_frontend, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/monorepo/frontend", true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let (worktree_backend, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/monorepo/backend", true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let frontend_common_dir = worktree_frontend.read_with(cx, |worktree, _| {
+        worktree.snapshot().root_repo_common_dir().cloned()
+    });
+    assert_eq!(
+        frontend_common_dir, None,
+        "remote monorepo subdirectory must not inherit ancestor .git",
+    );
+
+    let backend_common_dir = worktree_backend.read_with(cx, |worktree, _| {
+        worktree.snapshot().root_repo_common_dir().cloned()
+    });
+    assert_eq!(
+        backend_common_dir, None,
+        "remote monorepo subdirectory must not inherit ancestor .git",
+    );
+}
+
+#[gpui::test]
 async fn test_remote_search_commits_streams_proto_chunks(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
