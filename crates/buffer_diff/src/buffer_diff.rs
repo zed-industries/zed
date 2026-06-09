@@ -701,8 +701,7 @@ impl BufferDiffSnapshot {
     }
 }
 
-impl BufferDiff {
-    /// Returns the new index text and new pending hunks.
+impl BufferDiffSnapshot {
     fn stage_or_unstage_hunks_impl(
         &mut self,
         unstaged_diff: &Self,
@@ -711,18 +710,12 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         file_exists: bool,
     ) -> Option<Rope> {
-        let Some(diff_snapshot) = &mut self.diff_snapshot else {
-            return None;
-        };
-        let Some(unstaged_diff_snapshot) = &unstaged_diff.diff_snapshot else {
-            return None;
-        };
-        let head_text = diff_snapshot
+        let head_text = self
             .base_text_exists
-            .then(|| diff_snapshot.base_text.as_rope().clone());
-        let index_text = unstaged_diff_snapshot
+            .then(|| self.base_text.as_rope().clone());
+        let index_text = unstaged_diff
             .base_text_exists
-            .then(|| unstaged_diff_snapshot.base_text.as_rope().clone());
+            .then(|| unstaged_diff.base_text.as_rope().clone());
 
         // If the file doesn't exist in either HEAD or the index, then the
         // entire file must be either created or deleted in the index.
@@ -749,15 +742,13 @@ impl BufferDiff {
                     buffer_version: buffer.version().clone(),
                     new_status,
                 };
-                diff_snapshot.pending_hunks = SumTree::from_item(hunk, buffer);
+                self.pending_hunks = SumTree::from_item(hunk, buffer);
                 return new_index_text;
             }
         };
 
         let mut pending_hunks = SumTree::new(buffer);
-        let mut old_pending_hunks = diff_snapshot
-            .pending_hunks
-            .cursor::<DiffHunkSummary>(buffer);
+        let mut old_pending_hunks = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
 
         // first, merge new hunks into pending_hunks
         for DiffHunk {
@@ -804,9 +795,7 @@ impl BufferDiff {
         // append the remainder
         pending_hunks.append(old_pending_hunks.suffix(), buffer);
 
-        let mut unstaged_hunk_cursor = unstaged_diff_snapshot
-            .hunks
-            .cursor::<DiffHunkSummary>(buffer);
+        let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next();
 
         // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
@@ -910,7 +899,7 @@ impl BufferDiff {
         }
         drop(pending_hunks_iter);
         drop(old_pending_hunks);
-        diff_snapshot.pending_hunks = pending_hunks;
+        self.pending_hunks = pending_hunks;
 
         #[cfg(debug_assertions)] // invariants: non-overlapping and sorted
         {
@@ -1656,9 +1645,17 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Option<Rope> {
         let secondary_diff = self.secondary_diff.clone()?;
-        let new_index_text = secondary_diff.update(cx, |secondary_diff, _cx| {
-            self.stage_or_unstage_hunks_impl(secondary_diff, stage, hunks, buffer, file_exists)
-        });
+        let diff_snapshot = self.diff_snapshot.as_mut()?;
+        let unstaged_diff_snapshot = secondary_diff.read_with(cx, |secondary_diff, _cx| {
+            secondary_diff.diff_snapshot.clone()
+        })?;
+        let new_index_text = diff_snapshot.stage_or_unstage_hunks_impl(
+            &unstaged_diff_snapshot,
+            stage,
+            hunks,
+            buffer,
+            file_exists,
+        );
 
         cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
             new_index_text.clone(),
@@ -1688,11 +1685,23 @@ impl BufferDiff {
             .snapshot(cx)
             .hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), buffer)
             .collect::<Vec<_>>();
+        let Some(diff_snapshot) = &mut self.diff_snapshot else {
+            return;
+        };
         let Some(secondary) = self.secondary_diff.clone() else {
             return;
         };
         let secondary = secondary.read(cx);
-        self.stage_or_unstage_hunks_impl(&secondary, stage, &hunks, buffer, file_exists);
+        let Some(secondary_snapshot) = &secondary.diff_snapshot else {
+            return;
+        };
+        diff_snapshot.stage_or_unstage_hunks_impl(
+            &secondary_snapshot,
+            stage,
+            &hunks,
+            buffer,
+            file_exists,
+        );
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
             let changed_range = Some(first.buffer_range.start..last.buffer_range.end);
             let base_text_changed_range =
@@ -1812,7 +1821,7 @@ impl BufferDiff {
             mut extended_range,
             base_text_changed: _,
         } = match (old_base_text_exists, new_base_text_exists) {
-            (false, false) => DiffChanged::default(),
+            (false, false) if self.diff_snapshot.is_some() => DiffChanged::default(),
             (true, true) => compare_hunks(
                 &new_hunks,
                 &old_snapshot.hunks,
