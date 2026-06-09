@@ -20,7 +20,7 @@ pub struct Matcher<'a> {
     min_score: f64,
     match_positions: Vec<usize>,
     last_positions: Vec<usize>,
-    score_matrix: Vec<Option<f64>>,
+    score_matrix: Vec<f64>,
     best_position_matrix: Vec<usize>,
 }
 
@@ -64,7 +64,7 @@ impl<'a> Matcher<'a> {
     ) where
         C: MatchCandidate,
         T: Borrow<C>,
-        F: Fn(&C, f64, &Vec<usize>) -> R,
+        F: Fn(&C, f64, &[usize]) -> R,
     {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
@@ -92,7 +92,7 @@ impl<'a> Matcher<'a> {
             let matrix_len =
                 self.query.len() * (lowercase_prefix.len() + lowercase_candidate_chars.len());
             self.score_matrix.clear();
-            self.score_matrix.resize(matrix_len, None);
+            self.score_matrix.resize(matrix_len, f64::NAN);
             self.best_position_matrix.clear();
             self.best_position_matrix.resize(matrix_len, 0);
 
@@ -205,7 +205,9 @@ impl<'a> Matcher<'a> {
         }
 
         let path_len = prefix.len() + path.len();
-        if let Some(memoized) = self.score_matrix[query_idx * path_len + path_idx] {
+        let score_matrix_index = query_idx * path_len + path_idx;
+        let memoized = self.score_matrix[score_matrix_index];
+        if !memoized.is_nan() {
             return memoized;
         }
 
@@ -312,10 +314,10 @@ impl<'a> Matcher<'a> {
         }
 
         if best_position != 0 {
-            self.best_position_matrix[query_idx * path_len + path_idx] = best_position;
+            self.best_position_matrix[score_matrix_index] = best_position;
         }
 
-        self.score_matrix[query_idx * path_len + path_idx] = Some(score);
+        self.score_matrix[score_matrix_index] = score;
         score
     }
 }
@@ -603,7 +605,7 @@ mod tests {
             |candidate, score, positions| PathMatch {
                 score,
                 worktree_id: 0,
-                positions: positions.clone(),
+                positions: positions.to_vec(),
                 path: candidate.path.into(),
                 path_prefix: RelPath::empty().into(),
                 distance_to_relative_ancestor: usize::MAX,

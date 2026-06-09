@@ -181,7 +181,7 @@ where
                         |candidate: &&StringMatchCandidate, score, positions| StringMatch {
                             candidate_id: candidate.id,
                             score,
-                            positions: positions.clone(),
+                            positions: positions.to_vec(),
                             string: candidate.string.to_string(),
                         },
                     );
