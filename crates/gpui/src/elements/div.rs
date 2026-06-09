@@ -2251,9 +2251,12 @@ impl Interactivity {
                                         // Paint children. In glass mode mark them as glass
                                         // content so their fills preserve the backdrop alpha
                                         // (rounded edges don't punch through the glass).
+                                        // `Some` overrides the inherited state (`Some(false)`
+                                        // turns glass back off for an opaque subtree); `None`
+                                        // inherits whatever the ancestors established.
                                         let prev_glass_content = window.glass_content;
-                                        if style.glass_content {
-                                            window.glass_content = true;
+                                        if let Some(glass_content) = style.glass_content {
+                                            window.glass_content = glass_content;
                                         }
                                         f(&style, window, cx);
                                         window.glass_content = prev_glass_content;

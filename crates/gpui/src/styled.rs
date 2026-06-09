@@ -740,16 +740,20 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Paints this element's content as "glass content".
+    /// Controls whether this element's children are painted as "glass content".
     ///
-    /// The element's own background and border are painted normally (the
-    /// background establishes the translucent surface), while its child content
-    /// only blends RGB and preserves the destination alpha. Use this on a
-    /// translucent surface (e.g. a sidebar over a window glass background) so
-    /// rounded, anti-aliased child elements don't punch through the glass along
-    /// their edges.
-    fn glass(mut self) -> Self {
-        self.style().glass_content = Some(true);
+    /// When enabled, the element's own background and border are painted
+    /// normally (the background establishes the translucent surface), while its
+    /// child content only blends RGB and preserves the destination alpha. Use
+    /// this on a translucent surface (e.g. a sidebar over a window glass
+    /// background) so rounded, anti-aliased child elements don't punch through
+    /// the glass along their edges.
+    ///
+    /// Glass mode is inherited by descendants. Pass `false` to turn it back off
+    /// for an opaque subtree — e.g. a crisp content panel nested inside a glass
+    /// surface — so its fills and borders blend normally again.
+    fn glass(mut self, enabled: bool) -> Self {
+        self.style().glass_content = Some(enabled);
         self
     }
 
