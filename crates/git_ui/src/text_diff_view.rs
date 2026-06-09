@@ -11,7 +11,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Buffer, OffsetRangeExt, Point};
+use language::{self, Buffer, Capability, OffsetRangeExt, Point};
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
@@ -110,16 +110,22 @@ impl TextDiffView {
         }
 
         let workspace = workspace.weak_handle();
-        let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot.text, cx));
         let clipboard_buffer = build_clipboard_buffer(
             clipboard_text,
             &source_buffer,
             expanded_selection_range.clone(),
             cx,
         );
+        let diff_buffer = cx.new(|cx| {
+            BufferDiff::new_with_base_text_buffer(
+                &source_buffer_snapshot.text,
+                clipboard_buffer.clone(),
+                cx,
+            )
+        });
 
         let task = window.spawn(cx, async move |cx| {
-            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
@@ -179,6 +185,7 @@ impl TextDiffView {
                 cx,
             );
             splittable.disable_diff_hunk_controls(cx);
+            splittable.set_render_diff_hunks_as_unstaged(cx);
             splittable.rhs_editor().update(cx, |editor, _cx| {
                 editor.start_temporary_diff_override();
             });
@@ -240,7 +247,7 @@ impl TextDiffView {
                     }
 
                     log::trace!("start recalculating");
-                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
+                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -259,11 +266,16 @@ fn build_clipboard_buffer(
     cx.new(|cx| {
         let mut buffer = language::Buffer::local(source_buffer_snapshot.text(), cx);
         let language = source_buffer.read(cx).language().cloned();
+        if let Some(language_registry) = source_buffer.read(cx).language_registry() {
+            buffer.set_language_registry(language_registry);
+        }
         buffer.set_language(language, cx);
 
         let range_start = source_buffer_snapshot.point_to_offset(replacement_range.start);
         let range_end = source_buffer_snapshot.point_to_offset(replacement_range.end);
         buffer.edit([(range_start..range_end, text)], None, cx);
+
+        buffer.set_capability(Capability::ReadOnly, cx);
 
         buffer
     })
@@ -274,32 +286,23 @@ async fn update_diff_buffer(
     source_buffer: &Entity<Buffer>,
     clipboard_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) {
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let language = source_buffer_snapshot.language().cloned();
-    let language_registry = source_buffer.read_with(cx, |buffer, _| buffer.language_registry());
-
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let base_text = base_buffer_snapshot.text();
+    let base_text = Arc::<str>::from(base_buffer_snapshot.text());
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
                 source_buffer_snapshot.text.clone(),
-                Some(Arc::from(base_text.as_str())),
-                Some(true),
-                language.clone(),
+                &base_buffer_snapshot,
+                Some(base_text.clone()),
                 cx,
             )
         })
         .await;
 
-    diff.update(cx, |diff, cx| {
-        diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update, &source_buffer_snapshot.text, cx)
-    })
-    .await;
-    Ok(())
+    diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));
 }
 
 impl EventEmitter<EditorEvent> for TextDiffView {}
