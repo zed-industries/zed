@@ -2495,50 +2495,53 @@ impl GitGraph {
                         cx.write_to_clipboard(ClipboardItem::new_string(ref_name.to_string()));
                     })
                 })
-                .when(ref_name.is_none(), |menu| menu.map(|menu| {
-                    let tag_names = commit
-                        .data
-                        .tag_names()
-                        .into_iter()
-                        .map(|tag_name| SharedString::from(tag_name.to_string()))
-                        .collect::<Vec<_>>();
-                    let copy_tag_label = "Copy Tag";
+                .when(ref_name.is_none(), |menu| {
+                    menu.map(|menu| {
+                        let tag_names = commit
+                            .data
+                            .tag_names()
+                            .into_iter()
+                            .map(|tag_name| SharedString::from(tag_name.to_string()))
+                            .collect::<Vec<_>>();
+                        let copy_tag_label = "Copy Tag";
 
-                    match tag_names.as_slice() {
-                        [] => menu.item(
-                            ContextMenuEntry::new(copy_tag_label)
-                                .action(CopyCommitTag.boxed_clone())
-                                .disabled(true),
-                        ),
-                        [tag_name] => {
-                            let tag_name = tag_name.clone();
-                            let label = format!("{copy_tag_label}: {tag_name}");
-                            menu.entry(
-                                label,
-                                Some(CopyCommitTag.boxed_clone()),
-                                move |_window, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        tag_name.to_string(),
-                                    ));
-                                },
-                            )
-                        }
-                        _ => menu.submenu(copy_tag_label, move |menu, _window, _cx| {
-                            let mut menu = menu.fixed_width(COMMIT_TAG_LIST_WIDTH_IN_REMS.into());
-
-                            for tag_name in tag_names.clone() {
-                                let tag_name_to_copy = tag_name.clone();
-
-                                menu = menu.entry(tag_name, None, move |_window, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        tag_name_to_copy.to_string(),
-                                    ));
-                                });
+                        match tag_names.as_slice() {
+                            [] => menu.item(
+                                ContextMenuEntry::new(copy_tag_label)
+                                    .action(CopyCommitTag.boxed_clone())
+                                    .disabled(true),
+                            ),
+                            [tag_name] => {
+                                let tag_name = tag_name.clone();
+                                let label = format!("{copy_tag_label}: {tag_name}");
+                                menu.entry(
+                                    label,
+                                    Some(CopyCommitTag.boxed_clone()),
+                                    move |_window, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            tag_name.to_string(),
+                                        ));
+                                    },
+                                )
                             }
-                            menu
-                        }),
-                    }
-                }))
+                            _ => menu.submenu(copy_tag_label, move |menu, _window, _cx| {
+                                let mut menu =
+                                    menu.fixed_width(COMMIT_TAG_LIST_WIDTH_IN_REMS.into());
+
+                                for tag_name in tag_names.clone() {
+                                    let tag_name_to_copy = tag_name.clone();
+
+                                    menu = menu.entry(tag_name, None, move |_window, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            tag_name_to_copy.to_string(),
+                                        ));
+                                    });
+                                }
+                                menu
+                            }),
+                        }
+                    })
+                })
                 .map(|mut menu| {
                     menu = menu.separator().header("Custom Commands");
 
@@ -2928,13 +2931,7 @@ impl GitGraph {
                         h_flex().gap_1().flex_wrap().justify_center().children(
                             ref_names.iter().map(|name| {
                                 let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                self.render_ref_chip(
-                                    name,
-                                    accent_color,
-                                    is_head,
-                                    selected_idx,
-                                    cx,
-                                )
+                                self.render_ref_chip(name, accent_color, is_head, selected_idx, cx)
                             }),
                         )
                     }))
