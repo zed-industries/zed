@@ -20,6 +20,7 @@ pub(crate) fn release() -> Workflow {
     let linux_clippy = run_tests::clippy(Platform::Linux, None);
     let windows_clippy = run_tests::clippy(Platform::Windows, None);
     let check_scripts = run_tests::check_scripts();
+    let check_database_migrations = check_database_migrations();
 
     let create_draft_release = create_draft_release();
     let (non_blocking_compliance_run, job_output) = compliance_check();
@@ -28,32 +29,62 @@ pub(crate) fn release() -> Workflow {
         linux_aarch64: bundle_linux(
             Arch::AARCH64,
             None,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            &[
+                &linux_tests,
+                &linux_clippy,
+                &check_scripts,
+                &check_database_migrations,
+            ],
         ),
         linux_x86_64: bundle_linux(
             Arch::X86_64,
             None,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            &[
+                &linux_tests,
+                &linux_clippy,
+                &check_scripts,
+                &check_database_migrations,
+            ],
         ),
         mac_aarch64: bundle_mac(
             Arch::AARCH64,
             None,
-            &[&macos_tests, &macos_clippy, &check_scripts],
+            &[
+                &macos_tests,
+                &macos_clippy,
+                &check_scripts,
+                &check_database_migrations,
+            ],
         ),
         mac_x86_64: bundle_mac(
             Arch::X86_64,
             None,
-            &[&macos_tests, &macos_clippy, &check_scripts],
+            &[
+                &macos_tests,
+                &macos_clippy,
+                &check_scripts,
+                &check_database_migrations,
+            ],
         ),
         windows_aarch64: bundle_windows(
             Arch::AARCH64,
             None,
-            &[&windows_tests, &windows_clippy, &check_scripts],
+            &[
+                &windows_tests,
+                &windows_clippy,
+                &check_scripts,
+                &check_database_migrations,
+            ],
         ),
         windows_x86_64: bundle_windows(
             Arch::X86_64,
             None,
-            &[&windows_tests, &windows_clippy, &check_scripts],
+            &[
+                &windows_tests,
+                &windows_clippy,
+                &check_scripts,
+                &check_database_migrations,
+            ],
         ),
     };
 
@@ -75,6 +106,7 @@ pub(crate) fn release() -> Workflow {
         &linux_clippy,
         &windows_clippy,
         &check_scripts,
+        &check_database_migrations,
     ];
     let push_slack_notification = push_release_update_notification(
         &create_draft_release,
@@ -98,6 +130,10 @@ pub(crate) fn release() -> Workflow {
         .add_job(linux_clippy.name, linux_clippy.job)
         .add_job(windows_clippy.name, windows_clippy.job)
         .add_job(check_scripts.name, check_scripts.job)
+        .add_job(
+            check_database_migrations.name,
+            check_database_migrations.job,
+        )
         .add_job(create_draft_release.name, create_draft_release.job)
         .add_job(
             non_blocking_compliance_run.name,
@@ -147,6 +183,67 @@ impl ReleaseBundleJobs {
             self.windows_x86_64,
         ]
     }
+}
+
+/// Verifies that the database migrations in this commit apply cleanly to the
+/// database produced by previous Zed versions.
+///
+/// The database is persisted as a workflow artifact and carried forward from
+/// run to run, so the check does not depend on which CI machine runs it: each
+/// run downloads the database produced by the most recent run that uploaded
+/// one, migrates it forward, and uploads the result as the new canonical
+/// database. If no previous database exists (first run, or artifacts expired)
+/// the chain restarts from an empty database.
+pub(crate) fn check_database_migrations() -> NamedJob {
+    const MIGRATION_DATABASE_ARTIFACT: &str = "migration-database";
+    const MIGRATION_DATA_DIR: &str = "$RUNNER_TEMP/zed-migration";
+
+    fn download_previous_database() -> Step<Run> {
+        named::bash(formatdoc! {r#"
+            mkdir -p "{MIGRATION_DATA_DIR}/db"
+            mapfile -t run_ids < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$GITHUB_WORKFLOW" --limit 25 --json databaseId --jq '.[].databaseId')
+            for run_id in "${{run_ids[@]}}"; do
+                if gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name {MIGRATION_DATABASE_ARTIFACT} --dir "{MIGRATION_DATA_DIR}/db"; then
+                    echo "Migrating database produced by workflow run $run_id"
+                    exit 0
+                fi
+            done
+            echo "No previous database artifact found; starting from an empty database"
+        "#})
+        .add_env(("GH_TOKEN", vars::GITHUB_TOKEN))
+    }
+
+    fn run_database_migrations() -> Step<Run> {
+        named::bash(format!(
+            "cargo run --package zed -- --run-database-migrations --user-data-dir \"{MIGRATION_DATA_DIR}\""
+        ))
+    }
+
+    fn upload_migrated_database() -> Step<Use> {
+        named::uses(
+            "actions",
+            "upload-artifact",
+            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
+        )
+        .add_with(("name", MIGRATION_DATABASE_ARTIFACT))
+        .add_with(("path", "${{ runner.temp }}/zed-migration/db"))
+        .add_with(("if-no-files-found", "error"))
+    }
+
+    let platform = Platform::Linux;
+    named::job(
+        steps::use_clang(steps::release_job(&[]).runs_on(runners::LINUX_DEFAULT))
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(platform))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
+            .add_step(steps::setup_sccache(platform))
+            .add_step(download_previous_database())
+            .add_step(run_database_migrations())
+            .add_step(upload_migrated_database())
+            .add_step(steps::show_sccache_stats(platform))
+            .add_step(steps::cleanup_cargo_config(platform)),
+    )
 }
 
 pub(crate) fn create_sentry_release() -> Step<Use> {

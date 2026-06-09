@@ -270,6 +270,65 @@ jobs:
           exit 1
         fi
     timeout-minutes: 60
+  check_database_migrations:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: release::check_database_migrations::download_previous_database
+      run: |
+        mkdir -p "$RUNNER_TEMP/zed-migration/db"
+        mapfile -t run_ids < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$GITHUB_WORKFLOW" --limit 25 --json databaseId --jq '.[].databaseId')
+        for run_id in "${run_ids[@]}"; do
+            if gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name migration-database --dir "$RUNNER_TEMP/zed-migration/db"; then
+                echo "Migrating database produced by workflow run $run_id"
+                exit 0
+            fi
+        done
+        echo "No previous database artifact found; starting from an empty database"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: release::check_database_migrations::run_database_migrations
+      run: cargo run --package zed -- --run-database-migrations --user-data-dir "$RUNNER_TEMP/zed-migration"
+    - name: release::check_database_migrations::upload_migrated_database
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: migration-database
+        path: ${{ runner.temp }}/zed-migration/db
+        if-no-files-found: error
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+    timeout-minutes: 60
   create_draft_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -348,6 +407,7 @@ jobs:
     - run_tests_linux
     - clippy_linux
     - check_scripts
+    - check_database_migrations
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     env:
       CARGO_INCREMENTAL: 0
@@ -388,6 +448,7 @@ jobs:
     - run_tests_linux
     - clippy_linux
     - check_scripts
+    - check_database_migrations
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
       CARGO_INCREMENTAL: 0
@@ -428,6 +489,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
+    - check_database_migrations
     runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
@@ -473,6 +535,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
+    - check_database_migrations
     runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
@@ -518,6 +581,7 @@ jobs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
+    - check_database_migrations
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
@@ -563,6 +627,7 @@ jobs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
+    - check_database_migrations
     runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
@@ -745,6 +810,7 @@ jobs:
     - clippy_linux
     - clippy_windows
     - check_scripts
+    - check_database_migrations
     - bundle_linux_aarch64
     - bundle_linux_x86_64
     - bundle_mac_aarch64
@@ -772,6 +838,7 @@ jobs:
                 if [ "$RESULT_CLIPPY_LINUX" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
                 if [ "$RESULT_CLIPPY_WINDOWS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
                 if [ "$RESULT_CHECK_SCRIPTS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
+                if [ "$RESULT_CHECK_DATABASE_MIGRATIONS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_database_migrations"; fi
                 if [ "$RESULT_BUNDLE_LINUX_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
                 if [ "$RESULT_BUNDLE_LINUX_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
                 if [ "$RESULT_BUNDLE_MAC_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
@@ -823,6 +890,7 @@ jobs:
         RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
         RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
         RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
+        RESULT_CHECK_DATABASE_MIGRATIONS: ${{ needs.check_database_migrations.result }}
         RESULT_BUNDLE_LINUX_AARCH64: ${{ needs.bundle_linux_aarch64.result }}
         RESULT_BUNDLE_LINUX_X86_64: ${{ needs.bundle_linux_x86_64.result }}
         RESULT_BUNDLE_MAC_AARCH64: ${{ needs.bundle_mac_aarch64.result }}
