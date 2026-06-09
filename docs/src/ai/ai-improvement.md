@@ -10,7 +10,7 @@ Normal AI requests are not retained by Zed. For
 prohibit training on your prompts or code context and require zero data
 retention, except for
 [provider-designated models with safety retention](./privacy-and-security.md#provider-safety-retention),
-like Anthropic's Mythos-class models.
+such as Anthropic's Mythos-class models.
 This page covers the cases where Zed may retain AI data because you explicitly
 shared it or opted in.
 
@@ -27,7 +27,7 @@ For the broader request path and provider data boundaries, see
 ## Zed-Hosted Model Commitments {#data-retention-and-training}
 
 Zed-hosted model zero-data-retention and no-training commitments, including the
-exception for provider-designated models with safety retention (like
+exception for provider-designated models with safety retention (such as
 Anthropic's Mythos-class models), are documented
 on [AI Privacy](./privacy-and-security.md#data-retention-and-training).
 
